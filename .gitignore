@@ -32,6 +32,8 @@ venv/
 
 # 缓存
 .cache/
+.pytest_cache/
+.ruff_cache/
 *.egg-info/
 
 # ccache（CI 缓存）
@@ -39,3 +41,6 @@ venv/
 
 # Claude Code 子代理的临时 worktree
 .claude/worktrees/
+
+# Claude Code 本地设置（个人，不入库）
+.claude/settings.local.json

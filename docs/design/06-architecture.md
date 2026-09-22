@@ -32,29 +32,34 @@
 
 ## 5.1 仓库布局
 
+下图是按模块划分的布局；已实现的部分以实际文件名为准（逐文件说明见 README「目录结构」），标「规划」的是尚未创建的模块。
+
 ```
 ygorl/
 ├── pyproject.toml                # uv 管理；scikit-build-core 编译 C++ 扩展
 ├── CMakeLists.txt
 ├── third_party/                  # git submodule：ygopro-core(edo9300) CardScripts BabelCDB LFLists
-├── csrc/                         # C++：core_backend.cpp msg_decoder.cpp duel_pool.cpp
-│                                 #       obs_encoder.cpp event_tokens.cpp arena_snapshot.cpp binding.cpp
+├── patches/ygopro-core/          # 构建时打到核心上的补丁（确定性、Lua 分配器钩子）
+├── csrc/                         # C++：core_backend.cpp（OCG_* 封装）arena.cpp（每局 arena 与快照）
+│                                 #       duel_pool.cpp host.cpp（消息解码、动作状态机、追踪器）
+│                                 #       obs_encoder.cpp event_encoder.cpp privileged.cpp host_pool.cpp binding.cpp
 ├── src/ygorl/
-│   ├── engine/    duel.py messages.py backend.py           # 单局 API、类型化消息
-│   ├── cards/     cdb.py features.py embeddings.py lflist.py ydk.py   # 含效果级文本 str1..16
-│   ├── env/       pool.py single.py spaces.py curriculum.py # VecDuelEnv、DuelEnv、课程/中局开局
-│   ├── solver/    combo_solver.py demos.py                 # ygo-combo-solver 封装、示范数据集
-│   ├── agents/    base.py random_agent.py greedy.py policy.py
-│   ├── nets/      encoders.py history.py heads.py actor_critic.py belief.py
-│   ├── train/     bc.py ppo.py selfplay.py exploiter.py    # BC 预热、PPO(VRPO/KL)、快照池
-│   ├── eval/      arena.py matchup.py meta_solve.py calibration.py
-│   ├── build/     synergy_graph.py packages.py genome.py constraints.py
-│   │             funnel.py surrogate.py qd.py report.py
-│   ├── data/      ygoprodeck.py masterduelmeta.py yugipedia.py environment.py
+│   ├── engine/    duel.py messages.py actions.py replay.py branch.py curriculum.py puzzle.py query.py
+│   ├── cards/     cdb.py lflist.py ydk.py legality.py       # 含效果级文本 str1..16；文本嵌入 embeddings.py（规划，T5.2）
+│   ├── env/       pool.py single.py encoded.py encoding.py events.py privileged.py  # VecDuelEnv、DuelEnv、C++ 步进环境
+│   ├── solver/    combo_solver.py demos.py                  # ygo-combo-solver 封装、示范数据集（T4a.1）
+│   ├── agents/    base.py random_agent.py greedy.py policy.py registry.py
+│   ├── nets/      encoders.py history.py heads.py actor_critic.py belief.py      # （T4b / T4c）
+│   ├── train/     bc.py ppo.py selfplay.py exploiter.py advantages.py critic.py # BC 预热、PPO(VRPO/KL)、快照池（T4）
+│   ├── eval/      arena.py matchup.py calibration.py beliefs.py
+│   ├── build/     lua.py filters.py scripts.py synergy_graph.py packages.py genotype.py
+│   │             funnel.py surrogate.py qd.py report.py   # 后四个规划中（T5.6–T5.8、T6.4）
+│   ├── data/      environment.py；ygoprodeck.py masterduelmeta.py yugipedia.py（规划，T5.1）
+│   ├── commands/  duel.py replay.py branch.py arena.py matrix.py
 │   └── cli.py
-├── environments/md-2026-10/      # 版本化快照：environment.json pool.json banlist.lflist.conf meta/*.ydk meta.json artifacts/
-├── docs/          encoding.md belief.md offmeta.md
-└── tests/         decks/ replays/ combos/ ...
+├── environments/md-2026-10/      # 版本化快照（规划，T5.1）：environment.json pool.json banlist.lflist.conf meta/*.ydk meta.json artifacts/
+├── docs/          engine.md encoding.md replays.md branching.md curriculum.md ...（README 有完整列表）
+└── tests/         decks/ data/ ...
 ```
 
 ## 5.2 关键设计决定

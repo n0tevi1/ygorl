@@ -191,7 +191,7 @@ def test_greedy_selects_before_finishing_and_never_unselects():
     assert chosen(g, u).kind == "finish"
 
 
-def test_greedy_positions_by_atk_and_def():
+def test_greedy_positions_by_attack_and_defense():
     g = GreedyAgent(0)
     all_pos = C.POS_FACEUP_ATTACK | C.POS_FACEUP_DEFENSE | C.POS_FACEDOWN_DEFENSE
     assert chosen(g, M.SelectPosition(ME, BLUE_EYES, all_pos)).value == C.POS_FACEUP_ATTACK

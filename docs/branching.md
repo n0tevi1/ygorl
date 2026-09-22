@@ -40,7 +40,7 @@ uv run ygorl branch game.json.gz --at 30 --try 0,5,10 --rollouts 20
 |------|------|
 | `--at T` | 分叉的决策点（见下节定义） |
 | `--try all\|I,J,...` | 候选动作下标，默认全部合法动作 |
-| `--policy AGENT` | 双方的 rollout 策略，按名字从 agent 注册表构造（现有 `random`） |
+| `--policy AGENT` | 双方的 rollout 策略，按名字从 agent 注册表构造（现有 `random`、`greedy`） |
 | `--seed S` | 第一次 rollout 的策略种子 |
 | `--rollouts N` | 每个候选 rollout 次数；N > 1 时输出胜/平/负、胜率与均值 |
 | `--env PATH\|VERSION` | 回放的环境；省略时按回放记录的版本在环境根目录（`$YGORL_ENVIRONMENTS` 或 `./environments`）下查找 |
@@ -63,7 +63,7 @@ rollouts  policy random, seed 1, 10 rollouts per candidate; * = recorded action
 
 `N = 1` 时每行给出 `winner reason turns lp_a lp_b`。卡片以 `password` 标识，卡名只用于显示。错误（`t` 越界、未知策略、候选越界、环境不符、文件不存在）打印为 `ygorl branch: error: ...`，退出码 2。
 
-新增策略（Greedy、策略 checkpoint）：`ygorl.agents.register_agent(name, factory, description)`，`factory(arg, seed)` 返回 agent；`--policy name:arg` 把 `arg`（如 checkpoint 路径）传给工厂。新增子命令：在 `ygorl.commands` 下加一个模块（提供 `add_parser(subparsers)`），列入 `ygorl.cli.COMMANDS`。
+新增策略（如策略 checkpoint）：`ygorl.agents.register_agent(name, factory, description)`，`factory(arg, seed)` 返回 agent；`--policy name:arg` 把 `arg`（如 checkpoint 路径）传给工厂。新增子命令：在 `ygorl.commands` 下加一个模块（提供 `add_parser(subparsers)`），列入 `ygorl.cli.COMMANDS`。
 
 ## 决策点 `t` 的定义
 

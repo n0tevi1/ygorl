@@ -21,7 +21,7 @@
 - **环境** `--env PATH|VERSION`：目录，或 `$YGORL_ENVIRONMENTS`（默认 `./environments`）下的版本名（[environments.md](environments.md)）。
   给出时按环境的规则 flag、LP、起手、抽卡数对局，回放、Arena 报告、矩阵都带环境版本与指纹；不给时用 Master Rule 5 默认值、不绑定环境。
   `replay` / `branch` 不给 `--env` 时按回放记录的版本去环境根目录找，找不到报错并提示 `--env PATH`。
-- **`--max-turns N`**（`duel` / `arena` / `matrix`）：回合上限，到达时判平（`reason=turn_limit`），默认 200。
+- **`--max-turns N`**（`duel` / `arena` / `matrix`）：回合上限，到达时 LP 高者胜、相等为平局（`reason=turn_limit`），默认 200。
 - **输出文件**的父目录自动创建。
 - **退出码**：0 成功；1 结果不健康（`replay --verify` 未到达录制的终局；`arena` / `matrix` 有对局抛异常，`arena` 另含 retry、未知消息）；
   2 用法错误（参数不合法、文件不存在、未知 agent、环境不符等），打印为 `ygorl <命令>: error: ...`。
@@ -111,7 +111,7 @@ reasons: {'win': 20}; mean turns 31.1
 ```
 
 T3.2 的基准 `uv run python tools/arena.py --games 2000 --workers 2` 现在是 `ygorl arena tests/decks --games 2000 --workers 2` 的薄包装
-（`--decks a,b` 从 `tests/decks` 按名字挑牌），种子与对阵顺序不变，[benchmarks.md](benchmarks.md) 的数字照旧可复现。
+（`--decks a,b` 从 `tests/decks` 按名字挑牌），种子与对阵顺序不变。注意 [benchmarks.md](benchmarks.md) 的数字测于 commit `f621a5f`，之后 T2.3 修正了多选应答（合法动作列表有细微变化），同一种子下个别对局会不同，统计结论需要重测才能确认。本页的示例输出同样来自当时的代码，逐字复现不作保证。
 
 ## `ygorl matrix`
 

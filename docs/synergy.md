@@ -196,10 +196,10 @@ Jaccard 重叠 > 0.6 的包只保留排名靠前者。
 
 > Dragonmaid、Fur Hire、Exosister、Kozmo、Unchained、Lunalight、Mikanko、S-Force、**Nouvelles + Recipe**、Traptrix、Artmage、
 > **Springans**（含 Sprind / Tri-Brigade）、Rescue-ACE、Crystron、**Power Patron + DoomZ**、Purrely、P.U.N.K.、Speedroid + Synchron、Dragunity、
-> Bujin、Superheavy Samurai、Witchcrafter、Ritual Beast、Memento、Drytron + Ursarctic、Plunder Patroll、Dream Mirror、Gold Pride、
+> Bujin、Superheavy Samurai、Witchcrafter、Ritual Beast、Memento、Drytron + Ursarctic（2 个，成员只重叠 2 张）、Plunder Patroll、Dream Mirror、Gold Pride、
 > Super Quant（2 个）、Cubic、Sky Striker、**Assault Mode**、Fire King、Karakuri、Solfachord、Mathmech、Libromancer、Metalfoes、SPYRAL、
 > Salamangreat、**Skull Guardian + Voiceless Voice**、Amazoness、Nephthys、**Gravekeeper's + Necrovalley**、Goblin Rider、Tellarknight、
-> Drytron + Ursarctic、**GMX**、Altergeist（粗体为 `cross_archetype`，共 7 个）。
+> **GMX**、Altergeist（粗体为 `cross_archetype`，共 7 个）。
 
 人工抽检：50 个包都是可以成立的检索 / 特召引擎（系列核心加上它点名或按种族 / 等级拉出的卡），没有出现由泛用卡拼成的包。
 跨系列包里有真正的混合引擎：Nouvelles + Recipe；Power Patron + DoomZ；Skull Guardian + Voiceless Voice；

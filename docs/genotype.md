@@ -15,7 +15,7 @@ from ygorl.build.synergy_graph import load_or_build
 from ygorl.cards.cdb import CardDB
 from ygorl.data import load_environment
 
-db, env = CardDB.load(), load_environment("md-2026-10")   # 任一环境版本
+db, env = CardDB.load(), load_environment("md-2026-10")   # 示意：仓库里还没有真实环境（T5.1），测试用临时环境，见 tests/test_genotype.py
 pkgs = enumerate_packages(load_or_build(), setcodes=setcodes_from_db(db))
 generic = {14558127: "hand_trap", 54693926: "board_breaker", 29301450: "extra"}   # 卡密 -> 角色
 sp = GenotypeSpace.from_environment(env, db, pkgs, generic)

@@ -18,7 +18,7 @@
 
 ## 2. 任务清单
 
-「依赖」只列直接前置。验收标准是 issue 关闭的条件，与 [设计文档 §7 验证方式](#4-验证方式) 一致。
+「依赖」只列直接前置。验收标准是 issue 关闭的条件，与下文 [§4 验证方式](#4-验证方式) 一致。
 
 ### M0 骨架
 
@@ -55,6 +55,12 @@
 | T2.7 | 吞吐基准：决策/秒 vs 线程数，写入 `docs/benchmarks.md` | T2.2 | 16 核实测数字入库（目标 ≥ 1 万决策/秒，以实测为准） | [#19](https://github.com/n0tevi1/ygorl/issues/19) |
 | T2.8 | arena 快照 `snapshot()/restore()`（移植写监视 arena）；受阻则退回「从种子重放」实现中局开局，接口不变 | T1.7, T2.1 | restore 后继续对局与重放逐字节一致；恢复耗时 < 重放的 1/5（或记录退回原因） | [#20](https://github.com/n0tevi1/ygorl/issues/20) |
 | T2.9 | 分支探索 API：`fork(replay, t)` 从任意决策点分叉，对同一决策点尝试多个候选并用给定策略 rollout，比较结果；首版用确定性「重放到 t」实现，T2.8 落地后切到 `snapshot/restore`，接口不变。用途：反事实分析/调试、中局开局的数据来源、后期 PIMC 搜索基础。限制：保留同一隐藏状态（上帝视角分支），对手未知信息的重采样（确定化）留作后续 | T1.8, T2.1 | 从任意 t 分叉并按原应答继续，终局与原回放一致；CLI `ygorl branch <replay> --at t --try all --policy <agent>` 输出各候选 rollout 结果表；文档说明限制 | [#21](https://github.com/n0tevi1/ygorl/issues/21) |
+
+M2 遗留事项（验收之外发现、需要在后续任务前解决）：
+
+- **超过 128 个合法动作的决策**（T2.3 备注）：观测只编码前 128 个动作，主要影响 ANNOUNCE_CARD（可宣言卡名可达上千个），第 128 个之后的动作 agent 选不到（[encoding.md](encoding.md)「截断」）。需在 T4b.1 训练 ANNOUNCE_CARD 之前定方案（拆步宣言或按先验排序）。
+- **C++ 步进路径上的课程模式**（T2.6 备注）：课程模式只在 Python 主机实现，`EncodedVecEnv` 对非 `full` 规格报 `NotImplementedError`；T4d.1 的课程调度前需要把代答规则移植到 C++ `Tracker`。
+- **T2.7 的 16 核数字**：目前只有 4 核实测（[benchmarks.md](benchmarks.md)）。
 
 ### M3 基线与评估
 

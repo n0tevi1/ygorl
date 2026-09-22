@@ -29,7 +29,7 @@ def add_env_option(p: argparse.ArgumentParser, help: str) -> None:
 
 def add_max_turns_option(p: argparse.ArgumentParser) -> None:
     p.add_argument("--max-turns", type=int, default=None, metavar="N",
-                   help="end a game as a draw after N turns (default 200)")  # fmt: skip
+                   help="stop a game after N turns: the higher LP wins, equal LP is a draw (default 200)")  # fmt: skip
 
 
 def load_env(spec: str | None):

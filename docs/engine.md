@@ -129,7 +129,7 @@ result = Duel(seed=1, env=None, deck_a=a, deck_b=b).run(RandomAgent(1), RandomAg
 print(result.summary())
 ```
 
-- AEC 语义：谁被问谁决策；`DecisionPoint` 含决策消息、合法动作、回合、阶段、LP 和上次决策以来的事件。**事件是核心的全知视角**，按玩家过滤属于 M2（T2.2/T2.5）。
+- AEC 语义：谁被问谁决策；`DecisionPoint` 含决策消息、合法动作、回合、阶段、LP 和上次决策以来的事件。**事件是核心的全知视角**；按 viewer 可见性过滤后的事件流见 [encoding.md](encoding.md)「事件 token 流」（`ygorl.env.events.EventHistory`）。
 - 引擎玩家 0 先攻；`first=1` 让 b 先攻。结果按 (a, b) 顺序报告。
 - 核心在 `MSG_WIN` 之后仍会继续处理，主机（EDOPro 与我们）在第一个 `MSG_WIN` 处结束对局。胜负原因：1 = LP，2 = 卡组耗尽，0x10 以上为卡片特殊胜利。
 - 回合上限 / 决策数上限（`DuelConfig.max_turns / max_decisions`）触发时 LP 高者胜，相等为平局。
@@ -178,7 +178,7 @@ core.restore(snap)        # 回到快照时刻，之后的消息流与从头重�
 
 ## 向量化环境（`ygorl.env`，T2.1）
 
-`csrc/duel_pool.{h,cpp}` 的 `DuelPool` 持有 `num_envs` 个槽位和 `num_threads` 个工作线程，槽位 `i` 固定由线程 `i % num_threads` 处理（每线程独立的核心句柄集合，为 T2.8 的每线程 arena 留好位置）。接口是 envpool 式的异步调用：
+`csrc/duel_pool.{h,cpp}` 的 `DuelPool` 持有 `num_envs` 个槽位和 `num_threads` 个工作线程，槽位 `i` 固定由线程 `i % num_threads` 处理（每线程独立的核心句柄集合；T2.8 最终采用每局一个 arena 槽位，见「快照」）。接口是 envpool 式的异步调用：
 
 - `start(env, seed[4], flags, team1, team2, decks)`：在工作线程上建局、加载基础脚本、按给定顺序加卡、开始，并运行到第一个停点；
 - `respond(env, bytes)`：设置应答并运行到下一个停点；
@@ -187,7 +187,7 @@ core.restore(snap)        # 回到快照时刻，之后的消息流与从头重�
 
 所有调用在等待与核心运行期间释放 GIL。Python 侧 `VecDuelEnv` 为每个槽位持有一个 `DuelTracker`（与 `Duel.run` 共用同一份主机逻辑），多选的中间步骤在本地完成，只有完整应答才回到核心；`DuelEnv` 是单局的 `reset/step` 包装；`run_games(specs, agent_factory, num_envs, num_threads)` 按规格顺序返回结果。
 
-验收：`tests/test_pool.py` 检查池化结果与逐局 `Duel.run` 完全一致、线程数不影响结果、上限在池中同样生效；`uv run python tools/check_pool.py --games 1000 --threads 4` 做 1,000 局比对。目前每个决策的消息解码与动作生成仍在 Python 中完成，吞吐受其限制，T2.2 把观测编码移到 C++ 后再做基准（T2.7）。
+验收：`tests/test_pool.py` 检查池化结果与逐局 `Duel.run` 完全一致、线程数不影响结果、上限在池中同样生效；`uv run python tools/check_pool.py --games 1000 --threads 4` 做 1,000 局比对。这条路径每个决策的消息解码与动作生成在 Python 中完成、受 GIL 限制；训练用下文的 C++ 步进环境 `EncodedVecEnv`，两者的吞吐对比见 [benchmarks.md](benchmarks.md)。
 
 线程安全：`tools/tsan/check.sh` 用 `-fsanitize=thread` 另行编译 `_core`，在预加载 `libtsan` 的 Python 中以 4 线程跑池化对局并与逐局结果比对。2026-09-22 的一次运行：12 局、4 线程、结果与单线程一致，ThreadSanitizer 零报告（同一方式对一个故意制造数据竞争的库能正确报警，作为阳性对照）。
 

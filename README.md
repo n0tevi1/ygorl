@@ -4,7 +4,17 @@
 
 ## 项目状态
 
-设计已评审通过。M0（骨架）完成；M1（引擎绑定）实现中：核心绑定、卡片数据、合法性、消息解码、单局 API、确定性重放、回放格式已落地。M3（基线与评估）：GreedyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank、命令行 `ygorl duel / arena / matrix / replay` 已落地。技术栈与方向见下。
+设计已评审通过。逐任务的完成情况见 [工程计划](docs/eng-plan.md) 与 GitHub issues。
+
+- **M0 骨架**：完成。
+- **M1 引擎绑定**：完成；待办是两项人工核对（T1.2 卡片字段与效果串的人工抽检、T1.8 `.yrpX` 在 EDOPro 客户端中回看）。
+- **M2 向量化环境**：完成（C++ 线程池、C++ 步进与观测编码、多选可行集核对、事件 token 流、训练态真值、课程模式、arena 快照、分支探索）；待办是 16 核吞吐数字，以及 C++ 步进路径上的课程模式。
+- **M3 基线与评估**：完成（Greedy、配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念校准指标、命令行 `ygorl duel / replay / branch / arena / matrix`）。
+- **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）。
+- **M5 数据与组牌**：协同图（T5.3，代理召回检验）、引擎包枚举（T5.4）、基因型与算子（T5.5）已落地；T5.1 数据抓取与 T5.2 文本嵌入受当前网络环境限制（YGOPRODECK、masterduelmeta、Yugipedia、HuggingFace 不可达）尚未开始。
+- **M6**：未开始。
+
+技术栈与方向见下。
 
 ## 简介
 
@@ -23,6 +33,7 @@
 - [设计文档](docs/design/README.md)：目标、引擎裁决、RL 挑战、对局策略、对手预测、组牌与 off-meta 发现、架构、风险。
 - [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁、快照（snapshot / restore）。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
+- [调研：ygo-combo-solver](docs/spikes/combo-solver.md)：与本仓库核心的兼容性、封装方案、arena 快照移植评估（T1.7）。
 - [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank。
 - [命令行](docs/cli.md)：`ygorl duel`、`ygorl replay`、`ygorl branch`、`ygorl arena`、`ygorl matrix` 的参数、输出与退出码。
 - [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
@@ -43,6 +54,9 @@ Python 运行时依赖写在 `pyproject.toml`、锁定在 `uv.lock`，`uv sync` 
 [nashpy](https://github.com/drvinceknight/Nashpy)（连带 scipy、networkx 等）用于对局矩阵的 Nash 均衡（`ygorl.eval.matchup`）。
 策略训练（M4，`ygorl.nets` / `ygorl.train`）另需 PyTorch，放在可选依赖组 `train` 里：`uv sync --extra train`
 （从 PyPI 安装 Linux 版 torch，自带 CUDA 运行库，安装后约 5 GB；只跑引擎、评估与组牌不需要它，相关测试在未安装时自动跳过）。
+开发工具在 `dev` 依赖组（`uv sync` 默认安装）：pytest（单测）、ruff（lint，`uv run ruff check src tests tools`）。
+个别工具另有系统依赖：`tools/tsan/check.sh` 需要 ninja、GCC 的 libtsan 与 `setarch`（util-linux）；`tools/check_ygoprodeck.py` 需要能访问
+YGOPRODECK API 的网络。CI 与云端会话 hook 另装 ccache 以加速重编。
 新增依赖用 `uv add <包名>`（可选组用 `uv add --optional <组> <包名>`）。
 
 ```bash
@@ -80,7 +94,7 @@ uv run ygorl matrix tests/decks/snake_eye.ydk tests/decks/kashtira.ydk tests/dec
 ### Claude Code 云端会话
 
 `.claude/hooks/session-start.sh` 是 SessionStart hook（在 `.claude/settings.json` 注册），只在 Claude Code on the web
-（`CLAUDE_CODE_REMOTE=true`）中运行：补装缺失的工具（uv / cmake / ninja / g++ / ccache）、拉取子模块、`uv sync` 编译扩展，
+（`CLAUDE_CODE_REMOTE=true`）中运行：补装缺失的工具（uv / cmake / ninja / g++ / ccache）、拉取子模块、`uv sync --extra train` 编译扩展并安装 PyTorch（首次约 2 分钟、5 GB），
 会话开始时即可直接 `uv run pytest`。脚本幂等，也可以粘贴进云环境的 setup script，或手动执行：
 
 ```bash
@@ -118,22 +132,26 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── .github/workflows/       # CI：构建扩展 + pytest
 ├── pyproject.toml           # uv 项目 + scikit-build-core 构建配置
 ├── uv.lock
+├── .python-version         # uv 使用的 Python 版本（3.11）
+├── .gitmodules              # 子模块定义（third_party/）
 ├── CMakeLists.txt           # 构建 C++ 扩展 ygorl._core
 ├── cmake/                   # CMake 片段（ocgcore.cmake：复制核心、打补丁、编成静态库）
 ├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序、Lua 字符串哈希种子、Lua 分配器钩子），构建时应用
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
+├── environments/            # （尚未创建）环境版本目录，由 T5.1 生成，规范见 docs/environments.md
 ├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、privileged（训练态对手真值）、event_encoder + event_binding（事件 token 流）、host_pool + worker_pool（C++ 步进环境）、arena（每局内存 arena 与快照）、binding（pybind11）；exports.map 为链接导出表
 ├── src/ygorl/               # Python 包
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
+│   ├── paths.py             # 子模块数据路径（cards.cdb、脚本目录、禁限表）与环境根目录
 │   ├── commands/            # 各子命令一个模块：duel / replay / branch / arena / matrix；__init__.py 放共用选项（牌组、环境、agent）
 │   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；registry.py（按规格构造 agent 与可 pickle 的 factory，供 CLI）
 │   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、引擎包枚举（packages）、基因型与算子（genotype）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
-│   ├── engine/              # 消息解码、动作模型、单局 Duel、回放、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）；constants.py 为生成文件
+│   ├── engine/              # 消息解码、动作模型、单局 Duel、卡片查询解析（query.py）、回放、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv
 │   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
-├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、基因型采样与合法性检查、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、吞吐基准、课程模式检查、快照检查、C++ 编码 / 事件流交叉校验
+├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、基因型采样与合法性检查、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组，data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
