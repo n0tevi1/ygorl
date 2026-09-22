@@ -273,7 +273,13 @@ class Duel:
         self._ran = True
         tracker = self.tracker(reference_log=reference_log)
         core = self._core = self._setup()
+        hooks = []  # optional agent hooks (docs/evaluation.md): on_duel_start(duel), on_decision(point, index)
         try:
+            for agent in {id(a): a for a in seat or ()}.values():
+                if hasattr(agent, "on_duel_start"):
+                    agent.on_duel_start(self)
+                if hasattr(agent, "on_decision"):
+                    hooks.append(agent.on_decision)
             if observer is not None:
                 observer.on_start(core)
             while True:
@@ -299,7 +305,10 @@ class Duel:
                         if point is None:
                             break
                         agent = seat[point.player]
-                        response = tracker.act(agent.act(point), getattr(agent, "last_probs", None))
+                        index = agent.act(point)
+                        response = tracker.act(index, getattr(agent, "last_probs", None))
+                        for hook in hooks:
+                            hook(point, index)
                     if tracker.done:
                         break
                 core.set_response(response)
