@@ -101,9 +101,36 @@ print(result.summary())
 3. **补丁** `patches/ygopro-core/0001-deterministic-iteration-order.patch`：核心中若干以 `card*` / `effect*` 为键的 `unordered_set/map` 被遍历时会发消息或移除效果，遍历顺序随堆地址变化。实测未打补丁时同一进程内 60 局重放有 11 局消息顺序不同（都是效果重置时的 `MSG_CARD_HINT` / `MSG_PLAYER_HINT`），打补丁后为 0。补丁按效果 id（及 initial_id、code、type、description）或卡片 `cardid` 排序后遍历。子模块保持原样，CMake 在构建目录复制一份核心源码并按文件名顺序打补丁。
 4. **补丁** `patches/ygopro-core/0002-constant-lua-string-hash-seed.patch`：Lua 5.4 默认用时钟与堆地址生成字符串哈希种子，`pairs()` 遍历字符串键表的顺序因此每局不同；补丁把 `luai_makeseed` 固定为 0（ygo-combo-solver 同样处理）。测试 `test_lua_string_keyed_pairs_order_is_stable` 用 Lua 探针脚本验证。
 
-已知残余风险：核心里还有以原始指针为键的**有序**容器（如 `std::map<effect*, chain>`、`std::set<std::pair<effect*, tevent>>`），其遍历顺序由地址大小决定。大规模扫描（`tools/check_determinism.py`）未观察到由此导致的差异；若出现，彻底方案是每局一个地址确定的 arena 分配器，这也是 T2.8 快照需要的基础设施。
+已知残余风险：核心里还有以原始指针为键的**有序**容器（如 `std::map<effect*, chain>`、`std::set<std::pair<effect*, tevent>>`），其遍历顺序由地址大小决定。大规模扫描（`tools/check_determinism.py`）未观察到由此导致的差异。以 `snapshots=True` 创建的对局（见下节「快照」）把全部分配放进本局的 arena，地址的相对大小只由分配序列决定，这一风险随之消失。
 
 验证：`tests/test_determinism.py`（同种子字节一致、应答日志重放到同一终局、动作日志重放、截断日志、与参考流比对），以及 `uv run python tools/check_determinism.py --games 1000`。
+
+## 快照（T2.8）
+
+`_core.Duel(..., snapshots=True)`（Python 侧 `engine.duel.Duel(..., snapshots=True)`）让这一局的规则核心状态整体住进一块私有内存 arena，于是：
+
+```python
+core = Duel(seed, None, deck_a, deck_b, snapshots=True)._setup()
+...                       # 推进到某个决策点
+snap = core.snapshot()    # 复制核心的完整状态（约 4–5 MiB）
+...                       # 继续走任意分支
+core.restore(snap)        # 回到快照时刻，之后的消息流与从头重放逐字节一致
+```
+
+机制（`csrc/arena.{h,cpp}`，思路来自 ygo-combo-solver，见 [spikes/combo-solver.md](spikes/combo-solver.md)）：
+
+1. 进程启动后首次需要时，一次性保留一大段地址空间（`PROT_NONE`，最多 4 TiB，不占内存），切成每局 256 MiB 的槽位；槽位按需映射、页面按访问提交，关局时整槽归还。
+2. 扩展替换了 `operator new/delete`，补丁 `patches/ygopro-core/0003-lua-allocator-hook.patch` 让 Lua 的分配器走 `ygorl_lua_alloc`。**只在调用 `OCG_*` 期间**激活本局 arena，此时核心（含 Lua）的一切分配落在本局槽位里；槽内分配器（16 字节步长的小块 + 2 的幂大块，空闲链表）的元数据也在槽位开头，因此「槽位已用前缀」就是这一局的全部可变状态。释放按地址判断归属。
+3. 快照 = 复制已用前缀；恢复 = 原地址拷回，所有指针无需重定位。快照只能恢复到拍下它的那一局（跨局报 `ValueError`）。包装层的日志缓冲一并保存。
+4. 核心回调进入主机代码（读卡、读脚本、日志）时挂起 arena，主机数据结构因此永远不会指向 arena；脚本回调里再调用 `OCG_LoadScript` 时恢复 arena。
+5. libstdc++ 静态链接进扩展，使其非内联代码（如 `std::string` 扩容）也走同一对 `operator new/delete`；链接脚本 `csrc/exports.map` 只导出 `PyInit__core`，替换不会影响进程里的其他库（Python、PyTorch）。
+6. arena 激活期间若有分配无法放进 arena（超过 16 字节对齐的请求，或把主机堆上的块在 arena 内扩容），计入 `arena_escapes()`；非零即说明快照不完整，测试与检查脚本都要求为 0。
+
+默认 `snapshots=False`，行为与之前完全相同（`operator new` 只多一次线程局部变量判断后落到 `malloc`）。ThreadSanitizer 构建以 `-DYGORL_ARENA=OFF` 关闭替换，此时 `snapshots=True` 会报错。
+
+验证：`tests/test_snapshot.py`（恢复后续跑与不中断的消息流逐字节一致、多快照乱序恢复、从快照分叉走不同应答与全新重放一致、跨局拒绝、恢复耗时 < 重放 1/5；把恢复改成空操作时其中 3 项失败，作为阳性对照）；`uv run python tools/check_snapshots.py --games 200` 在随机时刻拍快照、先跑出去若干步再恢复，全局比对并记录耗时，数字见 [benchmarks.md](benchmarks.md)。
+
+目前快照只覆盖规则核心；主机侧的追踪状态（Python `DuelTracker` / C++ `Tracker`）由调用方自行保存。分支探索（T2.9）仍用「重放到 t」，改用快照是后续工作。
 
 ## 向量化环境（`ygorl.env`，T2.1）
 

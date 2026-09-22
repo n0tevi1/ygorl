@@ -172,6 +172,7 @@ class Duel:
         validate: bool = False,
         record_messages: bool = False,
         record_steps: bool = False,
+        snapshots: bool = False,
     ) -> None:
         if first not in (0, 1):
             raise ValueError("first must be 0 (deck_a starts) or 1 (deck_b starts)")
@@ -184,6 +185,7 @@ class Duel:
         self.first = first
         self.record_messages = record_messages
         self.record_steps = record_steps
+        self.snapshots = snapshots  # core arena for _core.Duel.snapshot()/restore() (T2.8)
         if validate:
             for deck in self.decks:
                 if env is not None:
@@ -218,7 +220,8 @@ class Duel:
     def _setup(self) -> _core.Duel:
         p = self.config.player
         player = (p.starting_lp, p.starting_hand, p.draw_per_turn)
-        core = _core.Duel(expand_seed(self.seed), self.config.rule_flags, player, player, self.cards.to_core(), self.scripts)
+        core = _core.Duel(expand_seed(self.seed), self.config.rule_flags, player, player, self.cards.to_core(), self.scripts,
+                          snapshots=self.snapshots)  # fmt: skip
         for base in ("constant.lua", "utility.lua"):
             if not core.load_script(base):
                 raise RuntimeError(f"failed to load base script {base}")

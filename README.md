@@ -21,7 +21,7 @@
 ## 文档
 
 - [设计文档](docs/design/README.md)：目标、引擎裁决、RL 挑战、对局策略、对手预测、组牌与 off-meta 发现、架构、风险。
-- [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁。
+- [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁、快照（snapshot / restore）。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
 - [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank。
 - [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
@@ -113,9 +113,9 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── uv.lock
 ├── CMakeLists.txt           # 构建 C++ 扩展 ygorl._core
 ├── cmake/                   # CMake 片段（ocgcore.cmake：复制核心、打补丁、编成静态库）
-├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序），构建时应用
+├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序、Lua 字符串哈希种子、Lua 分配器钩子），构建时应用
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
-├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、host_pool + worker_pool（C++ 步进环境）、binding（pybind11）
+├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、host_pool + worker_pool（C++ 步进环境）、arena（每局内存 arena 与快照）、binding（pybind11）；exports.map 为链接导出表
 ├── src/ygorl/               # Python 包
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
 │   ├── commands/            # 各子命令一个模块：branch.py（`ygorl branch`）
@@ -126,7 +126,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、回放、分支探索（branch.py）、课程模式（curriculum.py）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；encoded.py 为 C++ 步进的 EncodedVecEnv
 │   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
-├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准、信念基线表、吞吐基准、课程模式检查
+├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准、信念基线表、吞吐基准、课程模式检查、快照检查
 ├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据（含代理引擎包）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）

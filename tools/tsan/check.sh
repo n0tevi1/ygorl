@@ -10,7 +10,7 @@ pybind="$(cd "$root" && uv run --no-sync --with pybind11 python -c 'import pybin
 cmake -S "$root" -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_C_FLAGS=-fsanitize=thread -DCMAKE_CXX_FLAGS=-fsanitize=thread \
   -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=thread -Dpybind11_DIR="$pybind" \
-  -DPython_EXECUTABLE="$root/.venv/bin/python" > "$build.cmake.log"
+  -DPython_EXECUTABLE="$root/.venv/bin/python" -DYGORL_ARENA=OFF > "$build.cmake.log"
 cmake --build "$build" -j "$(nproc)" > "$build.build.log"
 rm -f "$build"/tsan_report*
 # setarch -R: TSAN cannot map its shadow memory with full ASLR entropy on recent kernels.

@@ -19,6 +19,7 @@ find_package(pybind11 CONFIG REQUIRED)
 include(cmake/ocgcore.cmake)
 
 pybind11_add_module(_core MODULE
+    csrc/arena.cpp
     csrc/binding.cpp
     csrc/core_backend.cpp
     csrc/duel_pool.cpp
@@ -28,5 +29,16 @@ pybind11_add_module(_core MODULE
 )
 target_include_directories(_core PRIVATE csrc)
 target_link_libraries(_core PRIVATE ocgcore)
+
+# Duel snapshots (T2.8): the extension replaces operator new/delete to route the
+# core's allocations into per-duel arenas (csrc/arena.h). libstdc++ is linked
+# statically so its out-of-line code uses the same operators, and only the module
+# init symbol is exported so nothing leaks into the rest of the process.
+option(YGORL_ARENA "Per-duel arenas for snapshot/restore" ON)
+if(YGORL_ARENA)
+    target_compile_definitions(_core PRIVATE YGORL_ARENA)
+    target_link_options(_core PRIVATE -static-libstdc++ -Wl,--exclude-libs,ALL
+                        -Wl,--version-script=${CMAKE_SOURCE_DIR}/csrc/exports.map)
+endif()
 
 install(TARGETS _core LIBRARY DESTINATION ygorl)

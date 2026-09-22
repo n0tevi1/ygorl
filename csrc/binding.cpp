@@ -78,6 +78,7 @@ public:
             if (result.is_none()) return false;
             content = result.cast<std::string>();
         }
+        arena::Resume in_core;  // the duel's arena (if any) while the core compiles the script
         return OCG_LoadScript(duel, content.data(), static_cast<uint32_t>(content.size()), name) != 0;
     }
 
@@ -219,14 +220,41 @@ PYBIND11_MODULE(_core, m) {
         .def_property_readonly("directories", &ScriptDirectory::directories)
         .def("__len__", &ScriptDirectory::size);
 
+    py::class_<DuelSnapshot, std::shared_ptr<DuelSnapshot>>(
+        m, "DuelSnapshot", "Opaque core state of one duel (Duel.snapshot); restorable only into that duel.")
+        .def_property_readonly("nbytes", &DuelSnapshot::nbytes);
+
+    m.attr("ARENA_AVAILABLE") = arena::available();
+
     py::class_<Duel>(m, "Duel", "One ygopro-core duel handle (OCG_* API).")
         .def(py::init([](std::array<uint64_t, 4> seed, uint64_t flags, py::tuple team1,
-                         py::tuple team2, py::object cards, py::object scripts) {
-                 return std::make_unique<Duel>(seed, flags, to_player(team1), to_player(team2),
-                                               to_card_source(cards), to_script_source(scripts));
+                         py::tuple team2, py::object cards, py::object scripts, bool snapshots) {
+                 auto card_source = to_card_source(cards);
+                 auto script_source = to_script_source(scripts);
+                 PlayerOptions p1 = to_player(team1), p2 = to_player(team2);
+                 py::gil_scoped_release release;
+                 return std::make_unique<Duel>(seed, flags, p1, p2, std::move(card_source),
+                                               std::move(script_source), snapshots);
              }),
              py::arg("seed"), py::arg("flags"), py::arg("team1"), py::arg("team2"),
-             py::arg("cards"), py::arg("scripts"))
+             py::arg("cards"), py::arg("scripts"), py::arg("snapshots") = false,
+             "snapshots=True keeps the core's state in a private arena so snapshot()/restore() work (T2.8).")
+        .def("snapshot", [](Duel& d) {
+            std::shared_ptr<const DuelSnapshot> snap;
+            {
+                py::gil_scoped_release release;
+                snap = d.snapshot();
+            }
+            return std::const_pointer_cast<DuelSnapshot>(snap);
+        }, "Copy the duel's complete core state.")
+        .def("restore", [](Duel& d, const DuelSnapshot& snap) {
+            py::gil_scoped_release release;
+            d.restore(snap);
+        }, py::arg("snapshot"), "Return to a snapshot taken from this duel (ValueError for another duel's).")
+        .def_property_readonly("snapshots_enabled", &Duel::snapshots_enabled)
+        .def("arena_escapes", &Duel::arena_escapes,
+             "Allocations that escaped the arena while the core ran (must be 0 for exact snapshots).")
+        .def("arena_bytes", &Duel::arena_bytes, "Bytes of the duel's arena in use.")
         .def("load_script", &Duel::load_script, py::arg("name"),
              py::call_guard<py::gil_scoped_release>())
         .def("new_card", &Duel::new_card, py::arg("team"), py::arg("duelist"), py::arg("code"),

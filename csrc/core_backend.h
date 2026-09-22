@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include "arena.h"
 #include "ocgapi.h"
 
 namespace ygorl {
@@ -89,13 +90,20 @@ struct LogEntry {
     std::string text;
 };
 
+// Complete core state of a duel at one point (T2.8); restorable only into the duel that took it.
+struct DuelSnapshot {
+    std::unique_ptr<arena::Image> image;
+    std::vector<LogEntry> logs;
+    size_t nbytes() const { return image ? image->size() : 0; }
+};
+
 // One duel = one core handle. Every public method is serialized by a mutex, so a
 // Duel may be driven from any thread (but never concurrently by two).
 class Duel {
 public:
     Duel(const std::array<uint64_t, 4>& seed, uint64_t flags, const PlayerOptions& team1,
          const PlayerOptions& team2, std::shared_ptr<CardSource> cards,
-         std::shared_ptr<ScriptSource> scripts);
+         std::shared_ptr<ScriptSource> scripts, bool snapshots = false);
     ~Duel();
     Duel(const Duel&) = delete;
     Duel& operator=(const Duel&) = delete;
@@ -116,6 +124,14 @@ public:
     void close();
     bool closed() const { return handle_ == nullptr; }
 
+    // Snapshots (duels created with snapshots=true): the core's whole state lives in a
+    // private arena (csrc/arena.h), so taking and restoring a snapshot is a memory copy.
+    bool snapshots_enabled() const { return arena_ != nullptr; }
+    std::shared_ptr<const DuelSnapshot> snapshot();
+    void restore(const DuelSnapshot& snapshot);  // std::invalid_argument if taken from another duel
+    uint64_t arena_escapes() const { return arena_ ? arena_->escapes() : 0; }
+    size_t arena_bytes() const { return arena_ ? arena_->used() : 0; }
+
     // Callback error captured at the C boundary; rethrown by the caller-facing method.
     void capture_error(std::exception_ptr e);
     void rethrow_pending();
@@ -127,6 +143,7 @@ private:
     static int script_reader(void* payload, OCG_Duel duel, const char* name);
     static void log_handler(void* payload, const char* text, int type);
 
+    std::unique_ptr<arena::Arena> arena_;  // null unless snapshots are enabled
     OCG_Duel handle_ = nullptr;
     std::shared_ptr<CardSource> cards_;
     std::shared_ptr<ScriptSource> scripts_;

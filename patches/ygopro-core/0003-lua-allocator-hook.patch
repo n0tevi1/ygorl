@@ -1,0 +1,28 @@
+ygorl: route Lua allocations through ygorl_lua_alloc (csrc/arena.cpp).
+
+A duel created with snapshots=True keeps its whole Lua state in its own
+arena so a snapshot can copy it; outside an arena the hook is plain
+realloc/free, exactly like upstream l_alloc.
+
+--- a/lua/src/lauxlib.c
++++ b/lua/src/lauxlib.c
+@@ -1023,14 +1023,12 @@
+ }
+ 
+ 
++/* ygorl: route Lua's memory through the host so a duel's Lua state can live in
++** its snapshot arena (csrc/arena.cpp). Lua is compiled as C++ here. */
++void *ygorl_lua_alloc (void *ud, void *ptr, size_t osize, size_t nsize);
++
+ static void *l_alloc (void *ud, void *ptr, size_t osize, size_t nsize) {
+-  (void)ud; (void)osize;  /* not used */
+-  if (nsize == 0) {
+-    free(ptr);
+-    return NULL;
+-  }
+-  else
+-    return realloc(ptr, nsize);
++  return ygorl_lua_alloc(ud, ptr, osize, nsize);
+ }
+ 
+ 

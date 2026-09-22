@@ -35,6 +35,7 @@ cache-keys = [
   { file = "patches/**/*.patch" },
   { file = "csrc/**/*.cpp" },
   { file = "csrc/**/*.h" },
+  { file = "csrc/**/*.map" },
 ]
 
 [tool.pytest.ini_options]
