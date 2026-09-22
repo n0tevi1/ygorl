@@ -45,8 +45,6 @@ def run(args: argparse.Namespace) -> int:
     from ygorl.commands import make_factory
     from ygorl.eval.arena import Arena, derive_seed, merge
 
-    side_a = load_decks(args.decks)
-    side_b = load_decks(args.vs) if args.vs is not None else side_a
     env = load_env(args.env)
     config = duel_config(env, args.max_turns)
     if args.games < 1 or args.workers < 1:
@@ -54,6 +52,8 @@ def run(args: argparse.Namespace) -> int:
     if not 0 < args.confidence < 1:
         raise CommandError("--confidence must be between 0 and 1")
     factory_a, factory_b = make_factory(args.agent_a), make_factory(args.agent_b)
+    side_a = load_decks(args.decks, env)
+    side_b = load_decks(args.vs, env) if args.vs is not None else side_a
 
     cells = [(a, b, derive_seed(args.seed, i, j)) for i, a in enumerate(side_a) for j, b in enumerate(side_b)]
     pairs = max(1, round(args.games / (2 * len(cells))))

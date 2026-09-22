@@ -17,6 +17,8 @@ from ygorl.commands import (
     load_env,
 )
 
+ARTIFACT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 
 def add_parser(subparsers) -> None:
     p = subparsers.add_parser(
@@ -49,9 +51,15 @@ def run(args: argparse.Namespace) -> int:
     from ygorl.eval.matchup import DEFAULT_ALPHA, DEFAULT_POPULATION, analyze, build_matrix
 
     env = load_env(args.env)
+    if args.name is not None:
+        if env is None:
+            raise CommandError("--name names an environment artifact; pass --env (or use --out)")
+        if not ARTIFACT_NAME_RE.match(args.name):
+            raise CommandError(f"--name {args.name!r} must be a plain file name: letters, digits, '.', '_' and '-', "
+                               "not starting with '.' or '-' (no path separators)")  # fmt: skip
     if args.decks:
         decks = {}
-        for deck in load_decks(args.decks):
+        for deck in load_decks(args.decks, env):
             if deck.name in decks:
                 raise CommandError(f"duplicate deck name {deck.name!r}: deck names (file stems) must be unique")
             decks[deck.name] = deck
@@ -63,8 +71,6 @@ def run(args: argparse.Namespace) -> int:
         raise CommandError("a matrix needs at least two decks")
     if args.games < 1 or args.workers < 1:
         raise CommandError("--games and --workers must be at least 1")
-    if args.name is not None and env is None:
-        raise CommandError("--name names an environment artifact; pass --env (or use --out)")
     config = duel_config(env, args.max_turns)
     factory = make_factory(args.agent)
     alpha = DEFAULT_ALPHA if args.alpha is None else args.alpha
@@ -97,7 +103,7 @@ def run(args: argparse.Namespace) -> int:
         if args.out is not None:
             path = meta.save(args.out)
         elif env is not None:
-            path = meta.save(env=env, name=args.name or re.sub(r"[^A-Za-z0-9._-]+", "-", args.agent))
+            path = meta.save(env=env, name=args.name or default_name(args.agent))
         else:
             path = None
     except (OSError, ValueError) as exc:
@@ -106,6 +112,12 @@ def run(args: argparse.Namespace) -> int:
         lines += ["", f"written to {path}"]
     print("\n".join(lines))
     return 1 if matrix.errors else 0
+
+
+def default_name(agent: str) -> str:
+    """Artifact name for ``agent`` when --name is not given: the spec with every other character replaced."""
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", agent).lstrip(".-")
+    return name if ARTIFACT_NAME_RE.match(name) else "matrix"
 
 
 def _table(names, win_rate, nash, alpha_rank) -> list[str]:

@@ -14,17 +14,30 @@
 
 ## 通用约定
 
-- **牌组**：`.ydk` 文件，或目录（取其中全部 `*.ydk`，按文件名排序）。牌组名是文件名去掉扩展名，卡片以 8 位 `password` 标识。
+- **牌组**：`.ydk` 文件，或目录（取其中全部 `*.ydk`，按文件名排序）。牌组名是文件名去掉扩展名，卡片以 8 位 `password` 标识
+  （`.ydk` 里的 `password` 必须是 1 到 99999999 的整数，文件必须是 UTF-8，否则报错并指出文件与行号）。
+- **牌组合法性检查**（`duel` / `arena` / `matrix`）：开局前检查每套牌，任何一套不合法就一局不打，退出码 2，
+  打印 `ygorl <命令>: error: <文件>: deck '<名字>' is illegal ...` 并逐条列出违反的规则（`ygorl.cards.legality.validate_deck`）。
+  - 给 `--env` 时按该环境检查：卡池（`pool.json`）、禁限卡表、`deck` 规则（主卡组张数上下限、额外 / 副卡组上限、同名卡上限），
+    外加下面的结构规则。
+  - 不给 `--env` 时只检查结构规则：`password` 在卡片数据库里存在、衍生物不能入组、额外卡组怪兽（融合 / 同调 / 超量 / 连接）
+    只能在额外卡组且额外卡组只能放它们、主卡组 40–60 张、额外 / 副卡组各至多 15 张、同名卡（含异画）合计至多 3 张。
+    空 `.ydk` 因主卡组 0 张而被拒。
+  - 只有命令行做这项检查；库 API（`Duel(...)` 不传 `validate=True`、`Arena`、`build_matrix`）照常对任意牌组开局，便于测试与实验。
 - **agent 规格** `name[:arg]`：按名字从登记表构造（`ygorl.agents.registry`），当前有 `random`、`greedy`；`--help` 列出全部。
   `agent_factory(spec)` 返回可 pickle、带名字的 factory（`AgentSpec`），并行 Arena 的子进程按名字重建 agent，
   所以新 agent（如策略检查点）要在导入时 `register_agent`。未知规格报错并列出可用的名字。
 - **环境** `--env PATH|VERSION`：目录，或 `$YGORL_ENVIRONMENTS`（默认 `./environments`）下的版本名（[environments.md](environments.md)）。
   给出时按环境的规则 flag、LP、起手、抽卡数对局，回放、Arena 报告、矩阵都带环境版本与指纹；不给时用 Master Rule 5 默认值、不绑定环境。
   `replay` / `branch` 不给 `--env` 时按回放记录的版本去环境根目录找，找不到报错并提示 `--env PATH`。
+  命令行加载环境时一并用卡片数据库检查它的全部 meta 卡组（`load_environment(..., cards=...)`），不合法的 meta 卡组让任何命令以退出码 2
+  拒绝该环境，错误里带 meta 卡组文件路径与违反的规则；环境清单的其它校验（LP、起手、类型等）见 [environments.md](environments.md)。
 - **`--max-turns N`**（`duel` / `arena` / `matrix`）：回合上限，到达时 LP 高者胜、相等为平局（`reason=turn_limit`），默认 200。
 - **输出文件**的父目录自动创建。
 - **退出码**：0 成功；1 结果不健康（`replay --verify` 未到达录制的终局；`arena` / `matrix` 有对局抛异常，`arena` 另含 retry、未知消息）；
-  2 用法错误（参数不合法、文件不存在、未知 agent、环境不符等），打印为 `ygorl <命令>: error: ...`。
+  2 用法或输入错误，打印为 `ygorl <命令>: error: ...`，不打印 traceback：参数不合法、文件不存在、未知 agent、环境不符、
+  牌组不合法、`.ydk` / 环境文件格式错误（非 UTF-8、`password` 越界、字段类型不对、规则不合理），
+  以及回放文件损坏（`.json.gz` 截断或不是 gzip、不是 JSON 对象、字段类型不对，如 `seed` 不是整数、`responses` 不是十六进制串、`decks` 结构不对）。
 
 ## `ygorl duel`
 
@@ -124,8 +137,10 @@ ygorl matrix [DECK...] [--agent AGENT] [--games N] [--workers N] [--seed S] [--c
   镜像不打。每格种子由 `S` 与两套牌的名字决定，矩阵与牌组顺序无关（见 [evaluation.md](evaluation.md)）。牌组名（文件名）必须唯一，至少两套。
 - 不给 `DECK` 而给 `--env` 时，用环境的 meta 卡组（名字取 `meta.json` 里的 `name`）。
 - 输出胜率矩阵（行牌组对列牌组的胜率，平局算半胜）与每套牌的 Nash 混合概率、alpha-rank 质量；`--alpha`（默认 10）、`--population`（默认 50）是 alpha-rank 参数。
-- **保存**：给 `--out` 写到该路径；否则给了 `--env` 就写到 `environments/<版本>/artifacts/matrix/<NAME>.json`（`--name` 默认取 agent 规格）；
-  两者都没有时只打印不保存。文件格式见 [evaluation.md](evaluation.md) 的「产物格式」，`MetaGame.load(path, env=env)` 读回。
+- **保存**：给 `--out` 写到该路径；否则给了 `--env` 就写到 `environments/<版本>/artifacts/matrix/<NAME>.json`（`--name` 默认取 agent 规格，
+  其中字母、数字、`.`、`_`、`-` 以外的字符换成 `-`）；两者都没有时只打印不保存。`--name` 必须是单纯的文件名：只含字母、数字、`.`、`_`、`-`，
+  不以 `.` 或 `-` 开头（因此不能含路径分隔符或 `..`），否则开局前退出码 2；`Environment.artifact_path` 本身也拒绝任何离开 `artifacts/` 的路径
+  （绝对路径、`..`、指向外部的符号链接）。文件格式见 [evaluation.md](evaluation.md) 的「产物格式」，`MetaGame.load(path, env=env)` 读回。
 
 ```
 $ uv run ygorl matrix tests/decks/snake_eye.ydk tests/decks/kashtira.ydk tests/decks/yubel.ydk --games 10 --workers 2 --out out/matrix.json
@@ -145,6 +160,8 @@ written to out/matrix.json
 ## 测试
 
 - `tests/test_cli.py`：每个命令的输出与直接调用 API 的结果一致（`duel` 对 `Duel.run`，`arena` 对 `Arena.run_many` + `merge`，`matrix` 对 `build_matrix` + `analyze`），
-  回放保存与 `.yrpX` 导出、`--verify` 成功与截断日志后的 `MISMATCH`、环境查找与报错、目录作牌组、`--vs`、环境 meta 卡组写入 `artifacts/matrix/`，以及各种用法错误。
+  回放保存与 `.yrpX` 导出、`--verify` 成功与截断日志后的 `MISMATCH`、环境查找与报错、目录作牌组、`--vs`、环境 meta 卡组写入 `artifacts/matrix/`，以及各种用法错误；
+  不合法牌组（未知 `password`、空文件、4 张同名、额外卡组怪兽在主卡组或反之、超过 60 张、环境禁止或卡池外的卡、不合法的 meta 卡组）在三个命令下都以退出码 2 拒绝，
+  损坏的回放 / `.ydk` / 环境文件与不合理的环境规则给出干净的错误，`--name` 不能带路径。
 - `tests/test_readme.py`：逐行执行 README「快速开始」里以 `uv run ygorl` 开头的示例（在临时目录中，`--games` 上限 2、`--rollouts` 上限 1），
   全部退出码 0，且每个子命令至少有一个示例。

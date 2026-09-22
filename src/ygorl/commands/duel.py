@@ -42,10 +42,10 @@ def run(args: argparse.Namespace) -> int:
     from ygorl.engine.duel import Duel
     from ygorl.engine.replay import Replay
 
-    deck_a, deck_b = load_decks([args.deck_a, args.deck_b])
     env = load_env(args.env)
     config = duel_config(env, args.max_turns)
     factory_a, factory_b = make_factory(args.agent_a), make_factory(args.agent_b)
+    deck_a, deck_b = load_decks([args.deck_a, args.deck_b], env)
     first = 0 if args.first == "a" else 1
     duel = Duel(args.seed, env, deck_a, deck_b, config=config, first=first)
     result = duel.run(factory_a(args.seed), factory_b(args.seed + 1))
