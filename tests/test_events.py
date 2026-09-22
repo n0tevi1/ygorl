@@ -418,3 +418,28 @@ def test_encoded_vec_env_exposes_events(db, vocab):
             n = DEFAULT_EVENT_LENGTH if length is None else length
             assert ev.obs["events"].shape == (n, E_EVENT) and ev.obs["event_mask"].shape == (n,)
             assert ev.obs["event_mask"].sum() > 0 and of_type(ev.obs, "draw")
+
+
+def test_shuffled_set_cards_keep_the_field_map_consistent(db, vocab):
+    """MSG_SHUFFLE_SET_CARD hides which set card is in which zone: the zones stay occupied, their
+    identities become unknown, and a later move out of one of them clears it (audit finding)."""
+
+    def locb(con, location, seq, pos):
+        return struct.pack("<BBII", con, location, seq, pos)
+
+    fd = C.POS_FACEDOWN_DEFENSE
+    a, b = locb(1, C.LOCATION_MZONE, 0, fd), locb(1, C.LOCATION_MZONE, 1, fd)
+    grave = locb(1, C.LOCATION_GRAVE, 0, C.POS_FACEUP)
+    records = [
+        bytes([C.MSG_SET]) + struct.pack("<I", ASH) + a,
+        bytes([C.MSG_SET]) + struct.pack("<I", CELTIC) + b,
+        bytes([C.MSG_SHUFFLE_SET_CARD, C.LOCATION_MZONE, 2]) + a + b + locb(0, 0, 0, 0) * 2,
+        bytes([C.MSG_MOVE]) + struct.pack("<I", CELTIC) + a + grave + struct.pack("<I", C.REASON_DESTROY),
+    ]
+    py, cpp = EventHistory(db, vocab, length=16), cpp_history(db, vocab, 16)
+    py.feed(M.decode_buffer(frame(records)))
+    cpp.feed(frame(records))
+    assert py.field_count(1) == cpp.field_count(1) == 1  # the core has one set card left
+    for viewer in (0, 1):
+        events, _ = cpp.encode(viewer)
+        np.testing.assert_array_equal(events, py.encode(viewer)["events"])

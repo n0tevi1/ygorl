@@ -245,8 +245,12 @@ class CardVocab:
     """Stable password <-> index mapping for embeddings.
 
     Index 0 is padding, 1 is "unknown / face-down card"; real cards start at
-    :data:`FIRST_INDEX`. New cards are appended, so existing indices never move
-    when the card database grows (important for warm-starting models, T6.3).
+    :data:`FIRST_INDEX`. :meth:`extend` only appends, so a vocab that is saved
+    (:meth:`save`) and grown with ``from_db(db, base=saved)`` keeps every old
+    index when the card database grows (important for warm-starting models,
+    T6.3). ``from_db(db)`` without a base builds a *fresh* vocab in password
+    order, whose indices shift when cards are added: persist the vocab next to
+    anything trained on it (checkpoints, environment artifacts).
     """
 
     PAD = 0
@@ -280,8 +284,12 @@ class CardVocab:
         return password in self._index
 
     @classmethod
-    def from_db(cls, db: CardDB) -> CardVocab:
-        return cls(sorted(db))
+    def from_db(cls, db: CardDB | Mapping[int, object], base: CardVocab | None = None) -> CardVocab:
+        """All cards of ``db``: a copy of ``base`` with the missing passwords appended (in password
+        order), or a fresh vocab in password order when ``base`` is None."""
+        vocab = cls(base._passwords if base is not None else ())
+        vocab.extend(sorted(db))
+        return vocab
 
     def save(self, path: str | Path) -> None:
         Path(path).write_text(json.dumps({"first_index": self.FIRST_INDEX, "passwords": self._passwords}))

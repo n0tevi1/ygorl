@@ -308,7 +308,7 @@ void EventHistory::on_record(const uint8_t* rec, size_t len) {
             int zone;
             if (slot_of(prev, zone)) {
                 Slot& s = field_[prev.controller][zone][prev.sequence];
-                if (s.used && s.code == code) s = Slot{};
+                if (s.used && (s.code == code || s.code == 0)) s = Slot{};  // 0: identity unknown
             }
             place(code, cur);
             hand_delta(prev, -1);
@@ -551,7 +551,13 @@ void EventHistory::on_record(const uint8_t* rec, size_t len) {
         }
         case MSG_SHUFFLE_SET_CARD: {
             const uint8_t location = r.u8(), ct = r.u8();
-            for (int i = 0; i < 2 * ct; ++i) r.loc_info();
+            for (int i = 0; i < ct; ++i) {  // zones before the shuffle: still occupied, identity now unknown
+                const Loc l = r.loc_info();
+                int zone;
+                if (slot_of(l, zone) && field_[l.controller][zone][l.sequence].used)
+                    field_[l.controller][zone][l.sequence].code = 0;
+            }
+            for (int i = 0; i < ct; ++i) r.loc_info();
             const Loc from = make_loc(2, location, 0, 0);
             emit(EV_SHUFFLE_SET_CARD, -1, {}, {}, &from, nullptr, ct);
             break;

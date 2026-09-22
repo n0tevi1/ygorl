@@ -9,7 +9,7 @@
 | `actions` | `[MAX_OPTIONS=128, A=10]` | 当前 step 的合法动作（多选已拆步，见 [engine.md](engine.md)） |
 | `action_mask` | `[MAX_OPTIONS]` | 1 = 该行是合法动作 |
 
-卡片身份用 `CardVocab` 下标（`0` 填充，`1` 未知/背面，真实卡从 `2` 起；见 `ygorl.cards.cdb.CardVocab`）。
+卡片身份用 `CardVocab` 下标（`0` 填充，`1` 未知/背面，真实卡从 `2` 起；见 `ygorl.cards.cdb.CardVocab`）。`CardVocab.from_db(db)` 按卡密排序新建，卡库增卡后下标会整体移动；训练产物必须与所用词表一起保存（`CardVocab.save`），卡库更新时用 `CardVocab.from_db(db, base=旧词表)` 只追加新卡，旧下标不变（T6.3 热启动依赖这一点）。
 
 ## 可见性
 
@@ -221,7 +221,7 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 | 32–34 | `confirm_cards` / `confirm_decktop` / `confirm_extratop` | 同名消息，每张卡一行 | 被出示者（`confirm_cards`）/ 卡组持有者 | 该卡 | from | |
 | 35 | `deck_top` | `MSG_DECK_TOP` | 卡组持有者 | 卡组顶的卡 | | |
 | 36–38 | `shuffle_deck` / `shuffle_hand` / `shuffle_extra` | 同名消息 | 该玩家 | | | 洗切张数（卡组为 0） |
-| 39 | `shuffle_set_card` | `MSG_SHUFFLE_SET_CARD` | | | from_location = 区域 | 张数 |
+| 39 | `shuffle_set_card` | `MSG_SHUFFLE_SET_CARD` | | | from_location = 区域 | 张数（洗切后这些区域仍视为有卡，但各区域的卡身份在场地表中变为未知，之后从其中移出的卡会清掉该区域） |
 | 40 | `swap_grave_deck` | `MSG_SWAP_GRAVE_DECK` | 该玩家 | | | |
 | 41 | `reverse_deck` | `MSG_REVERSE_DECK` | | | | |
 | 42 | `field_disabled` | `MSG_FIELD_DISABLED` | | | | viewer 的区域位掩码（16 位）/ 对手的 |

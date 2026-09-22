@@ -252,7 +252,7 @@ class EventHistory:
             card = self._card(msg.code, owner, public)
             self._emit("move", owner, card, frm=prev, to=cur, v1=msg.reason & 0x7FFFFFFF)
             slot = self._slot(prev)
-            if slot is not None and self.field.get(slot, (None,))[0] == msg.code:
+            if slot is not None and self.field.get(slot, (None,))[0] in (msg.code, 0):  # 0: identity unknown
                 del self.field[slot]
             self._place(msg.code, cur)
             self._hand_delta(prev, -1)
@@ -401,6 +401,10 @@ class EventHistory:
             self._emit("shuffle_hand" if t == C.MSG_SHUFFLE_HAND else "shuffle_extra", msg.player, v1=len(msg.codes))
         elif t == C.MSG_SHUFFLE_SET_CARD:
             self._emit("shuffle_set_card", frm=M.Location(2, msg.location, 0, 0), v1=len(msg.new_locations))
+            for loc in msg.new_locations:  # the cards' zones before the shuffle: still occupied, identity now unknown
+                slot = self._slot(loc)
+                if slot in self.field:
+                    self.field[slot] = (0, self.field[slot][1])
         elif t == C.MSG_SWAP_GRAVE_DECK:
             self._emit("swap_grave_deck", msg.player)
         elif t == C.MSG_REVERSE_DECK:

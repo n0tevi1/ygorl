@@ -134,3 +134,16 @@ def test_recorded_effect_string_sample(db):
     assert len(sample) >= 50
     for s in sample:
         assert db[s["password"]].strings[s["index"]] == s["text"]
+
+
+def test_vocab_from_db_with_a_base_only_appends():
+    """A saved vocab stays valid when the card database grows: from_db(db, base) keeps every old index."""
+    from ygorl.cards.cdb import CardVocab
+
+    base = CardVocab([30, 10])  # e.g. loaded from a checkpoint; not in password order
+    grown = {5: None, 10: None, 20: None, 30: None}  # 5 and 20 are new cards
+    v = CardVocab.from_db(grown, base=base)
+    assert [v.index(p) for p in (30, 10)] == [base.index(30), base.index(10)] == [2, 3]
+    assert (v.index(5), v.index(20)) == (4, 5)  # new cards appended in password order
+    assert len(base) == 4  # the base itself is not modified
+    assert CardVocab.from_db(grown).index(5) == 2  # without a base: fresh, password order
