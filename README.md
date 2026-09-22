@@ -33,6 +33,7 @@
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
 - [语义协同图](docs/synergy.md)：CardScripts 脚本挖掘、边语义、解析覆盖率、代理召回检验、引擎包枚举。
 - [组牌基因型](docs/genotype.md)：引擎包份数 + 泛用槽 + 额外卡组的表示、禁限 / 同名 3 张 / 40–60 / ≤ 15 硬约束与修复、变异 / 交叉算子、计数向量编码、10k 合法性验收。
+- [代理模型](docs/surrogate.md)：牌组特征（计数向量、引擎包、卡片结构、可插拔的卡文本嵌入均值）、自助 ridge 集成与不确定性、DSA-ME 在线更新与采集规则、真实对局标签缓存、留出集误差实测。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
 ## 快速开始
@@ -127,13 +128,13 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
 │   ├── commands/            # 各子命令一个模块：duel / replay / branch / arena / matrix；__init__.py 放共用选项（牌组、环境、agent）
 │   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；registry.py（按规格构造 agent 与可 pickle 的 factory，供 CLI）
-│   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、引擎包枚举（packages）、基因型与算子（genotype）
+│   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、引擎包枚举（packages）、基因型与算子（genotype）、代理模型（surrogate）与真实对局标签（labels）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、回放、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv
 │   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
-├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、基因型采样与合法性检查、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、吞吐基准、课程模式检查、快照检查、C++ 编码 / 事件流交叉校验
+├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、基因型采样与合法性检查、代理模型实验（surrogate_experiment：标注 + 留出集误差）、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、吞吐基准、课程模式检查、快照检查、C++ 编码 / 事件流交叉校验
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组，data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
@@ -149,6 +150,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── curriculum.md        # 课程模式、先后攻配平、增广开局标志位
 │   ├── synergy.md           # 脚本挖掘协同图与引擎包
 │   ├── genotype.md          # 组牌基因型、硬约束与变异 / 交叉算子
+│   ├── surrogate.md         # 代理模型：特征、ridge 集成、DSA-ME 在线更新、标签与留出集误差
 │   ├── spikes/              # 技术调研结论（combo-solver.md）
 │   └── eng-plan.md          # 工程计划
 ├── .editorconfig

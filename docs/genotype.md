@@ -124,6 +124,7 @@ sp.from_vector(x + rng.normal(size=len(sp)), rng)   # 任意实数向量 → 对
 - **计数向量** `sp.vector(g)`：`int8`，长度 `len(sp)`，`[0 : n_main]` 为主卡组份数，`[n_main :]` 为额外卡组份数，
   取值 `0..cap[i]`。代理模型的「计数向量」输入就是它（可再按 `sp.passwords` 查卡文本嵌入求均值）；
   pyribs 的解向量维度 = `len(sp)`，上下界 = `[0, sp.cap]`，经 `from_vector` 解码为合法基因型。
+  代理模型的特征映射（计数向量 + 引擎包 + 卡片结构 + 可选文本嵌入均值）见 [surrogate.md](surrogate.md)。
 - 索引是**空间相关**的：只在同一个 `fingerprint` 的空间内可比。跨空间 / 跨环境对齐时按 `sp.passwords` 映射到全局的
   `ygorl.cards.cdb.CardVocab` 索引。
 - 包选择不在向量里：它可以从向量推断（`from_vector`），并且对牌组没有影响。
