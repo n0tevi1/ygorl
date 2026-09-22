@@ -29,6 +29,7 @@
 - [课程与开局配平](docs/curriculum.md)：单人展开 / 仅手坑 / 完整三种课程模式、先后攻配平、增广开局标志位。
 - [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
 - [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局等实测数字。
+- [优势估计与特权 critic](docs/training.md)：rollout 数据布局与两人零和的符号约定、GAE(λ) 对照、Expected-SARSA(λ) 回报与 Q-boosted 优势（VRPO）、候选动作 Q 头 + V 头。
 - [观测编码](docs/encoding.md)：卡片表、全局向量、候选动作表的每一列；事件 token 流与响应窗口 / 放弃 token。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
 - [语义协同图](docs/synergy.md)：CardScripts 脚本挖掘、边语义、解析覆盖率、代理召回检验、引擎包枚举。
@@ -132,7 +133,8 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── data/                # Environment 加载与校验
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、回放、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv
-│   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
+│   ├── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
+│   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）
 ├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、基因型采样与合法性检查、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、吞吐基准、课程模式检查、快照检查、C++ 编码 / 事件流交叉校验
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组，data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
@@ -141,6 +143,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── encoding.md          # 观测编码规范（卡片表、全局向量、候选动作表、训练态真值、事件 token 流）
 │   ├── evaluation.md        # 基线 agent 与评估
 │   ├── belief-eval.md       # 信念校准评估：指标定义与基线数字
+│   ├── training.md          # 优势估计与特权 critic：公式、符号约定、rollout 数据布局
 │   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── replays.md           # 回放格式与 .yrpX 导出
