@@ -73,7 +73,7 @@
 | 18 | `decision` | 决策消息号（`MSG_SELECT_*` 等） |
 | 19 | `substep` | 多选已选数量（单步决策为 0） |
 | 20 | `num_actions` | 合法动作总数（可能大于 128，见下） |
-| 21 | `augmented_start` | 增广开局标志（T2.6，目前恒为 0） |
+| 21 | `augmented_start` | 增广开局标志：`DuelConfig.augmented_start`（经 `DecisionPoint.augmented_start`，见 [curriculum.md](curriculum.md)） |
 
 ## 候选动作表（`A = 10`）
 

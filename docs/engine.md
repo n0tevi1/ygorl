@@ -89,6 +89,7 @@ print(result.summary())
 - 引擎玩家 0 先攻；`first=1` 让 b 先攻。结果按 (a, b) 顺序报告。
 - 核心在 `MSG_WIN` 之后仍会继续处理，主机（EDOPro 与我们）在第一个 `MSG_WIN` 处结束对局。胜负原因：1 = LP，2 = 卡组耗尽，0x10 以上为卡片特殊胜利。
 - 回合上限 / 决策数上限（`DuelConfig.max_turns / max_decisions`）触发时 LP 高者胜，相等为平局。
+- 课程模式（`DuelConfig.curriculum / learner`）让主机在学习方回合替对手作答「放弃」类决策，并过滤对手的非手牌发动；增广开局标志 `augmented_start` 随 `DecisionPoint` 下发。见 [curriculum.md](curriculum.md)。
 - **洗牌在主机侧**：核心开局不洗卡组（EDOPro 由主机洗好再加卡）。`shuffle_deck(cards, seed, player)` 是 splitmix64 + 无偏 Fisher–Yates，有黄金向量测试锁定，供 M2 的 C++ 实现逐位复现。
 
 ## 确定性（R4，T1.6）
