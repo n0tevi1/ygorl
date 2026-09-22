@@ -1,6 +1,6 @@
 # 基线 agent 与评估（`ygorl.agents`、`ygorl.eval`）
 
-本文说明 M3 的对手与裁判：Agent 协议与基线 agent（T3.1）、配对种子 Arena（T3.2）。对应 [工程计划](eng-plan.md) M3。
+本文说明 M3 的对手与裁判：Agent 协议与基线 agent（T3.1）、配对种子 Arena（T3.2）、对局矩阵与 Nash / alpha-rank（T3.3）。对应 [工程计划](eng-plan.md) M3。
 
 ## Agent 协议（`ygorl/agents/base.py`）
 
@@ -94,3 +94,44 @@ factory 必须可 pickle。某局抛异常时记为 `reason="exception"`（胜�
 
 **基准**：`uv run python tools/arena.py --games 2000 --workers 2` 让两个 agent 在 10 套测试牌组的全部有序组合
 （含镜像，100 组）上各打 `2 × pairs` 局并汇总，结果记在 [benchmarks.md](benchmarks.md)。
+
+## 对局矩阵、Nash 与 alpha-rank（`ygorl/eval/matchup.py`，T3.3）
+
+```python
+from ygorl.agents import GreedyAgent
+from ygorl.eval.matchup import analyze, build_matrix, MetaGame
+
+matrix = build_matrix(decks, GreedyAgent, pairs=50, seed=0, env=env, workers=2)  # decks: [Deck] 或 {名字: Deck}
+meta = analyze(matrix, alpha=10.0, population_size=50)
+meta.nash_by_deck(), meta.alpha_rank_by_deck()
+meta.save(env=env, name="greedy-2026-10")        # -> environments/<v>/artifacts/matrix/greedy-2026-10.json
+meta.save("out/matrix.json")                     # 无环境时必须给路径
+MetaGame.load(path, env=env)                     # 环境不符时抛 EnvironmentConfigError
+```
+
+`ygorl.eval.matchup` 依赖 nashpy（及 scipy），没有从 `ygorl.eval` 顶层导出，只用 Arena 时不必加载它们。
+
+**矩阵**：同一个 agent factory 驾驶双方，对每一对不同牌组用 Arena 打 `2 × pairs` 局配对对局。
+`win_rate[i][j]` 是牌组 i 对牌组 j 的胜率（平局算半胜），`win_rate[j][i] = 1 - win_rate[i][j]`，
+对角线（镜像）不打、记 0.5、局数 0；另有每格的局数与 Wilson 区间（`ci_low` / `ci_high`）。
+每格按牌组名字排序后以 `derive_seed(seed, hash(名字1), hash(名字2))` 为种子，
+所以**矩阵与牌组列表顺序无关，增删牌组不影响其他格子**；牌组名字必须唯一。固定种子下矩阵与 Nash 混合逐位可复现，且与进程数无关
+（`tests/test_matchup.py` 用 3 套牌、每格 2 局验证）。
+
+**元游戏**：对称零和博弈，收益矩阵 `win_rate - 0.5`。
+
+- `nash_mixture(M)`：nashpy 的线性规划解（`Game(A).linear_program()`），得到一个没有任何单一牌组能平均胜过的牌组混合。
+  均衡不唯一时返回线性规划给出的那个（确定性）。
+- `alpha_rank(M, alpha, population_size)`：单种群 alpha-rank（Omidshafiei 等，2019）。种群有 `m = population_size` 个玩家，
+  都用牌组 s；一个变异者改用 r。有 k 个变异者时
+  `f_r(k) = ((k-1) M[r,r] + (m-k) M[r,s]) / (m-1)`，`f_s(k) = (k M[s,r] + (m-k-1) M[s,s]) / (m-1)`，
+  Fermi 过程的固定概率 `ρ(r,s) = 1 / (1 + Σ_{l=1}^{m-1} exp(-α Σ_{k=1}^{l} (f_r(k) - f_s(k))))`（对数域计算，大 α 不溢出）。
+  单态之间的马尔可夫链 `s → r` 的转移概率为 `ρ(r,s) / (n-1)`，其平稳分布即各牌组的 alpha-rank 质量。
+  `alpha` 越大选择越强；默认 `alpha = 10`、`population_size = 50`（胜率在 0–1 之间，差值量级 0.1 时已是强选择）。
+- 单测：石头剪刀布（Nash 与 alpha-rank 都均匀）、加权石头剪刀布（Nash = 1/4, 1/2, 1/4）、占优策略（Nash 纯策略、alpha-rank 质量 > 0.99）、
+  固定概率的中性与常数适应度闭式解、随机矩阵上 Nash 不可被剥削。
+
+**产物格式**（JSON，`format = "ygorl-matchup"`，`format_version = 1`）：
+`environment`（`Environment.stamp()` 或 `null`）、`decks`、`deck_hashes`（主/额外/副卡组的 sha256 前 16 位）、
+`agent`、`seed`、`pairs`、`confidence`、`errors`、`win_rate`、`games`、`ci_low`、`ci_high`、`nash`、`alpha_rank`、`alpha`、`population_size`。
+传入 `env` 保存时，矩阵必须是在同一环境（版本与指纹）下构建的，否则抛 `EnvironmentConfigError`。

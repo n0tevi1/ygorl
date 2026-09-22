@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-设计已评审通过。M0（骨架）完成；M1（引擎绑定）实现中：核心绑定、卡片数据、合法性、消息解码、单局 API、确定性重放、回放格式已落地。技术栈与方向见下。
+设计已评审通过。M0（骨架）完成；M1（引擎绑定）实现中：核心绑定、卡片数据、合法性、消息解码、单局 API、确定性重放、回放格式已落地。M3（基线与评估）：GreedyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank 已落地。技术栈与方向见下。
 
 ## 简介
 
@@ -23,7 +23,7 @@
 - [设计文档](docs/design/README.md)：目标、引擎裁决、RL 挑战、对局策略、对手预测、组牌与 off-meta 发现、架构、风险。
 - [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
-- [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena。
+- [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank。
 - [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局等实测数字。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
@@ -32,6 +32,9 @@
 
 依赖：Linux、[uv](https://docs.astral.sh/uv/)（≥ 0.8）、CMake（≥ 3.20）、支持 C++17 的编译器（GCC ≥ 9 / Clang ≥ 10）。
 Python 3.11 由 uv 自动选择或下载；pybind11 与 scikit-build-core 作为构建依赖由 uv 自动安装。
+Python 运行时依赖写在 `pyproject.toml`、锁定在 `uv.lock`，`uv sync` 一并安装：
+[nashpy](https://github.com/drvinceknight/Nashpy)（连带 numpy、scipy、networkx 等）用于对局矩阵的 Nash 均衡（`ygorl.eval.matchup`），
+由 `uv add nashpy` 引入。
 
 ```bash
 git clone --recurse-submodules --shallow-submodules https://github.com/n0tevi1/ygorl && cd ygorl
@@ -106,7 +109,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
-│   └── eval/                # 评估：配对种子 Arena
+│   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank
 ├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准
 ├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据
 ├── docs/

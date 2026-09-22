@@ -108,3 +108,9 @@ TCG / OCG / GOAT 等表直接取自 `third_party/LFLists`；**MD 表没有上游
 
 `Environment.artifact_path("matrix", "2026-10-02.json")` 返回 `artifacts/` 下的路径并创建父目录。
 产物文件应包含 `Environment.stamp()`。大型产物（模型权重等）不进 git，只提交小型报告与矩阵。
+
+已有的产物：
+
+| 路径 | 产生者 | 内容 |
+|------|--------|------|
+| `artifacts/matrix/<name>.json` | `ygorl.eval.matchup.MetaGame.save(env=env, name=...)` | 对局胜率矩阵、Nash 混合、alpha-rank（格式见 [evaluation.md](evaluation.md)） |
