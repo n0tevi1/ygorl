@@ -236,131 +236,212 @@ class Duel:
         if self._ran:
             raise RuntimeError("a Duel can only be run once")
         self._ran = True
-        cfg = self.config
-        lp = [cfg.player.starting_lp, cfg.player.starting_lp]
-        turn, phase = 0, 0
-        res = DuelResult(winner=None, reason="", first=self.first)
-        engine_winner: int | None = None
-        last_decision: M.Decision | None = None
-        events: list[M.Message] = []
-        consecutive_retries = 0
-        buffers = 0
-
+        tracker = self.tracker(reference_log=reference_log)
         core = self._core = self._setup()
         try:
             while True:
                 status = core.process()
-                for t, text in core.pop_logs():
-                    if t == _core.LOG_TYPE_ERROR:
-                        res.script_errors.append(text.decode("utf-8", "replace"))
-                buf = core.get_message()
-                if self.record_messages:
-                    res.message_log.append(buf)
-                if reference_log is not None:
-                    if buffers >= len(reference_log) or reference_log[buffers] != buf:
-                        raise ValueError(f"replay differs from the reference at message buffer {buffers}")
-                buffers += 1
-                decision: M.Decision | None = None
-                retried = False
-                for msg in M.decode_buffer(buf):
-                    events.append(msg)
-                    if isinstance(msg, M.Decision):
-                        decision = msg
-                    elif isinstance(msg, M.NewTurn):
-                        turn += 1
-                    elif isinstance(msg, M.NewPhase):
-                        phase = msg.phase
-                    elif isinstance(msg, (M.Damage, M.PayLpCost)):
-                        lp[msg.player] -= msg.amount  # the core does not clamp at 0
-                    elif isinstance(msg, M.Recover):
-                        lp[msg.player] += msg.amount
-                    elif isinstance(msg, M.LpUpdate):
-                        lp[msg.player] = msg.amount
-                    elif isinstance(msg, M.Win):
-                        engine_winner = msg.player if msg.player in (0, 1) else None
-                        res.win_reason = msg.reason
-                        res.reason = "win"
-                    elif isinstance(msg, M.Retry):
-                        retried = True
-                        res.retries += 1
-                    elif isinstance(msg, M.UnknownMessage):
-                        res.unknown_messages += 1
-                    elif isinstance(msg, M.UndecodableMessage):
-                        res.undecodable_messages += 1
-
-                # The core keeps processing after MSG_WIN; like EDOPro's host we stop at the first one.
-                if res.reason == "win":
+                tracker.on_buffer(core.get_message(), status, core.pop_logs())
+                if tracker.done:
                     break
-                if status == _core.DUEL_STATUS_END:
-                    res.reason = "end"
-                    break
-                if status != _core.DUEL_STATUS_AWAITING:
+                if not tracker.awaiting:
                     continue
-
-                if decision is None and retried:
-                    consecutive_retries += 1
-                    if consecutive_retries > MAX_CONSECUTIVE_RETRIES:
-                        res.reason, res.error = "error", "response rejected repeatedly (MSG_RETRY)"
-                        break
-                    decision = last_decision
-                else:
-                    consecutive_retries = 0
-                if decision is None:
-                    res.reason, res.error = "error", "engine awaits a response but sent no decodable decision"
-                    break
-                last_decision = decision
-
-                if turn > cfg.max_turns:
-                    res.reason = "turn_limit"
-                    break
-
                 if responses is not None:
-                    if len(res.responses) >= len(responses):
-                        res.reason = "log_exhausted"
+                    if len(tracker.result.responses) >= len(responses):
+                        tracker.stop("log_exhausted")
                         break
-                    response = responses[len(res.responses)]
+                    response = responses[len(tracker.result.responses)]
+                    tracker.use_response(response)
                 else:
-                    response = self._ask(seat, decision, res, turn, phase, lp, events)
-                    events = []
-                    if response is None:
+                    response = None
+                    while response is None and not tracker.done:
+                        point = tracker.point()
+                        if point is None:
+                            break
+                        agent = seat[point.player]
+                        response = tracker.act(agent.act(point), getattr(agent, "last_probs", None))
+                    if tracker.done:
                         break
-                res.responses.append(response)
                 core.set_response(response)
         finally:
             core.close()
+        return tracker.finish()
 
+    def tracker(self, reference_log: list[bytes] | None = None) -> DuelTracker:
+        """Host-side bookkeeping for this duel (used by :meth:`run` and by the vectorized env)."""
+        return DuelTracker(self.config, self.first, self.cards, record_messages=self.record_messages,
+                           record_steps=self.record_steps, reference_log=reference_log)  # fmt: skip
+
+
+class DuelTracker:
+    """Host-side state of one duel, independent of who drives the core.
+
+    Feed every engine buffer to :meth:`on_buffer`. When :attr:`awaiting`,
+    either answer with recorded bytes (:meth:`use_response`) or ask agents:
+    :meth:`point` gives the current decision point and :meth:`act` applies an
+    action index, returning the response bytes once the decision is complete.
+    Engine player indices are used internally; :meth:`finish` reports in
+    (a, b) order.
+    """
+
+    def __init__(self, config: DuelConfig, first: int, cards, *, record_messages: bool = False,
+                 record_steps: bool = False, reference_log: list[bytes] | None = None) -> None:  # fmt: skip
+        self.config = config
+        self.first = first
+        self.cards = cards
+        self.record_messages = record_messages
+        self.record_steps = record_steps
+        self.reference_log = reference_log
+        self.result = DuelResult(winner=None, reason="", first=first)
+        self.lp = [config.player.starting_lp, config.player.starting_lp]
+        self.turn = 0
+        self.phase = 0
+        self.events: list[M.Message] = []
+        self.state: DecisionState | None = None
+        self.decision: M.Decision | None = None
+        self.done = False
+        self._engine_winner: int | None = None
+        self._last_decision: M.Decision | None = None
+        self._consecutive_retries = 0
+        self._buffers = 0
+        self._point: DecisionPoint | None = None
+
+    @property
+    def awaiting(self) -> bool:
+        return not self.done and self.state is not None
+
+    def stop(self, reason: str, error: str = "") -> None:
+        self.result.reason = reason
+        if error:
+            self.result.error = error
+        self.done = True
+        self.state = None
+
+    def on_buffer(self, buf: bytes, status: int, logs=()) -> None:
+        """Consume one engine message buffer and the status of the ``process()`` that produced it."""
+        res = self.result
+        for t, text in logs:
+            if t == _core.LOG_TYPE_ERROR:
+                res.script_errors.append(text.decode("utf-8", "replace") if isinstance(text, bytes) else str(text))
+        if self.record_messages:
+            res.message_log.append(buf)
+        if self.reference_log is not None:
+            i = self._buffers
+            if i >= len(self.reference_log) or self.reference_log[i] != buf:
+                raise ValueError(f"replay differs from the reference at message buffer {i}")
+        self._buffers += 1
+        self.state = None
+        decision: M.Decision | None = None
+        retried = False
+        lp = self.lp
+        for msg in M.decode_buffer(buf):
+            self.events.append(msg)
+            if isinstance(msg, M.Decision):
+                decision = msg
+            elif isinstance(msg, M.NewTurn):
+                self.turn += 1
+            elif isinstance(msg, M.NewPhase):
+                self.phase = msg.phase
+            elif isinstance(msg, (M.Damage, M.PayLpCost)):
+                lp[msg.player] -= msg.amount  # the core does not clamp at 0
+            elif isinstance(msg, M.Recover):
+                lp[msg.player] += msg.amount
+            elif isinstance(msg, M.LpUpdate):
+                lp[msg.player] = msg.amount
+            elif isinstance(msg, M.Win):
+                self._engine_winner = msg.player if msg.player in (0, 1) else None
+                res.win_reason = msg.reason
+                res.reason = "win"
+            elif isinstance(msg, M.Retry):
+                retried = True
+                res.retries += 1
+            elif isinstance(msg, M.UnknownMessage):
+                res.unknown_messages += 1
+            elif isinstance(msg, M.UndecodableMessage):
+                res.undecodable_messages += 1
+
+        # The core keeps processing after MSG_WIN; like EDOPro's host we stop at the first one.
+        if res.reason == "win":
+            self.done = True
+            return
+        if status == _core.DUEL_STATUS_END:
+            self.stop("end")
+            return
+        if status != _core.DUEL_STATUS_AWAITING:
+            return
+        if decision is None and retried:
+            self._consecutive_retries += 1
+            if self._consecutive_retries > MAX_CONSECUTIVE_RETRIES:
+                self.stop("error", "response rejected repeatedly (MSG_RETRY)")
+                return
+            decision = self._last_decision
+        else:
+            self._consecutive_retries = 0
+        if decision is None:
+            self.stop("error", "engine awaits a response but sent no decodable decision")
+            return
+        self._last_decision = decision
+        if self.turn > self.config.max_turns:
+            self.stop("turn_limit")
+            return
+        self.decision = decision
+        self.state = make_decision(decision, self.cards)
+        self._point = None
+
+    def point(self) -> DecisionPoint | None:
+        """The current sub-step to ask the deciding agent about (None once the duel had to stop)."""
+        if not self.awaiting:
+            return None
+        if self._point is not None:
+            return self._point
+        res, state, decision = self.result, self.state, self.decision
+        if res.decisions >= self.config.max_decisions:
+            self.stop("decision_limit")
+            return None
+        actions = state.actions()
+        if not actions:
+            self.stop("error", f"no legal action for {decision.name}")
+            return None
+        self._point = DecisionPoint(res.decisions, decision.player, self.turn, self.phase, (self.lp[0], self.lp[1]),
+                                    decision, actions, state, tuple(self.events))  # fmt: skip
+        self.events = []
+        return self._point
+
+    def act(self, idx, probs=None) -> bytes | None:
+        """Apply action ``idx`` to the current point; return the response once the decision is complete."""
+        point = self.point()
+        if point is None:
+            raise RuntimeError("no decision is pending")
+        n = len(point.actions)
+        if not isinstance(idx, int) or not 0 <= idx < n:
+            raise ValueError(f"agent returned action {idx!r}, out of range 0..{n - 1} for {point.decision.name}")
+        res = self.result
+        if self.record_steps:
+            res.steps.append(_step_record(point, idx, probs))
+        res.actions.append(idx)
+        res.decisions += 1
+        self._point = None
+        response = self.state.step(idx)
+        if response is not None:
+            res.responses.append(response)
+            self.state = None
+        return response
+
+    def use_response(self, response: bytes) -> None:
+        """Answer the pending decision with recorded bytes (replay)."""
+        self.result.responses.append(response)
+        self.state = None
+        self.events = []
+
+    def finish(self) -> DuelResult:
+        res, lp = self.result, self.lp
+        engine_winner = self._engine_winner
         if res.reason in ("turn_limit", "decision_limit", "error"):
             engine_winner = None if lp[0] == lp[1] or res.reason == "error" else (0 if lp[0] > lp[1] else 1)
-        res.winner = None if engine_winner is None else self.deck_of(engine_winner)
-        res.turns = turn
+        res.winner = None if engine_winner is None else (self.first + engine_winner) % 2
+        res.turns = self.turn
         res.lp = (lp[self.first], lp[1 - self.first])  # engine player `first` holds deck a
         return res
-
-    def _ask(self, seat, decision: M.Decision, res: DuelResult, turn: int, phase: int, lp: list[int],
-             events: list[M.Message]) -> bytes | None:  # fmt: skip
-        """Ask the deciding agent step by step; return the response, or None if the duel must stop."""
-        state = make_decision(decision, self.cards)
-        player = decision.player
-        while not state.done:
-            if res.decisions >= self.config.max_decisions:
-                res.reason = "decision_limit"
-                return None
-            actions = state.actions()
-            if not actions:
-                res.reason, res.error = "error", f"no legal action for {decision.name}"
-                return None
-            point = DecisionPoint(res.decisions, player, turn, phase, (lp[0], lp[1]), decision, actions, state, tuple(events))
-            events = []
-            agent = seat[player]
-            idx = agent.act(point)
-            if not isinstance(idx, int) or not 0 <= idx < len(actions):
-                raise ValueError(f"agent returned action {idx!r}, out of range 0..{len(actions) - 1} for {decision.name}")
-            if self.record_steps:
-                res.steps.append(_step_record(point, idx, getattr(agent, "last_probs", None)))
-            res.actions.append(idx)
-            res.decisions += 1
-            state.step(idx)
-        return state.response
 
 
 def _step_record(point: DecisionPoint, chosen: int, probs) -> dict:
@@ -398,4 +479,5 @@ def run_duel(seed: int, deck_a: Deck, deck_b: Deck, agent_a, agent_b, env: Envir
     return Duel(seed, env, deck_a, deck_b, **kwargs).run(agent_a, agent_b)
 
 
-__all__ = ["DecisionPoint", "Duel", "DuelConfig", "DuelResult", "ScriptedAgent", "expand_seed", "run_duel", "shuffle_deck"]
+__all__ = ["DecisionPoint", "Duel", "DuelConfig", "DuelResult", "DuelTracker", "ScriptedAgent", "expand_seed", "run_duel",
+           "shuffle_deck"]
