@@ -34,7 +34,7 @@ JSON 对象（`.json.gz` 为 gzip 压缩的同一内容）：
 | `result` | 录制时的胜者、原因、回合、LP、决策数（参考信息） |
 | `steps` | 可选：每个动作步的候选动作列表、所选下标、玩家、决策类型，以及 agent 暴露的 `last_probs`（策略概率） |
 
-应答日志是回放的唯一真相：核心种子由 `seed` 经 `expand_seed` 得到，洗牌由 `shuffle_deck` 从同一 `seed` 得到（见 [engine.md](engine.md)）。
+应答日志是回放的唯一真相：核心种子由 `seed` 经 `expand_seed` 得到，洗牌由 `shuffle_deck` 从同一 `seed` 得到（见 [engine.md](engine.md)）。从回放的任意决策点分叉、尝试其它动作见 [branching.md](branching.md)。
 
 ## 环境绑定
 

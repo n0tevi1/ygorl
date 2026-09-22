@@ -23,6 +23,7 @@
 - [设计文档](docs/design/README.md)：目标、引擎裁决、RL 挑战、对局策略、对手预测、组牌与 off-meta 发现、架构、风险。
 - [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
+- [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
 - [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
@@ -50,6 +51,13 @@ from ygorl.cards.ydk import load_ydk
 from ygorl.engine.duel import Duel
 a, b = load_ydk('tests/decks/snake_eye.ydk'), load_ydk('tests/decks/kashtira.ydk')
 print(Duel(1, None, a, b).run(RandomAgent(1), RandomAgent(2)).summary())"
+```
+
+从回放的第 `t` 步分叉，逐个尝试该决策点的全部合法动作并用随机策略下完（回放的录制见 [docs/replays.md](docs/replays.md)，用法与限制见 [docs/branching.md](docs/branching.md)）：
+
+```bash
+uv run ygorl branch game.json.gz --at 30 --try all --policy random --seed 1
+uv run ygorl branch game.json.gz --at 30 --rollouts 20   # 每个候选 20 次，输出胜/平/负与均值
 ```
 
 修改 `csrc/`、`patches/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
@@ -102,10 +110,12 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
 ├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、binding（pybind11）
 ├── src/ygorl/               # Python 包
-│   ├── agents/              # Agent 协议、RandomAgent
+│   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
+│   ├── commands/            # 各子命令一个模块：branch.py（`ygorl branch`）
+│   ├── agents/              # Agent 协议、RandomAgent、registry.py（按名字构造 agent，供 --policy）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
-│   ├── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
+│   ├── engine/              # 消息解码、动作模型、单局 Duel、回放、分支探索（branch.py）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games；encoding.py 参考编码器
 │   └── eval/                # 评估：calibration.py（ECE / AUC / top-k 等指标）、beliefs.py（信念头报告与基线）
 ├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对、信念基线表
@@ -117,6 +127,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── belief-eval.md       # 信念校准评估：指标定义与基线数字
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── replays.md           # 回放格式与 .yrpX 导出
+│   ├── branching.md         # 分支探索：fork(replay, t)、ygorl branch、限制
 │   ├── spikes/              # 技术调研结论（combo-solver.md）
 │   └── eng-plan.md          # 工程计划
 ├── .editorconfig
