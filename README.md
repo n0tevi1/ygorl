@@ -111,6 +111,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── engine.md            # 引擎层：CoreBackend、消息、动作模型、确定性
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── replays.md           # 回放格式与 .yrpX 导出
+│   ├── spikes/              # 技术调研结论（combo-solver.md）
 │   └── eng-plan.md          # 工程计划
 ├── .editorconfig
 └── .gitignore
