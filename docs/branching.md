@@ -74,6 +74,8 @@ rollouts  policy random, seed 1, 10 rollouts per candidate; * = recorded action
 
 回放文件只存引擎应答字节，不存动作下标。`fork` 按回放重建对局（`Replay.duel`），用一个两方共用的 agent 逐步作答：每个决策开始时，把下一条记录的应答**反解**为动作下标序列（`actions_for_response`：在决策状态的副本上深度优先搜索，按应答里的选卡顺序、区域、计数等剪枝），然后逐步喂给引擎，到第 `t` 步停下并交出该决策点。回放带有逐步记录（`record_steps`）时直接用其中的 `chosen`，并核对它能生成记录的应答，不一致即报错；逐步记录还能补上被截断在多选中间的最后几步。反解与原局一致由测试保证：`recorded_actions(replay) == result.actions`。
 
+课程模式（[curriculum.md](curriculum.md)）下，部分对手决策由主机代答，这些应答也在回放里，但不对应任何 agent 步。重建的对局按同一配置由主机重新代答，所以每个 agent 决策按 `DecisionPoint.response_index`（该决策的应答在应答日志中的位置）取对应的记录应答，而不是按 agent 决策的顺序计数；对局结束时再核对整份应答日志与记录一致。
+
 `rollout` 再从头重放：`t` 之前按前缀动作、`t` 处走候选、之后问策略；并核对 `t` 处的决策与分叉时相同，否则报「replay diverged」。
 
 测试（`tests/test_branch.py`）：从一局的每个 `t` 分叉并按原动作继续，终局（胜者、原因、回合、LP、全部应答）与原局一致；多选中间分叉；每种多选的反解都能还原任意路径的应答；`try_all` 每个合法动作一个结果且可复现；越界报错。`tests/test_cli.py` 覆盖命令行输出表。

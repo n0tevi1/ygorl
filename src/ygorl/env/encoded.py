@@ -52,6 +52,9 @@ class EncodedVecEnv:
         self.num_threads = threads
 
     def reset(self, env_id: int, spec: GameSpec) -> None:
+        if spec.config.curriculum != "full" or spec.config.augmented_start:
+            raise NotImplementedError("EncodedVecEnv supports only curriculum='full' without augmented_start; "
+                                      "curriculum modes (T2.6) run on VecDuelEnv / Duel.run")  # fmt: skip
         duel = Duel(spec.seed, None, spec.deck_a, spec.deck_b, cards=self.cards, config=spec.config, first=spec.first)
         cfg = spec.config
         p = cfg.player

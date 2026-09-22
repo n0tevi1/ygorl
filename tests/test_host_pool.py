@@ -93,3 +93,13 @@ def test_observations_have_fixed_shapes(db, vocab):
 def test_chooser_is_deterministic_and_in_range():
     assert chooser(5, 7, 10) == chooser(5, 7, 10)
     assert all(0 <= chooser(s, t, 3) < 3 for s in range(20) for t in range(20))
+
+
+@pytest.mark.parametrize("config", [DuelConfig(curriculum="solo"), DuelConfig(curriculum="handtrap"),
+                                    DuelConfig(augmented_start=True)])  # fmt: skip
+def test_unsupported_curriculum_settings_are_rejected(db, vocab, config):
+    """The C++ step loop has no curriculum filtering yet (T2.6 lives in the Python tracker): refuse, don't ignore."""
+    env = EncodedVecEnv(1, 1, cards=db, vocab=vocab)
+    with pytest.raises(NotImplementedError, match="curriculum|augmented_start"):
+        env.reset(0, specs(1, config)[0])
+    assert env.pending() == 0

@@ -339,3 +339,22 @@ def test_try_all_subset_and_several_rollouts(short_game):
         branch.try_all(RandomAgent, candidates=[len(branch.point.actions)])
     with pytest.raises(ValueError, match="rollouts"):
         branch.try_all(RandomAgent, rollouts=0)
+
+
+# ------------------------------------------------------------------ curriculum modes (T2.6)
+
+
+@pytest.mark.parametrize("mode", ["solo", "handtrap"])
+def test_curriculum_games_can_be_forked(mode):
+    """Host-answered decisions are in the response log but not asked of agents; forking must skip them."""
+    cfg = DuelConfig(max_turns=4, curriculum=mode, learner=0)
+    duel = Duel(2, None, DECKS["snake_eye"], DECKS["tearlaments"], config=cfg)
+    result = duel.run(RandomAgent(2), RandomAgent(3))
+    assert result.auto_decisions > 0, "the test game should contain host-answered decisions"
+    rep = Replay.from_duel(duel, result)
+    assert recorded_actions(rep) == result.actions
+    script = RecordedAgent(result.actions)
+    n = len(result.actions)
+    for t in (0, n // 2, n - 1):
+        again = fork(rep, t).rollout(result.actions[t], script, script)
+        assert end(again) == end(result), f"t={t}"

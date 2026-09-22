@@ -115,6 +115,7 @@ class DecisionPoint:
     events: tuple[M.Message, ...]  # messages since the previous decision point
     turn_player: int = 0  # engine player whose turn it is
     augmented_start: bool = False  # DuelConfig.augmented_start
+    response_index: int = 0  # position this decision's response takes in DuelResult.responses
 
 
 @dataclass
@@ -430,7 +431,7 @@ class DuelTracker:
                 self._allowed, actions = allowed, [actions[i] for i in allowed]
         self._point = DecisionPoint(res.decisions, decision.player, self.turn, self.phase, (self.lp[0], self.lp[1]),
                                     decision, actions, state, tuple(self.events), self.turn_player,
-                                    self.config.augmented_start)  # fmt: skip
+                                    self.config.augmented_start, len(res.responses))  # fmt: skip
         self.events = []
         return self._point
 

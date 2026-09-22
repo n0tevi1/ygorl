@@ -130,5 +130,6 @@ print(result.summary())
 - `step(env, action_index)`：应用一个动作；多选的中间步骤只更新本地状态，完整应答才送回核心；
 - `recv(min_events, timeout)`：取回事件 `EncodedEvent(env_id, player, obs, result)`。`obs` 是定长 numpy 数组（`cards` 160×23、`globals` 22、`actions` 128×10、`action_mask` 128），对局结束时 `obs` 为 `None`、`result` 为终局信息（引擎玩家顺序）。
 - 槽位在其作业结果被 `recv` 取走之前一直处于 busy 状态，此时再次 `reset/step` 会抛出 `RuntimeError`。
+- 课程模式（[curriculum.md](curriculum.md)）目前只在 Python 主机（`Duel.run` / `VecDuelEnv`）里实现；`curriculum` 不是 `full` 或 `augmented_start=True` 的规格会被 `EncodedVecEnv.reset` 以 `NotImplementedError` 拒绝，而不是悄悄按完整对局运行。
 
 Python 侧 `ygorl.env.encoded.EncodedVecEnv` 负责把 `GameSpec` 转成种子与加卡顺序（与 `Duel` 共用主机洗牌），`play(specs, choose)` 用于测试与基准。`tests/test_host_pool.py` 检查它与 `Duel.run` 在相同动作序列下逐局一致、线程数不影响结果、上限同样生效。吞吐基准见 [benchmarks.md](benchmarks.md)（`tools/bench_throughput.py`）。

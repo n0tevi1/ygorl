@@ -167,7 +167,7 @@ class _RecordedSteps:
         self.hints = _step_hints(replay.steps)
         self.stop_at = stop_at
         self.actions: list[int] = []
-        self._next_response = 0
+        self._sent = 0  # responses the duel had sent when the record last spoke (host answers included)
         self._state: DecisionState | None = None
         self._plan: list[int] = []
 
@@ -186,12 +186,13 @@ class _RecordedSteps:
         return idx
 
     def _decide(self, point: DecisionPoint) -> list[int]:
-        k = self._next_response
+        k = point.response_index  # host answers (curriculum modes) fill the gaps between agent decisions
         target = self.responses[k] if k < len(self.responses) else None
         hints = self.hints[point.index :] if self.hints is not None else []
+        self._sent = k
         if target is None:  # after the last response: only step records can continue a started decision
             return _follow(point.state, hints)[0] if hints else []
-        self._next_response += 1
+        self._sent = k + 1
         if hints:
             seq, out = _follow(point.state, hints)
             if out != target:
@@ -203,9 +204,10 @@ class _RecordedSteps:
                               f"sequence for {point.decision.name}")  # fmt: skip
         return seq
 
-    def check_consumed(self) -> None:
-        if self._next_response != len(self.responses):
-            raise BranchError(f"the duel ended after {self._next_response} of {len(self.responses)} recorded responses; "
+    def check_consumed(self, result: DuelResult | None = None) -> None:
+        sent = len(result.responses) if result is not None else self._sent
+        if sent != len(self.responses) or (result is not None and result.responses != self.responses):
+            raise BranchError(f"the duel ended after {sent} of {len(self.responses)} recorded responses; "
                               "the replay does not reproduce")  # fmt: skip
 
 
@@ -222,11 +224,12 @@ def recorded_actions(replay: Replay, env: Environment | None = None, **duel_kwar
     to :class:`~ygorl.engine.duel.Duel`.
     """
     agent = _RecordedSteps(replay, stop_at=None)
+    result = None
     try:
-        replay.duel(env, **duel_kwargs).run(agent, agent)
+        result = replay.duel(env, **duel_kwargs).run(agent, agent)
     except _Exhausted:
         pass
-    agent.check_consumed()
+    agent.check_consumed(result)
     return agent.actions
 
 
@@ -357,13 +360,13 @@ def fork(replay: Replay, t: int, env: Environment | None = None, **duel_kwargs) 
         raise BranchError(f"t={t} is not a decision point: t counts agent steps from 0")
     agent = _RecordedSteps(replay, stop_at=t)
     try:
-        replay.duel(env, **duel_kwargs).run(agent, agent)
+        result = replay.duel(env, **duel_kwargs).run(agent, agent)
     except _Reached as reached:
         return Branch(replay, t, env, reached.point, agent.actions[:t], reached.recorded, duel_kwargs)
     except _Exhausted as exhausted:
         last = exhausted.index  # a decision nobody answered: it can be forked, later ones cannot be reached
     else:
-        agent.check_consumed()
+        agent.check_consumed(result)
         last = len(agent.actions) - 1
     raise BranchError(f"t={t} is out of range: this replay reaches decision points 0..{last}")
 
