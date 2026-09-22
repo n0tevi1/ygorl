@@ -51,3 +51,17 @@ log "uv sync --extra train"
 uv sync --extra train   # torch for M4 (policy training); first install ~2 min / ~5 GB
 
 uv run --no-sync python -c "import ygorl._core as c; print('[session-start] ygorl._core OK, ocgcore', c.ocg_version())" >&2
+
+# 4. Optional combo solver (tests/test_solver.py). Only when .claude/cloud-setup.sh
+#    prebuilt it into the snapshot: then this is a no-op, or a ccache-warm rebuild
+#    if the core or our patches changed. Without it the solver tests stay skipped
+#    rather than every cold session paying ~45 s for them.
+solver_dir="$HOME/.cache/ygorl/combo-solver"   # keep in step with .claude/cloud-setup.sh
+if [ -d "$solver_dir" ]; then
+  if bin="$(YGORL_SOLVER_BUILD_DIR="$solver_dir" tools/build_combo_solver.sh 2>/dev/null | tail -1)" && [ -x "$bin" ]; then
+    log "combo solver: $bin"
+    echo "export YGORL_COMBO_SOLVER=\"$bin\"" >> "${CLAUDE_ENV_FILE:-/dev/null}"
+  else
+    log "combo solver build failed; its tests will be skipped"
+  fi
+fi

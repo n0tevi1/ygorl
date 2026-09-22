@@ -111,11 +111,14 @@ uv run python tools/solve_openings.py tests/decks/labrynth.ydk --hands 2 --solve
 
 - `.claude/cloud-setup.sh`：云环境的 **setup script**，以 root 在 Claude Code 启动前运行，结果被快照、约 7 天内的新会话直接复用。
   装 ccache 与 libsqlite3-dev（combo 求解器用），并执行一次 `uv sync --extra train` 预热 uv 缓存（PyTorch 约 3 GB 下载）与 ccache；
-  若运行时仓库尚未克隆，则只把 Python 3.11 和固定版本的 torch 放进 uv 缓存（版本写在脚本里，升级 torch 时同步改）。冷启动实测约 1 分钟，
+  再把可选的 combo 求解器编译到仓库外的 `~/.cache/ygorl/combo-solver/`（约 45 秒），随快照保存；
+  若运行时仓库尚未克隆，则只把 Python 3.11 和固定版本的 torch 放进 uv 缓存（版本写在脚本里，升级 torch 时同步改）。冷启动实测约 2 分钟，
   始终以 0 退出。
 - `.claude/hooks/session-start.sh`：SessionStart hook（在 `.claude/settings.json` 注册），只在 Claude Code on the web
   （`CLAUDE_CODE_REMOTE=true`）中运行，每个会话都跑且不进快照：补装缺失的工具（uv / cmake / ninja / g++ / ccache）、拉取子模块、
-  `uv sync --extra train` 编译扩展并安装 PyTorch，会话开始时即可直接 `uv run pytest`。缓存已预热时约 15 秒（ccache 命中率 > 95%），
+  `uv sync --extra train` 编译扩展并安装 PyTorch，会话开始时即可直接 `uv run pytest`；若快照里有预编译的求解器，
+  则核对它是否与当前核心和补丁一致（不一致时借 ccache 重编）并导出 `YGORL_COMBO_SOLVER`，求解器测试随之不再跳过
+  （没有预编译时不在会话里现编，免得冷启动多花约 45 秒）。缓存已预热时约 15 秒（ccache 命中率 > 95%），
   没配 setup script 时约 1 分钟。脚本幂等，也可手动执行：`CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh`。
 
 在 [claude.ai/code](https://claude.ai/code) 的环境选择器里编辑（或新建）云环境：

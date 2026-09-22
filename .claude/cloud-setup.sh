@@ -11,6 +11,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 REPO=/home/user/ygorl
 TORCH_FALLBACK=2.14.0   # used only when the repo isn't cloned yet; keep in step with uv.lock
+SOLVER_DIR=/root/.cache/ygorl/combo-solver   # keep in step with .claude/hooks/session-start.sh
 
 log() { echo "[cloud-setup] $*" >&2; }
 
@@ -26,6 +27,12 @@ if [ -f "$REPO/uv.lock" ]; then
   (cd "$REPO" \
     && git submodule update --init --recursive --depth 1 \
     && uv sync --extra train) || log "uv sync failed; the SessionStart hook will retry"
+  # Prebuild the optional combo solver outside the checkout so it lands in the
+  # snapshot; the SessionStart hook reuses it (and rebuilds only if the core or
+  # our patches changed) and points YGORL_COMBO_SOLVER at it.
+  log "building combo solver in $SOLVER_DIR"
+  YGORL_SOLVER_BUILD_DIR="$SOLVER_DIR" timeout 180 "$REPO/tools/build_combo_solver.sh" >/dev/null \
+    || log "combo solver build failed; its tests will be skipped"
 else
   # No repo yet: at least put Python 3.11 and torch in uv's cache.
   log "warming uv cache: python 3.11, torch $TORCH_FALLBACK"
