@@ -184,11 +184,13 @@ def label_decks(decks: Sequence[Deck], pool: Sequence[Deck], *, weights: Sequenc
     fps = [deck_fingerprint(d) for d in decks]
     out: dict[str, dict[str, Any]] = {}
     todo: list[int] = []
+    queued: set[str] = set()
     for i, fp in enumerate(fps):
         hit = cache.get(fp, cfg) if cache is not None else None
         if hit is not None:
             out[fp] = hit
-        elif fp not in out and all(fps[j] != fp for j in todo):
+        elif fp not in queued:
+            queued.add(fp)
             todo.append(i)
     for start in range(0, len(todo), max(chunk, 1)):
         batch = todo[start : start + max(chunk, 1)]

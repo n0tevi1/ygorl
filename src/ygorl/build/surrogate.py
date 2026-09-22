@@ -194,7 +194,6 @@ class FeatureMap:
         self._main = main.astype(np.float64)
         names: list[str] = []
         self.groups: dict[str, slice] = {}
-        self._linear: list[tuple[str, np.ndarray, str]] = []  # (group, matrix [V, k], normaliser)
 
         def add(group: str, cols: list[str]) -> None:
             self.groups[group] = slice(len(names), len(names) + len(cols))
