@@ -49,12 +49,43 @@ def expand_seed(seed: int) -> list[int]:
     return out
 
 
+def _splitmix64(state: int) -> tuple[int, int]:
+    state = (state + 0x9E3779B97F4A7C15) & MASK64
+    z = state
+    z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & MASK64
+    z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & MASK64
+    return state, z ^ (z >> 31)
+
+
+def shuffle_deck(cards, seed: int, player: int) -> list[int]:
+    """Deterministic Fisher-Yates shuffle of a main deck (host side, like EDOPro).
+
+    The core does not shuffle decks when a duel starts; the host loads them
+    already shuffled. The stream is splitmix64 seeded from ``seed`` and
+    ``player``, with rejection sampling so every permutation is equally likely.
+    Stable across Python versions so it can be mirrored in C++ (M2).
+    """
+    state = (seed & MASK64) ^ (((player + 1) * 0xD1B54A32D192ED03) & MASK64)
+    out = list(cards)
+    for i in range(len(out) - 1, 0, -1):
+        n = i + 1
+        limit = (1 << 64) - ((1 << 64) % n)
+        while True:
+            state, x = _splitmix64(state)
+            if x < limit:
+                break
+        j = x % n
+        out[i], out[j] = out[j], out[i]
+    return out
+
+
 @dataclass(frozen=True)
 class DuelConfig:
     rule_flags: int = C.DUEL_MODE_MR5
     player: PlayerRules = PlayerRules()
     max_turns: int = 200
     max_decisions: int = 20000
+    shuffle_decks: bool = True  # host-side shuffle of each main deck before loading
 
     @classmethod
     def from_environment(cls, env: Environment, **overrides) -> DuelConfig:
@@ -77,7 +108,7 @@ class DecisionPoint:
 @dataclass
 class DuelResult:
     winner: int | None  # 0 = deck_a / agent_a, 1 = deck_b / agent_b, None = draw
-    reason: str  # "win", "turn_limit", "decision_limit", "end", "error"
+    reason: str  # "win", "turn_limit", "decision_limit", "end", "error", "log_exhausted" (replay)
     win_reason: int | None = None  # MSG_WIN reason: WIN_REASON_LP, WIN_REASON_DECK_OUT, or 0x10+ (card effects)
     turns: int = 0
     decisions: int = 0
@@ -89,6 +120,7 @@ class DuelResult:
     script_errors: list[str] = field(default_factory=list)
     responses: list[bytes] = field(default_factory=list)  # every set_response, in order
     actions: list[int] = field(default_factory=list)  # every agent action index, in order
+    message_log: list[bytes] = field(default_factory=list)  # raw engine buffers (record_messages=True)
     error: str = ""
 
     def summary(self) -> str:
@@ -123,6 +155,7 @@ class Duel:
         config: DuelConfig | None = None,
         first: int = 0,
         validate: bool = False,
+        record_messages: bool = False,
     ) -> None:
         if first not in (0, 1):
             raise ValueError("first must be 0 (deck_a starts) or 1 (deck_b starts)")
@@ -133,6 +166,7 @@ class Duel:
         self.scripts = scripts if scripts is not None else default_scripts()
         self.config = config or (DuelConfig.from_environment(env) if env is not None else DuelConfig())
         self.first = first
+        self.record_messages = record_messages
         if validate:
             for deck in self.decks:
                 if env is not None:
@@ -164,7 +198,8 @@ class Duel:
                 raise RuntimeError(f"failed to load base script {base}")
         for team in (0, 1):
             deck = self.decks[self.deck_of(team)]
-            for code in deck.main:
+            main = shuffle_deck(deck.main, self.seed, team) if self.config.shuffle_decks else deck.main
+            for code in main:
                 core.new_card(team, 0, code, team, C.LOCATION_DECK, 0, C.POS_FACEDOWN_DEFENSE)
             for code in deck.extra:
                 core.new_card(team, 0, code, team, C.LOCATION_EXTRA, 0, C.POS_FACEDOWN_DEFENSE)
@@ -173,11 +208,24 @@ class Duel:
 
     # -- main loop -------------------------------------------------------
     def run(self, agent_a, agent_b) -> DuelResult:
+        """Play the duel, asking ``agent_a`` / ``agent_b`` for every decision."""
+        agents = (agent_a, agent_b)
+        return self._loop(seat=(agents[self.deck_of(0)], agents[self.deck_of(1)]))
+
+    def replay(self, responses: list[bytes], reference_log: list[bytes] | None = None) -> DuelResult:
+        """Feed recorded ``set_response`` payloads instead of asking agents.
+
+        Stops with reason ``log_exhausted`` when the engine asks for more
+        responses than were recorded. With ``reference_log`` (a previous
+        ``message_log``), every engine message buffer is compared as it is
+        produced and a :class:`ValueError` is raised at the first difference.
+        """
+        return self._loop(responses=list(responses), reference_log=reference_log)
+
+    def _loop(self, seat=None, responses: list[bytes] | None = None, reference_log: list[bytes] | None = None) -> DuelResult:
         if self._ran:
             raise RuntimeError("a Duel can only be run once")
         self._ran = True
-        agents = (agent_a, agent_b)
-        seat = [agents[self.deck_of(0)], agents[self.deck_of(1)]]
         cfg = self.config
         lp = [cfg.player.starting_lp, cfg.player.starting_lp]
         turn, phase = 0, 0
@@ -186,6 +234,7 @@ class Duel:
         last_decision: M.Decision | None = None
         events: list[M.Message] = []
         consecutive_retries = 0
+        buffers = 0
 
         core = self._core = self._setup()
         try:
@@ -194,9 +243,16 @@ class Duel:
                 for t, text in core.pop_logs():
                     if t == _core.LOG_TYPE_ERROR:
                         res.script_errors.append(text.decode("utf-8", "replace"))
+                buf = core.get_message()
+                if self.record_messages:
+                    res.message_log.append(buf)
+                if reference_log is not None:
+                    if buffers >= len(reference_log) or reference_log[buffers] != buf:
+                        raise ValueError(f"replay differs from the reference at message buffer {buffers}")
+                buffers += 1
                 decision: M.Decision | None = None
                 retried = False
-                for msg in M.decode_buffer(core.get_message()):
+                for msg in M.decode_buffer(buf):
                     events.append(msg)
                     if isinstance(msg, M.Decision):
                         decision = msg
@@ -248,30 +304,18 @@ class Duel:
                     res.reason = "turn_limit"
                     break
 
-                state = make_decision(decision, self.cards)
-                player = decision.player
-                while not state.done:
-                    if res.decisions >= cfg.max_decisions:
+                if responses is not None:
+                    if len(res.responses) >= len(responses):
+                        res.reason = "log_exhausted"
                         break
-                    actions = state.actions()
-                    if not actions:
-                        res.reason, res.error = "error", f"no legal action for {decision.name}"
-                        break
-                    point = DecisionPoint(res.decisions, player, turn, phase, (lp[0], lp[1]), decision, actions, state, tuple(events))
+                    response = responses[len(res.responses)]
+                else:
+                    response = self._ask(seat, decision, res, turn, phase, lp, events)
                     events = []
-                    idx = seat[player].act(point)
-                    if not isinstance(idx, int) or not 0 <= idx < len(actions):
-                        raise ValueError(f"agent returned action {idx!r}, out of range 0..{len(actions) - 1} for {decision.name}")
-                    res.actions.append(idx)
-                    res.decisions += 1
-                    state.step(idx)
-                if res.reason == "error":
-                    break
-                if not state.done:
-                    res.reason = "decision_limit"
-                    break
-                res.responses.append(state.response)
-                core.set_response(state.response)
+                    if response is None:
+                        break
+                res.responses.append(response)
+                core.set_response(response)
         finally:
             core.close()
 
@@ -282,6 +326,44 @@ class Duel:
         res.lp = (lp[self.first], lp[1 - self.first])  # engine player `first` holds deck a
         return res
 
+    def _ask(self, seat, decision: M.Decision, res: DuelResult, turn: int, phase: int, lp: list[int],
+             events: list[M.Message]) -> bytes | None:  # fmt: skip
+        """Ask the deciding agent step by step; return the response, or None if the duel must stop."""
+        state = make_decision(decision, self.cards)
+        player = decision.player
+        while not state.done:
+            if res.decisions >= self.config.max_decisions:
+                res.reason = "decision_limit"
+                return None
+            actions = state.actions()
+            if not actions:
+                res.reason, res.error = "error", f"no legal action for {decision.name}"
+                return None
+            point = DecisionPoint(res.decisions, player, turn, phase, (lp[0], lp[1]), decision, actions, state, tuple(events))
+            events = []
+            idx = seat[player].act(point)
+            if not isinstance(idx, int) or not 0 <= idx < len(actions):
+                raise ValueError(f"agent returned action {idx!r}, out of range 0..{len(actions) - 1} for {decision.name}")
+            res.actions.append(idx)
+            res.decisions += 1
+            state.step(idx)
+        return state.response
+
+
+class ScriptedAgent:
+    """Plays back a recorded list of action indices (shared by both seats, in order)."""
+
+    def __init__(self, actions: list[int]) -> None:
+        self._actions = list(actions)
+        self._next = 0
+
+    def act(self, point: DecisionPoint) -> int:
+        if self._next >= len(self._actions):
+            raise IndexError("scripted action log exhausted")
+        idx = self._actions[self._next]
+        self._next += 1
+        return idx
+
 
 def run_duel(seed: int, deck_a: Deck, deck_b: Deck, agent_a, agent_b, env: Environment | None = None,
              **kwargs) -> DuelResult:  # fmt: skip
@@ -289,4 +371,4 @@ def run_duel(seed: int, deck_a: Deck, deck_b: Deck, agent_a, agent_b, env: Envir
     return Duel(seed, env, deck_a, deck_b, **kwargs).run(agent_a, agent_b)
 
 
-__all__ = ["DecisionPoint", "Duel", "DuelConfig", "DuelResult", "expand_seed", "run_duel"]
+__all__ = ["DecisionPoint", "Duel", "DuelConfig", "DuelResult", "ScriptedAgent", "expand_seed", "run_duel", "shuffle_deck"]
