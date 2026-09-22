@@ -24,6 +24,7 @@
 - [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
 - [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank。
+- [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
 - [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
 - [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局等实测数字。
 - [观测编码](docs/encoding.md)：卡片表、全局向量、候选动作表的每一列。
@@ -55,6 +56,13 @@ from ygorl.cards.ydk import load_ydk
 from ygorl.engine.duel import Duel
 a, b = load_ydk('tests/decks/snake_eye.ydk'), load_ydk('tests/decks/kashtira.ydk')
 print(Duel(1, None, a, b).run(RandomAgent(1), RandomAgent(2)).summary())"
+```
+
+从回放的第 `t` 步分叉，逐个尝试该决策点的全部合法动作并用随机策略下完（回放的录制见 [docs/replays.md](docs/replays.md)，用法与限制见 [docs/branching.md](docs/branching.md)）：
+
+```bash
+uv run ygorl branch game.json.gz --at 30 --try all --policy random --seed 1
+uv run ygorl branch game.json.gz --at 30 --rollouts 20   # 每个候选 20 次，输出胜/平/负与均值
 ```
 
 修改 `csrc/`、`patches/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
@@ -107,10 +115,12 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
 ├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、host_pool + worker_pool（C++ 步进环境）、binding（pybind11）
 ├── src/ygorl/               # Python 包
-│   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent
+│   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
+│   ├── commands/            # 各子命令一个模块：branch.py（`ygorl branch`）
+│   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；registry.py（按名字构造 agent，供 --policy）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
-│   ├── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
+│   ├── engine/              # 消息解码、动作模型、单局 Duel、回放、分支探索（branch.py）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games；encoding.py 参考编码器；encoded.py 为 C++ 步进的 EncodedVecEnv
 │   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
 ├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准、信念基线表、吞吐基准
@@ -124,6 +134,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── replays.md           # 回放格式与 .yrpX 导出
+│   ├── branching.md         # 分支探索：fork(replay, t)、ygorl branch、限制
 │   ├── spikes/              # 技术调研结论（combo-solver.md）
 │   └── eng-plan.md          # 工程计划
 ├── .editorconfig
