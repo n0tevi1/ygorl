@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-设计已评审通过。M0（骨架）完成；M1（引擎绑定）实现中：核心绑定、卡片数据、合法性、消息解码、单局 API、确定性重放、回放格式已落地。M3（基线与评估）：GreedyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank 已落地。技术栈与方向见下。
+设计已评审通过。M0（骨架）完成；M1（引擎绑定）实现中：核心绑定、卡片数据、合法性、消息解码、单局 API、确定性重放、回放格式已落地。M3（基线与评估）：GreedyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank、命令行 `ygorl duel / arena / matrix / replay` 已落地。技术栈与方向见下。
 
 ## 简介
 
@@ -24,6 +24,7 @@
 - [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁、快照（snapshot / restore）。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
 - [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank。
+- [命令行](docs/cli.md)：`ygorl duel`、`ygorl replay`、`ygorl branch`、`ygorl arena`、`ygorl matrix` 的参数、输出与退出码。
 - [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
 - [课程与开局配平](docs/curriculum.md)：单人展开 / 仅手坑 / 完整三种课程模式、先后攻配平、增广开局标志位。
 - [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
@@ -50,23 +51,26 @@ uv run python -c "import ygorl._core"     # 冒烟测试
 uv run pytest                             # 跑单测
 ```
 
-跑一局随机对局：
+命令行 `ygorl`：单局、回放、分叉探索、Arena、对局矩阵（全部参数与输出说明见 [docs/cli.md](docs/cli.md)，`uv run ygorl <命令> --help` 查看帮助）。
+在仓库根目录依次运行，产物写到 git 已忽略的 `out/`；`tests/test_readme.py` 会逐行执行下面的示例（局数调小）：
 
 ```bash
-uv run python -c "
-from ygorl.agents import RandomAgent
-from ygorl.cards.ydk import load_ydk
-from ygorl.engine.duel import Duel
-a, b = load_ydk('tests/decks/snake_eye.ydk'), load_ydk('tests/decks/kashtira.ydk')
-print(Duel(1, None, a, b).run(RandomAgent(1), RandomAgent(2)).summary())"
+# 单局：snake_eye（greedy）对 kashtira（random），打印胜者、终局原因、回合、LP、决策数；存回放并导出 EDOPro .yrpX
+uv run ygorl duel tests/decks/snake_eye.ydk tests/decks/kashtira.ydk --seed 1 --agent-a greedy --save-replay out/game.json.gz --yrpx out/game.yrpX
+# 回放：显示元数据，按应答日志重新模拟并核对是否到达录制的终局，再导出一份 .yrpX
+uv run ygorl replay out/game.json.gz --verify --export-yrpx out/again.yrpX
+# 分叉：从第 12 个 agent 步逐个尝试全部合法动作并用 greedy 下完；第二行每个候选 20 次随机 rollout，输出胜/平/负与均值
+uv run ygorl branch out/game.json.gz --at 12 --try all --policy greedy --seed 1
+uv run ygorl branch out/game.json.gz --at 12 --try 0,1,2 --rollouts 20
+# Arena：greedy 驾驶 snake_eye 对 random 驾驶 kashtira，20 局配对种子对局，输出胜率与 95% Wilson 区间
+uv run ygorl arena tests/decks/snake_eye.ydk --vs tests/decks/kashtira.ydk --games 20 --workers 2
+# 对局矩阵：3 套牌两两各 10 局（greedy 驾驶双方），输出胜率矩阵、Nash 混合与 alpha-rank
+uv run ygorl matrix tests/decks/snake_eye.ydk tests/decks/kashtira.ydk tests/decks/yubel.ydk --games 10 --workers 2 --out out/matrix.json
 ```
 
-从回放的第 `t` 步分叉，逐个尝试该决策点的全部合法动作并用随机策略下完（回放的录制见 [docs/replays.md](docs/replays.md)，用法与限制见 [docs/branching.md](docs/branching.md)）：
-
-```bash
-uv run ygorl branch game.json.gz --at 30 --try all --policy random --seed 1
-uv run ygorl branch game.json.gz --at 30 --rollouts 20   # 每个候选 20 次，输出胜/平/负与均值
-```
+加 `--env <版本或目录>` 即按该环境的规则对局，产物绑定环境版本；`ygorl matrix --env <版本>` 不给牌组时用环境的 meta 卡组，
+结果写到 `environments/<版本>/artifacts/matrix/`（见 [docs/cli.md](docs/cli.md)）。Python API 见 [docs/engine.md](docs/engine.md)、
+[docs/replays.md](docs/replays.md)、[docs/evaluation.md](docs/evaluation.md)。
 
 修改 `csrc/`、`patches/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
 需要强制重编时用 `uv sync --reinstall-package ygorl`。
@@ -119,16 +123,16 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、privileged（训练态对手真值）、host_pool + worker_pool（C++ 步进环境）、arena（每局内存 arena 与快照）、binding（pybind11）；exports.map 为链接导出表
 ├── src/ygorl/               # Python 包
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
-│   ├── commands/            # 各子命令一个模块：branch.py（`ygorl branch`）
-│   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；registry.py（按名字构造 agent，供 --policy）
+│   ├── commands/            # 各子命令一个模块：duel / replay / branch / arena / matrix；__init__.py 放共用选项（牌组、环境、agent）
+│   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；registry.py（按规格构造 agent 与可 pickle 的 factory，供 CLI）
 │   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、引擎包枚举（packages）、基因型与算子（genotype）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、回放、分支探索（branch.py）、课程模式（curriculum.py）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；encoded.py 为 C++ 步进的 EncodedVecEnv
 │   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
-├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、基因型采样与合法性检查、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准、信念基线表、吞吐基准、课程模式检查、快照检查
-├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据（含代理引擎包、泛用卡池）
+├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、基因型采样与合法性检查、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、吞吐基准、课程模式检查、快照检查
+├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组，data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
 │   ├── engine.md            # 引擎层：CoreBackend、消息、动作模型、确定性
@@ -138,6 +142,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── replays.md           # 回放格式与 .yrpX 导出
+│   ├── cli.md               # 命令行 ygorl 各子命令
 │   ├── branching.md         # 分支探索：fork(replay, t)、ygorl branch、限制
 │   ├── curriculum.md        # 课程模式、先后攻配平、增广开局标志位
 │   ├── synergy.md           # 脚本挖掘协同图与引擎包

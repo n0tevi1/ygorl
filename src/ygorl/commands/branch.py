@@ -5,18 +5,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from ygorl.agents.registry import available_agents
-from ygorl.commands import CommandError
+from ygorl.commands import SIDES as _SIDES
+from ygorl.commands import CommandError, add_env_option, agents_help, load_replay, replay_env
 
 _LOCATIONS = {0x1: "deck", 0x2: "hand", 0x4: "mzone", 0x8: "szone", 0x10: "grave", 0x20: "banished", 0x40: "extra",
               0x80: "overlay"}  # fmt: skip
 _POSITIONS = {0x1: "faceup_attack", 0x2: "facedown_attack", 0x4: "faceup_defense", 0x8: "facedown_defense"}
-_SIDES = {0: "a", 1: "b", None: "draw"}
 _MAX_DESCRIPTION = 44
 
 
 def add_parser(subparsers) -> None:
-    agents = ", ".join(f"{name} ({desc})" if desc else name for name, desc in available_agents().items())
     p = subparsers.add_parser(
         "branch",
         help="fork a replay at a decision point and roll out candidate actions",
@@ -27,11 +25,10 @@ def add_parser(subparsers) -> None:
     p.add_argument("--at", dest="t", type=int, required=True, metavar="T", help="decision point: agent step index, from 0")
     p.add_argument("--try", dest="candidates", type=_candidates, default=None, metavar="all|I,J,...",
                    help="candidate action indices at T (default: all legal actions)")  # fmt: skip
-    p.add_argument("--policy", default="random", metavar="AGENT", help=f"rollout policy for both sides: {agents}")
+    p.add_argument("--policy", default="random", metavar="AGENT", help=f"rollout policy for both sides: {agents_help()}")
     p.add_argument("--seed", type=int, default=0, help="policy seed of the first rollout (default 0)")
     p.add_argument("--rollouts", type=int, default=1, metavar="N", help="rollouts per candidate (default 1)")
-    p.add_argument("--env", default=None, metavar="PATH|VERSION",
-                   help="environment of the replay (default: its recorded version under the environments root)")  # fmt: skip
+    add_env_option(p, "environment of the replay (default: its recorded version under the environments root)")
     p.set_defaults(func=run)
 
 
@@ -46,22 +43,12 @@ def _candidates(text: str) -> list[int] | None:
 
 def run(args: argparse.Namespace) -> int:
     from ygorl.agents.registry import make_agent
-    from ygorl.data import load_environment
     from ygorl.engine.branch import fork
     from ygorl.engine.duel import default_cards
-    from ygorl.engine.replay import Replay
 
+    replay = load_replay(args.replay)
+    env = replay_env(replay, args.env)
     try:
-        replay = Replay.load(args.replay)
-        env = None
-        if args.env is not None:
-            env = load_environment(args.env)
-        elif replay.environment is not None:
-            version = replay.environment["version"]
-            try:
-                env = load_environment(version)
-            except FileNotFoundError as exc:
-                raise CommandError(f"{exc}; pass --env PATH for environment {version}") from None
         make_agent(args.policy, args.seed)  # fail on a bad spec before replaying anything
         branch = fork(replay, args.t, env)
         outcomes = branch.try_all(lambda seed: make_agent(args.policy, seed), candidates=args.candidates,

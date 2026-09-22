@@ -51,7 +51,7 @@ AgentFactory = Callable[[int], Agent]                 # 种子 -> 新 agent
 
 验收（T3.1）：`tests/test_agents.py` 让 Greedy 在 10 套测试牌组上各打一局（对 Random），零 retry、零未知消息，且都以胜负或回合上限结束；开发时的 200 局抽样全部以 `MSG_WIN` 结束，Greedy 胜率约 90%。
 
-`AGENTS = {"random": RandomAgent, "greedy": GreedyAgent}` 按名字登记基线 agent，供工具脚本与 CLI 使用。
+`AGENTS = {"random": RandomAgent, "greedy": GreedyAgent}` 按名字列出基线 agent。命令行用 `ygorl.agents.registry` 的规格 `name[:arg]`：`make_agent(spec, seed)` 构造 agent，`agent_factory(spec)` 返回可 pickle、以规格为名字的 factory（`AgentSpec`），可直接传给 `Arena` / `build_matrix`。
 
 ## Arena（`ygorl/eval/arena.py`，T3.2）
 
@@ -92,7 +92,9 @@ factory 必须可 pickle。某局抛异常时记为 `reason="exception"`（胜�
 统计说明：平局按半胜计时，胜负平得分的方差不超过 `p(1 - p)`，所以 Wilson 区间偏保守；
 但区间假设各局独立，而配对的两局相关（同一起手），严格的配对检验留待需要时再加。
 
-**基准**：`uv run python tools/arena.py --games 2000 --workers 2` 让两个 agent 在 10 套测试牌组的全部有序组合
+命令行：`ygorl arena`（见 [cli.md](cli.md)）。
+
+**基准**：`uv run python tools/arena.py --games 2000 --workers 2`（`ygorl arena tests/decks` 的包装）让两个 agent 在 10 套测试牌组的全部有序组合
 （含镜像，100 组）上各打 `2 × pairs` 局并汇总，结果记在 [benchmarks.md](benchmarks.md)。
 
 ## 对局矩阵、Nash 与 alpha-rank（`ygorl/eval/matchup.py`，T3.3）
@@ -108,6 +110,8 @@ meta.save(env=env, name="greedy-2026-10")        # -> environments/<v>/artifacts
 meta.save("out/matrix.json")                     # 无环境时必须给路径
 MetaGame.load(path, env=env)                     # 环境不符时抛 EnvironmentConfigError
 ```
+
+命令行：`ygorl matrix`（见 [cli.md](cli.md)）。
 
 `ygorl.eval.matchup` 依赖 nashpy（及 scipy），没有从 `ygorl.eval` 顶层导出，只用 Arena 时不必加载它们。
 

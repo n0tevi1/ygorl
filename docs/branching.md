@@ -31,6 +31,7 @@ same = branch.rollout(acts[30], RecordedAgent(acts), RecordedAgent(acts))  # 按
 ## 命令行
 
 ```bash
+uv run ygorl duel tests/decks/snake_eye.ydk tests/decks/kashtira.ydk --seed 1 --save-replay game.json.gz   # 先录一局
 uv run ygorl branch game.json.gz --at 30 --try all --policy random --seed 1
 uv run ygorl branch game.json.gz --at 30 --try 0,5,10 --rollouts 20
 ```
