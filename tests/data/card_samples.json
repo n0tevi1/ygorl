@@ -1,0 +1,28 @@
+{
+  "source": "Official card data transcribed by hand (YGOPRODECK was unreachable from the build environment). Re-verify with: uv run python tools/check_ygoprodeck.py",
+  "cards": [
+    {"password": 89631139, "name": "Blue-Eyes White Dragon", "types": ["monster", "normal"], "attribute": "light", "race": "dragon", "level": 8, "attack": 3000, "defense": 2500},
+    {"password": 46986414, "name": "Dark Magician", "types": ["monster", "normal"], "attribute": "dark", "race": "spellcaster", "level": 7, "attack": 2500, "defense": 2100},
+    {"password": 14558127, "name": "Ash Blossom & Joyous Spring", "types": ["monster", "effect", "tuner"], "attribute": "fire", "race": "zombie", "level": 3, "attack": 0, "defense": 1800},
+    {"password": 97268402, "name": "Effect Veiler", "types": ["monster", "effect", "tuner"], "attribute": "light", "race": "spellcaster", "level": 1, "attack": 0, "defense": 0},
+    {"password": 23434538, "name": "Maxx \"C\"", "types": ["monster", "effect"], "attribute": "earth", "race": "insect", "level": 2, "attack": 500, "defense": 200},
+    {"password": 27204311, "name": "Nibiru, the Primal Being", "types": ["monster", "effect"], "attribute": "light", "race": "rock", "level": 11, "attack": 3000, "defense": 600},
+    {"password": 10000000, "name": "Obelisk the Tormentor", "types": ["monster", "effect"], "attribute": "divine", "race": "divine", "level": 10, "attack": 4000, "defense": 4000},
+    {"password": 5405694, "name": "Black Luster Soldier", "types": ["monster", "ritual"], "attribute": "earth", "race": "warrior", "level": 8, "attack": 3000, "defense": 2500},
+    {"password": 23995346, "name": "Blue-Eyes Ultimate Dragon", "types": ["monster", "fusion"], "attribute": "light", "race": "dragon", "level": 12, "attack": 4500, "defense": 3800, "extra_deck": true},
+    {"password": 44508094, "name": "Stardust Dragon", "types": ["monster", "effect", "synchro"], "attribute": "wind", "race": "dragon", "level": 8, "attack": 2500, "defense": 2000, "extra_deck": true},
+    {"password": 84013237, "name": "Number 39: Utopia", "types": ["monster", "effect", "xyz"], "attribute": "light", "race": "warrior", "rank": 4, "attack": 2500, "defense": 2000, "extra_deck": true},
+    {"password": 1861629, "name": "Decode Talker", "types": ["monster", "effect", "link"], "attribute": "dark", "race": "cyberse", "link": 3, "attack": 2300, "link_markers": ["bottom_left", "bottom_right", "top"], "extra_deck": true},
+    {"password": 41999284, "name": "Linkuriboh", "types": ["monster", "effect", "link"], "attribute": "dark", "race": "cyberse", "link": 1, "attack": 300, "link_markers": ["bottom"], "extra_deck": true},
+    {"password": 65741786, "name": "I:P Masquerena", "types": ["monster", "effect", "link"], "attribute": "dark", "race": "cyberse", "link": 2, "attack": 800, "link_markers": ["bottom_left", "bottom_right"], "extra_deck": true},
+    {"password": 16178681, "name": "Odd-Eyes Pendulum Dragon", "types": ["monster", "effect", "pendulum"], "attribute": "dark", "race": "dragon", "level": 7, "attack": 2500, "defense": 2000, "scales": [4, 4]},
+    {"password": 76794549, "name": "Astrograph Sorcerer", "types": ["monster", "effect", "pendulum"], "attribute": "dark", "race": "spellcaster", "level": 7, "attack": 2500, "defense": 2000, "scales": [1, 1]},
+    {"password": 55144522, "name": "Pot of Greed", "types": ["spell"]},
+    {"password": 24224830, "name": "Called by the Grave", "types": ["spell", "quickplay"]},
+    {"password": 67616300, "name": "Chicken Game", "types": ["spell", "field"]},
+    {"password": 83746708, "name": "Mage Power", "types": ["spell", "equip"]},
+    {"password": 44095762, "name": "Mirror Force", "types": ["trap"]},
+    {"password": 82732705, "name": "Skill Drain", "types": ["trap", "continuous"]},
+    {"password": 41420027, "name": "Solemn Judgment", "types": ["trap", "counter"]}
+  ]
+}

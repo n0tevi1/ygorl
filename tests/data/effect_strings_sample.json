@@ -1,0 +1,606 @@
+{
+ "note": "50 aux.Stringid(id, n) -> texts.str{n+1} pairs from 25 multi-effect cards (seeded sample). 'script' shows the SetDescription line and following Set* calls so a reviewer can confirm the string describes that effect. reviewed_by is filled in after human review.",
+ "reviewed_by": "AI-assisted review (Claude Code), 2026-09-22: all 50 strings describe the effect whose SetDescription references them (category/type match). Human confirmation pending.",
+ "samples": [
+  {
+   "password": 29071332,
+   "name": "Armory Arm",
+   "index": 0,
+   "text": "Equip this card",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_EQUIP)",
+    "e1:SetType(EFFECT_TYPE_IGNITION)",
+    "e1:SetProperty(EFFECT_FLAG_CARD_TARGET)"
+   ]
+  },
+  {
+   "password": 29071332,
+   "name": "Armory Arm",
+   "index": 1,
+   "text": "Unequip this card and Special Summon",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e2:SetType(EFFECT_TYPE_IGNITION)",
+    "e2:SetRange(LOCATION_SZONE)"
+   ]
+  },
+  {
+   "password": 33202303,
+   "name": "Earthbound Servant Geo Gremlina",
+   "index": 0,
+   "text": "Search 1 \"Earthbound\" monster",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_TOHAND+CATEGORY_SEARCH)",
+    "e1:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 33202303,
+   "name": "Earthbound Servant Geo Gremlina",
+   "index": 1,
+   "text": "1 DARK Synchro you control can attack directly",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetType(EFFECT_TYPE_IGNITION)",
+    "e2:SetProperty(EFFECT_FLAG_CARD_TARGET)",
+    "e2:SetRange(LOCATION_MZONE)"
+   ]
+  },
+  {
+   "password": 20137754,
+   "name": "Duza the Meteor Cubic Vessel",
+   "index": 0,
+   "text": "Send to Graveyard",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_TOGRAVE)",
+    "e1:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 20137754,
+   "name": "Duza the Meteor Cubic Vessel",
+   "index": 1,
+   "text": "Increase ATK",
+   "script": [
+    "e3:SetDescription(aux.Stringid(id,1))",
+    "e3:SetCategory(CATEGORY_ATKCHANGE)",
+    "e3:SetType(EFFECT_TYPE_QUICK_O)",
+    "e3:SetProperty(EFFECT_FLAG_DAMAGE_STEP)"
+   ]
+  },
+  {
+   "password": 37115575,
+   "name": "Malefic Truth Dragon",
+   "index": 0,
+   "text": "Special Summon",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e1:SetProperty(EFFECT_FLAG_DAMAGE_STEP+EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 37115575,
+   "name": "Malefic Truth Dragon",
+   "index": 1,
+   "text": "Destroy all face-up monsters your opponent controls.\r\n",
+   "script": [
+    "e3:SetDescription(aux.Stringid(id,1))",
+    "e3:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_F)",
+    "e3:SetCategory(CATEGORY_DESTROY)",
+    "e3:SetCode(EVENT_BATTLE_DESTROYING)"
+   ]
+  },
+  {
+   "password": 54702678,
+   "name": "Barbaroid, the Ultimate Battle Machine",
+   "index": 0,
+   "text": "Negate effect",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,0))",
+    "e2:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_F)",
+    "e2:SetCode(EVENT_BATTLED)",
+    "e2:SetCondition(s.discon)"
+   ]
+  },
+  {
+   "password": 54702678,
+   "name": "Barbaroid, the Ultimate Battle Machine",
+   "index": 1,
+   "text": "1000 damage",
+   "script": [
+    "e3:SetDescription(aux.Stringid(id,1))",
+    "e3:SetCategory(CATEGORY_DAMAGE)",
+    "e3:SetCode(EVENT_BATTLE_DESTROYING)",
+    "e3:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_F)"
+   ]
+  },
+  {
+   "password": 46956301,
+   "name": "White Aura Porpoise",
+   "index": 0,
+   "text": "Special Summon 1 Level 4 or lower Fish monster",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e1:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 46956301,
+   "name": "White Aura Porpoise",
+   "index": 1,
+   "text": "Special Summon this card and treat it as a Tuner",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e2:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e2:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 56506740,
+   "name": "Primite Lordly Lode",
+   "index": 0,
+   "text": "Add 1 \"Primite\" card from your Deck to your hand",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_TOHAND+CATEGORY_SEARCH)",
+    "e1:SetType(EFFECT_TYPE_ACTIVATE)",
+    "e1:SetCode(EVENT_FREE_CHAIN)"
+   ]
+  },
+  {
+   "password": 56506740,
+   "name": "Primite Lordly Lode",
+   "index": 1,
+   "text": "Special Summon 1 Normal Monster from your hand/Deck/GY",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e2:SetType(EFFECT_TYPE_IGNITION)",
+    "e2:SetRange(LOCATION_SZONE)"
+   ]
+  },
+  {
+   "password": 15171722,
+   "name": "Evolsaur Lios",
+   "index": 0,
+   "text": "Set 1 \"Evolutionary Bridge\" or \"Evo-Singularity\"",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_SET)",
+    "e1:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 15171722,
+   "name": "Evolsaur Lios",
+   "index": 1,
+   "text": "Send 1 monster to the GY",
+   "script": [
+    "e3:SetDescription(aux.Stringid(id,1))",
+    "e3:SetCategory(CATEGORY_TOGRAVE+CATEGORY_LVCHANGE)",
+    "e3:SetType(EFFECT_TYPE_IGNITION)",
+    "e3:SetRange(LOCATION_MZONE)"
+   ]
+  },
+  {
+   "password": 67270095,
+   "name": "Turbo Synchron",
+   "index": 0,
+   "text": "Change the attack target to Defense Position.",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_POSITION)",
+    "e1:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetCode(EVENT_ATTACK_ANNOUNCE)"
+   ]
+  },
+  {
+   "password": 67270095,
+   "name": "Turbo Synchron",
+   "index": 1,
+   "text": "Special Summon",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e2:SetProperty(EFFECT_FLAG_DAMAGE_STEP)",
+    "e2:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_TRIGGER_O)"
+   ]
+  },
+  {
+   "password": 36609518,
+   "name": "Evil★Twin Lil-la",
+   "index": 0,
+   "text": "Target 1 card to destroy",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_DESTROY)",
+    "e1:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetCode(EVENT_SPSUMMON_SUCCESS)"
+   ]
+  },
+  {
+   "password": 36609518,
+   "name": "Evil★Twin Lil-la",
+   "index": 1,
+   "text": "Special Summon",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e2:SetType(EFFECT_TYPE_QUICK_O)",
+    "e2:SetCode(EVENT_FREE_CHAIN)"
+   ]
+  },
+  {
+   "password": 70333910,
+   "name": "Noctovision Dragon",
+   "index": 0,
+   "text": "Special Summon this card",
+   "script": [
+    "e3:SetDescription(aux.Stringid(id,0))",
+    "e3:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e3:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_TRIGGER_O)",
+    "e3:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 70333910,
+   "name": "Noctovision Dragon",
+   "index": 1,
+   "text": "Draw 1 card",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_DRAW)",
+    "e2:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e2:SetCode(EVENT_BE_MATERIAL)"
+   ]
+  },
+  {
+   "password": 17209452,
+   "name": "Kewl Tune Rotary",
+   "index": 0,
+   "text": "Immediately after this effect resolves, Normal Summon 1 Tuner",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_SUMMON)",
+    "e1:SetType(EFFECT_TYPE_IGNITION)",
+    "e1:SetRange(LOCATION_HAND)"
+   ]
+  },
+  {
+   "password": 17209452,
+   "name": "Kewl Tune Rotary",
+   "index": 1,
+   "text": "Activate 1 of these effects",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e2:SetProperty(EFFECT_FLAG_DELAY+EFFECT_FLAG_CARD_TARGET)",
+    "e2:SetCode(EVENT_BE_MATERIAL)"
+   ]
+  },
+  {
+   "password": 2674965,
+   "name": "Argostars - Home Stadium",
+   "index": 0,
+   "text": "Add 1 \"Argostars\" card to your hand",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_TOHAND)",
+    "e1:SetType(EFFECT_TYPE_IGNITION)",
+    "e1:SetRange(LOCATION_FZONE)"
+   ]
+  },
+  {
+   "password": 2674965,
+   "name": "Argostars - Home Stadium",
+   "index": 1,
+   "text": "Negate the effects of 1 opponent's card",
+   "script": [
+    "e3:SetDescription(aux.Stringid(id,1))",
+    "e3:SetCategory(CATEGORY_DISABLE)",
+    "e3:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_TRIGGER_O)",
+    "e3:SetProperty(EFFECT_FLAG_CARD_TARGET+EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 84433129,
+   "name": "Star Ryzeal",
+   "index": 0,
+   "text": "Special Summon (\"Star Ryzeal\")",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetType(EFFECT_TYPE_FIELD)",
+    "e1:SetProperty(EFFECT_FLAG_UNCOPYABLE)",
+    "e1:SetCode(EFFECT_SPSUMMON_PROC)"
+   ]
+  },
+  {
+   "password": 84433129,
+   "name": "Star Ryzeal",
+   "index": 1,
+   "text": "Set 1 \"Ryzeal\" Spell/Trap from your Deck",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_SET)",
+    "e2:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e2:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 6276588,
+   "name": "Karakuri Ninja mdl 919 \"Kuick\"",
+   "index": 0,
+   "text": "Change battle position",
+   "script": [
+    "e3:SetDescription(aux.Stringid(id,0))",
+    "e3:SetCategory(CATEGORY_POSITION)",
+    "e3:SetType(EFFECT_TYPE_TRIGGER_F+EFFECT_TYPE_SINGLE)",
+    "e3:SetCode(EVENT_BE_BATTLE_TARGET)"
+   ]
+  },
+  {
+   "password": 6276588,
+   "name": "Karakuri Ninja mdl 919 \"Kuick\"",
+   "index": 1,
+   "text": "Special Summon",
+   "script": [
+    "e4:SetDescription(aux.Stringid(id,1))",
+    "e4:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e4:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_TRIGGER_F)",
+    "e4:SetProperty(EFFECT_FLAG_CARD_TARGET)"
+   ]
+  },
+  {
+   "password": 40680521,
+   "name": "Mamonaka the Vaylantz United",
+   "index": 0,
+   "text": "Activate 1 of these effects",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetType(EFFECT_TYPE_IGNITION)",
+    "e1:SetRange(LOCATION_PZONE)",
+    "e1:SetCountLimit(1,id)"
+   ]
+  },
+  {
+   "password": 40680521,
+   "name": "Mamonaka the Vaylantz United",
+   "index": 1,
+   "text": "Place in Spell/Trap Zone",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_DESTROY)",
+    "e2:SetType(EFFECT_TYPE_QUICK_O)",
+    "e2:SetProperty(EFFECT_FLAG_CARD_TARGET)"
+   ]
+  },
+  {
+   "password": 25218587,
+   "name": "Lightsworn Aegis",
+   "index": 0,
+   "text": "Negate the effects of face-up cards your opponent controls",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_DISABLE)",
+    "e1:SetType(EFFECT_TYPE_ACTIVATE)",
+    "e1:SetProperty(EFFECT_FLAG_CARD_TARGET)"
+   ]
+  },
+  {
+   "password": 25218587,
+   "name": "Lightsworn Aegis",
+   "index": 1,
+   "text": "Set this card",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_SET)",
+    "e2:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e2:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 61160289,
+   "name": "Amunessia, the Ogdoadic Queen",
+   "index": 0,
+   "text": "Special Summon",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e1:SetType(EFFECT_TYPE_IGNITION)",
+    "e1:SetRange(LOCATION_GRAVE)"
+   ]
+  },
+  {
+   "password": 61160289,
+   "name": "Amunessia, the Ogdoadic Queen",
+   "index": 1,
+   "text": "Send to GY",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_TOGRAVE)",
+    "e2:SetProperty(EFFECT_FLAG_DELAY)",
+    "e2:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_TRIGGER_O)"
+   ]
+  },
+  {
+   "password": 26582143,
+   "name": "Gladiator Beast Gistel",
+   "index": 0,
+   "text": "Special Summon 1 \"Gladiator Beast\" monster from your Deck",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e1:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetCode(EVENT_PHASE|PHASE_BATTLE)"
+   ]
+  },
+  {
+   "password": 26582143,
+   "name": "Gladiator Beast Gistel",
+   "index": 1,
+   "text": "Special Summon both this card and 1 other \"Gladiator Beast\" monster from your hand",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_SPECIAL_SUMMON)",
+    "e2:SetType(EFFECT_TYPE_IGNITION)",
+    "e2:SetRange(LOCATION_HAND)"
+   ]
+  },
+  {
+   "password": 69191257,
+   "name": "Jade Dragon Mech",
+   "index": 0,
+   "text": "Send 1 Machine Tuner from your Deck to the GY",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_TOGRAVE+CATEGORY_SPECIAL_SUMMON)",
+    "e1:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 69191257,
+   "name": "Jade Dragon Mech",
+   "index": 1,
+   "text": "Destroy cards on the field",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_DESTROY)",
+    "e2:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e2:SetProperty(EFFECT_FLAG_DELAY+EFFECT_FLAG_CARD_TARGET)"
+   ]
+  },
+  {
+   "password": 31600845,
+   "name": "Amazement Abomination Arlekino",
+   "index": 0,
+   "text": "Special Summon this card from your hand",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_SPECIAL_SUMMON+CATEGORY_TOHAND+CATEGORY_SEARCH)",
+    "e1:SetType(EFFECT_TYPE_IGNITION)",
+    "e1:SetRange(LOCATION_HAND)"
+   ]
+  },
+  {
+   "password": 31600845,
+   "name": "Amazement Abomination Arlekino",
+   "index": 1,
+   "text": "Shuffle this card into the Deck and Special Summon",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_TODECK+CATEGORY_SPECIAL_SUMMON+CATEGORY_ATKCHANGE)",
+    "e2:SetType(EFFECT_TYPE_QUICK_O)",
+    "e2:SetProperty(EFFECT_FLAG_CARD_TARGET+EFFECT_FLAG_DAMAGE_STEP)"
+   ]
+  },
+  {
+   "password": 41908872,
+   "name": "Supreme King Dragon Lightwurm",
+   "index": 0,
+   "text": "Special Summon this card",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_SPECIAL_SUMMON+CATEGORY_LVCHANGE)",
+    "e1:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 41908872,
+   "name": "Supreme King Dragon Lightwurm",
+   "index": 1,
+   "text": "Add 1 \"Supreme King Dragon\" or \"Supreme King Gate\" from your Extra Deck to your hand",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_TOHAND+CATEGORY_SPECIAL_SUMMON)",
+    "e2:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e2:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  },
+  {
+   "password": 61307542,
+   "name": "Paleozoic Anomalocaris",
+   "index": 0,
+   "text": "Excavate",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,0))",
+    "e2:SetCategory(CATEGORY_TOHAND+CATEGORY_SEARCH+CATEGORY_DECKDES)",
+    "e2:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_TRIGGER_O)",
+    "e2:SetCode(EVENT_TO_GRAVE)"
+   ]
+  },
+  {
+   "password": 61307542,
+   "name": "Paleozoic Anomalocaris",
+   "index": 1,
+   "text": "Destroy",
+   "script": [
+    "e3:SetDescription(aux.Stringid(id,1))",
+    "e3:SetCategory(CATEGORY_DESTROY)",
+    "e3:SetType(EFFECT_TYPE_QUICK_O)",
+    "e3:SetCode(EVENT_FREE_CHAIN)"
+   ]
+  },
+  {
+   "password": 30194529,
+   "name": "Ningirsu the World Chalice Warrior",
+   "index": 0,
+   "text": "Draw",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_DRAW)",
+    "e1:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_F)",
+    "e1:SetCode(EVENT_SPSUMMON_SUCCESS)"
+   ]
+  },
+  {
+   "password": 30194529,
+   "name": "Ningirsu the World Chalice Warrior",
+   "index": 1,
+   "text": "Send to Graveyard",
+   "script": [
+    "e2:SetDescription(aux.Stringid(id,1))",
+    "e2:SetCategory(CATEGORY_TOGRAVE)",
+    "e2:SetType(EFFECT_TYPE_IGNITION)",
+    "e2:SetRange(LOCATION_MZONE)"
+   ]
+  },
+  {
+   "password": 25273572,
+   "name": "G Golem Pebble Dog",
+   "index": 0,
+   "text": "Search or Special Summon",
+   "script": [
+    "e1:SetDescription(aux.Stringid(id,0))",
+    "e1:SetCategory(CATEGORY_SEARCH+CATEGORY_TOHAND+CATEGORY_SPECIAL_SUMMON)",
+    "e1:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e1:SetCode(EVENT_SUMMON_SUCCESS)"
+   ]
+  },
+  {
+   "password": 25273572,
+   "name": "G Golem Pebble Dog",
+   "index": 1,
+   "text": "Search",
+   "script": [
+    "e3:SetDescription(aux.Stringid(id,1))",
+    "e3:SetCategory(CATEGORY_SEARCH+CATEGORY_TOHAND)",
+    "e3:SetType(EFFECT_TYPE_SINGLE+EFFECT_TYPE_TRIGGER_O)",
+    "e3:SetProperty(EFFECT_FLAG_DELAY)"
+   ]
+  }
+ ]
+}
