@@ -9,6 +9,7 @@ ygorl.engine.duel      Duel(seed, env, deck_a, deck_b).run(agent_a, agent_b) / .
 ygorl.engine.actions   决策消息 → 合法动作列表（多选拆步）→ set_response 字节
 ygorl.engine.messages  OCG_DuelGetMessage 缓冲区 → 类型化 Message（绝不抛异常）
 ygorl.engine.constants 由 tools/gen_constants.py 从 ocgapi_constants.h 生成
+ygorl.engine.puzzle    残局：把卡直接放进指定区域开局（确定性的规则场景，T2.3 测试用）
 ygorl._core            pybind11：CardDatabase / ScriptDirectory / Duel（csrc/）
 third_party/ygopro-core + patches/ygopro-core/*.patch   规则核心（构建时打补丁）
 ```
@@ -63,7 +64,7 @@ third_party/ygopro-core + patches/ygopro-core/*.patch   规则核心（构建时
 |------|------|------|
 | IDLECMD / BATTLECMD | summon / spsummon / reposition / mset / sset / activate / attack / battle_phase / main2 / end_phase / shuffle | 单步；应答 `i32 (类别 \| 下标<<16)` |
 | EFFECTYN / YESNO / OPTION / CHAIN / POSITION / ANNOUNCE_NUMBER / RPS | yes/no、option、chain/pass、position、number、rps | 单步 |
-| SELECT_CARD / TRIBUTE / SUM | 逐张 select + finish（可取消时 cancel） | 只给出仍能补全为合法集合的卡：祭品数按 `release_param` 计；SUM 精确模式用子集和 DP（含每张卡的两种数值与必选卡），「≥ 且最小」模式做单调剪枝的搜索 |
+| SELECT_CARD / TRIBUTE / SUM | 逐张 select + finish；未选任何卡且消息可取消时另有 cancel | 只给出仍能补全为合法集合的卡：祭品数按 `release_param` 计；SUM 精确模式用子集和 DP（含每张卡的两种数值与必选卡），「≥ 且最小」模式做单调剪枝的搜索。finish 总是发显式列表（可以为空：min 为 0，或 SUM 的必选卡已足够），cancel 发 `-1`，见下文「多选可行集验证」 |
 | SELECT_UNSELECT_CARD | select / unselect / finish 或 cancel | 核心本身就逐张询问 |
 | SELECT_COUNTER | 每步移除一个指示物 | 共 `count` 步 |
 | SORT_CARD / SORT_CHAIN | 逐张定序（首步可 default） | 剩一张时自动完成 |
@@ -72,6 +73,49 @@ third_party/ygopro-core + patches/ygopro-core/*.patch   规则核心（构建时
 | ANNOUNCE_CARD | declare（全部可宣言的卡） | 用与核心一致的 RPN opcode 解释器（`is_declarable`）从卡库筛选 |
 
 因此 agent 永远不会触发 `MSG_RETRY`；压力测试把 retry 数作为失败条件。
+
+## 多选可行集验证（T2.3）
+
+SELECT_CARD / SELECT_TRIBUTE / SELECT_SUM 在核心里是**一次**应答（一组卡），环境把它拆成逐张 select + finish，并且每一步只给出还能补全成合法应答的卡（Python `actions.py` 与 C++ `csrc/host.cpp` 的 `DecisionState` 逐元素一致）。验收标准是「环境可行集 = 引擎接受集合」，由 `tests/test_feasible_sets.py` 用真实引擎检查。
+
+**残局构造**：`ygorl.engine.puzzle.Puzzle` 用 `OCG_DuelNewCard` 把卡直接放到指定区域（手牌、怪兽区含额外怪兽区、魔陷区、额外卡组），双方起手 0 张、每回合抽 0 张，开局即玩家 0 的主要阶段 1。场景因此一两步就能走到素材选择，且与普通对局一样确定。
+
+**做法**：从召唤/发动命令开始，对之后的每个决策：
+
+1. SELECT_CARD / TRIBUTE / SUM：枚举所提供卡的**全部子集**（外加 `-1`），逐个作为应答发给引擎。被拒绝的应答只产生 `MSG_RETRY`、核心停在同一决策上，所以被拒的候选在同一局里接着试，只有被接受的候选需要重放一局（同一残局 + 同一应答前缀 → 同一状态）。得到的接受集合必须等于环境逐步动作能到达的完整应答集合（所有以 finish 或自动完成结束的 select 路径），Python 与 C++ 状态机都要相等，且任何路径都不能走进死路。
+2. SELECT_UNSELECT_CARD：CardScripts 的同调/超量/连接手续（`proc_synchro.lua` / `proc_xyz.lua` / `proc_link.lua`）都用 `Group.SelectUnselect` 让核心逐张询问，环境只是透传；对它以及手续中途的其他决策（如 ANNOUNCE_NUMBER）遍历所有动作。连锁窗口、区域、表示形式取固定默认。
+3. 每条路径回到空闲命令时，记录离开手牌/场上的卡（即实际使用的素材），与按卡片效果手工列出的合法素材集合比较。
+
+**场景**（卡片密码见测试文件的 `CARDS`）：
+
+| 场景 | 决策 | 要点 |
+|------|------|------|
+| 上级召唤 Dark Magician（46986414，暗，7 星） | SELECT_TRIBUTE | Double Coston（44436472）对暗属性怪兽算 2 个祭品：单独它、它 + 1 只、任意 2 只普通怪兽 |
+| 上级召唤 Blue-Eyes White Dragon（89631139，光） | SELECT_TRIBUTE | Double Coston 只算 1 个 |
+| Twin Twisters（43898403） | SELECT_CARD ×2 | 丢弃 1 张（1..1），再以 1..2 张盖放的魔法为对象 |
+| Dark Magician Girl the Magician's Apprentice（2501624） | SELECT_CARD（min 0） | 从手牌特殊召唤时丢弃 0..1 张；选 0 张则召唤中止 |
+| Black Luster Ritual（55761792，≥ 8） | SELECT_SUM 至少模式 | Miracle Raven（18988396，场上可作全部祭品：1 或 8）+ 手牌/场上 1–6 星 |
+| Contract with the Abyss（69035382，= 8，暗属性仪式） | SELECT_SUM 精确模式 | Ritual Raven（34334692，1 或 8）+ 手牌/场上 1–6 星 |
+| Number 39: Utopia / Number 61: Volcasaurus / Number 32: Shark Drake | SELECT_UNSELECT_CARD（+ ANNOUNCE_NUMBER） | Star Drawing（24610207）可当 5 星；Drake Shark（81096431）对需要 3 个以上素材的水属性超量可当 2 个素材 |
+| Stardust Dragon（44508094，调整 + 非调整，8 星） | SELECT_UNSELECT_CARD | Yamatako Orochi（4632019，调整，1 或 8 星）、Tuningware（92676637，1 或 2 星） |
+| Decode Talker（1861629，连接 3，2+ 效果怪兽） | SELECT_UNSELECT_CARD | Proxy Dragon（22862454）算 1 或 2，Linkuriboh（41999284）算 1，通常怪兽不可用 |
+
+另外对随机生成的 SELECT_CARD / TRIBUTE / SUM 消息（含必选卡、min 0、双数值卡），用照抄 `playerop.cpp` 检查逻辑的纯 Python 模型比较（只取至少有一个合法应答的消息，核心不会发出无解的选择）。
+
+**发现并修复的不一致**（Python 与 C++ 同步修改）：
+
+- min 为 0 的 SELECT_CARD / TRIBUTE：原来「一张不选就 finish」被编码成 `-1`。核心同时接受 `-1` 和显式空列表，但含义不同：对可取消的脚本 `-1` 返回 nil（上级召唤里是取消召唤），空列表返回空卡片组。现在 finish 总是发显式列表，另给 `cancel`（`-1`）。min 为 0 时消息里的「可取消」位总是置 1（核心写的是 `cancelable || min == 0`），所以两个动作都会出现；脚本本身不可取消时二者效果相同。课程模式把 `cancel` 视为「放弃」类动作，因此 solo 模式下对手的 min 0 选卡由主机代答 `-1`。
+- SELECT_SUM 的必选卡本身已满足条件时：核心接受空列表（至少模式下这是唯一合法应答，再加任何卡都多余），原实现要求至少选一张，走进死路。现在允许不选直接 finish。
+
+**引擎行为备忘**：
+
+- 核心对 SELECT_SUM 至少模式的检查是「各卡较大值之和 ≥ 目标，且各卡较小值之和减去最小的较小值 < 目标」。对能作全部祭品的卡（参数低 16 位为仪式怪兽等级、高 16 位为自身等级）它比规则文字宽松：Miracle Raven + Frostosaurus（6 星）会被接受。环境以核心为准。
+- SELECT_SUM 精确模式由 `select_sum_check1` 按**卡片指针顺序**检查（`parse_response_cards` 按指针排序），它要求非末位的卡值严格小于剩余量。若出现数值为 0 的卡，接受与否取决于指针顺序；实际脚本没有遇到，环境按「存在一种取值使总和相等」处理。
+- 上级召唤一般不会发出 min 0 的 SELECT_TRIBUTE：可以不解放时核心先问 YESNO「是否解放」，答是之后 min 为 1。
+- 灵摆怪兽作为素材离场时进额外卡组（表侧），不在墓地；判断「用了哪些素材」要看离开手牌/场上的卡。
+- 同一张多选消息之后核心可能还会询问别的决策（德雷克鲨在被选中后问「当作 1 个还是 2 个素材」）；这些信息不在后续的 SELECT_UNSELECT_CARD 消息里，是脚本内部状态。
+
+运行时间：`uv run pytest tests/test_feasible_sets.py` 约 30 秒（每个接受的候选重放一局残局，一局约 10 ms）。
 
 ## 单局 API（`duel.py`）
 

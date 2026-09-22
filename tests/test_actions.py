@@ -142,9 +142,19 @@ def test_select_card_finish_and_cancel():
 
 
 def test_select_card_min_zero_finish_empty():
+    # the core accepts both an explicit empty selection and -1 (a cancelable script sees nil for -1)
     st = make_decision(M.SelectCard(0, True, 0, 1, (card(1),)))
-    assert kinds(st) == ["select", "finish"]
-    assert st.step(1) == i32(-1)
+    assert kinds(st) == ["select", "finish", "cancel"]
+    assert make_decision(st.decision).step(1) == cards_response()
+    assert make_decision(st.decision).step(2) == i32(-1)
+
+
+def test_tribute_min_zero_finish_empty():
+    opts = (M.TributeOption(1, M.Location(0, C.LOCATION_MZONE, 0), 1),)
+    st = make_decision(M.SelectTribute(0, True, 0, 1, opts))
+    assert kinds(st) == ["select", "finish", "cancel"]
+    assert make_decision(st.decision).step(1) == cards_response()  # summon without tributes
+    assert make_decision(st.decision).step(2) == i32(-1)  # cancel the summon
 
 
 def test_tribute_counts_release_param():
@@ -192,6 +202,21 @@ def test_select_sum_at_least_is_minimal():
     assert [a.index for a in st.actions() if a.kind == "select"] == [0]  # 4+3 too small, 4+3+5 not minimal
     st.step(0)
     assert st.response == cards_response(1, 0)
+
+
+def test_select_sum_must_cards_alone():
+    # at-least mode: the must-select cards already reach the target, so adding anything is superfluous
+    must, cards = sums(1, 2, must=(4, 5))
+    st = make_decision(M.SelectSum(0, False, 8, 0, 0, must, cards))
+    assert kinds(st) == ["finish"]
+    assert st.step(0) == cards_response()
+    # exact mode with min 0: the must cards alone, or with the 2 on top
+    must, cards = sums(2, 1, must=(8,))
+    st = make_decision(M.SelectSum(0, True, 8, 0, 2, must, cards))
+    assert kinds(st) == ["finish"]
+    st = make_decision(M.SelectSum(0, True, 10, 0, 2, must, cards))
+    assert kinds(st) == ["select"]
+    assert st.step(0) == cards_response(0)
 
 
 def test_unselect_card():
