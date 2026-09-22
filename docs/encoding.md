@@ -99,3 +99,122 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 - Python 参考：`ygorl.env.encoding.ObservationEncoder`（`tests/test_encoding.py`）。
 - C++：`csrc/host.{h,cpp}`（决策解码、动作状态机、主机侧 tracker）与 `csrc/obs_encoder.cpp`（编码），通过 `ygorl._core.HostDuel` / `ygorl._core.DecisionState` 暴露。
 - 校验：`tests/test_cpp_host.py` 对 19 种决策消息做随机报文 + 随机选择路径的差分测试（动作列表与应答字节必须与 `ygorl.engine.actions` 一致），并在 5 局真实对局中逐步比对动作、四个观测数组与终局；`uv run python tools/check_cpp_encoder.py --points 10000` 做验收。2026-09-22 的一次运行：8 局、10,530 个决策点、0 处不一致，覆盖 16 种决策类型（其余类型由差分测试覆盖）。
+
+## 事件 token 流（T2.4）
+
+设计 I6（[03-play-policy.md](design/03-play-policy.md)）与「不响应」证据（[04-opponent-model.md](design/04-opponent-model.md)）的落地：把核心发出的 `MSG_*` 事件按 **viewer 可见性**过滤后编码成定长整数行，另插入「响应窗口 + 放弃」token。Python 参考实现是 `ygorl.env.events.EventHistory`，C++ 实现是 `csrc/event_encoder.cpp`（`EventHistory`），两者逐元素一致。
+
+| 数组 | 形状 | 说明 |
+|------|------|------|
+| `events` | `[L, E=20]` | viewer 视角最近 `L` 个事件 token，按时间先后排在第 0…n−1 行（最新在第 n−1 行），其余行全 0 |
+| `event_mask` | `[L]` | 1 = 该行是事件 |
+
+`L` 可配（`EventHistory(length=L)`、`EncodedVecEnv(event_length=L)`、`_core.HostDuel(..., event_length=L)`；默认 `DEFAULT_EVENT_LENGTH = 128`，0 = 不输出）。历史从对局开始累积（每个 viewer 各一份），只保留最近 `L` 个。
+
+**状态与输入**：历史吃的是**全部**核心消息（上帝视角，按产生顺序；Python 侧即依次喂入每个 `DecisionPoint.events`，C++ 侧即 `HostDuel` 收到的每个消息缓冲），同时为两个 viewer 生成 token；每个 token 在生成时就按该 viewer 的可见性过滤，之后不再改动。决策点的观测取决策方（`DecisionPoint.player`）那一份。
+
+### 列（`E = 20`）
+
+| 列 | 名称 | 取值 |
+|----|------|------|
+| 0 | `type` | 事件类型编号（下表），0 填充 |
+| 1 | `player` | 事件主体玩家：0 无，1 viewer，2 对手（含义见下表） |
+| 2 | `card` | 主卡的词表下标：0 无 / 未追踪，1 对 viewer 隐藏，≥ 2 卡片 |
+| 3 | `card2` | 第二张卡（攻击目标、装备对象、交换的另一张；`CHAINING` 为效果串所属卡），取值同上 |
+| 4–7 | `from_controller, from_location, from_sequence, from_position` | 起点位置 |
+| 8–11 | `to_controller, to_location, to_sequence, to_position` | 终点位置 |
+| 12–14 | `value1, value2, value3` | 与类型相关的整数（下表） |
+| 15 | `turn` | 事件后的回合数，截断到 999 |
+| 16 | `phase` | 事件后的阶段位序号 + 1（同全局向量第 4 列） |
+| 17 | `my_turn` | 事件后的回合玩家是否为 viewer |
+| 18 | `my_lp` | 事件后 viewer 的 LP，截断到 [0, 65535] |
+| 19 | `op_lp` | 事件后对手的 LP，同上 |
+
+位置四列的编码：`controller` 0 无、1 viewer、2 对手；`location` 同卡片表第 1 列（`LOCATION_OVERLAY` 位优先，记 8），0 无；`sequence` 为区域内序号（超量素材为所属怪兽序号），**卡组内一律记 0**（不泄露卡组顺序，同卡片表规则 4）；`position` 1–4 同卡片表第 6 列，其余表侧形式（魔陷、除外等）记 5、其余里侧形式记 6，超量素材与无位置信息记 0。没有该位置的事件四列全 0。
+
+### 事件类型
+
+| 编号 | 名称 | 来源 | `player` | `card` / `card2` | 位置 | `value1` / `value2` / `value3` |
+|----|------|------|------|------|------|------|
+| 1 | `draw` | `MSG_DRAW`，每张卡一行 | 抽卡者 | 抽到的卡 | to = 抽卡者手牌 | 本条消息抽卡张数 |
+| 2 | `move` | `MSG_MOVE` | 终点控制者（终点为空时取起点） | 移动的卡 | from / to | `reason` 位掩码（`& 0x7fffffff`） |
+| 3 | `pos_change` | `MSG_POS_CHANGE` | 控制者 | 该卡 | from = 原表示形式，to = 新表示形式 | |
+| 4 | `set` | `MSG_SET` | 控制者 | 该卡 | to | |
+| 5 | `swap` | `MSG_SWAP` | — | 卡 1 / 卡 2 | from = 卡 1 原位置，to = 卡 2 原位置 | |
+| 6–8 | `summoning` / `spsummoning` / `flipsummoning` | `MSG_SUMMONING` 等 | 控制者 | 被召唤的卡 | to | |
+| 9 | `chaining` | `MSG_CHAINING` | 发动者 | 发动的卡 / 效果串所属卡 | from = 该卡位置 | 连锁序号 / 效果串序号 + 1 / 系统串编号（同候选动作表第 3–5 列规则） |
+| 10–12 | `chain_solving` / `chain_negated` / `chain_disabled` | 同名消息 | 该连锁的发动者 | 该连锁发动的卡 | | 连锁序号 |
+| 13 | `chain_end` | `MSG_CHAIN_END` | | | | |
+| 14 | `new_turn` | `MSG_NEW_TURN` | 新回合玩家 | | | |
+| 15 | `new_phase` | `MSG_NEW_PHASE` | | | | 阶段位序号 + 1 |
+| 16–18 | `damage` / `recover` / `pay_lpcost` | 同名消息 | 受影响玩家 | | | 数值（截断到 65535） |
+| 19 | `lp_update` | `MSG_LPUPDATE` | 受影响玩家 | | | 新 LP（截断） |
+| 20 | `attack` | `MSG_ATTACK` | 攻击怪兽控制者 | 攻击怪兽 / 攻击对象 | from = 攻击怪兽，to = 攻击对象（直接攻击为空） | 直接攻击 1，否则 0 |
+| 21 | `battle` | `MSG_BATTLE` | 攻击怪兽控制者 | 攻击怪兽 / 攻击对象 | from / to | 攻击怪兽攻击力 / 对象攻击力 / 对象守备力（截断到 [0, 65535]） |
+| 22 | `attack_disabled` | `MSG_ATTACK_DISABLED` | | | | |
+| 23 | `equip` | `MSG_EQUIP` | 装备卡控制者 | 装备卡 / 装备对象 | from / to | |
+| 24 | `unequip` | `MSG_UNEQUIP` | 控制者 | 装备卡 | from | |
+| 25–26 | `card_target` / `cancel_target` | 同名消息 | 控制者 | 卡 / 对象 | from / to | |
+| 27–29 | `become_target` / `card_selected` / `random_selected` | 同名消息，每个位置一行 | 该位置控制者（`random_selected` 为选择者） | 该位置的卡 | from | |
+| 30–31 | `add_counter` / `remove_counter` | 同名消息 | 控制者 | 该位置的卡 | from | 指示物类型 / 数量 |
+| 32–34 | `confirm_cards` / `confirm_decktop` / `confirm_extratop` | 同名消息，每张卡一行 | 被出示者（`confirm_cards`）/ 卡组持有者 | 该卡 | from | |
+| 35 | `deck_top` | `MSG_DECK_TOP` | 卡组持有者 | 卡组顶的卡 | | |
+| 36–38 | `shuffle_deck` / `shuffle_hand` / `shuffle_extra` | 同名消息 | 该玩家 | | | 洗切张数（卡组为 0） |
+| 39 | `shuffle_set_card` | `MSG_SHUFFLE_SET_CARD` | | | from_location = 区域 | 张数 |
+| 40 | `swap_grave_deck` | `MSG_SWAP_GRAVE_DECK` | 该玩家 | | | |
+| 41 | `reverse_deck` | `MSG_REVERSE_DECK` | | | | |
+| 42 | `field_disabled` | `MSG_FIELD_DISABLED` | | | | viewer 的区域位掩码（16 位）/ 对手的 |
+| 43–44 | `toss_coin` / `toss_dice` | 同名消息 | 投掷者 | | | 次数 / 结果（硬币：第 i 次为正面置位 i；骰子：第 i 个点数放在第 3i 位起的 3 位，至多 10 个） |
+| 45 | `hand_res` | `MSG_HAND_RES` | | | | viewer 出的拳 / 对手出的拳（1–3） |
+| 46 | `abstain` | 合成（见下） | 放弃响应者 | 触发卡 | from = 触发卡位置 | 触发类型位掩码 / 放弃者场上卡数 / 放弃者手牌数 |
+
+「该位置的卡」来自历史自己维护的场上图（见下）；不在怪兽区 / 魔陷区的位置（墓地、除外、手牌等）不追踪，`card` 记 0。
+
+**不编码的消息**：全部决策消息（`MSG_SELECT_*`、`MSG_SORT_*`、`MSG_ANNOUNCE_*`、`MSG_ROCK_PAPER_SCISSORS`）——它们只发给决策方，内容（有哪些可选项）正是隐藏信息；`MSG_HINT` / `MSG_CARD_HINT` / `MSG_PLAYER_HINT` / `MSG_SHOW_HINT`（界面提示，部分只发给一方）；`MSG_MISSED_EFFECT`（只发给该卡控制者）；`MSG_RETRY`、`MSG_WAITING`、`MSG_WIN`、`MSG_RELOAD_FIELD`、`MSG_TAG_SWAP`、`MSG_REMOVE_CARDS`、`MSG_AI_NAME`、`MSG_MATCH_KILL`（非对局事件或对局已结束）；与相邻 token 冗余的 `MSG_SUMMONED` / `MSG_SPSUMMONED` / `MSG_FLIPSUMMONED`（紧跟对应的 `*SUMMONING`）、`MSG_CHAINED`（紧跟 `CHAINING`）、`MSG_CHAIN_SOLVED`（下一个 `chain_solving` 或 `chain_end` 隐含）、`MSG_DAMAGE_STEP_START` / `MSG_DAMAGE_STEP_END`（由 `battle` 隐含）；以及核心从不发出的消息。决策消息虽不编码，仍参与下文响应窗口的关闭判定（只用其类型，类型在对局规则下是公开的）。
+
+### 卡片身份的可见性
+
+核心消息里的卡片密码是上帝视角的；token 的 `card` / `card2` 只在 viewer 本就能知道时填卡片下标，否则记 1。与 EDOPro 服务器转发消息时的过滤一致，并补上「来源公开」的情形。先定义位置 `loc` **公开**：超量素材或墓地 → 公开；卡组、手牌 → 不公开；怪兽区、魔陷区、除外、额外卡组 → 表侧表示时公开；其他 → 不公开。
+
+| 事件 | 卡片可见，当且仅当 |
+|------|------|
+| `draw` | viewer 是抽卡者，或该卡以表侧抽出（卡组翻转时） |
+| `move` | viewer 是终点控制者（终点为空时取起点控制者），或终点公开，或起点公开 |
+| `pos_change` | viewer 是控制者，或原 / 新表示形式之一为表侧 |
+| `set` | viewer 是控制者 |
+| `swap` | 每张卡分别：viewer 是其新控制者，或其原位置公开 |
+| `*summoning` | viewer 是控制者，或召唤位置公开（里侧特殊召唤对对手隐藏） |
+| `chaining`、`chain_*`、`abstain` | 总是可见（发动即公开） |
+| `confirm_cards` | viewer 是被出示者，或该卡不在卡组（手牌等的出示双方都看到，EDOPro 同此） |
+| `confirm_decktop` / `confirm_extratop` | 总是可见 |
+| `deck_top` | 该卡为表侧 |
+| 场上图查得的卡（`attack`、`battle`、`equip`、`*target`、`*selected`、指示物） | viewer 是该卡控制者，或该卡当前为表侧 |
+
+对手抽到的卡、对手盖放的卡、加入对手手牌 / 卡组的卡、对手的里侧除外，因此都记 1；对手从卡组检索后按效果出示时，出示本身产生可见的 `confirm_cards` token。位置、张数、LP、连锁结构等**公开信息**不受影响。
+
+**场上图**：历史按 `move` / `pos_change` / `swap` / `set` / `*summoning` 维护两名玩家怪兽区（序号 0–6）与魔陷区（序号 0–7）上每个格子的卡与表示形式（`move` 只在起点格子仍是同一密码时才清空起点，以正确处理两条 `MSG_MOVE` 组成的交换），同时按 `draw` / `move` 维护双方手牌张数。场上卡数与手牌张数都是公开信息；测试逐决策点核对它们与核心查询一致。
+
+### 响应窗口与放弃 token
+
+「对手本可以响应却没有响应」是信念头的重要负证据（04 §4.5），但**对手是否真有合法响应是隐藏信息**：核心只在有可发动效果时才对某些窗口发 `MSG_SELECT_CHAIN`，决策消息的内容也只发给决策方。因此放弃 token 只由**公开**事件按规则判定——「在触发 X 之后按规则开了一个响应窗口，而某玩家在窗口内没有发动任何效果」——与该玩家手里有没有能发动的卡、核心有没有问他都无关。对 viewer 而言，「对手有灰流丽但放弃」与「对手根本没有灰流丽」产生**完全相同**的 token 流（测试 `test_abstain_stream_is_public` 逐行核对）。
+
+触发类型位掩码（`value1`）：
+
+| 位 | 名称 | 含义 |
+|----|------|------|
+| 1 | `search` | 该连锁处理时有卡从卡组加入手牌（`MSG_MOVE` 卡组 → 手牌） |
+| 2 | `spsummon_deck` | 该连锁处理时有卡从卡组特殊召唤（`MSG_MOVE` 卡组 → 怪兽区） |
+| 4 | `send_deck_gy` | 该连锁处理时有卡从卡组送去墓地（堆墓） |
+| 8 | `fifth_summon` | 回合玩家本回合第 5 次召唤 / 特殊召唤（尼比鲁的条件） |
+| 16 | `attack` | 攻击宣言 |
+| 32 | `other` | 该连锁处理时以上三种都没有发生（包括被无效） |
+
+两类窗口：
+
+1. **发动窗口**（灰流丽、效果遮蒙者、无限泡影类）：连锁第 `n` 环由玩家 A 发动。它处理完毕（`MSG_CHAIN_SOLVED n`）时，若对手 B 在第 `n` 环之后没有加入任何一环（B 在第 n 环之上没有连锁），就生成一个 `abstain` token：`player` = B，`card` / from = 第 `n` 环发动的卡，触发类型取第 `n` 环处理期间（`MSG_CHAIN_SOLVING n` 到 `MSG_CHAIN_SOLVED n`）观察到的卡组移动（`search` / `spsummon_deck` / `send_deck_gy` 的并集，都没有则 `other`）。处理期间才归类，是因为「这个效果含检索」只在处理后才由公开事件确认；被 B 连锁（包括被灰流丽无效）的环不生成 token——连锁本身已经是可见的 `chaining` token。双方对称：B 发动、A 不连锁同样生成 `player` = A 的 token。
+2. **事件窗口**（尼比鲁、攻击反应类）：`MSG_ATTACK`（放弃者 = 攻击怪兽控制者的对手）与回合玩家本回合第 5 次 `summoning` / `spsummoning`（按召唤位置的控制者计，`MSG_NEW_TURN` 清零；放弃者 = 非回合玩家）各打开一个窗口；放弃者在窗口内发动任何效果（`MSG_CHAINING` 的发动者是他）即视为已响应；窗口在下一次回到开放局面时关闭——即下一个 `MSG_SELECT_IDLECMD` / `MSG_SELECT_BATTLECMD`（任何一方）、`MSG_NEW_PHASE` 或 `MSG_NEW_TURN`，此时对每个未响应的窗口生成 `abstain` token（先于该消息自身的 token）。`card` 为攻击怪兽 / 第 5 次召唤的怪兽（按 `*summoning` 的可见性），from 为其位置。
+
+`abstain` token 的 `value2` / `value3` 是放弃者当时的场上卡数（怪兽区 + 魔陷区）与手牌张数，`my_lp` / `op_lp` / `turn` 列给出 LP 与回合——即设计中的「对手场面、LP、回合」。
+
+**已知局限**：从卡组以外（额外卡组、墓地）的检索与特召、「宣言卡名」等只在提示消息里出现的公开信息不单独编码；场上图之外的位置（墓地、除外）被取对象时 `card` 记 0；手牌里被公开（`QUERY_IS_PUBLIC`）的卡在之后的移动中仍按上表规则判定；增殖的 G 类「对方特殊召唤时」、屋敷童 / 墓穴类「墓地效果发动时」没有专门的触发位（落在 `other` 或不产生窗口）。
+
