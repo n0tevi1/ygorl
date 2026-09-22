@@ -1,11 +1,12 @@
 """Tests for the Agent protocol, GreedyAgent and PolicyAgent (T3.1)."""
 
+import functools
 import math
 from pathlib import Path
 
 import pytest
 
-from ygorl.agents import Agent, GreedyAgent, PolicyAgent, RandomAgent
+from ygorl.agents import AGENTS, Agent, GreedyAgent, PolicyAgent, RandomAgent, agent_name
 from ygorl.cards.ydk import load_ydk
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
@@ -67,6 +68,18 @@ def chosen(agent, decision, **kw):
 def test_all_agents_satisfy_the_protocol():
     for agent in (RandomAgent(0), GreedyAgent(0), PolicyAgent(lambda p: [0.0] * len(p.actions))):
         assert isinstance(agent, Agent)
+
+
+def test_agent_registry_and_names():
+    for name, factory in AGENTS.items():
+        assert isinstance(factory(0), Agent) and agent_name(factory) == name
+    assert agent_name(GreedyAgent(0)) == "greedy"
+    assert agent_name(functools.partial(GreedyAgent, max_repeats=1)) == "greedy"
+
+    def my_agent(seed):
+        return RandomAgent(seed)
+
+    assert agent_name(my_agent) == "test_agent_registry_and_names.<locals>.my_agent"
 
 
 # ------------------------------------------------------------------ greedy: main phase

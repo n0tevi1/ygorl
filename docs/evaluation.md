@@ -1,6 +1,6 @@
 # 基线 agent 与评估（`ygorl.agents`、`ygorl.eval`）
 
-本文说明 M3 的对手与裁判：Agent 协议与基线 agent（T3.1）。对应 [工程计划](eng-plan.md) M3。
+本文说明 M3 的对手与裁判：Agent 协议与基线 agent（T3.1）、配对种子 Arena（T3.2）。对应 [工程计划](eng-plan.md) M3。
 
 ## Agent 协议（`ygorl/agents/base.py`）
 
@@ -50,3 +50,47 @@ AgentFactory = Callable[[int], Agent]                 # 种子 -> 新 agent
 「有攻击者才进战斗阶段」的近似：agent 不追踪场面，主要阶段 1 能进战斗阶段就进，到了 BATTLECMD 没有可攻击的怪兽再去主要阶段 2 / 结束阶段。
 
 验收（T3.1）：`tests/test_agents.py` 让 Greedy 在 10 套测试牌组上各打一局（对 Random），零 retry、零未知消息，且都以胜负或回合上限结束；开发时的 200 局抽样全部以 `MSG_WIN` 结束，Greedy 胜率约 90%。
+
+`AGENTS = {"random": RandomAgent, "greedy": GreedyAgent}` 按名字登记基线 agent，供工具脚本与 CLI 使用。
+
+## Arena（`ygorl/eval/arena.py`，T3.2）
+
+```python
+from ygorl.agents import GreedyAgent, RandomAgent
+from ygorl.eval import Arena
+
+arena = Arena(GreedyAgent, RandomAgent, env=None, workers=2)   # 参数是 factory：seed -> agent
+report = arena.run(deck_a, deck_b, pairs=100, seed=0)          # 200 局
+print(report.summary())
+reports = arena.run_many([(a1, b1), (a2, b2, 7)], pairs=10)     # 多个对阵共用一个进程池；第三项可指定种子
+```
+
+**配对种子**：第 `p` 对用同一个对局种子 `s_p = derive_seed(seed, p)` 打两局，牌组相同、先后攻互换（`first=0` / `first=1`）。
+Arena 自己用 `shuffle_deck(main, s_p, 0/1)` 洗好双方主卡组，再以 `DuelConfig(shuffle_decks=False)` 按原顺序加载，
+所以同一对的两局起手与抽卡顺序完全相同；两局的 agent 种子也相同。这样能抵消大部分抽牌运气和先攻优势。
+`DuelConfig.shuffle_decks=False` 传给 Arena 时不洗牌（按牌组文件顺序）。
+
+**确定性**：每局由 `GameSpec`（种子、先攻、洗好的牌组、agent 种子、环境、配置）完全决定；
+`workers > 1` 时用 `multiprocessing` 进程池 `map`，结果按局序排列，与进程数无关（`test_results_do_not_depend_on_worker_count`）。
+factory 必须可 pickle。某局抛异常时记为 `reason="exception"`（胜者为空）并计入 `errors`，不中断整个评估。
+
+**报告** `ArenaReport`（均为 agent a 视角）：
+
+| 字段 | 含义 |
+|------|------|
+| `games`、`wins` / `losses` / `draws` | 局数与胜负平 |
+| `win_rate` | `(wins + draws / 2) / games`，平局算半胜 |
+| `ci`、`confidence` | `win_rate` 的 Wilson 区间（默认 95%）；`significant()`：区间不含 0.5 |
+| `as_first` / `as_second` | a 先攻 / 后攻时的 `SideStats`（局数、胜负平、胜率） |
+| `first_player_win_rate` | 先攻方胜率（衡量先攻优势） |
+| `reasons`、`retries`、`unknown_messages`、`errors`、`mean_turns` | 终局原因计数与健康指标 |
+| `environment` | 有环境时为 `Environment.stamp()` |
+| `records` | 每局的 `GameRecord`（对号、种子、先攻、胜者、原因、回合、决策数、LP 等） |
+
+`to_dict()` 可直接写 JSON；`merge(reports)` 把同一对 agent 的多份报告合并成一份。
+
+统计说明：平局按半胜计时，胜负平得分的方差不超过 `p(1 - p)`，所以 Wilson 区间偏保守；
+但区间假设各局独立，而配对的两局相关（同一起手），严格的配对检验留待需要时再加。
+
+**基准**：`uv run python tools/arena.py --games 2000 --workers 2` 让两个 agent 在 10 套测试牌组的全部有序组合
+（含镜像，100 组）上各打 `2 × pairs` 局并汇总，结果记在 [benchmarks.md](benchmarks.md)。

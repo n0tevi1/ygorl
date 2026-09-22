@@ -23,7 +23,7 @@
 - [设计文档](docs/design/README.md)：目标、引擎裁决、RL 挑战、对局策略、对手预测、组牌与 off-meta 发现、架构、风险。
 - [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
-- [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent。
+- [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
@@ -104,8 +104,9 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
-│   └── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
-├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对
+│   ├── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
+│   └── eval/                # 评估：配对种子 Arena
+├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准
 ├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
