@@ -196,6 +196,8 @@ struct Observation {
 void encode(Duel& core, const Tracker& tracker, const std::vector<Action>& actions, const CardDatabase& cards,
             const Vocab& vocab, Observation& out);
 
+struct Privileged;  // privileged.h (T2.5)
+
 // A single duel driven entirely in C++ (used by tests and by the pool).
 class HostDuel {
 public:
@@ -210,6 +212,8 @@ public:
     int player() const;
     void act(size_t index);
     void observe(Observation& out);
+    // Training-only opponent ground truth (privileged.cpp); never part of observe().
+    void observe_privileged(Privileged& out);
     const Tracker& tracker() const { return *tracker_; }
 
 private:

@@ -37,19 +37,28 @@ class EncodedEvent:
     player: int
     obs: dict[str, np.ndarray] | None  # the next decision to answer with step()
     result: dict | None  # the game is over (engine-player order)
+    # Training mode only (privileged=True): opponent ground truth for the critic / belief losses
+    # (docs/encoding.md). Kept out of ``obs`` so the actor cannot see it; None in inference mode.
+    privileged: dict[str, np.ndarray] | None = None
 
 
 class EncodedVecEnv:
     def __init__(self, num_envs: int, num_threads: int | None = None, cards=None, scripts=None,
-                 vocab: CardVocab | None = None) -> None:  # fmt: skip
+                 vocab: CardVocab | None = None, privileged: bool = False) -> None:  # fmt: skip
+        """``privileged=True`` is training mode: events also carry ``privileged`` (opponent ground truth).
+
+        The default (inference mode) never computes it. Evaluation and play must use the default.
+        """
         self.cards = cards if cards is not None else default_cards()
         self.vocab = vocab if vocab is not None else CardVocab.from_db(self.cards)
         passwords = [self.vocab.password(i) for i in range(CardVocab.FIRST_INDEX, len(self.vocab))]
         threads = num_threads or max(1, min(num_envs, os.cpu_count() or 1))
         self._pool = _core.HostPool(num_envs, threads, self.cards.to_core(),
-                                    scripts if scripts is not None else default_scripts(), passwords)  # fmt: skip
+                                    scripts if scripts is not None else default_scripts(), passwords,
+                                    privileged)  # fmt: skip
         self.num_envs = num_envs
         self.num_threads = threads
+        self.privileged = privileged
 
     def reset(self, env_id: int, spec: GameSpec) -> None:
         if spec.config.curriculum != "full" or spec.config.augmented_start:
@@ -68,7 +77,8 @@ class EncodedVecEnv:
 
     def recv(self, min_events: int = 1, timeout: float | None = None) -> list[EncodedEvent]:
         timeout_ms = -1 if timeout is None else int(timeout * 1000)
-        return [EncodedEvent(e, player, obs, result) for e, _done, player, obs, result in self._pool.recv(min_events, timeout_ms)]
+        return [EncodedEvent(e, player, obs, result, priv)
+                for e, _done, player, obs, result, priv in self._pool.recv(min_events, timeout_ms)]  # fmt: skip
 
     def pending(self) -> int:
         return self._pool.pending()

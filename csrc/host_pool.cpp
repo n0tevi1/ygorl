@@ -3,8 +3,9 @@
 namespace ygorl::host {
 
 HostPool::HostPool(size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
-                   std::shared_ptr<ScriptSource> scripts, std::shared_ptr<const Vocab> vocab)
-    : cards_(std::move(cards)), scripts_(std::move(scripts)), vocab_(std::move(vocab)), slots_(num_envs) {
+                   std::shared_ptr<ScriptSource> scripts, std::shared_ptr<const Vocab> vocab, bool privileged)
+    : cards_(std::move(cards)), scripts_(std::move(scripts)), vocab_(std::move(vocab)), privileged_(privileged),
+      slots_(num_envs) {
     pool_ = std::make_unique<WorkerPool<std::pair<int, PoolJob>, PoolEvent>>(
         num_envs, num_threads, [this](std::pair<int, PoolJob>& job) { return run(job.first, job.second); });
 }
@@ -41,6 +42,10 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
         if (!host->done() && !host->actions().empty()) {  // actions() may stop the duel (decision limit)
             ev.player = host->player();
             host->observe(ev.obs);
+            if (privileged_) {
+                host->observe_privileged(ev.privileged);
+                ev.has_privileged = true;
+            }
             return ev;
         }
     } catch (const std::exception& e) {

@@ -16,6 +16,7 @@ from ygorl.engine import constants as C
 from ygorl.engine import messages as M
 from ygorl.engine.duel import DecisionPoint
 from ygorl.engine.query import CARD_QUERY_FLAGS, parse_query_location
+from ygorl.env.privileged import encode_privileged
 
 N_CARDS = 160
 F_CARD = 23
@@ -52,11 +53,16 @@ def _clamp(value: int, lo: int = 0, hi: int = CLAMP) -> int:
 
 
 class ObservationEncoder:
-    """Encode a :class:`DecisionPoint` for its deciding player (see docs/encoding.md)."""
+    """Encode a :class:`DecisionPoint` for its deciding player (see docs/encoding.md).
 
-    def __init__(self, cards: Mapping, vocab: CardVocab) -> None:
+    ``privileged=True`` (training mode) additionally enables :meth:`encode_privileged`, the
+    opponent ground truth for critic / belief losses (T2.5); it is never part of :meth:`encode`.
+    """
+
+    def __init__(self, cards: Mapping, vocab: CardVocab, privileged: bool = False) -> None:
         self.cards = cards
         self.vocab = vocab
+        self.privileged = privileged
 
     # -- public ------------------------------------------------------------
     def encode(self, point: DecisionPoint, core) -> dict[str, np.ndarray]:
@@ -92,6 +98,12 @@ class ObservationEncoder:
             table[:n] = np.asarray(rows[:n], dtype=np.int64).astype(np.int32)
         actions, mask = self._actions(point, viewer, keys, deck_rows, n)
         return {"cards": table, "globals": self._globals(point, core, viewer), "actions": actions, "action_mask": mask}
+
+    def encode_privileged(self, point: DecisionPoint, core) -> dict[str, np.ndarray]:
+        """Opponent ground truth for ``point.player`` (training mode only; never give it to the actor)."""
+        if not self.privileged:
+            raise RuntimeError("privileged tensors are disabled (inference mode); construct with privileged=True")
+        return encode_privileged(core, point.player, self.vocab)
 
     # -- rows --------------------------------------------------------------
     def _card_row(self, card: dict, loc: int, seq: int, side: int, viewer: int, visible: bool) -> list[int]:

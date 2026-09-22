@@ -15,6 +15,7 @@
 #include "duel_pool.h"
 #include "host.h"
 #include "host_pool.h"
+#include "privileged.h"
 
 namespace py = pybind11;
 using namespace ygorl;
@@ -137,6 +138,18 @@ py::dict observation_dict(const host::Observation& o) {
     d["globals"] = to_array(o.globals, {host::G_GLOBAL});
     d["actions"] = to_array(o.actions, {host::MAX_OPTIONS, host::A_ACTION});
     d["action_mask"] = to_array(o.action_mask, {host::MAX_OPTIONS});
+    return d;
+}
+
+// Training-only opponent ground truth; kept out of observation_dict on purpose (the actor never sees it).
+py::dict privileged_dict(const host::Privileged& p) {
+    py::dict d;
+    d["op_hand"] = to_array(p.op_hand, {host::P_HAND, host::P_COLS});
+    d["op_deck"] = to_array(p.op_deck, {host::P_DECK, host::P_COLS});
+    d["op_extra"] = to_array(p.op_extra, {host::P_EXTRA, host::P_COLS});
+    d["op_set"] = to_array(p.op_set, {host::P_SET, host::P_COLS});
+    d["op_removed"] = to_array(p.op_removed, {host::P_REMOVED, host::P_COLS});
+    d["counts"] = to_array(p.counts, {host::P_COUNTS});
     return d;
 }
 
@@ -364,6 +377,14 @@ PYBIND11_MODULE(_core, m) {
             }
             return observation_dict(o);
         })
+        .def("observe_privileged", [](host::HostDuel& h) {
+            host::Privileged p;
+            {
+                py::gil_scoped_release release;
+                h.observe_privileged(p);
+            }
+            return privileged_dict(p);
+        }, "Training-only opponent ground truth (docs/encoding.md); never feed it to the actor.")
         .def("result", [](host::HostDuel& h) {
             const auto& t = h.tracker();
             py::dict d;
@@ -385,11 +406,12 @@ PYBIND11_MODULE(_core, m) {
     py::class_<host::HostPool>(m, "HostPool",
         "Vectorized env with the step loop, action states and encoder in C++ (env i on thread i % threads).")
         .def(py::init([](size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
-                         std::shared_ptr<ScriptDirectory> scripts, const std::vector<uint32_t>& vocab) {
+                         std::shared_ptr<ScriptDirectory> scripts, const std::vector<uint32_t>& vocab, bool privileged) {
                  return std::make_unique<host::HostPool>(num_envs, num_threads, cards, scripts,
-                                                         std::make_shared<host::Vocab>(vocab));
+                                                         std::make_shared<host::Vocab>(vocab), privileged);
              }),
-             py::arg("num_envs"), py::arg("num_threads"), py::arg("cards"), py::arg("scripts"), py::arg("vocab"))
+             py::arg("num_envs"), py::arg("num_threads"), py::arg("cards"), py::arg("scripts"), py::arg("vocab"),
+             py::arg("privileged") = false)
         .def("reset", [](host::HostPool& p, int env, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1,
                          py::tuple t2, DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
             host::PoolJob job;
@@ -412,10 +434,12 @@ PYBIND11_MODULE(_core, m) {
             }
             py::list out;
             for (const auto& e : events) {
+                // 6th element: training-mode ground truth, None in inference mode and at game end
+                py::object priv = e.has_privileged && !e.done ? py::object(privileged_dict(e.privileged)) : py::none();
                 if (e.done)
-                    out.append(py::make_tuple(e.env_id, true, e.player, py::none(), result_dict(e)));
+                    out.append(py::make_tuple(e.env_id, true, e.player, py::none(), result_dict(e), priv));
                 else
-                    out.append(py::make_tuple(e.env_id, false, e.player, observation_dict(e.obs), py::none()));
+                    out.append(py::make_tuple(e.env_id, false, e.player, observation_dict(e.obs), py::none(), priv));
             }
             return out;
         }, py::arg("min_results") = 1, py::arg("timeout_ms") = -1)
