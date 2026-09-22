@@ -14,8 +14,8 @@ cores in ``tools/make_test_decks.py`` ``DECKS``:
   the Fiendsmith cards of the Snake-Eye and Fiendsmith-Ryzeal decks form one
   "fiendsmith" package, the Ryzeal cards a "ryzeal" package.
 
-Names are resolved to passwords through cards.cdb (like make_test_decks.py);
-the output lists passwords (the key) with names for readability only. The
+Cards are keyed by password (like make_test_decks.py); the output lists
+passwords (the key) with names for readability only. The
 packages are an *evaluation* set: never use them to build the graph.
 """
 
@@ -35,36 +35,64 @@ _spec = importlib.util.spec_from_file_location("make_test_decks", ROOT / "tools"
 make_test_decks = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(make_test_decks)
 
-GENERIC = {
+GENERIC: set[int] = {  # password; names are comments for review only
     # generic Normal Traps and trap support played by Labrynth
-    "Transaction Rollback", "Dogmatika Punishment", "Destructive Daruma Karma Cannon", "Dimensional Barrier",
-    "Torrential Tribute", "Compulsory Evacuation Device", "Trap Trick",
+    6351147,  # Transaction Rollback
+    82956214,  # Dogmatika Punishment
+    30748475,  # Destructive Daruma Karma Cannon
+    83326048,  # Dimensional Barrier
+    53582587,  # Torrential Tribute
+    94192409,  # Compulsory Evacuation Device
+    80101899,  # Trap Trick
     # generic Extra Deck monsters
-    "Muckraker From the Underworld", "Chaos Angel", "Crystal Wing Synchro Dragon", "Stardust Dragon",
-    "Black Rose Dragon", "Mudragon of the Swamp", "El Shaddoll Construct", "Guardian Chimera",
-}  # fmt: skip
+    71607202,  # Muckraker From the Underworld
+    22850702,  # Chaos Angel
+    50954680,  # Crystal Wing Synchro Dragon
+    44508094,  # Stardust Dragon
+    73580471,  # Black Rose Dragon
+    54757758,  # Mudragon of the Swamp
+    20366274,  # El Shaddoll Construct
+    11321089,  # Guardian Chimera
+}
 
-SPLIT = {
+SPLIT: dict[str, set[int]] = {
     "fiendsmith": {
-        "Fiendsmith Engraver", "Fiendsmith in Paradise", "Fiendsmith's Tract", "Fiendsmith's Sanct", "Fiendsmith Kyrie",
-        "Lacrima the Crimson Tears", "Fiendsmith's Requiem", "Fiendsmith's Sequence", "Fiendsmith's Lacrima",
-        "Fiendsmith's Desirae", "Fiendsmith's Agnumday", "Necroquip Princess",
+        2463794,  # Fiendsmith's Requiem
+        26434972,  # Fiendsmith Kyrie
+        28803166,  # Lacrima the Crimson Tears
+        32991300,  # Fiendsmith's Agnumday
+        35552985,  # Fiendsmith's Sanct
+        46640168,  # Fiendsmith's Lacrima
+        49867899,  # Fiendsmith's Sequence
+        60764609,  # Fiendsmith Engraver
+        82135803,  # Fiendsmith's Desirae
+        93860227,  # Necroquip Princess
+        98567237,  # Fiendsmith's Tract
+        99989863,  # Fiendsmith in Paradise
     },
-    "ryzeal": {"Ice Ryzeal", "Sword Ryzeal", "Node Ryzeal", "Star Ryzeal", "Ryzeal Cross", "Ryzeal Duo Drive", "Ext Ryzeal", "Ryzeal Detonator"},
-}  # fmt: skip
+    "ryzeal": {
+        6798031,  # Ryzeal Cross
+        7511613,  # Ryzeal Duo Drive
+        8633261,  # Ice Ryzeal
+        34022970,  # Ext Ryzeal
+        34909328,  # Ryzeal Detonator
+        35844557,  # Sword Ryzeal
+        72238166,  # Node Ryzeal
+        84433129,  # Star Ryzeal
+    },
+}
 
 
 def derive(db: CardDB) -> dict:
-    names = make_test_decks.by_name(db)
     packages: dict[str, dict[int, str]] = {}
     excluded: dict[int, str] = {}
     for deck, spec in make_test_decks.DECKS.items():
-        for name, _count in spec:
-            pw = names[name]
-            if name in GENERIC:
+        for pw, _count in spec:
+            name = db[pw].name  # display only
+            if pw in GENERIC:
                 excluded[pw] = name
                 continue
-            target = next((pkg for pkg, members in SPLIT.items() if name in members), deck)
+            target = next((pkg for pkg, members in SPLIT.items() if pw in members), deck)
             packages.setdefault(target, {})[pw] = name
     return {
         "description": "Proxy engine packages derived from tools/make_test_decks.py DECKS (see tools/make_proxy_packages.py); "
