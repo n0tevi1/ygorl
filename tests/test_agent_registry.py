@@ -42,3 +42,20 @@ def test_register_agent_with_an_argument():
     finally:
         register_agent("test-ckpt", None)
     assert "test-ckpt" not in available_agents()
+
+
+def test_agent_factory_is_a_named_picklable_factory():
+    import pickle
+
+    from ygorl.agents import agent_factory, agent_name
+
+    factory = agent_factory("greedy")
+    assert agent_name(factory) == "greedy"
+    clone = pickle.loads(pickle.dumps(factory))
+    assert agent_name(clone) == "greedy"
+    a, b = factory(5), clone(5)
+    assert type(a).__name__ == "GreedyAgent" and type(a) is type(b)
+    with pytest.raises(ValueError, match="unknown agent 'nope'"):
+        agent_factory("nope")  # a bad spec fails when the factory is made, not in a worker
+    with pytest.raises(ValueError, match="random takes no argument"):
+        agent_factory("random:x")
