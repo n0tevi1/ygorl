@@ -139,3 +139,11 @@ def test_events():
     assert M.decode_message(rec(C.MSG_SHOW_HINT, "H", 2) + b"hi\0") == M.ShowHint("hi")
     assert M.decode_message(rec(C.MSG_SUMMONED)) == M.Summoned()
     assert M.decode_message(rec(C.MSG_CONFIRM_CARDS, "BIIBBI", 1, 1, 9, 0, C.LOCATION_HAND, 0)).cards[0].code == 9
+
+
+def test_reload_field_lp_is_signed():
+    """LP is an int32 in the core and goes negative after lethal damage."""
+    empty_player = struct.pack("<i", -1800) + b"\0" * 15 + struct.pack("<6I", 0, 0, 0, 0, 0, 0)
+    other = struct.pack("<i", 8000) + b"\0" * 15 + struct.pack("<6I", 35, 5, 0, 0, 15, 0)
+    msg = M.decode_message(rec(C.MSG_RELOAD_FIELD, "I", 0) + empty_player + other + struct.pack("<I", 0))
+    assert msg.players[0]["lp"] == -1800 and msg.players[1]["main"] == 35

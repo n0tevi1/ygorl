@@ -1187,7 +1187,7 @@ def _(r: Reader) -> Message:
     opts = r.u32()
     players = []
     for _ in range(2):
-        p: dict = {"lp": r.u32()}
+        p: dict = {"lp": r.i32()}
         for zone, n in (("mzone", 7), ("szone", 8)):
             slots = []
             for _ in range(n):
