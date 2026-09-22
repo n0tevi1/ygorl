@@ -11,11 +11,12 @@ Playing a replay under a different environment version, or under the same
 version whose files changed (fingerprint), raises
 :class:`ReplayEnvironmentMismatch`.
 
-``to_yrpx`` writes an EDOPro replay: a streamed packet list (MSG_START plus
-every engine message a spectator would see) and an embedded ``yrp1`` replay
-(seed, decks in load order, responses) that EDOPro's "yrp" mode re-simulates
-with its own core. Layout transcribed from edo9300/edopro gframe/replay.cpp
-and generic_duel.cpp.
+``to_yrpx`` writes an EDOPro replay: a streamed packet list (what EDOPro's
+host records: MSG_START, every engine message a spectator would see and the
+MSG_UPDATE_DATA / MSG_UPDATE_CARD refreshes it queries from the core around
+them) and an embedded ``yrp1`` replay (seed, decks in load order, responses)
+that EDOPro's "yrp" mode re-simulates with its own core. Layout transcribed
+from edo9300/edopro gframe/replay.cpp, generic_duel.cpp and core_utils.cpp.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import gzip
 import json
 import lzma
 import struct
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -50,6 +52,10 @@ EDOPRO_VERSION = (41, 0)  # client version written in the header (EDOPro 41.0)
 
 # Hint types the EDOPro host sends only to one player and leaves out of replays.
 _PRIVATE_HINTS = {1, 2, 3, 5}
+# MSG_WIN reason of the packet written for a game stopped by a turn / decision limit: EDOPro shows it as
+# "[loser] Time limit up" (its host writes the same reason when a player runs out of time).
+WIN_REASON_LIMIT = 0x3
+_LIMIT_REASONS = ("turn_limit", "decision_limit")
 
 
 class ReplayEnvironmentMismatch(ValueError):
@@ -83,6 +89,7 @@ class Replay:
     learner: int = 0
     augmented_start: bool = False
     seed_words: list[int] | None = None  # explicit core seed words (replays from other hosts); None = expand_seed(seed)
+    recorded_at: int | None = None  # unix time the duel was recorded (the .yrpX date); None in older files
 
     # -- construction -----------------------------------------------------
     @classmethod
@@ -108,6 +115,7 @@ class Replay:
             learner=cfg.learner,
             augmented_start=cfg.augmented_start,
             seed_words=None if duel.core_seed == expand_seed(duel.seed) else list(duel.core_seed),
+            recorded_at=int(time.time()),
         )
 
     @classmethod
@@ -118,7 +126,9 @@ class Replay:
         supported. The decks are taken in load order, so the host shuffle is
         off; engine player 0 (the first ``yrp1`` deck) is deck ``a`` and moves
         first. Such a replay carries no environment: it re-runs under the rule
-        flags and player rules of the file.
+        flags and player rules of the file. The header timestamp is the
+        recording date (``recorded_at``); the seed words are explicit, so
+        ``seed`` is 0.
         """
         yrp = source if isinstance(source, YrpFile) else (parse_yrp(source) if isinstance(source, bytes) else load_yrp(source))
         yrp = yrp.replayable()
@@ -130,10 +140,10 @@ class Replay:
         names = yrp.names + ("", "")
         decks = {side: {"name": names[i], "main": list(yrp.decks[i][0]), "extra": list(yrp.decks[i][1]), "side": []}
                  for i, side in enumerate("ab")}  # fmt: skip
-        return cls(seed=yrp.timestamp, first=0, rule_flags=yrp.rule_flags,
+        return cls(seed=0, first=0, rule_flags=yrp.rule_flags,
                    player={"starting_lp": lp, "starting_hand": hand, "draw_per_turn": draw}, shuffle_decks=False,
                    decks=decks, responses=list(yrp.responses), engine={"ocgcore": list(_core.ocg_version())},
-                   seed_words=list(yrp.seed))  # fmt: skip
+                   seed_words=list(yrp.seed), recorded_at=yrp.timestamp or None)  # fmt: skip
 
     @property
     def core_seed(self) -> list[int]:
@@ -173,8 +183,9 @@ class Replay:
     def to_json(self) -> dict[str, Any]:
         d = asdict(self)
         d["responses"] = [r.hex() for r in self.responses]
-        if self.seed_words is None:
-            del d["seed_words"]  # files of ordinary duels stay as before
+        for key in ("seed_words", "recorded_at"):
+            if d[key] is None:
+                del d[key]  # optional keys: files without them stay as before
         return {"format": FORMAT, "format_version": FORMAT_VERSION, **d}
 
     @classmethod
@@ -209,32 +220,33 @@ class Replay:
         """Write an EDOPro ``.yrpX`` (streamed packets + embedded ``yrp1``).
 
         ``names`` are given in (a, b) order. The duel is re-run to collect the
-        message stream, so the environment check applies; ``kwargs`` (``cards``,
-        ``scripts``) go to :class:`Duel`.
+        packet stream (the core is queried along the way, as EDOPro's host
+        does), so the environment check applies; ``kwargs`` (``cards``,
+        ``scripts``) go to :class:`Duel`. A game the recorded result says was
+        stopped by the turn or decision limit ends with a MSG_WIN packet
+        (winner from ``result``, reason :data:`WIN_REASON_LIMIT`). The header
+        date is ``recorded_at`` (0 when unknown), so exports are reproducible.
         """
-        duel = self.duel(env, record_messages=True, **kwargs)
-        result = duel.replay(self.responses)
+        duel = self.duel(env, **kwargs)
         seat_names = (names[duel.deck_of(0)], names[duel.deck_of(1)])
         loaded = duel.loaded_decks()
-        yrp1 = self._yrp1(seat_names, loaded)
+        lp = self.player["starting_lp"]
+        host = _HostStream(struct.pack("<BIIHHHH", 0, lp, lp, len(loaded[0][0]), len(loaded[0][1]), len(loaded[1][0]),
+                                       len(loaded[1][1])))  # fmt: skip
+        duel.replay(self.responses, observer=host)
+        if not host.won and self.result.get("reason") in _LIMIT_REASONS:
+            winner = self.result.get("winner")
+            seat = 2 if winner is None else (winner - duel.first) % 2
+            host.packets += _packet(C.MSG_WIN, bytes([seat, WIN_REASON_LIMIT]))  # the host's own [player, reason] packet
 
+        timestamp = self.recorded_at or 0
         body = bytearray(_names_block(seat_names))
         body += struct.pack("<Q", self.rule_flags)
-        lp = self.player["starting_lp"]
-        start = struct.pack("<BIIHHHH", 0, lp, lp, len(loaded[0][0]), len(loaded[0][1]), len(loaded[1][0]), len(loaded[1][1]))
-        body += _packet(C.MSG_START, start)
-        for buf in result.message_log:
-            for record in M.split_messages(buf):
-                msg_type, payload = record[0], record[1:]
-                if msg_type in M.DECISION_TYPES or msg_type == C.MSG_RETRY:
-                    continue
-                if msg_type == C.MSG_HINT and payload[:1] and payload[0] in _PRIVATE_HINTS:
-                    continue
-                body += _packet(msg_type, payload)
-        body += _packet(OLD_REPLAY_MODE, yrp1)
-        Path(path).write_bytes(_header(REPLAY_YRPX, self.core_seed, len(body), self.seed) + bytes(body))
+        body += host.packets
+        body += _packet(OLD_REPLAY_MODE, self._yrp1(seat_names, loaded, timestamp))
+        Path(path).write_bytes(_header(REPLAY_YRPX, self.core_seed, len(body), timestamp) + bytes(body))
 
-    def _yrp1(self, seat_names: tuple[str, str], loaded) -> bytes:
+    def _yrp1(self, seat_names: tuple[str, str], loaded, timestamp: int) -> bytes:
         p = self.player
         body = bytearray(_names_block(seat_names))
         body += struct.pack("<IIIQ", p["starting_lp"], p["starting_hand"], p["draw_per_turn"], self.rule_flags)
@@ -246,7 +258,202 @@ class Replay:
             if not 0 < len(r) < 256:
                 raise ValueError(f"response of {len(r)} bytes cannot be stored in a yrp1 replay")
             body += bytes([len(r)]) + r
-        return _header(REPLAY_YRP1, self.core_seed, len(body), self.seed) + bytes(body)
+        return _header(REPLAY_YRP1, self.core_seed, len(body), timestamp) + bytes(body)
+
+
+# ---------------------------------------------------------------- EDOPro host packet stream
+
+# Query flags of the host's refreshes (gframe/generic_duel.h default arguments).
+_Q_MZONE, _Q_SZONE, _Q_HAND, _Q_GRAVE, _Q_EXTRA = 0x3981FFF, 0x3F81FFF, 0x3781FFF, 0x381FFF, 0x381FFF
+_Q_SINGLE, _Q_DECK, _Q_SET_CARD = 0x3F81FFF, 0x1181FFF, 0x3181FFF
+_Q_TAG_MZONE, _Q_TAG_SZONE = 0x3181FFF, 0x3781FFF
+_AFTER_FIELD = frozenset({C.MSG_DAMAGE_STEP_START, C.MSG_DAMAGE_STEP_END, C.MSG_SUMMONED, C.MSG_SPSUMMONED,
+                          C.MSG_FLIPSUMMONED, C.MSG_NEW_PHASE, C.MSG_CHAINED, C.MSG_CHAIN_SOLVED, C.MSG_CHAIN_END})  # fmt: skip
+_KNOWN_QUERIES = frozenset(1 << i for i in range(26)) | {C.QUERY_END}
+
+
+def _loc_info(payload: bytes, pos: int) -> tuple[int, int, int, int]:
+    """(controller, location, sequence, position) of a 10-byte loc_info (CoreUtils::ReadLocInfo)."""
+    con, loc, seq, position = struct.unpack_from("<BBII", payload, pos)
+    return con, loc, seq, position
+
+
+def _host_query(raw: bytes, pos: int) -> tuple[bytes, int]:
+    """One card's query as EDOPro's host re-serialises it (CoreUtils::Query::Parse + GenerateBuffer(false, false)).
+
+    The core writes ``[u16 size][u32 flag][data]`` records up to QUERY_END (a lone ``u16 0`` is an empty
+    slot). The host writes the flags it read in ascending order, drops a reason / equip card without a
+    location and keeps unknown flags without their data. Returns the bytes and the position after the card.
+    """
+    (size,) = struct.unpack_from("<H", raw, pos)
+    if size == 0:
+        return b"\0\0", pos + 2
+    fields: dict[int, bytes] = {}
+    while True:
+        (size, flag) = struct.unpack_from("<HI", raw, pos)
+        fields[flag] = raw[pos + 6 : pos + 2 + size] if flag in _KNOWN_QUERIES else b""
+        pos += 2 + size
+        if flag == C.QUERY_END:
+            break
+    out = bytearray()
+    for flag in sorted(fields):
+        data = fields[flag]
+        if flag in (C.QUERY_REASON_CARD, C.QUERY_EQUIP_CARD) and data[1] == 0:
+            continue
+        out += struct.pack("<HI", len(data) + 4, flag) + data
+    return bytes(out), pos
+
+
+class _HostStream:
+    """The packets EDOPro's host (gframe/generic_duel.cpp) records into a ``.yrpX``, rebuilt from a live core.
+
+    ``GenericDuel::Analyze``: every engine message but decisions and private hints is recorded;
+    ``BeforeParsing`` / ``AfterParsing`` add MSG_UPDATE_DATA / MSG_UPDATE_CARD refreshes queried from the
+    core, and for the messages ``BeforeParsing`` handles the message itself goes after them
+    (``record_last``). The host stops reading a buffer at a decision and stops recording at MSG_WIN.
+    Unlike the host we also leave out MSG_RETRY (the host ends the duel there; a recorded game that
+    retried a response is still worth watching).
+    """
+
+    def __init__(self, start_payload: bytes) -> None:
+        self.start_payload = start_payload
+        self.packets = bytearray()
+        self.won = False
+        self._core = None
+        self._out: list[bytes] = []
+
+    # -- observer protocol (Duel.replay) --------------------------------
+    def on_start(self, core) -> None:
+        self._core = core
+        self.packets += _packet(C.MSG_START, self.start_payload)
+        self._out = []
+        self._deck(0)
+        self._deck(1)
+        self._location(0, C.LOCATION_EXTRA, _Q_EXTRA)
+        self._location(1, C.LOCATION_EXTRA, _Q_EXTRA)
+        self._flush()
+
+    def on_buffer(self, core, buf: bytes) -> None:
+        if self.won:
+            return
+        self._core = core
+        for record in M.split_messages(buf):
+            msg, payload = record[0], record[1:]
+            self._out = []
+            last = self._before(msg, payload)
+            record_it = not (msg in M.DECISION_TYPES or msg == C.MSG_RETRY
+                             or (msg == C.MSG_HINT and payload[:1] and payload[0] in _PRIVATE_HINTS))  # fmt: skip
+            self._after(msg, payload)
+            if record_it:
+                packet = _packet(msg, payload)
+                self._out.insert(len(self._out) if last else 0, packet)
+            self._flush()
+            if msg == C.MSG_WIN:
+                self.won = True
+                return
+            if msg in M.DECISION_TYPES:
+                return
+
+    # -- GenericDuel::BeforeParsing / AfterParsing ----------------------
+    def _before(self, msg: int, p: bytes) -> bool:
+        if msg in (C.MSG_SELECT_BATTLECMD, C.MSG_SELECT_IDLECMD):
+            self._field(hands=True)
+        elif msg in (C.MSG_SELECT_CHAIN, C.MSG_NEW_TURN):
+            self._field()
+        elif msg == C.MSG_FLIPSUMMONING:
+            con, loc, seq, _ = _loc_info(p, 4)
+            self._single(con, loc, seq)
+        else:
+            return False
+        return True
+
+    def _after(self, msg: int, p: bytes) -> None:
+        if msg in (C.MSG_SHUFFLE_HAND, C.MSG_DRAW):
+            self._location(p[0], C.LOCATION_HAND, _Q_HAND)
+        elif msg == C.MSG_SHUFFLE_EXTRA:
+            self._location(p[0], C.LOCATION_EXTRA, _Q_EXTRA)
+        elif msg == C.MSG_SWAP_GRAVE_DECK:
+            self._location(p[0], C.LOCATION_GRAVE, _Q_GRAVE)
+        elif msg == C.MSG_REVERSE_DECK:
+            self._deck(0)
+            self._deck(1)
+        elif msg == C.MSG_SHUFFLE_SET_CARD:
+            self._location(0, p[0], _Q_SET_CARD)
+            self._location(1, p[0], _Q_SET_CARD)
+        elif msg in _AFTER_FIELD:
+            if msg == C.MSG_CHAIN_END:
+                self._deck(0)
+                self._deck(1)
+            self._location(0, C.LOCATION_MZONE, _Q_MZONE)
+            self._location(1, C.LOCATION_MZONE, _Q_MZONE)
+            if msg not in (C.MSG_DAMAGE_STEP_START, C.MSG_DAMAGE_STEP_END):
+                self._location(0, C.LOCATION_SZONE, _Q_SZONE)
+                self._location(1, C.LOCATION_SZONE, _Q_SZONE)
+            if msg in (C.MSG_NEW_PHASE, C.MSG_CHAINED, C.MSG_CHAIN_END):
+                self._location(0, C.LOCATION_HAND, _Q_HAND)
+                self._location(1, C.LOCATION_HAND, _Q_HAND)
+        elif msg == C.MSG_MOVE:
+            prev_con, prev_loc, _, _ = _loc_info(p, 4)
+            con, loc, seq, _ = _loc_info(p, 14)
+            if loc and not loc & C.LOCATION_OVERLAY and (loc != prev_loc or con != prev_con):
+                self._single(con, loc, seq)
+        elif msg == C.MSG_POS_CHANGE:
+            con, loc, seq, prev_pos, pos = p[4], p[5], p[6], p[7], p[8]
+            if prev_pos & C.POS_FACEDOWN and pos & C.POS_FACEUP:
+                self._single(con, loc, seq)
+        elif msg == C.MSG_SWAP:
+            first, second = _loc_info(p, 4), _loc_info(p, 18)
+            self._single(*first[:3])
+            self._single(*second[:3])
+        elif msg == C.MSG_TAG_SWAP:
+            self._deck(p[0])
+            self._location(p[0], C.LOCATION_EXTRA, _Q_EXTRA)
+            self._location(0, C.LOCATION_MZONE, _Q_TAG_MZONE)
+            self._location(1, C.LOCATION_MZONE, _Q_TAG_MZONE)
+            self._location(0, C.LOCATION_SZONE, _Q_TAG_SZONE)
+            self._location(1, C.LOCATION_SZONE, _Q_TAG_SZONE)
+            self._location(0, C.LOCATION_HAND, _Q_HAND)
+            self._location(1, C.LOCATION_HAND, _Q_HAND)
+        elif msg == C.MSG_RELOAD_FIELD:
+            self._location(0, C.LOCATION_EXTRA, _Q_EXTRA)
+            self._location(1, C.LOCATION_EXTRA, _Q_EXTRA)
+
+    def _field(self, hands: bool = False) -> None:
+        for loc, flags in ((C.LOCATION_MZONE, _Q_MZONE), (C.LOCATION_SZONE, _Q_SZONE)):
+            self._location(0, loc, flags)
+            self._location(1, loc, flags)
+        if hands:
+            self._location(0, C.LOCATION_HAND, _Q_HAND)
+            self._location(1, C.LOCATION_HAND, _Q_HAND)
+
+    # -- GenericDuel::RefreshLocation / RefreshSingle / PseudoRefreshDeck --
+    def _location(self, player: int, location: int, flags: int) -> None:
+        raw = self._core.query_location(flags, player, location)
+        if not raw:
+            return
+        (size,) = struct.unpack_from("<I", raw, 0)
+        body, pos = bytearray(), 4
+        while pos < 4 + size:
+            card, pos = _host_query(raw, pos)
+            body += card
+        self._out.append(_packet(C.MSG_UPDATE_DATA, struct.pack("<BBI", player, location & 0xFF, len(body)) + body))
+
+    def _single(self, player: int, location: int, sequence: int) -> None:
+        raw = self._core.query(_Q_SINGLE, player, location & 0xFF, sequence & 0xFF, 0)
+        if not raw:
+            return
+        card, _ = _host_query(raw, 0)
+        self._out.append(_packet(C.MSG_UPDATE_CARD, bytes([player, location & 0xFF, sequence & 0xFF]) + card))
+
+    def _deck(self, player: int) -> None:
+        raw = self._core.query_location(_Q_DECK, player, C.LOCATION_DECK)
+        if raw:
+            self._out.append(_packet(C.MSG_UPDATE_DATA, bytes([player, C.LOCATION_DECK]) + raw))
+
+    def _flush(self) -> None:
+        for packet in self._out:
+            self.packets += packet
+        self._out = []
 
 
 def _names_block(names: tuple[str, str]) -> bytes:
