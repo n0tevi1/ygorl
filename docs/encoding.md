@@ -81,7 +81,7 @@
 |----|------|------|
 | 0 | `kind` | 动作类型编号 + 1（`ygorl.env.encoding.ACTION_KINDS` 的顺序），0 填充 |
 | 1 | `card_row` | 所指卡在卡片表中的行号 + 1，0 无；卡组中的卡按卡片下标匹配构成行 |
-| 2 | `card_index` | 所指卡（宣言动作为被宣言的卡）的词表下标 |
+| 2 | `card_index` | 所指卡（宣言动作为被宣言的卡）的词表下标；该卡对决策方隐藏时为 0（见下「决策中的隐藏信息」），此时第 1 列仍指向卡片表里那张（未知的）卡 |
 | 3 | `effect_card` | 效果描述串所属卡的词表下标（`description >> 20` 是已知卡时），否则 0 |
 | 4 | `effect_index` | 该卡的第几个效果串 + 1（`(description & 0xfffff) + 1`，即 `str1..16`），否则 0 |
 | 5 | `system_string` | 描述不是卡片效果串时的系统串编号（截断到 65535），否则 0 |
@@ -91,6 +91,8 @@
 | 9 | `index` | 动作在其所属列表中的下标 + 1（截断到 255），无则 0 |
 
 EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），所以描述的高位是卡片密码、低 20 位是串序号；比 `1 << 20` 小的描述是系统串。`effect_card` + `effect_index` 就是效果级文本嵌入（设计 I5）的查表键。
+
+**决策中的隐藏信息**：核心在 SELECT_CARD / SELECT_TRIBUTE / SELECT_UNSELECT_CARD 里写的是真实卡密，包括对手里侧、手牌、卡组中的卡（例如选择破坏对手盖放的卡）；EDOPro 服务端把这三种消息里对手卡的卡密清零后才发给玩家（`generic_duel.cpp` `Sending`）。主机在解码决策时做同样的事（`messages.hide_private`，C++ `host::hide_private`）：对手的卡若不在墓地 / 超量素材中，且在卡组 / 手牌中或里侧表示（SELECT_TRIBUTE 不带表示形式，未知一律按隐藏处理），卡密置 0。表侧的对手卡保留卡密（它在场上本就可见）。因此 `DecisionPoint.actions`、动作表第 2 列、以及所有 agent（含 GreedyAgent）都看不到这些卡的身份；原始消息日志（回放、`.yrpX` 导出）不受影响。这是审计发现的泄露（修复前动作表第 2 列会带出对手里侧卡的身份），`tests/test_visibility.py` 覆盖 Python 与 C++ 两条路径。
 
 **截断（未解决）**：合法动作超过 128 个时（主要是 ANNOUNCE_CARD 宣言卡名，可达上千个）只编码前 128 个，`globals[20]` 记录真实数量，`action_mask` 只标前 128 行，**第 128 行之后的动作 agent 选不到**。T2.3 只处理了多选拆步，没有处理这一点；可能的方案是把宣言拆成「先选类别 / 种族 / 属性再选卡」的多步，或按信念头排序只列前 128 个。待网络（T4b.1）落地后决定，见 [eng-plan.md](eng-plan.md) T2.3 备注。
 

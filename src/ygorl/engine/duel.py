@@ -502,6 +502,7 @@ class DuelTracker:
             self.stop("error", "engine awaits a response but sent no decodable decision")
             return
         self._last_decision = decision
+        decision = M.hide_private(decision)  # what the decider may see (the message log keeps the raw bytes)
         if self.turn > self.config.max_turns:
             self.stop("turn_limit")
             return

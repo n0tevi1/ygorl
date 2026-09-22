@@ -151,8 +151,22 @@ def test_greedy_attacks_the_strongest_target_it_beats():
     assert _attack_then_target(GreedyAgent(0), BLUE_EYES, targets).card.code == DARK_MAGICIAN
     assert _attack_then_target(GreedyAgent(0), CELTIC_GUARDIAN, targets).card.code == KURIBOH
     # Defense-position targets are compared by DEF: 1400 does not beat Big Shield Gardna's 2600 DEF.
-    targets = [card(BIG_SHIELD_GARDNA, sequence=0, **def_pos), card(KURIBOH, sequence=1, **atk_pos)]
+    up_def = dict(def_pos, position=C.POS_FACEUP_DEFENSE)
+    targets = [card(BIG_SHIELD_GARDNA, sequence=0, **up_def), card(KURIBOH, sequence=1, **atk_pos)]
     assert _attack_then_target(GreedyAgent(0), CELTIC_GUARDIAN, targets).card.code == KURIBOH
+
+
+def test_greedy_never_peeks_at_face_down_targets():
+    """A face-down target arrives with code 0 (messages.hide_private); Greedy assumes HIDDEN_STAT for it."""
+    from ygorl.agents.greedy import HIDDEN_STAT
+
+    hidden = card(0, OPP, C.LOCATION_MZONE, 0, C.POS_FACEDOWN_DEFENSE)
+    kuriboh = card(KURIBOH, OPP, C.LOCATION_MZONE, 1, C.POS_FACEUP_ATTACK)
+    assert HIDDEN_STAT == 1500
+    # 2500 beats the assumed 1500: the stronger (hidden) target is attacked.
+    assert _attack_then_target(GreedyAgent(0), DARK_MAGICIAN, [hidden, kuriboh]).card.loc == hidden.loc
+    # 1400 does not: Kuriboh is attacked instead.
+    assert _attack_then_target(GreedyAgent(0), CELTIC_GUARDIAN, [hidden, kuriboh]).card.code == KURIBOH
 
 
 def test_greedy_cancels_a_losing_attack_and_does_not_retry_it():

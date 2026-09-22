@@ -88,6 +88,10 @@ struct Decision {
 bool is_decision_type(uint8_t type);
 // Decode one record ([type][payload]); nullopt if the type is not a decision or the payload is malformed.
 std::optional<Decision> decode_decision(const uint8_t* data, size_t size);
+// Mirror of messages.is_hidden_from / hide_private: zero the codes of cards the decider cannot see
+// in SELECT_CARD / SELECT_TRIBUTE / SELECT_UNSELECT_CARD (as EDOPro's server does).
+bool is_hidden_from(uint8_t viewer, const Loc& loc);
+void hide_private(Decision& d);
 
 // Step-wise builder of the response to one decision (mirror of actions.DecisionState).
 class DecisionState {

@@ -293,8 +293,8 @@ void encode(Duel& core, const Tracker& tracker, const std::vector<Action>& actio
         int32_t* row = out.actions.data() + i * A_ACTION;
         out.action_mask[i] = 1;
         row[0] = static_cast<int32_t>(a.kind) + 1;
-        if (a.has_card && a.card.code) {
-            row[2] = vocab.index(a.card.code);
+        if (a.has_card) {
+            if (a.card.code) row[2] = vocab.index(a.card.code);  // 0 when hidden from the decider
             const Loc& l = a.card.loc;
             std::optional<size_t> ref;
             if (l.location & LOCATION_OVERLAY) {

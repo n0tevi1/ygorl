@@ -4,6 +4,8 @@
 
 ## Greedy vs Random（T3.2 验收）
 
+> **注意**：下表测于修复「决策中的隐藏信息」泄露之前（见 [encoding.md](encoding.md)），当时 GreedyAgent 选攻击目标时能看到对手里侧怪兽的真实守备力。修复后的复测见本节末尾。
+
 | 项 | 值 |
 |----|----|
 | 命令 | `uv run python tools/arena.py --games 2000 --workers 2 --seed 0` |

@@ -120,6 +120,18 @@ bool is_decision_type(uint8_t t) {
     }
 }
 
+bool is_hidden_from(uint8_t viewer, const Loc& loc) {
+    if (loc.controller == viewer || (loc.location & (LOCATION_GRAVE | LOCATION_OVERLAY))) return false;
+    return (loc.location & (LOCATION_DECK | LOCATION_HAND)) || (loc.position & POS_FACEDOWN) || loc.position == 0;
+}
+
+void hide_private(Decision& d) {
+    if (d.type != MSG_SELECT_CARD && d.type != MSG_SELECT_TRIBUTE && d.type != MSG_SELECT_UNSELECT_CARD) return;
+    for (auto* list : {&d.cards, &d.unselectable})
+        for (CardRef& c : *list)
+            if (is_hidden_from(d.player, c.loc)) c.code = 0;
+}
+
 std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
     if (size < 1 || !is_decision_type(data[0])) return std::nullopt;
     Decision d;
@@ -894,6 +906,7 @@ void Tracker::on_buffer(const std::string& buf, int status) {
         return;
     }
     last_decision_ = decision;
+    hide_private(*decision);  // what the decider may see (mirror of messages.hide_private)
     if (turn_ > cfg_.max_turns) {
         stop("turn_limit");
         return;

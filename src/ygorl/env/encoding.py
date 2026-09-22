@@ -190,8 +190,9 @@ class ObservationEncoder:
             mask[i] = 1
             row[0] = ACTION_KINDS.index(action.kind) + 1
             card = action.card
-            if card is not None and card.code:
-                row[2] = self.vocab.index(card.code)
+            if card is not None:
+                if card.code:  # 0 when hidden from the decider (messages.hide_private)
+                    row[2] = self.vocab.index(card.code)
                 ref = self._card_ref(card, viewer, keys, deck_rows)
                 if ref is not None and ref < n_rows:
                     row[1] = ref + 1

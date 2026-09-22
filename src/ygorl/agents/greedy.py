@@ -11,7 +11,8 @@ memory); it never tracks the board. Card stats come from the card database
 * attack target: the strongest target whose ATK (attack position) or DEF
   (defense position) the attacker's ATK strictly exceeds; if none, cancel the
   attack (and do not try that attacker again this turn), or, when it cannot be
-  cancelled, the weakest target;
+  cancelled, the weakest target. A face-down target's identity is hidden
+  (``messages.hide_private``), so its stat is assumed to be ``HIDDEN_STAT``;
 * chain whenever possible, answer yes, choose attack position when ATK >= DEF;
 * card selections: keep selecting (tributes: lowest ATK first, otherwise
   seeded random), ``finish`` only when nothing else is offered, never unselect;
@@ -36,6 +37,8 @@ from ygorl.engine.actions import Action
 
 if TYPE_CHECKING:
     from ygorl.engine.duel import DecisionPoint
+
+HIDDEN_STAT = 1500  # assumed ATK/DEF of a target whose identity is hidden (face-down)
 
 HINTMSG_ATTACKTARGET = 549  # constant.lua; MSG_HINT(HINT_SELECTMSG) before the attack target selection
 
@@ -162,6 +165,8 @@ class GreedyAgent:
         power = self._attack(attacker.card.code)
 
         def stat(a: Action) -> int:
+            if not a.card.code:  # hidden from us: assume a typical value, never peek
+                return HIDDEN_STAT
             pos = a.card.loc.position
             return self._attack(a.card.code) if pos & C.POS_ATTACK else self._defense(a.card.code)
 

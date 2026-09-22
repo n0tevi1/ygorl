@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import struct
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ygorl.engine import constants as C
 
@@ -1279,6 +1279,36 @@ def decode_message(record: bytes) -> Message:
     if reader.remaining():
         log.warning("%s: %d trailing bytes ignored", MESSAGE_NAMES.get(msg_type, msg_type), reader.remaining())
     return msg
+
+
+def is_hidden_from(viewer: int, loc: Location) -> bool:
+    """A card at ``loc`` is hidden from ``viewer`` (EDOPro's public test for moves, generic_duel.cpp):
+    it belongs to the other player, is not in the GY or an overlay, and is in the deck / hand or face-down.
+    A position of 0 means the message did not say (SELECT_TRIBUTE) and counts as hidden."""
+    if loc.controller == viewer or loc.location & (C.LOCATION_GRAVE | C.LOCATION_OVERLAY):
+        return False
+    return bool(loc.location & (C.LOCATION_DECK | C.LOCATION_HAND) or loc.position & C.POS_FACEDOWN or not loc.position)
+
+
+def _mask(cards: tuple, viewer: int) -> tuple:
+    return tuple(replace(c, code=0) if c.code and is_hidden_from(viewer, c.loc) else c for c in cards)
+
+
+def hide_private(decision: Message) -> Message:
+    """The decision as the deciding player may see it: hidden cards' codes set to 0.
+
+    The core writes real passwords into SELECT_CARD / SELECT_TRIBUTE / SELECT_UNSELECT_CARD even for
+    the opponent's face-down or hand cards; EDOPro's server strips opponent codes from exactly these
+    messages before sending them (generic_duel.cpp ``Sending``). We strip the codes of cards that are
+    hidden from the decider (:func:`is_hidden_from`) and keep those of public cards, which the player
+    sees on the field anyway. Other decisions are returned unchanged.
+    """
+    if isinstance(decision, (SelectCard, SelectTribute)):
+        return replace(decision, cards=_mask(decision.cards, decision.player))
+    if isinstance(decision, SelectUnselectCard):
+        return replace(decision, selectable=_mask(decision.selectable, decision.player),
+                       unselectable=_mask(decision.unselectable, decision.player))  # fmt: skip
+    return decision
 
 
 def decode_buffer(buf: bytes) -> list[Message]:
