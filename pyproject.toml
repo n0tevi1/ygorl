@@ -13,6 +13,10 @@ dependencies = [
     "numpy>=2.4.6",
 ]
 
+[project.optional-dependencies]
+# Policy training (M4). PyPI's Linux wheel bundles the CUDA runtime (~5 GB installed).
+train = ["torch>=2.6"]
+
 [project.scripts]
 ygorl = "ygorl.cli:main"
 

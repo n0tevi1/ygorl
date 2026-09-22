@@ -46,7 +46,7 @@ git submodule sync --recursive >/dev/null
 git submodule update --init --recursive --depth 1
 
 # 3. Python env + C++ extension (uv rebuilds only when native sources change).
-log "uv sync"
-uv sync
+log "uv sync --extra train"
+uv sync --extra train   # torch for M4 (policy training); first install ~2 min / ~5 GB
 
 uv run --no-sync python -c "import ygorl._core as c; print('[session-start] ygorl._core OK, ocgcore', c.ocg_version())" >&2

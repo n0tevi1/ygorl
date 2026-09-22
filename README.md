@@ -41,7 +41,9 @@
 Python 3.11 由 uv 自动选择或下载；pybind11 与 scikit-build-core 作为构建依赖由 uv 自动安装。
 Python 运行时依赖写在 `pyproject.toml`、锁定在 `uv.lock`，`uv sync` 一并安装：numpy（观测编码、评估指标）；
 [nashpy](https://github.com/drvinceknight/Nashpy)（连带 scipy、networkx 等）用于对局矩阵的 Nash 均衡（`ygorl.eval.matchup`）。
-新增依赖用 `uv add <包名>`。
+策略训练（M4，`ygorl.nets` / `ygorl.train`）另需 PyTorch，放在可选依赖组 `train` 里：`uv sync --extra train`
+（从 PyPI 安装 Linux 版 torch，自带 CUDA 运行库，安装后约 5 GB；只跑引擎、评估与组牌不需要它，相关测试在未安装时自动跳过）。
+新增依赖用 `uv add <包名>`（可选组用 `uv add --optional <组> <包名>`）。
 
 ```bash
 git clone --recurse-submodules --shallow-submodules https://github.com/n0tevi1/ygorl && cd ygorl
