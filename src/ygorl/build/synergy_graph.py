@@ -54,6 +54,8 @@ EDGE_TYPES = ("search", "special_summon", "send_to_gy", "recover", "material")
 REACH_TYPES = ("search", "special_summon")  # edges that bring a card to the hand / field
 DEFAULT_MAX_FANOUT = 100
 
+GRAPH_SOURCES = ("lua.py", "filters.py", "scripts.py", "synergy_graph.py")
+
 _TYPE_ORDER = {t: i for i, t in enumerate(EDGE_TYPES)}
 _SEARCH_ACTIONS = frozenset(("to_hand", "set", "place", "equip"))
 
@@ -419,8 +421,8 @@ def cache_dir() -> Path:
 
 def _cache_key(scripts_dir: Path, cdb: Path, max_fanout: int) -> str:
     h = hashlib.sha256()
-    for src in sorted(Path(__file__).parent.glob("*.py")):
-        h.update(src.read_bytes())
+    for name in GRAPH_SOURCES:  # the modules the graph depends on (not packages.py etc.)
+        h.update((Path(__file__).parent / name).read_bytes())
     for p in sorted(scripts_dir.glob("c*.lua")):
         st = p.stat()
         h.update(f"{p.name}:{st.st_size}:{st.st_mtime_ns};".encode())
@@ -435,7 +437,7 @@ def _cache_key(scripts_dir: Path, cdb: Path, max_fanout: int) -> str:
 def load_or_build(*, max_fanout: int = DEFAULT_MAX_FANOUT, workers: int = 1, cache: Path | None = None) -> SynergyGraph:
     """The default graph (CardScripts ``official/`` x ``cards.cdb``), cached on disk.
 
-    The cache key covers this package's source, the script files, the constant
+    The cache key covers the graph modules' source, the script files, the constant
     files and the card database, so a stale graph is never returned.
     """
     scripts_dir = paths.card_scripts() / "official"

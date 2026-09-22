@@ -24,7 +24,7 @@
 - [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
-- [语义协同图](docs/synergy.md)：CardScripts 脚本挖掘、边语义、解析覆盖率、代理召回检验。
+- [语义协同图](docs/synergy.md)：CardScripts 脚本挖掘、边语义、解析覆盖率、代理召回检验、引擎包枚举。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
 ## 快速开始
@@ -102,11 +102,11 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── csrc/                    # C++：core_backend（OCG_* 封装）、binding（pybind11）
 ├── src/ygorl/               # Python 包
 │   ├── agents/              # Agent 协议、RandomAgent
-│   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）
+│   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、引擎包枚举（packages）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
 │   └── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
-├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、压力测试、确定性扫描、YGOPRODECK 核对
+├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、压力测试、确定性扫描、YGOPRODECK 核对
 ├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据（含代理引擎包）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）

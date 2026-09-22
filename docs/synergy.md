@@ -1,7 +1,8 @@
-# 语义协同图（T5.3）
+# 语义协同图（T5.3）与引擎包（T5.4）
 
-> 对应设计文档 [5.2 Off-meta 发现专用组件](design/05-deck-building.md#52-off-meta-发现专用组件)「语义协同图」，
-> 工程计划 T5.3（[#40](https://github.com/n0tevi1/ygorl/issues/40)）。代码在 `src/ygorl/build/`。
+> 对应设计文档 [5.2 Off-meta 发现专用组件](design/05-deck-building.md#52-off-meta-发现专用组件)「语义协同图」「引擎包枚举」，
+> 工程计划 T5.3（[#40](https://github.com/n0tevi1/ygorl/issues/40)）与 T5.4（[#41](https://github.com/n0tevi1/ygorl/issues/41)）。
+> 代码在 `src/ygorl/build/`。
 
 协同图不依赖比赛卡表：它静态挖掘 ProjectIgnis/CardScripts 的 `official/c<password>.lua` 脚本（不跑 Lua），
 把每张卡「能从哪里、把什么样的卡检索 / 特召 / 送墓」解析成过滤条件，再拿过滤条件去匹配卡片数据库，
@@ -29,6 +30,7 @@ g.save("graph.json.gz"); g.load("graph.json.gz")
 | `ygorl.build.filters` | 过滤条件 IR（`Pred / And / Or / Not`）、从 Lua 过滤函数编译 IR（`FilterCompiler`）、在卡片数据库上用位集求值（`CardIndex`）。 |
 | `ygorl.build.scripts` | 单个脚本的事实抽取：效果与分类、目标查询（动作 + 位置 + 过滤条件）、召唤 / 素材手续、`listed_names` 等。 |
 | `ygorl.build.synergy_graph` | 构图、`SynergyGraph`（邻接查询、保存 / 载入、统计、按卡池限制）、磁盘缓存、召回评估。 |
+| `ygorl.build.packages` | 引擎包枚举（T5.4）：局部生长、可达密度打分、去重、跨系列标记。 |
 
 ## 解析覆盖
 
@@ -115,8 +117,8 @@ g.save("graph.json.gz"); g.load("graph.json.gz")
 
 **持久化。** `save/load` 为 JSON（`.gz` 后缀自动 gzip，约 0.7 MB），`format = "ygorl-synergy-graph"`、`version = 1`，
 `meta` 含 `max_fanout`、CardScripts / BabelCDB 的 commit、统计数据；按环境限制后另含 `meta.environment = Environment.stamp()`。
-`load_or_build()` 的磁盘缓存（`$YGORL_CACHE_DIR` 或 `~/.cache/ygorl/synergy/`）以 `ygorl/build/*.py` 源码、脚本文件、常量文件与
-`cards.cdb` 为键，不会返回过期的图。
+`load_or_build()` 的磁盘缓存（`$YGORL_CACHE_DIR` 或 `~/.cache/ygorl/synergy/`）以构图模块（`lua / filters / scripts / synergy_graph.py`）
+源码、脚本文件、常量文件、`cards.cdb` 与 `max_fanout` 为键，不会返回过期的图；测试会话共用一次构建（`tests/conftest.py` 的 `real_graph`）。
 
 **扩展点。** Yugipedia SMW 关系（T5.1）与卡文本相似度（T5.2）目前无法离线获取；它们可作为新的边类型经
 `SynergyGraph.add_edges` 并入（`save/load` 支持任意额外类型），不需要改动挖掘部分。
@@ -156,3 +158,61 @@ Voiceless Voice 0.83；Kashtira 0.80；**Tearlaments 0.77（漏召）**。未连
 - **泛用查询被剪掉。** `max_fanout = 100` 会去掉「4 星以下战士族」这类宽过滤与大多数泛用素材要求；这些关系留给 T5.2 的文本相似度与 T5.4 的密度排序处理。
 - **素材附加检查未解析。** 连接 / 同调手续里 `s.lcheck` 之类的组检查函数（「包含 X 的怪兽 2 只」）不参与匹配，只看单卡素材过滤。
 - **环境无关。** 图按子模块中的全部官方脚本构建；绑定环境时用 `restrict(pool, stamp)`，`fanout` 仍是在全卡池上计算的。
+
+## 引擎包枚举（T5.4）
+
+```python
+from ygorl.build.packages import enumerate_packages, setcodes_from_db
+from ygorl.cards.cdb import CardDB
+
+pkgs = enumerate_packages(load_or_build(), setcodes=setcodes_from_db(CardDB.load()))  # 全部种子约 1 s
+pkgs[0].members, pkgs[0].starters, pkgs[0].score, pkgs[0].cross_archetype
+```
+
+命令行：`uv run python tools/list_packages.py [--top 50] [--cross-only] [--json out.json]`。
+
+**生长（连通子图）。** 边按特异性加权：`w = 类型权重 / sqrt(fanout)`（`search`、`special_summon` 为 1，`send_to_gy` 0.7，
+`recover`、`material` 0.5；点名检索权重 1，匹配 16 张的系列检索 0.25），两个方向相加得到无向亲和度。
+从每个有出边的卡出发，反复加入使 `aff(v,P)² / deg(v)` 最大的候选 `v`：既与包联系紧密，自身权重又大部分落在包内。
+要求 `aff(v,P) ≥ 0.25` 且 `aff(v,P)/deg(v) ≥ 0.15`，上限 15 张。泛用卡（被大量宽过滤指向）过不了占比门槛。
+每次只加入与包相邻的卡，所以每个包在协同图上都是（弱）连通子图。
+
+**打分（可达密度）。** 只看包诱导子图上的 `search` + `special_summon` 边：
+- `sources(v)`：包内能沿检索 / 特召链到达 `v` 的其它成员数；
+- `starters`：贪心最小集合，其可达闭包覆盖全包（没有成员能到达的卡必然是启动卡）；
+- `reach_mass = Σ_v min(sources(v), k)/k`（`k = 2`：能从 ≥ 2 个来源到达的成员计满分，对应设计中的「≥ k 条路径」）；
+- **`score = reach_mass / |starters|`**，即每张启动卡能稳定拉出的成员数，作为排序主键；
+- `density`：包内有序对 `(u, v)` 中 `v` 可从 `u` 到达的比例。一张启动卡拉满全包时 `score` 在包大小处饱和，此时按 `density` 排序。
+
+Jaccard 重叠 > 0.6 的包只保留排名靠前者。
+
+**跨系列包。** 成员的「组」是基础系列码 `setcode & 0xfff`（无系列码的卡自成一组）；`cross_edges` 统计两端不同组的包内边；
+`archetypes` 是至少 2 名成员共有的基础系列码。满足「有跨组边」且「≥ 2 个系列」或「主系列之外 ≥ 2 名成员」时标为 `cross_archetype`。
+
+### 结果（默认参数，当前子模块版本）
+
+共 709 个包（去重后），其中 354 个跨系列；大小分布以 15（336 个，达到上限）与 3–7 为主；448 个只需 1 张启动卡。
+**Top-50**（`tools/list_packages.py --top 50`）全部是 15 张、1 张启动卡、`score = 15` 的包，按 `density` 排序（1.00 → 0.53）：
+
+> Dragonmaid、Fur Hire、Exosister、Kozmo、Unchained、Lunalight、Mikanko、S-Force、**Nouvelles + Recipe**、Traptrix、Artmage、
+> **Springans**（含 Sprind / Tri-Brigade）、Rescue-ACE、Crystron、**Power Patron + DoomZ**、Purrely、P.U.N.K.、Speedroid + Synchron、Dragunity、
+> Bujin、Superheavy Samurai、Witchcrafter、Ritual Beast、Memento、Drytron + Ursarctic、Plunder Patroll、Dream Mirror、Gold Pride、
+> Super Quant（2 个）、Cubic、Sky Striker、**Assault Mode**、Fire King、Karakuri、Solfachord、Mathmech、Libromancer、Metalfoes、SPYRAL、
+> Salamangreat、**Skull Guardian + Voiceless Voice**、Amazoness、Nephthys、**Gravekeeper's + Necrovalley**、Goblin Rider、Tellarknight、
+> Drytron + Ursarctic、**GMX**、Altergeist（粗体为 `cross_archetype`，共 7 个）。
+
+人工抽检：50 个包都是可以成立的检索 / 特召引擎（系列核心加上它点名或按种族 / 等级拉出的卡），没有出现由泛用卡拼成的包。
+跨系列包里有真正的混合引擎：Nouvelles + Recipe；Power Patron + DoomZ；Skull Guardian + Voiceless Voice；
+White Forest + Azamina + Sinful Spoils；Spright + Ryzeal；Tenpai + Sangen 加上按种族 / 等级拉入的龙族（Dora Dora、Poki Draco、Masked Dragon）。
+后者正是设计文档所说「跨系列共享种族 / 等级」的 rogue 种子。也有一部分是官方拆成不同基础系列码的姊妹系列（Heraldic Beast / Heraldry、Aroma / Rose）。
+`--cross-only` 可单独列出跨系列包。
+
+与代理引擎包的对照（每个代理包与全部 709 个包的最佳重叠系数 `|P∩R| / min(|P|,|R|)`）：Labrynth、Ryzeal 1.00，Purrely 0.93，
+Kashtira 0.90，Fiendsmith 0.89，Voiceless Voice 0.83，Yubel 0.82，Tearlaments 0.77，Tenpai 0.75，Snake-Eye 0.50，Branded/Despia 0.50。
+后两者的代理包各含两套引擎（Snake-Eye + Sinful Spoils / Diabellstar；Branded + Despia + Albaz 融合，共 20 张），
+一个 ≤ 15 张、经去重的包覆盖不全，属于预期。参数（`min_affinity ∈ {0.2, 0.25, 0.35}`、`min_share ∈ {0.08…0.2}`）扫描下
+平均最佳重叠在 0.80–0.84 之间，结果对参数不敏感；默认值按原则选定，没有针对代理包调参。
+
+**局限。** `score` 在包大小处饱和，Top-N 实际由 `density` 决定；上限 15 张会截断大系列（剩余部分作为另一个重叠 ≤ 0.6 的包出现）；
+贪心生长依赖种子，同一引擎可能被拆成几个包。T5.5 的基因型以「引擎包份数」为单位，这些包是它的候选集合，
+不需要是互斥的划分。
