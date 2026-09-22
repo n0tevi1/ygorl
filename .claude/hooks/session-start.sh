@@ -46,7 +46,13 @@ git submodule sync --recursive >/dev/null
 git submodule update --init --recursive --depth 1
 
 # 3. Python env + C++ extension (uv rebuilds only when native sources change).
+#    torch (M4 policy training) is ~5 GB and ~2 min on first install; if it
+#    can't be fetched, fall back to the base env so engine/eval/deck tests still
+#    run (training tests skip without torch).
 log "uv sync --extra train"
-uv sync --extra train   # torch for M4 (policy training); first install ~2 min / ~5 GB
+if ! uv sync --extra train; then
+  log "uv sync --extra train failed; falling back to uv sync (no torch)"
+  uv sync
+fi
 
 uv run --no-sync python -c "import ygorl._core as c; print('[session-start] ygorl._core OK, ocgcore', c.ocg_version())" >&2

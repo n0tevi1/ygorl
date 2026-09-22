@@ -11,7 +11,7 @@
 - **M2 向量化环境**：完成（C++ 线程池、C++ 步进与观测编码、多选可行集核对、事件 token 流、训练态真值、课程模式、arena 快照、分支探索）；待办是 16 核吞吐数字，以及 C++ 步进路径上的课程模式。
 - **M3 基线与评估**：完成（Greedy、配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念校准指标、命令行 `ygorl duel / replay / branch / arena / matrix`）。
 - **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）。
-- **M5 数据与组牌**：协同图（T5.3，代理召回检验）、引擎包枚举（T5.4）、基因型与算子（T5.5）已落地；T5.1 数据抓取与 T5.2 文本嵌入受当前网络环境限制（YGOPRODECK、masterduelmeta、Yugipedia、HuggingFace 不可达）尚未开始。
+- **M5 数据与组牌**：协同图（T5.3，代理召回检验）、引擎包枚举（T5.4）、基因型与算子（T5.5）已落地；T5.1 数据抓取与 T5.2 文本嵌入尚未开始（云端环境已放行 YGOPRODECK、masterduelmeta、Yugipedia API、HuggingFace）。
 - **M6**：未开始。
 
 技术栈与方向见下。
