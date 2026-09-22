@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ygorl.cards.legality import DeckRules, Violation, validate_deck
 from ygorl.cards.lflist import Banlist, LflistError, load_lflist, select
 from ygorl.cards.ydk import Deck, YdkError, load_ydk
 from ygorl.engine import constants as C
@@ -64,15 +65,6 @@ class PlayerRules:
     starting_lp: int = 8000
     starting_hand: int = 5
     draw_per_turn: int = 1
-
-
-@dataclass(frozen=True)
-class DeckRules:
-    main_min: int = 40
-    main_max: int = 60
-    extra_max: int = 15
-    side_max: int = 15
-    max_copies: int = 3
 
 
 @dataclass(frozen=True)
@@ -138,6 +130,10 @@ class Environment:
 
     def in_pool(self, password: int) -> bool:
         return password in self.card_pool
+
+    def validate_deck(self, deck: Deck, cards: Mapping[int, Any]) -> list[Violation]:
+        """Violations of ``deck`` under this environment's pool, banlist and deck rules."""
+        return validate_deck(deck, cards=cards, banlist=self.banlist, pool=self.card_pool, rules=self.deck_rules)
 
 
 # --- loading ---------------------------------------------------------------
