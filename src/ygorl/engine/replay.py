@@ -78,6 +78,9 @@ class Replay:
     max_decisions: int = 20000
     result: dict = field(default_factory=dict)
     steps: list[dict] = field(default_factory=list)
+    curriculum: str = "full"  # DuelConfig.curriculum / learner / augmented_start (T2.6); absent in older files
+    learner: int = 0
+    augmented_start: bool = False
 
     # -- construction -----------------------------------------------------
     @classmethod
@@ -99,6 +102,9 @@ class Replay:
             result={"winner": result.winner, "reason": result.reason, "win_reason": result.win_reason,
                     "turns": result.turns, "lp": list(result.lp), "decisions": result.decisions},  # fmt: skip
             steps=list(result.steps),
+            curriculum=cfg.curriculum,
+            learner=cfg.learner,
+            augmented_start=cfg.augmented_start,
         )
 
     @property
@@ -107,7 +113,8 @@ class Replay:
 
     def config(self) -> DuelConfig:
         return DuelConfig(rule_flags=self.rule_flags, player=PlayerRules(**self.player), max_turns=self.max_turns,
-                          max_decisions=self.max_decisions, shuffle_decks=self.shuffle_decks)  # fmt: skip
+                          max_decisions=self.max_decisions, shuffle_decks=self.shuffle_decks, curriculum=self.curriculum,
+                          learner=self.learner, augmented_start=self.augmented_start)  # fmt: skip
 
     def duel(self, env: Environment | None = None, **kwargs) -> Duel:
         """A fresh Duel set up exactly like the recorded one (after the environment check)."""

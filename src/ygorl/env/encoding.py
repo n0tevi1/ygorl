@@ -166,7 +166,7 @@ class ObservationEncoder:
         g[18] = point.decision.TYPE
         g[19] = len(getattr(point.state, "picked", ()))
         g[20] = len(point.actions)
-        g[21] = 0  # augmented start (T2.6)
+        g[21] = int(point.augmented_start)  # augmented (mid-game) start, DuelConfig.augmented_start (T2.6)
         return g
 
     # -- actions -----------------------------------------------------------

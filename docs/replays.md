@@ -29,6 +29,7 @@ JSON 对象（`.json.gz` 为 gzip 压缩的同一内容）：
 | `engine` | `{"ocgcore": [major, minor]}` |
 | `seed`, `first` | 对局种子；先攻方（0 = a，1 = b） |
 | `rule_flags`, `player`, `shuffle_decks`, `max_turns`, `max_decisions` | 规则 flag、LP/起手/抽卡数、是否主机洗牌、上限 |
+| `curriculum`, `learner`, `augmented_start` | 课程模式、学习方（0 = a，1 = b）、增广开局标志（见 [curriculum.md](curriculum.md)）；旧文件缺省为 `"full"`、`0`、`false` |
 | `decks` | `{"a": {name, main, extra, side}, "b": {...}}`，洗牌前的原始卡组 |
 | `responses` | 每次 `set_response` 的负载（十六进制字符串），按时间顺序 |
 | `result` | 录制时的胜者、原因、回合、LP、决策数（参考信息） |
