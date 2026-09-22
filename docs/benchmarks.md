@@ -45,6 +45,19 @@
 
 说明：Wilson 区间按各局独立计算；配对的两局共享起手，并不独立。按对做符号检验（两局全胜 879 对 vs 全负 6 对）同样远超显著。
 
+
+**修复隐藏信息泄露后的复测**（同一命令 `uv run python tools/arena.py --games 2000 --workers 2 --seed 0`，commit `4227249`，2026-09-22，4 核容器、期间有其他任务占用 CPU，耗时 833 秒）：GreedyAgent 不再能看到对手里侧怪兽的真实数值（按 `HIDDEN_STAT = 1500` 估计）。
+
+| 指标 | 值 |
+|------|------|
+| 胜 / 负 / 平 | 1,843 / 157 / 0 |
+| 胜率 | **0.921**，95% Wilson 区间 **0.909–0.932**（仍显著 > 50%；泄露修复前 0.936） |
+| Greedy 先攻 / 后攻胜率 | 0.927 / 0.916 |
+| 先攻方胜率 | 0.505 |
+| 终局原因 | 全部 `MSG_WIN`；平均 22.6 回合；异常 0、retry 0 |
+
+按 Greedy 驾驶的牌组：branded_despia 0.925、fiendsmith_ryzeal 1.000、kashtira 0.990、labrynth 0.935、purrely 0.745、snake_eye 0.880、tearlaments 0.930、tenpai 0.920、voiceless_voice 0.960、yubel 0.930（每项 200 局）。
+
 ## 吞吐：决策/秒 vs 线程数（T2.7）
 
 | 项 | 值 |
