@@ -98,6 +98,7 @@ print(result.summary())
 1. 核心 RNG 种子 = `expand_seed(seed)`（splitmix64 扩成 4 个 u64，喂给 Xoshiro256**）。
 2. 主机洗牌用同一 `seed` 的独立流。
 3. **补丁** `patches/ygopro-core/0001-deterministic-iteration-order.patch`：核心中若干以 `card*` / `effect*` 为键的 `unordered_set/map` 被遍历时会发消息或移除效果，遍历顺序随堆地址变化。实测未打补丁时同一进程内 60 局重放有 11 局消息顺序不同（都是效果重置时的 `MSG_CARD_HINT` / `MSG_PLAYER_HINT`），打补丁后为 0。补丁按效果 id（及 initial_id、code、type、description）或卡片 `cardid` 排序后遍历。子模块保持原样，CMake 在构建目录复制一份核心源码并按文件名顺序打补丁。
+4. **补丁** `patches/ygopro-core/0002-constant-lua-string-hash-seed.patch`：Lua 5.4 默认用时钟与堆地址生成字符串哈希种子，`pairs()` 遍历字符串键表的顺序因此每局不同；补丁把 `luai_makeseed` 固定为 0（ygo-combo-solver 同样处理）。测试 `test_lua_string_keyed_pairs_order_is_stable` 用 Lua 探针脚本验证。
 
 已知残余风险：核心里还有以原始指针为键的**有序**容器（如 `std::map<effect*, chain>`、`std::set<std::pair<effect*, tevent>>`），其遍历顺序由地址大小决定。大规模扫描（`tools/check_determinism.py`）未观察到由此导致的差异；若出现，彻底方案是每局一个地址确定的 arena 分配器，这也是 T2.8 快照需要的基础设施。
 

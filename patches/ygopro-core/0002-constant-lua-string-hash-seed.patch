@@ -1,0 +1,19 @@
+ygorl: pin Lua's string-hash seed so duels are reproducible.
+
+Without it, pairs() over string-keyed tables visits keys in a different
+order in every lua_State (seed = clock ^ addresses). ygo-combo-solver pins
+the seed the same way.
+
+diff --git a/lua/luaconf-customize.h b/lua/luaconf-customize.h
+index d1073a1..a08319c 100644
+--- a/lua/luaconf-customize.h
++++ b/lua/luaconf-customize.h
+@@ -1,3 +1,8 @@
++/* ygorl: constant string-hash seed. Lua 5.4 otherwise derives it from the
++   clock and heap addresses (lstate.c), so pairs() over string-keyed tables
++   iterates in a different order in every duel, breaking replay determinism.
++   The seed only protects against hash-flooding, irrelevant here. */
++#define luai_makeseed(L) ((void)(L), 0u)
+ #if defined(LUA_EPRO_APICHECK)
+ void ocgcore_lua_api_check(void* L, const char* error_message);
+ #define luai_apicheck(l,e)	do { if(!e) ocgcore_lua_api_check(l,"Lua api check failed: " #e); } while(0)

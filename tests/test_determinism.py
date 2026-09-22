@@ -65,3 +65,26 @@ def test_replay_detects_divergence(db):
         Duel(5, None, DECKS["snake_eye"], DECKS["yubel"], cards=db).replay(original.responses, reference_log=original.message_log)
     # the right seed replays cleanly against its own reference
     Duel(4, None, DECKS["snake_eye"], DECKS["yubel"], cards=db).replay(original.responses, reference_log=original.message_log)
+
+
+def test_lua_string_keyed_pairs_order_is_stable(db, tmp_path):
+    """Lua 5.4 seeds string hashing from the clock and heap addresses unless
+    luai_makeseed is pinned; then pairs() order over string keys differs per duel."""
+    from ygorl import _core
+    from ygorl.engine import constants as C
+    from ygorl.engine import messages as M
+
+    (tmp_path / "probe.lua").write_text(
+        'local t = {} for i = 1, 200 do t["key" .. i] = i end '
+        "local out = {} for k in pairs(t) do out[#out + 1] = k end "
+        'Debug.ShowHint(table.concat(out, ","))'
+    )
+    scripts = _core.ScriptDirectory([str(tmp_path)])
+    orders = []
+    for seed in ([1, 2, 3, 4], [5, 6, 7, 8], [1, 2, 3, 4]):
+        duel = _core.Duel(seed, C.DUEL_MODE_MR5, (8000, 5, 1), (8000, 5, 1), db.to_core(), scripts)
+        assert duel.load_script("probe.lua")
+        hints = [m for m in M.decode_buffer(duel.get_message()) if isinstance(m, M.ShowHint)]
+        orders.append(hints[0].text)
+        duel.close()
+    assert orders[0] == orders[1] == orders[2]
