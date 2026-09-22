@@ -33,13 +33,17 @@ def add_max_turns_option(p: argparse.ArgumentParser) -> None:
 
 
 def load_env(spec: str | None):
-    """The environment named by ``--env`` (a directory or a version under the environments root), or None."""
+    """The environment named by ``--env`` (a directory or a version under the environments root), or None.
+
+    Its meta decks are checked against its own pool, banlist and deck rules with the card database.
+    """
     if spec is None:
         return None
     from ygorl.data import EnvironmentConfigError, load_environment
+    from ygorl.engine.duel import default_cards
 
     try:
-        return load_environment(spec)
+        return load_environment(spec, cards=default_cards())
     except (EnvironmentConfigError, OSError) as exc:
         raise CommandError(str(exc)) from None
 
@@ -74,9 +78,16 @@ def make_factory(spec: str):
         raise CommandError(str(exc)) from None
 
 
-def load_decks(paths: list[Path]) -> list:
-    """Decks from ``.ydk`` files and directories (every ``*.ydk`` inside, sorted by name), named by file stem."""
+def load_decks(paths: list[Path], env=None) -> list:
+    """Decks from ``.ydk`` files and directories (every ``*.ydk`` inside, sorted by name), named by file stem.
+
+    Every deck must be legal: under ``env`` against its pool, banlist and deck rules, without one against
+    the structural rules (known passwords, deck sections, sizes, at most 3 copies). The library API
+    (:class:`ygorl.engine.duel.Duel` without ``validate=True``) still plays any deck.
+    """
+    from ygorl.cards.legality import validate_deck
     from ygorl.cards.ydk import YdkError, load_ydk
+    from ygorl.engine.duel import default_cards
 
     files: list[Path] = []
     for path in paths:
@@ -90,9 +101,21 @@ def load_decks(paths: list[Path]) -> list:
         else:
             raise CommandError(f"deck file not found: {path}")
     try:
-        return [load_ydk(f) for f in files]
+        decks = [load_ydk(f) for f in files]
     except (YdkError, OSError, UnicodeDecodeError) as exc:
         raise CommandError(str(exc)) from None
+    cards = default_cards()
+    for deck, path in zip(decks, files, strict=True):
+        if env is not None:
+            violations = env.validate_deck(deck, cards)
+            where = f"in environment {env.version}"
+        else:
+            violations = validate_deck(deck, cards=cards, banlist=None)
+            where = "(no environment: structural rules only)"
+        if violations:
+            lines = "\n".join(f"  - {v.message}" for v in violations)
+            raise CommandError(f"{path}: deck {deck.name!r} is illegal {where}:\n{lines}")
+    return decks
 
 
 def duel_config(env, max_turns: int | None):

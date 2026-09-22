@@ -1,5 +1,6 @@
 """Replay format, environment binding and .yrpX export (T1.8)."""
 
+import gzip
 import json
 import struct
 import time
@@ -89,6 +90,81 @@ def test_unknown_format_version(tmp_path):
     (tmp_path / "r.json").write_text(json.dumps({"format": "ygorl-replay", "format_version": 999}))
     with pytest.raises(ValueError, match="format_version 999"):
         Replay.load(tmp_path / "r.json")
+
+
+def minimal_replay_json():
+    decks = {s: {"name": s, "main": list(d.main), "extra": list(d.extra), "side": []} for s, d in (("a", A), ("b", B))}
+    return {"format": "ygorl-replay", "format_version": 1, "seed": 3, "first": 1, "rule_flags": C.DUEL_MODE_MR5,
+            "player": {"starting_lp": 8000, "starting_hand": 5, "draw_per_turn": 1}, "shuffle_decks": True,
+            "decks": decks, "responses": ["00000000", "0100"], "environment": None,
+            "result": {"winner": None, "lp": [8000, 8000]}}  # fmt: skip
+
+
+def test_minimal_replay_json_loads():
+    rep = Replay.from_json(minimal_replay_json())
+    assert rep.responses == [b"\0\0\0\0", b"\x01\x00"] and rep.decks["a"]["main"] == list(A.main)
+
+
+@pytest.mark.parametrize(
+    "change, msg",
+    [
+        ({"seed": "abc"}, "'seed' must be an integer, not str"),
+        ({"seed": True}, "'seed' must be an integer, not bool"),
+        ({"first": 2}, "'first' must be 0 or 1"),
+        ({"rule_flags": -1}, "'rule_flags' must be"),
+        ({"player": [8000, 5, 1]}, "'player' must be an object"),
+        ({"player": {"starting_lp": "8000", "starting_hand": 5, "draw_per_turn": 1}}, r"'player.starting_lp' must be"),
+        ({"player": {"starting_lp": 8000}}, "'player' needs keys"),
+        ({"shuffle_decks": "yes"}, "'shuffle_decks' must be true or false"),
+        ({"decks": [1, 2]}, "'decks' must be an object with decks 'a' and 'b'"),
+        ({"decks": {"a": {"main": [], "extra": []}}}, "'decks' must be an object with decks 'a' and 'b'"),
+        ({"decks": {"a": {"main": [1], "extra": []}, "b": {"main": "1", "extra": []}}},
+         r"'decks.b.main' must be a list"),
+        ({"decks": {"a": {"main": [2**32], "extra": []}, "b": {"main": [], "extra": []}}}, r"'decks.a.main\[0\]'"),
+        ({"responses": "00"}, "'responses' must be a list"),
+        ({"responses": ["zz"]}, r"'responses\[0\]' is not a hex string"),
+        ({"responses": [5]}, r"'responses\[0\]' is not a hex string"),
+        ({"environment": "v1"}, "'environment' must be null or an object"),
+        ({"environment": {"fingerprint": "x"}}, "'environment.version' must be a string"),
+        ({"seed_words": [1, 2, 3]}, "'seed_words' must be null or four"),
+        ({"max_turns": "200"}, "'max_turns' must be"),
+        ({"result": []}, "'result' must be an object"),
+        ({"result": {"lp": 8000}}, "'result.lp' must be"),
+        ({"steps": {}}, "'steps' must be a list"),
+        ({"engine": {"ocgcore": "11.0"}}, "'engine.ocgcore' must be"),
+        ({"recorded_at": "2026-09-22"}, "'recorded_at' must be null or unix seconds"),
+        ({"recorded_at": -1}, "'recorded_at' must be null or unix seconds"),
+        ({"bogus": 1}, "unknown replay field"),
+    ],
+)
+def test_malformed_replay_fields_are_value_errors(change, msg):
+    data = minimal_replay_json()
+    data.update(change)
+    with pytest.raises(ValueError, match=msg):
+        Replay.from_json(data)
+
+
+def test_missing_replay_field():
+    data = minimal_replay_json()
+    del data["responses"]
+    with pytest.raises(ValueError, match="missing field 'responses'"):
+        Replay.from_json(data)
+
+
+@pytest.mark.parametrize(
+    "name, content, msg",
+    [
+        ("r.json.gz", gzip.compress(b'{"format": "ygorl-replay"}')[:12], "truncated or corrupt gzip"),
+        ("r.json.gz", b"not gzip at all", "truncated or corrupt gzip"),
+        ("r.json", b"[1, 2]", "expected a JSON object, not list"),
+        ("r.json", b"\xff\xfe", "not valid JSON"),
+        ("r.json", b"{", "not valid JSON"),
+    ],
+)
+def test_unreadable_replay_files_are_value_errors(tmp_path, name, content, msg):
+    (tmp_path / name).write_bytes(content)
+    with pytest.raises(ValueError, match=msg):
+        Replay.load(tmp_path / name)
 
 
 class ProbAgent(RandomAgent):

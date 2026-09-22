@@ -62,6 +62,17 @@ environments/<version>/
 flag 数值来自 `ygorl.engine.constants`，该模块由 `tools/gen_constants.py` 从核心的 `ocgapi_constants.h`
 生成，单测保证二者同步。MD 版 = `MR5` + MD 卡池 + MD 禁限表；TCG / OCG 版只换 flag、禁限表与卡池。
 
+加载时的校验（违反任何一条都抛 `EnvironmentConfigError`，命令行显示为退出码 2 的错误，不会带着不合理的规则开局）：
+
+- 类型：清单必须是 JSON 对象；`rules`、`player`、`deck` 缺省或为对象；`rules.mode` 是上表中的字符串；
+  `rules.extra_flags` 是 flag 名字符串的**列表**（写成单个字符串会报 `rules.extra_flags must be a list`）；
+  `description`、`banlist_name` 若给出必须是字符串；`player` / `deck` 只允许上表的键，值是非负整数且不超过 2^31−1。
+- `player.starting_lp` ≥ 1（为 0 时开局即平局）。
+- `player.starting_hand` ≤ `deck.main_min`，`player.draw_per_turn` ≤ `deck.main_min`：合法牌组至少有 `main_min` 张，
+  起手或单次抽卡超过它会让双方在第一回合就抽空卡组。两者可以为 0。
+- `deck.main_min` ≤ `deck.main_max`；`deck.max_copies` ≥ 1。
+- 四个文件都必须是 UTF-8；非 UTF-8 的文件（包括禁限表与 meta `.ydk`）报错并指出文件。
+
 ## `pool.json`
 
 ```json
@@ -69,8 +80,8 @@ flag 数值来自 `ygorl.engine.constants`，该模块由 `tools/gen_constants.p
   "cards": [89631139, 14558127, { "password": 46986414, "name": "Dark Magician" }] }
 ```
 
-- `cards`：卡片密码（8 位官方 `password`，正整数）列表；元素可以是整数，也可以是带 `password` 键的对象
-  （其余字段作为说明，加载时忽略）。
+- `cards`：卡片密码（8 位官方 `password`，1 到 99999999 的整数）列表；元素可以是整数，也可以是带 `password` 键的对象
+  （其余字段作为说明，加载时忽略）。文件本身必须是 JSON 对象。
 - 不允许重复，不允许为空。卡池是「本格式存在的卡」，禁限状态由禁限表决定。
 - 来源：MD 卡池由 YGOPRODECK API（`format=master duel`）抓取生成；TCG / OCG 可由 BabelCDB 按 `ot` 字段导出（T5.1）。
 
@@ -101,12 +112,20 @@ TCG / OCG / GOAT 等表直接取自 `third_party/LFLists`；**MD 表没有上游
 ```
 
 - `name` 唯一；`file` 是相对环境目录的路径，不能跳出目录；`share` 在 [0, 1]，总和 ≤ 1（剩余份额视为「其它」）。
-- `.ydk` 为 YGOPro 通用格式（`#main` / `#extra` / `!side`，每行一个密码，一张一行），解析器为 `ygorl.cards.ydk`。
+- `.ydk` 为 YGOPro 通用格式（`#main` / `#extra` / `!side`，每行一个密码，一张一行），解析器为 `ygorl.cards.ydk`；
+  密码必须是 1 到 99999999 的整数，文件必须是 UTF-8。
 - 允许 `decks` 为空列表（例如尚未整理 meta 的新环境）。
+- **meta 卡组必须在本环境下合法**：卡池、禁限卡表、`deck` 规则，以及结构规则（密码在卡片数据库里存在、衍生物不能入组、
+  额外卡组怪兽只能在额外卡组、同名卡含异画合计计数）。这项检查需要卡片数据库，所以只在给出时进行：
+  `load_environment(path, cards=CardDB.load())` 或 `env.check_meta_decks(cards)`，不合法时 `EnvironmentConfigError` 列出每套不合法的
+  meta 卡组（文件路径、名字）及其全部违规。命令行（`--env`）总是带卡片数据库加载，见 [cli.md](cli.md)；
+  不带 `cards` 的 `load_environment(path)` 只做本页其余的格式校验（测试用的假卡池环境依赖这一点）。
 
 ## `artifacts/`
 
 `Environment.artifact_path("matrix", "2026-10-02.json")` 返回 `artifacts/` 下的路径并创建父目录。
+会离开 `artifacts/` 的路径（绝对路径、含 `..` 的部分、解析后指向外部的符号链接、空路径）一律抛 `EnvironmentConfigError`，
+所以 `MetaGame.save(env=env, name="../x")` 之类的名字写不到环境目录之外。
 产物文件应包含 `Environment.stamp()`。大型产物（模型权重等）不进 git，只提交小型报告与矩阵。
 
 已有的产物：

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from ygorl.cards.lflist import LflistError, load_lflist, parse_lflist, select
-from ygorl.cards.ydk import YdkError, parse_ydk
+from ygorl.cards.ydk import YdkError, load_ydk, parse_ydk
 
 LFLISTS = Path(__file__).resolve().parents[1] / "third_party" / "LFLists"
 
@@ -73,3 +73,21 @@ def test_ydk_errors():
         parse_ydk("123\n")
     with pytest.raises(YdkError, match="expected a card password"):
         parse_ydk("#main\nfoo\n")
+
+
+@pytest.mark.parametrize("password", ["0", "-5", "100000000", "99999999999", str(2**32), str(2**64)])
+def test_ydk_rejects_passwords_out_of_range(password):
+    with pytest.raises(YdkError, match=f"d.ydk:3: invalid card password {password}"):
+        parse_ydk(f"#main\n89631139\n{password}\n", source="d.ydk")
+    assert parse_ydk("#main\n1\n99999999\n").main == (1, 99999999)
+
+
+def test_non_utf8_files_are_format_errors(tmp_path):
+    ydk = tmp_path / "d.ydk"
+    ydk.write_bytes(b"#created by caf\xe9\n#main\n1\n")
+    with pytest.raises(YdkError, match="d.ydk: not valid UTF-8"):
+        load_ydk(ydk)
+    conf = tmp_path / "x.lflist.conf"
+    conf.write_bytes(b"!x\n1 1 --caf\xe9\n")
+    with pytest.raises(LflistError, match="x.lflist.conf: not valid UTF-8"):
+        load_lflist(conf)

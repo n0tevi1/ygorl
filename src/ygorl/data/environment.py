@@ -26,7 +26,7 @@ from typing import Any
 
 from ygorl.cards.legality import DeckRules, Violation, validate_deck
 from ygorl.cards.lflist import Banlist, LflistError, load_lflist, select
-from ygorl.cards.ydk import Deck, YdkError, load_ydk
+from ygorl.cards.ydk import MAX_PASSWORD, Deck, YdkError, load_ydk, valid_password
 from ygorl.engine import constants as C
 
 MANIFEST = "environment.json"
@@ -39,6 +39,7 @@ REQUIRED_FILES = (MANIFEST, POOL, BANLIST, META)
 
 VERSION_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9.]+)*$")
 SHARE_TOLERANCE = 1e-6
+MAX_RULE_VALUE = 2**31 - 1  # player and deck rule values must fit the core's 32-bit (signed LP) fields
 
 DUEL_MODES: Mapping[str, int] = {
     "MR1": C.DUEL_MODE_MR1,
@@ -100,8 +101,17 @@ class Environment:
         return path
 
     def artifact_path(self, *parts: str) -> Path:
-        """Path inside ``artifacts/``; parent directories are created."""
-        path = self.artifacts_dir.joinpath(*parts)
+        """Path inside ``artifacts/``; parent directories are created.
+
+        Raises :class:`EnvironmentConfigError` for a path that would leave ``artifacts/`` (absolute parts,
+        ``..``, or a symlink pointing elsewhere).
+        """
+        artifacts = self.artifacts_dir
+        path = artifacts.joinpath(*parts)
+        if not parts or any(Path(p).is_absolute() or ".." in Path(p).parts for p in parts) or (
+            artifacts.resolve() not in path.resolve().parents
+        ):
+            raise EnvironmentConfigError(f"artifact path {'/'.join(map(str, parts))!r} escapes {artifacts}")
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -135,6 +145,17 @@ class Environment:
         """Violations of ``deck`` under this environment's pool, banlist and deck rules."""
         return validate_deck(deck, cards=cards, banlist=self.banlist, pool=self.card_pool, rules=self.deck_rules)
 
+    def check_meta_decks(self, cards: Mapping[int, Any]) -> None:
+        """Raise :class:`EnvironmentConfigError` naming every illegal meta deck and all its violations."""
+        problems = []
+        for md in self.meta_decks:
+            violations = self.validate_deck(md.deck, cards)
+            if violations:
+                lines = "".join(f"\n  - {v.message}" for v in violations)
+                problems.append(f"{md.path}: meta deck {md.name!r} is illegal in environment {self.version}:{lines}")
+        if problems:
+            raise EnvironmentConfigError("\n".join(problems))
+
 
 # --- loading ---------------------------------------------------------------
 
@@ -144,25 +165,38 @@ def default_root() -> Path:
     return Path(os.environ.get("YGORL_ENVIRONMENTS", "environments"))
 
 
-def load_environment(path_or_version: str | os.PathLike[str], root: str | os.PathLike[str] | None = None) -> Environment:
-    """Load and validate an environment from a directory path or a version name."""
+def load_environment(path_or_version: str | os.PathLike[str], root: str | os.PathLike[str] | None = None, *,
+                     cards: Mapping[int, Any] | None = None) -> Environment:  # fmt: skip
+    """Load and validate an environment from a directory path or a version name.
+
+    With ``cards`` (password -> card, e.g. a :class:`ygorl.cards.cdb.CardDB`) every meta deck must also be
+    legal under the environment's pool, banlist and deck rules; the command line always passes the card
+    database.
+    """
     path = Path(path_or_version)
     if not path.is_dir():
         candidate = Path(root) / path if root is not None else default_root() / path
         if not candidate.is_dir():
             raise EnvironmentFileMissing(f"environment directory not found: {path} (also tried {candidate})")
         path = candidate
-    return _load_dir(path.resolve())
+    env = _load_dir(path.resolve())
+    if cards is not None:
+        env.check_meta_decks(cards)
+    return env
 
 
 def _read_json(path: Path) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise EnvironmentConfigError(f"{path}: not valid UTF-8 ({exc.reason} at byte {exc.start})") from None
     except json.JSONDecodeError as exc:
         raise EnvironmentConfigError(f"{path}: invalid JSON: {exc}") from None
 
 
 def _require(obj: Mapping[str, Any], key: str, typ: type | tuple[type, ...], where: str) -> Any:
+    if not isinstance(obj, dict):
+        raise EnvironmentConfigError(f"{where}: expected a JSON object, not {type(obj).__name__}")
     if key not in obj:
         raise EnvironmentConfigError(f"{where}: missing key {key!r}")
     value = obj[key]
@@ -171,13 +205,31 @@ def _require(obj: Mapping[str, Any], key: str, typ: type | tuple[type, ...], whe
     return value
 
 
+def _optional(obj: Mapping[str, Any], key: str, typ: type | tuple[type, ...], default: Any, where: str) -> Any:
+    """``obj[key]`` checked like :func:`_require`, or ``default`` when the key is absent or null."""
+    return default if obj.get(key) is None else _require(obj, key, typ, where)
+
+
+def _object(manifest: Mapping[str, Any], key: str, where: str) -> dict[str, Any]:
+    value = manifest.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise EnvironmentConfigError(f"{where}: {key} must be an object, not {type(value).__name__}")
+    return value
+
+
 def _rule_flags(rules: Mapping[str, Any], where: str) -> int:
     mode = rules.get("mode", "MR5")
-    if mode not in DUEL_MODES:
+    if not isinstance(mode, str) or mode not in DUEL_MODES:
         raise EnvironmentConfigError(f"{where}: unknown rules.mode {mode!r}; expected one of {sorted(DUEL_MODES)}")
     flags = DUEL_MODES[mode]
-    for name in rules.get("extra_flags", []):
-        const = getattr(C, f"DUEL_{name}", None)
+    extra = rules.get("extra_flags", [])
+    if not isinstance(extra, list):
+        raise EnvironmentConfigError(f"{where}: rules.extra_flags must be a list of flag names, "
+                                     f"not {type(extra).__name__}")  # fmt: skip
+    for name in extra:
+        const = getattr(C, f"DUEL_{name}", None) if isinstance(name, str) else None
         if not isinstance(const, int) or name.startswith("MODE_"):
             raise EnvironmentConfigError(f"{where}: unknown rules.extra_flags entry {name!r}")
         flags |= const
@@ -193,7 +245,24 @@ def _dataclass_from(cls: type, data: Mapping[str, Any] | None, where: str) -> An
     for k, v in data.items():
         if not isinstance(v, int) or isinstance(v, bool) or v < 0:
             raise EnvironmentConfigError(f"{where}: {k} must be a non-negative integer")
+        if v > MAX_RULE_VALUE:
+            raise EnvironmentConfigError(f"{where}: {k} must be at most {MAX_RULE_VALUE}")
     return cls(**data)
+
+
+def _check_rules(player: PlayerRules, deck: DeckRules, where: str) -> None:
+    """Reject rules under which no game can be played (see docs/environments.md)."""
+    if player.starting_lp < 1:
+        raise EnvironmentConfigError(f"{where}: player.starting_lp must be at least 1")
+    for key in ("starting_hand", "draw_per_turn"):
+        if getattr(player, key) > deck.main_min:
+            raise EnvironmentConfigError(f"{where}: player.{key} {getattr(player, key)} is larger than deck.main_min "
+                                         f"{deck.main_min} (a legal deck could not draw it)")  # fmt: skip
+    if deck.main_min > deck.main_max:
+        raise EnvironmentConfigError(f"{where}: deck.main_min {deck.main_min} is larger than deck.main_max "
+                                     f"{deck.main_max}")  # fmt: skip
+    if deck.max_copies < 1:
+        raise EnvironmentConfigError(f"{where}: deck.max_copies must be at least 1")
 
 
 def _load_pool(path: Path) -> frozenset[int]:
@@ -202,8 +271,9 @@ def _load_pool(path: Path) -> frozenset[int]:
     passwords: list[int] = []
     for i, entry in enumerate(cards):
         pw = entry.get("password") if isinstance(entry, dict) else entry
-        if not isinstance(pw, int) or isinstance(pw, bool) or pw <= 0:
-            raise EnvironmentConfigError(f"{path}: cards[{i}] is not a valid card password: {entry!r}")
+        if not valid_password(pw):
+            raise EnvironmentConfigError(f"{path}: cards[{i}] is not a valid card password (1 to {MAX_PASSWORD}): "
+                                         f"{entry!r}")  # fmt: skip
         passwords.append(pw)
     pool = frozenset(passwords)
     if len(pool) != len(passwords):
@@ -275,12 +345,15 @@ def _load_dir(root: Path) -> Environment:
     if version != root.name:
         raise EnvironmentConfigError(f"{where}: version {version!r} does not match directory name {root.name!r}")
     fmt = _require(manifest, "format", str, where)
-    rules = manifest.get("rules", {})
-    if not isinstance(rules, dict):
-        raise EnvironmentConfigError(f"{where}: rules must be an object")
+    rules = _object(manifest, "rules", where)
+    player = _dataclass_from(PlayerRules, _object(manifest, "player", where), f"{where}: player")
+    deck_rules = _dataclass_from(DeckRules, _object(manifest, "deck", where), f"{where}: deck")
+    _check_rules(player, deck_rules, where)
+    description = _optional(manifest, "description", str, "", where)
+    banlist_name = _optional(manifest, "banlist_name", str, None, where)
 
     try:
-        banlist = select(load_lflist(root / BANLIST), manifest.get("banlist_name"))
+        banlist = select(load_lflist(root / BANLIST), banlist_name)
     except LflistError as exc:
         raise EnvironmentConfigError(str(exc)) from None
 
@@ -292,9 +365,9 @@ def _load_dir(root: Path) -> Environment:
         banlist=banlist,
         rule_flags=_rule_flags(rules, where),
         meta_decks=meta_decks,
-        player=_dataclass_from(PlayerRules, manifest.get("player"), f"{where}: player"),
-        deck_rules=_dataclass_from(DeckRules, manifest.get("deck"), f"{where}: deck"),
-        description=manifest.get("description", ""),
+        player=player,
+        deck_rules=deck_rules,
+        description=description,
         root=root,
         fingerprint=_fingerprint(root, meta_decks),
         manifest=manifest,

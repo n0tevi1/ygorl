@@ -1,16 +1,19 @@
 """Command line: `ygorl` subcommands (T2.9 `branch`; T3.4 `duel`, `arena`, `matrix`, `replay`)."""
 
+import gzip
 import json
 from pathlib import Path
 
 import pytest
 
 from ygorl.agents import RandomAgent, agent_factory
-from ygorl.cards.ydk import load_ydk
+from ygorl.cards.legality import IllegalDeck
+from ygorl.cards.ydk import Deck, load_ydk
 from ygorl.cli import main
 from ygorl.data import load_environment
+from ygorl.engine import constants as C
 from ygorl.engine.branch import fork
-from ygorl.engine.duel import Duel, DuelConfig
+from ygorl.engine.duel import Duel, DuelConfig, default_cards
 from ygorl.engine.replay import Replay
 from ygorl.eval.arena import Arena, derive_seed, merge
 
@@ -377,3 +380,157 @@ def test_matrix_errors(capsys):
     assert "no decks" in capsys.readouterr().err
     assert main(["matrix", str(DECKS / "kashtira.ydk"), str(DECKS / "kashtira.ydk")]) == 2
     assert "duplicate deck name" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("name", ["../escape", "a/b", "..", ".hidden", "a\\b", ""])
+def test_matrix_rejects_an_artifact_name_with_a_path(tmp_path, capsys, name):
+    d = make_env(tmp_path, meta=("snake_eye", "kashtira"))
+    assert main(["matrix", "--env", str(d), "--games", "2", "--max-turns", "1", "--name", name]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("ygorl matrix: error:") and "--name" in err
+    assert not (d / "artifacts").exists() or not any((d / "artifacts").rglob("*.json"))
+    assert not (tmp_path / "envs" / "escape.json").exists()
+
+
+# ------------------------------------------------------------------ deck legality
+
+
+def write_deck(path, main=(), extra=(), side=()):
+    path.write_text(Deck(tuple(main), tuple(extra), tuple(side)).to_ydk())
+    return path
+
+
+def illegal_decks(tmp_path):
+    """(file, expected message) for decks that break a structural rule (no environment needed)."""
+    most = max(set(A.main), key=A.main.count)
+    four = (most,) * (4 - A.main.count(most))
+    spell = next(p for p in A.main if not default_cards()[p].type & C.TYPE_MONSTER)
+    return [
+        (write_deck(tmp_path / "unknown.ydk", A.main[:-1] + (12345678,), A.extra), "12345678 does not exist"),
+        (write_deck(tmp_path / "empty.ydk"), "Main Deck has 0 cards (minimum 40)"),
+        (write_deck(tmp_path / "four.ydk", A.main + four, A.extra), "4 copies (maximum 3)"),
+        (write_deck(tmp_path / "extra_in_main.ydk", A.main[:-1] + A.extra[:1], A.extra[1:]),
+         "is an Extra Deck monster but is in the Main Deck"),
+        (write_deck(tmp_path / "main_in_extra.ydk", A.main, A.extra[:-1] + (spell,)),
+         "is not an Extra Deck monster but is in the Extra Deck"),
+        (write_deck(tmp_path / "big.ydk", A.main[:39] + (60 * (A.main[39],)), A.extra), "maximum 60"),
+    ]  # fmt: skip
+
+
+def test_illegal_decks_are_rejected_before_playing(tmp_path, capsys):
+    for path, message in illegal_decks(tmp_path):
+        for command in (["duel", str(path), str(DECKS / "snake_eye.ydk")],
+                        ["duel", str(DECKS / "snake_eye.ydk"), str(path)],
+                        ["arena", str(DECKS / "snake_eye.ydk"), "--vs", str(path), "--games", "2"],
+                        ["matrix", str(DECKS / "snake_eye.ydk"), str(path), "--games", "2"]):  # fmt: skip
+            assert main(command) == 2, (command, capsys.readouterr())
+            captured = capsys.readouterr()
+            assert captured.out == ""
+            assert captured.err.startswith(f"ygorl {command[0]}: error: {path}: deck '{path.stem}' is illegal")
+            assert message in captured.err
+
+
+def test_empty_ydk_file_is_rejected(tmp_path, capsys):
+    path = tmp_path / "nothing.ydk"
+    path.write_text("")
+    assert main(["duel", str(path), str(DECKS / "snake_eye.ydk")]) == 2
+    assert "Main Deck has 0 cards" in capsys.readouterr().err
+
+
+def test_decks_are_checked_against_the_environment(tmp_path, capsys):
+    d = make_env(tmp_path)
+    banned = A.main[0]
+    (d / "banlist.lflist.conf").write_text(f"!ban\n{banned} 0\n")
+    args = ["--max-turns", "1", "--env", str(d)]
+    assert main(["duel", str(DECKS / "snake_eye.ydk"), str(DECKS / "tearlaments.ydk"), *args]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith(f"ygorl duel: error: {DECKS / 'snake_eye.ydk'}: deck 'snake_eye' is illegal in environment "
+                          "env-2026-09")  # fmt: skip
+    assert f"({banned}) is forbidden" in err
+    # the same deck is legal without the environment
+    assert main(["duel", str(DECKS / "snake_eye.ydk"), str(DECKS / "tearlaments.ydk"), "--max-turns", "1"]) == 0
+    capsys.readouterr()
+    # a deck outside the environment's card pool
+    (d / "banlist.lflist.conf").write_text("!none\n")
+    for command in (["duel", str(DECKS / "kashtira.ydk"), str(DECKS / "snake_eye.ydk")],
+                    ["arena", str(DECKS / "snake_eye.ydk"), "--vs", str(DECKS / "kashtira.ydk"), "--games", "2"],
+                    ["matrix", str(DECKS / "snake_eye.ydk"), str(DECKS / "kashtira.ydk"), "--games", "2"]):  # fmt: skip
+        assert main([*command, *args]) == 2
+        err = capsys.readouterr().err
+        assert "deck 'kashtira' is illegal in environment env-2026-09" in err
+        assert "is not in this format's card pool" in err
+
+
+def test_environment_meta_decks_are_checked(tmp_path, capsys):
+    d = make_env(tmp_path, meta=("snake_eye", "tearlaments"))
+    meta_file = d / "meta" / "tearlaments.ydk"
+    most_b = max(set(B.main), key=B.main.count)
+    write_deck(meta_file, B.main + (most_b,) * (4 - B.main.count(most_b)), B.extra)
+    assert main(["matrix", "--env", str(d), "--games", "2", "--max-turns", "1"]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("ygorl matrix: error:")
+    assert str(meta_file) in err and "'tearlaments'" in err and "4 copies" in err
+    assert not (d / "artifacts" / "matrix").exists()
+    # the environment is refused wherever it is loaded, not only by matrix
+    assert main(["duel", str(DECKS / "snake_eye.ydk"), str(DECKS / "tearlaments.ydk"), "--env", str(d)]) == 2
+    assert str(meta_file) in capsys.readouterr().err
+
+
+def test_bad_input_files_are_clean_errors(replay_file, tmp_path, capsys):
+    good = replay_file[0].read_bytes()
+    data = json.loads(gzip.decompress(good))
+    (tmp_path / "trunc.json.gz").write_bytes(good[: len(good) // 2])
+    (tmp_path / "list.json").write_text("[1, 2]")
+    (tmp_path / "seed.json").write_text(json.dumps({**data, "seed": "abc"}))
+    (tmp_path / "hex.json").write_text(json.dumps({**data, "responses": ["zz"]}))
+    (tmp_path / "decks.json").write_text(json.dumps({**data, "decks": {"a": [1]}}))
+    (tmp_path / "big.ydk").write_text("#main\n" + "\n".join(map(str, A.main[:39])) + "\n99999999999\n")
+    cases = [
+        (["replay", str(tmp_path / "trunc.json.gz")], "truncated or corrupt gzip"),
+        (["replay", str(tmp_path / "list.json"), "--verify"], "expected a JSON object, not list"),
+        (["replay", str(tmp_path / "seed.json"), "--verify"], "'seed' must be an integer, not str"),
+        (["replay", str(tmp_path / "hex.json")], "'responses[0]' is not a hex string"),
+        (["branch", str(tmp_path / "decks.json"), "--at", "0"], "'decks' must be an object"),
+        (["duel", str(tmp_path / "big.ydk"), str(DECKS / "snake_eye.ydk")],
+         "big.ydk:41: invalid card password 99999999999"),
+    ]  # fmt: skip
+    for args, message in cases:
+        assert main(args) == 2, args
+        err = capsys.readouterr().err
+        assert err.startswith(f"ygorl {args[0]}: error:") and message in err, err
+        assert "Traceback" not in err
+
+
+@pytest.mark.parametrize(
+    ("manifest", "message"),
+    [
+        ({"player": [1, 2]}, "player must be an object"),
+        ({"player": {"starting_lp": 0}}, "starting_lp must be at least 1"),
+        ({"player": {"starting_hand": 70}}, "starting_hand 70 is larger than deck.main_min 40"),
+        ({"rules": {"mode": "MR5", "extra_flags": "TCG_SEGOC_NONPUBLIC"}}, "rules.extra_flags must be a list"),
+    ],
+)
+def test_degenerate_environments_are_rejected(tmp_path, capsys, manifest, message):
+    d = make_env(tmp_path)
+    (d / "environment.json").write_text(json.dumps({"version": "env-2026-09", "format": "md", **manifest}))
+    assert main(["duel", str(DECKS / "snake_eye.ydk"), str(DECKS / "tearlaments.ydk"), "--env", str(d)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("ygorl duel: error:") and message in err
+
+
+def test_non_utf8_banlist_is_a_clean_error(tmp_path, capsys):
+    d = make_env(tmp_path)
+    (d / "banlist.lflist.conf").write_bytes(b"!caf\xe9\n")
+    assert main(["duel", str(DECKS / "snake_eye.ydk"), str(DECKS / "tearlaments.ydk"), "--env", str(d)]) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("ygorl duel: error:") and f"{d / 'banlist.lflist.conf'}: not valid UTF-8" in err
+
+
+def test_illegal_decks_still_play_through_the_library():
+    deck = Deck(A.main[:-1] + (12345678,), A.extra)
+    with pytest.raises(IllegalDeck, match="12345678"):
+        Duel(0, None, deck, B, validate=True)
+    result = Duel(0, None, Deck(A.main + (A.main[0],), A.extra), B, config=DuelConfig(max_turns=1)).run(
+        RandomAgent(0), RandomAgent(1)
+    )
+    assert result.reason in ("turn_limit", "win")
