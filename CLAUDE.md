@@ -4,8 +4,14 @@
 
 ## 项目背景
 
-`ygorl` 是一个与游戏王（Yu-Gi-Oh!）相关的项目。仓库刚初始化，技术栈与方向尚未确定。
-在方向确定前，不要擅自引入语言运行时、包管理器或框架。
+`ygorl` 是游戏王（Yu-Gi-Oh!）强化学习引擎：对局、组牌（含 off-meta 发现）、对手预测。
+设计文档在 `docs/design/`，工程计划与任务清单在 `docs/eng-plan.md`；设计文档是唯一权威，设计变更先改文档再改代码。
+
+技术栈（已定）：edo9300/ygopro-core + Project Ignis 脚本/数据库（git submodule），C++17 + pybind11
+（CMake + scikit-build-core），Python 3.11 + uv，PyTorch，pyribs，pytest。不要引入其它运行时或框架。
+
+「环境」（格式 + 卡池 + 禁限表 + 规则 flag + meta 卡表 + 版本号）是一等公民配置，位于
+`environments/<version>/`；所有训练、评估、组牌产物必须绑定环境版本。
 
 ## 游戏王术语约定
 

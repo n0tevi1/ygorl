@@ -1,34 +1,43 @@
 # ygorl
 
-一个与游戏王（Yu-Gi-Oh!）相关的项目。
+游戏王（Yu-Gi-Oh!）强化学习引擎：遵循当前环境规则（卡池 + 禁限表）进行对局、探索组牌策略、并推断对手隐藏信息。
 
 ## 项目状态
 
-仓库刚刚初始化，尚未确定技术栈与具体方向。可能的方向包括：
-
-- 卡牌数据库与查询工具
-- 卡组构筑与禁限卡表校验
-- 决斗规则引擎 / 模拟器
-- 基于决斗环境的强化学习（RL）实验
-
-确定方向后请更新本文件的「简介」「快速开始」「目录结构」三节。
+设计已评审通过，进入实施（里程碑 M0 骨架）。技术栈与方向见下。
 
 ## 简介
 
-待补充。
+三个目标：
+
+1. **对局**：给定一套牌组，与其他玩家 / agent 决斗。
+2. **组牌**：给定卡池与当前环境信息，探索组牌策略，并能发现并实验验证非版本主流的强势构筑。
+3. **对手预测**：对局中估计对手的手牌、剩余卡组、盖牌与牌组类型。
+
+核心结构是「牌组无关的通用对局策略（内层）」+「以该策略为评估器的组牌搜索（外层）」，对手预测作为内层网络的子模块。
+
+技术栈：edo9300/ygopro-core（EDOPro 核心）+ Project Ignis 卡片脚本与数据库，C++17 + pybind11 向量化环境，Python 3.11 + PyTorch 训练，pyribs 质量-多样性搜索。优先 Master Duel 格式，架构适用于 OCG / TCG。
+
+## 文档
+
+- [设计文档](docs/design/README.md)：目标、引擎裁决、RL 挑战、对局策略、对手预测、组牌与 off-meta 发现、架构、风险。
+- [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
 ## 快速开始
 
-待补充。
+待 M0 完成后补充（uv + CMake 构建）。
 
 ## 目录结构
 
 ```
 .
-├── README.md        # 项目说明
-├── CLAUDE.md        # 给 AI 协作工具的项目约定
-├── .editorconfig    # 编辑器基础格式约定
-└── .gitignore       # 通用忽略规则
+├── README.md
+├── CLAUDE.md                # 给 AI 协作工具的项目约定
+├── docs/
+│   ├── design/              # 设计文档（按主题拆分）
+│   └── eng-plan.md          # 工程计划
+├── .editorconfig
+└── .gitignore
 ```
 
 ## 参考资料
@@ -36,8 +45,9 @@
 - 游戏王 OCG 官方站：https://www.yugioh-card.com/japan/
 - 游戏王 TCG 官方站：https://www.yugioh-card.com/en/
 - 卡片数据 API（YGOPRODeck）：https://ygoprodeck.com/api-guide/
-- 开源决斗引擎（ygopro-core）：https://github.com/Fluorohydride/ygopro-core
+- 规则核心（EDOPro）：https://github.com/edo9300/ygopro-core
+- 卡片脚本 / 数据库 / 禁限表（Project Ignis）：https://github.com/ProjectIgnis
 
 ## 许可证
 
-待定。
+待定（注意：edo9300 核心与 Project Ignis 脚本为 AGPL-3.0）。
