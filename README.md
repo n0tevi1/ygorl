@@ -21,6 +21,7 @@
 ## 文档
 
 - [设计文档](docs/design/README.md)：目标、引擎裁决、RL 挑战、对局策略、对手预测、组牌与 off-meta 发现、架构、风险。
+- [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
 ## 快速开始
@@ -73,9 +74,14 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
 ├── csrc/                    # C++ 源码（pybind11 绑定）
 ├── src/ygorl/               # Python 包
+│   ├── cards/               # 禁限表（.lflist.conf）、牌组（.ydk）、卡片数据
+│   ├── data/                # Environment 加载与校验
+│   └── engine/              # 核心绑定；constants.py 由 tools/gen_constants.py 生成
+├── tools/                   # 开发脚本（gen_constants.py 等）
 ├── tests/                   # pytest 单测
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
+│   ├── environments.md      # environments/<version>/ 目录规范
 │   └── eng-plan.md          # 工程计划
 ├── .editorconfig
 └── .gitignore

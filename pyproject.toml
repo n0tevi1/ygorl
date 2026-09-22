@@ -31,7 +31,6 @@ cache-keys = [
   { file = "cmake/**/*.cmake" },
   { file = "csrc/**/*.cpp" },
   { file = "csrc/**/*.h" },
-  { git = { commit = true, tags = false } },
 ]
 
 [tool.pytest.ini_options]

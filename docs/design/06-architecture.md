@@ -52,7 +52,7 @@ ygorl/
 │   │             funnel.py surrogate.py qd.py report.py
 │   ├── data/      ygoprodeck.py masterduelmeta.py yugipedia.py environment.py
 │   └── cli.py
-├── environments/md-2026-10/      # 版本化快照：pool.json banlist.lflist.conf meta/*.ydk meta.json artifacts/
+├── environments/md-2026-10/      # 版本化快照：environment.json pool.json banlist.lflist.conf meta/*.ydk meta.json artifacts/
 ├── docs/          encoding.md belief.md offmeta.md
 └── tests/         decks/ replays/ combos/ ...
 ```
