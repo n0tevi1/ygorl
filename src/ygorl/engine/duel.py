@@ -27,6 +27,7 @@ from ygorl.data.environment import Environment, PlayerRules
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
 from ygorl.engine.actions import Action, DecisionState, make_decision
+from ygorl.engine.curriculum import FULL, MODES, allowed_actions, auto_action
 
 MASK64 = (1 << 64) - 1
 WIN_REASON_LP = 1  # MSG_WIN reasons written by the core (processor.cpp); 0x10+ come from card scripts
@@ -86,6 +87,15 @@ class DuelConfig:
     max_turns: int = 200
     max_decisions: int = 20000
     shuffle_decks: bool = True  # host-side shuffle of each main deck before loading
+    curriculum: str = FULL  # "full" / "solo" / "handtrap": restricts the opponent in the learner's turn (T2.6)
+    learner: int = 0  # the learning deck the curriculum protects: 0 = deck_a, 1 = deck_b
+    augmented_start: bool = False  # the game starts from an augmented (mid-game) state (I7); shown in observations
+
+    def __post_init__(self) -> None:
+        if self.curriculum not in MODES:
+            raise ValueError(f"unknown curriculum {self.curriculum!r} (expected one of {MODES})")
+        if self.learner not in (0, 1):
+            raise ValueError(f"learner must be 0 (deck_a) or 1 (deck_b), not {self.learner!r}")
 
     @classmethod
     def from_environment(cls, env: Environment, **overrides) -> DuelConfig:
@@ -104,6 +114,7 @@ class DecisionPoint:
     state: DecisionState
     events: tuple[M.Message, ...]  # messages since the previous decision point
     turn_player: int = 0  # engine player whose turn it is
+    augmented_start: bool = False  # DuelConfig.augmented_start
 
 
 @dataclass
@@ -124,6 +135,7 @@ class DuelResult:
     message_log: list[bytes] = field(default_factory=list)  # raw engine buffers (record_messages=True)
     steps: list[dict] = field(default_factory=list)  # per-action candidates/choice/probs (record_steps=True)
     error: str = ""
+    auto_decisions: int = 0  # decisions the host answered for the opponent (curriculum); their bytes are in responses
 
     def summary(self) -> str:
         who = {0: "a", 1: "b", None: "draw"}[self.winner]
@@ -254,7 +266,7 @@ class Duel:
                     response = responses[len(tracker.result.responses)]
                     tracker.use_response(response)
                 else:
-                    response = None
+                    response = tracker.auto_response()
                     while response is None and not tracker.done:
                         point = tracker.point()
                         if point is None:
@@ -278,9 +290,11 @@ class DuelTracker:
     """Host-side state of one duel, independent of who drives the core.
 
     Feed every engine buffer to :meth:`on_buffer`. When :attr:`awaiting`,
-    either answer with recorded bytes (:meth:`use_response`) or ask agents:
-    :meth:`point` gives the current decision point and :meth:`act` applies an
-    action index, returning the response bytes once the decision is complete.
+    either answer with recorded bytes (:meth:`use_response`) or first let the
+    host answer for a restricted opponent (:meth:`auto_response`, curriculum
+    modes) and otherwise ask agents: :meth:`point` gives the current decision
+    point and :meth:`act` applies an action index, returning the response bytes
+    once the decision is complete.
     Engine player indices are used internally; :meth:`finish` reports in
     (a, b) order.
     """
@@ -307,6 +321,9 @@ class DuelTracker:
         self._consecutive_retries = 0
         self._buffers = 0
         self._point: DecisionPoint | None = None
+        self._allowed: list[int] | None = None  # point.actions -> state.actions() indices when filtered
+        self._stepped = False
+        self._learner = (config.learner + first) % 2  # engine player of the learning deck
 
     @property
     def awaiting(self) -> bool:
@@ -390,6 +407,7 @@ class DuelTracker:
         self.decision = decision
         self.state = make_decision(decision, self.cards)
         self._point = None
+        self._stepped = False  # host answers only fresh decisions, never a half-built multi-select
 
     def point(self) -> DecisionPoint | None:
         """The current sub-step to ask the deciding agent about (None once the duel had to stop)."""
@@ -405,8 +423,14 @@ class DuelTracker:
         if not actions:
             self.stop("error", f"no legal action for {decision.name}")
             return None
+        self._allowed = None
+        if self._restricted():
+            allowed = allowed_actions(self.config.curriculum, decision, actions)
+            if len(allowed) < len(actions):
+                self._allowed, actions = allowed, [actions[i] for i in allowed]
         self._point = DecisionPoint(res.decisions, decision.player, self.turn, self.phase, (self.lp[0], self.lp[1]),
-                                    decision, actions, state, tuple(self.events), self.turn_player)  # fmt: skip
+                                    decision, actions, state, tuple(self.events), self.turn_player,
+                                    self.config.augmented_start)  # fmt: skip
         self.events = []
         return self._point
 
@@ -424,10 +448,35 @@ class DuelTracker:
         res.actions.append(idx)
         res.decisions += 1
         self._point = None
-        response = self.state.step(idx)
+        self._stepped = True
+        response = self.state.step(idx if self._allowed is None else self._allowed[idx])
         if response is not None:
             res.responses.append(response)
             self.state = None
+        return response
+
+    def _restricted(self) -> bool:
+        """The pending decision is the opponent's, in the learner's turn, under a restricting curriculum."""
+        return (self.config.curriculum != FULL and self.decision is not None and self.decision.player != self._learner
+                and self.turn_player == self._learner)  # fmt: skip
+
+    def auto_response(self) -> bytes | None:
+        """Answer the pending decision on the opponent's behalf if the curriculum says so; else None.
+
+        The answer is always a passive one (pass / no / cancel, see
+        :mod:`ygorl.engine.curriculum`); it is logged in ``responses`` like any
+        other, so replays need no knowledge of the curriculum.
+        """
+        if not self.awaiting or not self._restricted() or self._point is not None or self._stepped:
+            return None
+        idx = auto_action(self.config.curriculum, self.decision, self.state.actions())
+        if idx is None:
+            return None
+        response = self.state.step(idx)
+        assert response is not None, "passive answers complete a decision in one step"
+        self.result.responses.append(response)
+        self.result.auto_decisions += 1
+        self.state = None
         return response
 
     def use_response(self, response: bytes) -> None:

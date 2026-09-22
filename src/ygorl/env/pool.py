@@ -22,9 +22,10 @@ Asynchronous, envpool-style usage::
 
 from __future__ import annotations
 
+import dataclasses
 import os
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 
 from ygorl import _core
@@ -39,6 +40,11 @@ class GameSpec:
     deck_b: Deck
     first: int = 0
     config: DuelConfig = field(default_factory=DuelConfig)
+
+
+def paired_specs(specs: Iterable[GameSpec]) -> list[GameSpec]:
+    """Opening balance (先后攻配平): every spec twice, with deck_a going first and then second."""
+    return [dataclasses.replace(spec, first=first) for spec in specs for first in (0, 1)]
 
 
 @dataclass
@@ -127,6 +133,11 @@ class VecDuelEnv:
 
     def _emit(self, env_id: int) -> None:
         tracker = self._trackers[env_id]
+        response = tracker.auto_response()  # the host answers for a restricted opponent (curriculum)
+        if response is not None:
+            self._state[env_id] = _RUNNING
+            self._pool.respond(env_id, response)
+            return
         point = tracker.point() if not tracker.done else None
         if point is not None:
             self._state[env_id] = _DECIDING
