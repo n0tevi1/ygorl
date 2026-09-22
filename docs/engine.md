@@ -118,3 +118,16 @@ print(result.summary())
 验收：`tests/test_pool.py` 检查池化结果与逐局 `Duel.run` 完全一致、线程数不影响结果、上限在池中同样生效；`uv run python tools/check_pool.py --games 1000 --threads 4` 做 1,000 局比对。目前每个决策的消息解码与动作生成仍在 Python 中完成，吞吐受其限制，T2.2 把观测编码移到 C++ 后再做基准（T2.7）。
 
 线程安全：`tools/tsan/check.sh` 用 `-fsanitize=thread` 另行编译 `_core`，在预加载 `libtsan` 的 Python 中以 4 线程跑池化对局并与逐局结果比对。2026-09-22 的一次运行：12 局、4 线程、结果与单线程一致，ThreadSanitizer 零报告（同一方式对一个故意制造数据竞争的库能正确报警，作为阳性对照）。
+
+## C++ 步进环境（`EncodedVecEnv`，T2.2 / T2.7）
+
+`VecDuelEnv` 的每个决策仍要在 Python 里解码消息、生成动作；训练用的是另一条路径：`csrc/host.{h,cpp}` 把消息解码、动作状态机（`DecisionState`，含多选拆步与可行性剪枝）、主机追踪（`Tracker`，对应 `DuelTracker`）与观测编码器（`csrc/obs_encoder.cpp`，规格见 [encoding.md](encoding.md)）全部用 C++ 重写，`tests/test_cpp_host.py` 逐元素核对它与 Python 参考实现一致。
+
+`csrc/host_pool.{h,cpp}` 的 `HostPool` 在此之上提供异步接口（线程分配规则与 `DuelPool` 相同，由通用模板 `csrc/worker_pool.h` 实现）：
+
+- `reset(env, spec)`：在工作线程上建局并运行到第一个决策；
+- `step(env, action_index)`：应用一个动作；多选的中间步骤只更新本地状态，完整应答才送回核心；
+- `recv(min_events, timeout)`：取回事件 `EncodedEvent(env_id, player, obs, result)`。`obs` 是定长 numpy 数组（`cards` 160×23、`globals` 22、`actions` 128×10、`action_mask` 128），对局结束时 `obs` 为 `None`、`result` 为终局信息（引擎玩家顺序）。
+- 槽位在其作业结果被 `recv` 取走之前一直处于 busy 状态，此时再次 `reset/step` 会抛出 `RuntimeError`。
+
+Python 侧 `ygorl.env.encoded.EncodedVecEnv` 负责把 `GameSpec` 转成种子与加卡顺序（与 `Duel` 共用主机洗牌），`play(specs, choose)` 用于测试与基准。`tests/test_host_pool.py` 检查它与 `Duel.run` 在相同动作序列下逐局一致、线程数不影响结果、上限同样生效。吞吐基准见 [benchmarks.md](benchmarks.md)（`tools/bench_throughput.py`）。

@@ -14,6 +14,7 @@
 #include "core_backend.h"
 #include "duel_pool.h"
 #include "host.h"
+#include "host_pool.h"
 
 namespace py = pybind11;
 using namespace ygorl;
@@ -139,6 +140,21 @@ py::dict observation_dict(const host::Observation& o) {
 }
 
 // Owns a DecisionState plus the record it was decoded from (for fuzz tests against actions.py).
+py::dict result_dict(const host::PoolEvent& e) {
+    py::dict d;
+    d["winner"] = e.winner < 0 ? py::object(py::none()) : py::object(py::int_(e.winner));
+    d["reason"] = e.reason;
+    d["win_reason"] = e.win_reason < 0 ? py::object(py::none()) : py::object(py::int_(e.win_reason));
+    d["turns"] = e.turns;
+    d["lp"] = py::make_tuple(e.lp[0], e.lp[1]);
+    d["decisions"] = e.decisions;
+    py::list responses;
+    for (const auto& r : e.responses) responses.append(py::bytes(r));
+    d["responses"] = responses;
+    d["error"] = e.error;
+    return d;
+}
+
 class PyDecisionState {
 public:
     PyDecisionState(py::bytes record, std::shared_ptr<CardDatabase> cards) : cards_(std::move(cards)) {
@@ -337,6 +353,45 @@ PYBIND11_MODULE(_core, m) {
             d["error"] = t.error();
             return d;
         });
+
+    py::class_<host::HostPool>(m, "HostPool",
+        "Vectorized env with the step loop, action states and encoder in C++ (env i on thread i % threads).")
+        .def(py::init([](size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
+                         std::shared_ptr<ScriptDirectory> scripts, const std::vector<uint32_t>& vocab) {
+                 return std::make_unique<host::HostPool>(num_envs, num_threads, cards, scripts,
+                                                         std::make_shared<host::Vocab>(vocab));
+             }),
+             py::arg("num_envs"), py::arg("num_threads"), py::arg("cards"), py::arg("scripts"), py::arg("vocab"))
+        .def("reset", [](host::HostPool& p, int env, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1,
+                         py::tuple t2, DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
+            host::PoolJob job;
+            job.seed = seed;
+            job.flags = flags;
+            job.team1 = to_player(t1);
+            job.team2 = to_player(t2);
+            job.decks = std::move(decks);
+            job.max_turns = max_turns;
+            job.max_decisions = max_decisions;
+            py::gil_scoped_release release;
+            p.reset(env, std::move(job));
+        })
+        .def("step", &host::HostPool::step, py::arg("env"), py::arg("action"), py::call_guard<py::gil_scoped_release>())
+        .def("recv", [](host::HostPool& p, size_t min_results, int timeout_ms) {
+            std::vector<host::PoolEvent> events;
+            {
+                py::gil_scoped_release release;
+                events = p.recv(min_results, timeout_ms);
+            }
+            py::list out;
+            for (const auto& e : events) {
+                if (e.done)
+                    out.append(py::make_tuple(e.env_id, true, e.player, py::none(), result_dict(e)));
+                else
+                    out.append(py::make_tuple(e.env_id, false, e.player, observation_dict(e.obs), py::none()));
+            }
+            return out;
+        }, py::arg("min_results") = 1, py::arg("timeout_ms") = -1)
+        .def("pending", &host::HostPool::pending);
 
     m.attr("DUEL_STATUS_END") = static_cast<int>(OCG_DUEL_STATUS_END);
     m.attr("DUEL_STATUS_AWAITING") = static_cast<int>(OCG_DUEL_STATUS_AWAITING);

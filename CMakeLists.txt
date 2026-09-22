@@ -24,6 +24,7 @@ pybind11_add_module(_core MODULE
     csrc/duel_pool.cpp
     csrc/host.cpp
     csrc/obs_encoder.cpp
+    csrc/host_pool.cpp
 )
 target_include_directories(_core PRIVATE csrc)
 target_link_libraries(_core PRIVATE ocgcore)

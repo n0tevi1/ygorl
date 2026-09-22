@@ -105,15 +105,15 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── cmake/                   # CMake 片段（ocgcore.cmake：复制核心、打补丁、编成静态库）
 ├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序），构建时应用
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
-├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、binding（pybind11）
+├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、host_pool + worker_pool（C++ 步进环境）、binding（pybind11）
 ├── src/ygorl/               # Python 包
 │   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
-│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games；encoding.py 参考编码器
+│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games；encoding.py 参考编码器；encoded.py 为 C++ 步进的 EncodedVecEnv
 │   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
-├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准、信念基线表
+├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准、信念基线表、吞吐基准
 ├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
