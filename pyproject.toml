@@ -29,6 +29,7 @@ cache-keys = [
   { file = "pyproject.toml" },
   { file = "CMakeLists.txt" },
   { file = "cmake/**/*.cmake" },
+  { file = "patches/**/*.patch" },
   { file = "csrc/**/*.cpp" },
   { file = "csrc/**/*.h" },
 ]

@@ -1,0 +1,218 @@
+ygorl: make observable iteration order independent of heap addresses.
+
+Several core containers are std::unordered_set/map keyed by card*/effect*,
+so iterating them follows pointer hashes. When the loop emits messages or
+removes effects, two duels with the same seed and responses can produce
+differently ordered message streams (seen with MSG_CARD_HINT/PLAYER_HINT
+when effects reset). This patch visits those containers in a stable order:
+effects by (id, initial_id, code, type, description), cards by cardid.
+
+Applied by cmake/ocgcore.cmake to a build-tree copy of third_party/ygopro-core.
+
+diff --git a/field.cpp b/field.cpp
+index 5a015e8..ddb9f1a 100644
+--- a/field.cpp
++++ b/field.cpp
+@@ -975,8 +975,7 @@ void field::shuffle(uint8_t playerid, uint8_t location) {
+ 		if(location == LOCATION_HAND) {
+ 			core.shuffle_hand_check[playerid] = false;
+ 			for(auto& pcard : to_shuffle) {
+-				for(auto& i : pcard->indexer) {
+-					effect* peffect = i.first;
++				for(auto* peffect : field_effect::deterministic_order(pcard->indexer)) {
+ 					if(peffect->is_flag(EFFECT_FLAG_CLIENT_HINT) && !peffect->is_flag(EFFECT_FLAG_PLAYER_TARGET)) {
+ 						auto _message = pduel->new_message(MSG_CARD_HINT);
+ 						_message->write(pcard->get_info_location());
+@@ -1408,10 +1407,9 @@ void field::remove_effect(effect* peffect) {
+ 	}
+ }
+ void field::remove_oath_effect(effect* reason_effect) {
+-	for(auto oeit = effects.oath.begin(); oeit != effects.oath.end();) {
+-		auto rm = oeit++;
+-		if(rm->second == reason_effect) {
+-			effect* peffect = rm->first;
++	for(auto* peffect : field_effect::deterministic_order(effects.oath)) {
++		auto rm = effects.oath.find(peffect);
++		if(rm != effects.oath.end() && rm->second == reason_effect) {
+ 			effects.oath.erase(rm);
+ 			if(peffect->is_flag(EFFECT_FLAG_FIELD_ONLY))
+ 				remove_effect(peffect);
+@@ -1425,14 +1423,55 @@ void field::release_oath_relation(effect* reason_effect) {
+ 		if(oeit.second == reason_effect)
+ 			oeit.second = nullptr;
+ }
++namespace {
++// ygorl: stable, address-independent order for effects and cards.
++bool effect_order(const effect* a, const effect* b) {
++	if(a->id != b->id)
++		return a->id < b->id;
++	if(a->initial_id != b->initial_id)
++		return a->initial_id < b->initial_id;
++	if(a->code != b->code)
++		return a->code < b->code;
++	if(a->type != b->type)
++		return a->type < b->type;
++	return a->description < b->description;
++}
++std::vector<effect*> sorted_effects(std::vector<effect*> ordered) {
++	std::sort(ordered.begin(), ordered.end(), effect_order);
++	return ordered;
++}
++}
++std::vector<effect*> field_effect::deterministic_order(const effect_collection& coll) {
++	return sorted_effects(std::vector<effect*>(coll.begin(), coll.end()));
++}
++std::vector<effect*> field_effect::deterministic_order(const effect_indexer& indexer) {
++	std::vector<effect*> ordered;
++	ordered.reserve(indexer.size());
++	for(const auto& entry : indexer)
++		ordered.push_back(entry.first);
++	return sorted_effects(std::move(ordered));
++}
++std::vector<effect*> field_effect::deterministic_order(const oath_effects& oath) {
++	std::vector<effect*> ordered;
++	ordered.reserve(oath.size());
++	for(const auto& entry : oath)
++		ordered.push_back(entry.first);
++	return sorted_effects(std::move(ordered));
++}
++std::vector<card*> field_effect::deterministic_order(const std::unordered_set<card*>& cards) {
++	std::vector<card*> ordered(cards.begin(), cards.end());
++	std::sort(ordered.begin(), ordered.end(), [](const card* a, const card* b) { return a->cardid < b->cardid; });
++	return ordered;
++}
+ void field::reset_phase(uint32_t phase) {
+-	for(auto eit = effects.pheff.begin(); eit != effects.pheff.end();) {
+-		auto rm = eit++;
+-		if((*rm)->reset(phase, RESET_PHASE)) {
+-			if((*rm)->is_flag(EFFECT_FLAG_FIELD_ONLY))
+-				remove_effect((*rm));
++	for(auto* peffect : field_effect::deterministic_order(effects.pheff)) {
++		if(effects.pheff.find(peffect) == effects.pheff.end())
++			continue; // removed while resetting an earlier effect
++		if(peffect->reset(phase, RESET_PHASE)) {
++			if(peffect->is_flag(EFFECT_FLAG_FIELD_ONLY))
++				remove_effect(peffect);
+ 			else
+-				(*rm)->handler->remove_effect((*rm));
++				peffect->handler->remove_effect(peffect);
+ 		}
+ 	}
+ }
+@@ -1441,12 +1480,13 @@ void field::reset_chain() {
+ 		ensure_luaL_stack(luaL_unref, pduel->lua->lua_state, LUA_REGISTRYINDEX, ch_lim_p.function);
+ 	core.chain_limit_p.clear();
+ 	core.effect_count_code_chain.clear();
+-	for(auto eit = effects.cheff.begin(); eit != effects.cheff.end();) {
+-		auto rm = eit++;
+-		if((*rm)->is_flag(EFFECT_FLAG_FIELD_ONLY))
+-			remove_effect((*rm));
++	for(auto* peffect : field_effect::deterministic_order(effects.cheff)) {
++		if(effects.cheff.find(peffect) == effects.cheff.end())
++			continue; // removed while resetting an earlier effect
++		if(peffect->is_flag(EFFECT_FLAG_FIELD_ONLY))
++			remove_effect(peffect);
+ 		else
+-			(*rm)->handler->remove_effect((*rm));
++			peffect->handler->remove_effect(peffect);
+ 	}
+ }
+ processor::effect_count_map& field::get_count_map(uint8_t flag) {
+@@ -2123,7 +2163,7 @@ void field::adjust_self_destroy_set() {
+ 	int32_t p = infos.turn_player;
+ 	for(int32_t p1 = 0; p1 < 2; ++p1) {
+ 		std::vector<card*> uniq_set;
+-		for(auto& ucard : core.unique_cards[p]) {
++		for(auto* ucard : field_effect::deterministic_order(core.unique_cards[p])) {
+ 			if(ucard->is_position(POS_FACEUP) && ucard->get_status(STATUS_EFFECT_ENABLED)
+ 					&& !ucard->get_status(STATUS_DISABLED | STATUS_FORBIDDEN)) {
+ 				card_set cset;
+@@ -2248,7 +2288,7 @@ void field::remove_unique_card(card* pcard) {
+ }
+ // return: pcard->unique_effect or 0
+ effect* field::check_unique_onfield(card* pcard, uint8_t controler, uint8_t location, card* icard) {
+-	for(auto& ucard : core.unique_cards[controler]) {
++	for(auto* ucard : field_effect::deterministic_order(core.unique_cards[controler])) {
+ 		if((ucard != pcard) && (ucard != icard) && ucard->is_position(POS_FACEUP) && ucard->get_status(STATUS_EFFECT_ENABLED)
+ 			&& !ucard->get_status(STATUS_DISABLED | STATUS_FORBIDDEN)
+ 			&& ucard->unique_fieldid && ucard->check_unique_code(pcard) && (ucard->unique_location & location))
+diff --git a/field.h b/field.h
+index 64a4a62..5e908e5 100644
+--- a/field.h
++++ b/field.h
+@@ -151,6 +151,12 @@ struct field_effect {
+ 	effect_indexer indexer;
+ 	oath_effects oath;
+ 	effect_collection pheff;
++	// ygorl: iteration order of these pointer-keyed sets depends on heap addresses;
++	// visit them through deterministic_order() when the order is observable.
++	static std::vector<effect*> deterministic_order(const effect_collection& coll);
++	static std::vector<effect*> deterministic_order(const effect_indexer& indexer);
++	static std::vector<effect*> deterministic_order(const oath_effects& oath);
++	static std::vector<card*> deterministic_order(const std::unordered_set<card*>& cards);
+ 	effect_collection cheff;
+ 	effect_collection rechargeable;
+ 	effect_collection spsummon_count_eff;
+diff --git a/processor.cpp b/processor.cpp
+index d2c6c09..65a3a4a 100644
+--- a/processor.cpp
++++ b/processor.cpp
+@@ -337,7 +337,7 @@ bool field::process(Processors::PhaseEvent& arg) {
+ 			++cn_count;
+ 		}
+ 		//all effects taking control non-permanently are only until End Phase, not until Turn end
+-		for(auto* peffect : effects.pheff) {
++		for(auto* peffect : field_effect::deterministic_order(effects.pheff)) {
+ 			if(peffect->code != EFFECT_SET_CONTROL)
+ 				continue;
+ 			if(!(peffect->reset_flag & phase))
+diff --git a/card.cpp b/card.cpp
+index be7ba73..31c2317 100644
+--- a/card.cpp
++++ b/card.cpp
+@@ -1935,12 +1935,12 @@ int32_t card::replace_effect(uint32_t code, uint32_t reset, uint32_t count, bool
+ 		return -1;
+ 	if(is_status(STATUS_EFFECT_REPLACED))
+ 		set_status(STATUS_EFFECT_REPLACED, FALSE);
+-	for(auto i = indexer.begin(); i != indexer.end();) {
+-		auto rm = i++;
+-		effect* peffect = rm->first;
+-		auto it = rm->second;
++	for(auto* peffect : field_effect::deterministic_order(indexer)) {
++		auto rm = indexer.find(peffect);
++		if(rm == indexer.end())
++			continue; // removed together with an earlier effect
+ 		if (peffect->is_flag(EFFECT_FLAG_INITIAL | EFFECT_FLAG_COPY_INHERIT))
+-			remove_effect(peffect, it);
++			remove_effect(peffect, rm->second);
+ 	}
+ 	uint32_t cr = pduel->game_field->core.copy_reset;
+ 	uint8_t crc = pduel->game_field->core.copy_reset_count;
+@@ -2055,12 +2055,12 @@ void card::reset(uint32_t id, uint32_t reset_type) {
+ 			}
+ 		}
+ 	}
+-	for (auto i = indexer.begin(); i != indexer.end();) {
+-		auto rm = i++;
+-		effect* peffect = rm->first;
+-		auto it = rm->second;
++	for(auto* peffect : field_effect::deterministic_order(indexer)) {
++		auto rm = indexer.find(peffect);
++		if(rm == indexer.end())
++			continue; // removed together with an earlier effect
+ 		if (peffect->reset(id, reset_type))
+-			remove_effect(peffect, it);
++			remove_effect(peffect, rm->second);
+ 	}
+ }
+ void card::reset_effect_count() {
+@@ -2522,8 +2522,7 @@ void card::filter_immune_effect() {
+ // 1. put all cards in the target of peffect into effects.disable_check_set, effects.disable_check_list
+ // 2. add equiping_target of peffect into effects.disable_check_set, effects.disable_check_list
+ void card::filter_disable_related_cards() {
+-	for (auto& it : indexer) {
+-		effect* peffect = it.first;
++	for(auto* peffect : field_effect::deterministic_order(indexer)) {
+ 		if (peffect->is_disable_related()) {
+ 			if (peffect->type & EFFECT_TYPE_FIELD)
+ 				pduel->game_field->update_disable_check_list(peffect);
