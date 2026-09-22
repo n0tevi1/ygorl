@@ -30,6 +30,7 @@ JSON 对象（`.json.gz` 为 gzip 压缩的同一内容）：
 | `environment` | `{"version", "fingerprint"}`，无环境对局为 `null` |
 | `engine` | `{"ocgcore": [major, minor]}` |
 | `seed`, `first` | 对局种子；先攻方（0 = a，1 = b） |
+| `seed_words` | 可选：4 个核心种子字，只在来自其他主机的回放（`Replay.from_yrp`，见文末）里出现；缺省时由 `seed` 经 `expand_seed` 得到 |
 | `rule_flags`, `player`, `shuffle_decks`, `max_turns`, `max_decisions` | 规则 flag、LP/起手/抽卡数、是否主机洗牌、上限 |
 | `curriculum`, `learner`, `augmented_start` | 课程模式、学习方（0 = a，1 = b）、增广开局标志（见 [curriculum.md](curriculum.md)）；旧文件缺省为 `"full"`、`0`、`false` |
 | `decks` | `{"a": {name, main, extra, side}, "b": {...}}`，洗牌前的原始卡组 |
@@ -58,3 +59,22 @@ JSON 对象（`.json.gz` 为 gzip 压缩的同一内容）：
 测试：`test_yrpx_export_structure` 用与 EDOPro 相同的解析逻辑读回文件并核对各字段；`test_embedded_yrp1_resimulates_like_edopro_old_mode` 只凭文件内容按 EDOPro 旧模式的步骤重跑核心，得到与原局逐字节相同的消息流。
 
 **尚待人工确认**：验收要求在 EDOPro 客户端里实际打开一次导出的 `.yrpX`。需要 EDOPro 使用与本仓库相同版本的核心与脚本，否则 yrp 模式的重新模拟会分叉；流式模式不依赖脚本版本，但缺少主机发送的 `MSG_UPDATE_DATA` 刷新包，卡组/额外卡组的卡面信息可能显示不全。
+
+## 读取 `.yrp` / `.yrpX`（T4a.1）
+
+```python
+from ygorl.engine.replay import Replay, load_yrp
+
+yrp = load_yrp("solution_00_b2_a5.yrp")   # YrpFile：id、flag、seed（4 个核心种子字）、names、player、decks、responses、packets
+inner = yrp.replayable()                   # yrp1 本身，或 yrpX 内嵌的 yrp1
+rep = Replay.from_yrp(yrp)                 # 可重放的 ygorl Replay
+result = rep.play()                        # 按文件里的种子、规则、加载顺序的卡组与应答重新模拟
+```
+
+- 解析照 `gframe/replay.cpp`：普通头 32 字节，带 `EXTENDED_HEADER` 时 72 字节（含 4 个 u64 种子）；`COMPRESSED` 标志时正文是 LZMA（头里存 5 字节属性、`datasize` 为解压后长度），
+  用标准库 `lzma` 以 `.lzma` 格式重组后解压；`yrpX` 的数据包流中 `OLD_REPLAY_MODE` 包即内嵌的 `yrp1`；应答以长度 0 结尾或读到数据末尾为止（求解器写结尾 0，我们的导出不写）。
+- 截断、标识不对、解压失败、声明长度超过实际数据都抛 `YrpError`（`ValueError` 子类），不会返回半截结果。
+- `Replay.from_yrp` 只接受 1 对 1、带扩展头的回放：`seed_words` 取文件的种子字（不再由 `seed` 经 `expand_seed` 得到），`shuffle_decks=False`、卡组按文件的加载顺序，
+  `first=0`（文件的第一套卡组是引擎玩家 0，记为 a）；规则 flag 与 LP / 起手 / 抽卡数取自文件，不带环境。
+- 相应地，`Duel(..., core_seed=[w0, w1, w2, w3])` 可以直接指定核心种子字；`Replay` 的 `seed_words` 只在不等于 `expand_seed(seed)` 时写进 JSON，普通对局的回放文件与之前逐字节相同。
+- `Replay.to_yrpx(path, names, env, cards=..., scripts=...)` 的额外参数传给 `Duel`。
