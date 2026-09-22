@@ -24,6 +24,7 @@
 - [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
 - [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena。
+- [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局等实测数字。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
@@ -112,6 +113,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── design/              # 设计文档（按主题拆分）
 │   ├── engine.md            # 引擎层：CoreBackend、消息、动作模型、确定性
 │   ├── evaluation.md        # 基线 agent 与评估
+│   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── replays.md           # 回放格式与 .yrpX 导出
 │   ├── spikes/              # 技术调研结论（combo-solver.md）
