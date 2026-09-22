@@ -103,6 +103,7 @@ class DecisionPoint:
     actions: list[Action]
     state: DecisionState
     events: tuple[M.Message, ...]  # messages since the previous decision point
+    turn_player: int = 0  # engine player whose turn it is
 
 
 @dataclass
@@ -295,6 +296,7 @@ class DuelTracker:
         self.result = DuelResult(winner=None, reason="", first=first)
         self.lp = [config.player.starting_lp, config.player.starting_lp]
         self.turn = 0
+        self.turn_player = 0
         self.phase = 0
         self.events: list[M.Message] = []
         self.state: DecisionState | None = None
@@ -340,6 +342,7 @@ class DuelTracker:
                 decision = msg
             elif isinstance(msg, M.NewTurn):
                 self.turn += 1
+                self.turn_player = msg.player
             elif isinstance(msg, M.NewPhase):
                 self.phase = msg.phase
             elif isinstance(msg, (M.Damage, M.PayLpCost)):
@@ -403,7 +406,7 @@ class DuelTracker:
             self.stop("error", f"no legal action for {decision.name}")
             return None
         self._point = DecisionPoint(res.decisions, decision.player, self.turn, self.phase, (self.lp[0], self.lp[1]),
-                                    decision, actions, state, tuple(self.events))  # fmt: skip
+                                    decision, actions, state, tuple(self.events), self.turn_player)  # fmt: skip
         self.events = []
         return self._point
 

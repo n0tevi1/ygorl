@@ -106,13 +106,14 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
-│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games
+│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games；encoding.py 参考编码器
 │   └── eval/                # 评估：calibration.py（ECE / AUC / top-k 等指标）、beliefs.py（信念头报告与基线）
 ├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对、信念基线表
 ├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
 │   ├── engine.md            # 引擎层：CoreBackend、消息、动作模型、确定性
+│   ├── encoding.md          # 观测编码规范（卡片表、全局向量、候选动作表）
 │   ├── belief-eval.md       # 信念校准评估：指标定义与基线数字
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── replays.md           # 回放格式与 .yrpX 导出
