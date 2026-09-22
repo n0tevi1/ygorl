@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import lzma
 import struct
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -81,6 +82,7 @@ class Replay:
     curriculum: str = "full"  # DuelConfig.curriculum / learner / augmented_start (T2.6); absent in older files
     learner: int = 0
     augmented_start: bool = False
+    seed_words: list[int] | None = None  # explicit core seed words (replays from other hosts); None = expand_seed(seed)
 
     # -- construction -----------------------------------------------------
     @classmethod
@@ -105,11 +107,37 @@ class Replay:
             curriculum=cfg.curriculum,
             learner=cfg.learner,
             augmented_start=cfg.augmented_start,
+            seed_words=None if duel.core_seed == expand_seed(duel.seed) else list(duel.core_seed),
         )
+
+    @classmethod
+    def from_yrp(cls, source: str | Path | bytes | YrpFile) -> Replay:
+        """A replay of the duel an EDOPro ``.yrp`` / ``.yrpX`` (or its embedded ``yrp1``) records.
+
+        Only 1-vs-1 duels with the extended header (four core seed words) are
+        supported. The decks are taken in load order, so the host shuffle is
+        off; engine player 0 (the first ``yrp1`` deck) is deck ``a`` and moves
+        first. Such a replay carries no environment: it re-runs under the rule
+        flags and player rules of the file.
+        """
+        yrp = source if isinstance(source, YrpFile) else (parse_yrp(source) if isinstance(source, bytes) else load_yrp(source))
+        yrp = yrp.replayable()
+        if yrp.seed is None:
+            raise YrpError("replay without the extended header (four core seed words) is not supported")
+        if (yrp.home_count, yrp.opposing_count) != (1, 1) or yrp.flag & REPLAY_HAND_TEST:
+            raise YrpError("only 1-vs-1 duels can be re-run (tag duels and hand tests are not supported)")
+        lp, hand, draw = yrp.player
+        names = yrp.names + ("", "")
+        decks = {side: {"name": names[i], "main": list(yrp.decks[i][0]), "extra": list(yrp.decks[i][1]), "side": []}
+                 for i, side in enumerate("ab")}  # fmt: skip
+        return cls(seed=yrp.timestamp, first=0, rule_flags=yrp.rule_flags,
+                   player={"starting_lp": lp, "starting_hand": hand, "draw_per_turn": draw}, shuffle_decks=False,
+                   decks=decks, responses=list(yrp.responses), engine={"ocgcore": list(_core.ocg_version())},
+                   seed_words=list(yrp.seed))  # fmt: skip
 
     @property
     def core_seed(self) -> list[int]:
-        return expand_seed(self.seed)
+        return list(self.seed_words) if self.seed_words is not None else expand_seed(self.seed)
 
     def config(self) -> DuelConfig:
         return DuelConfig(rule_flags=self.rule_flags, player=PlayerRules(**self.player), max_turns=self.max_turns,
@@ -120,7 +148,8 @@ class Replay:
         """A fresh Duel set up exactly like the recorded one (after the environment check)."""
         self.check_environment(env)
         decks = (_deck_from_dict(self.decks["a"]), _deck_from_dict(self.decks["b"]))
-        return Duel(self.seed, env, decks[0], decks[1], config=self.config(), first=self.first, **kwargs)
+        return Duel(self.seed, env, decks[0], decks[1], config=self.config(), first=self.first, core_seed=self.seed_words,
+                    **kwargs)  # fmt: skip
 
     def check_environment(self, env: Environment | None) -> None:
         if self.environment is None:
@@ -144,6 +173,8 @@ class Replay:
     def to_json(self) -> dict[str, Any]:
         d = asdict(self)
         d["responses"] = [r.hex() for r in self.responses]
+        if self.seed_words is None:
+            del d["seed_words"]  # files of ordinary duels stay as before
         return {"format": FORMAT, "format_version": FORMAT_VERSION, **d}
 
     @classmethod
@@ -173,13 +204,15 @@ class Replay:
         return cls.from_json(json.loads(raw))
 
     # -- EDOPro export ----------------------------------------------------
-    def to_yrpx(self, path: str | Path, names: tuple[str, str] = ("Player A", "Player B"), env: Environment | None = None) -> None:
+    def to_yrpx(self, path: str | Path, names: tuple[str, str] = ("Player A", "Player B"), env: Environment | None = None,
+                **kwargs) -> None:  # fmt: skip
         """Write an EDOPro ``.yrpX`` (streamed packets + embedded ``yrp1``).
 
         ``names`` are given in (a, b) order. The duel is re-run to collect the
-        message stream, so the environment check applies.
+        message stream, so the environment check applies; ``kwargs`` (``cards``,
+        ``scripts``) go to :class:`Duel`.
         """
-        duel = self.duel(env, record_messages=True)
+        duel = self.duel(env, record_messages=True, **kwargs)
         result = duel.replay(self.responses)
         seat_names = (names[duel.deck_of(0)], names[duel.deck_of(1)])
         loaded = duel.loaded_decks()
@@ -236,4 +269,169 @@ def _header(ident: int, seed_words: list[int], datasize: int, timestamp: int) ->
     return base + struct.pack("<Q4Q", 1, *seed_words)
 
 
-__all__ = ["Replay", "ReplayEnvironmentMismatch"]
+# ------------------------------------------------------------------ reading .yrp / .yrpX
+
+REPLAY_COMPRESSED = 0x1
+REPLAY_TAG = 0x2
+REPLAY_SINGLE_MODE = 0x8
+REPLAY_HAND_TEST = 0x40
+_NAME_BYTES = 40  # 20 UTF-16 code units
+
+
+class YrpError(ValueError):
+    """A file is not a readable EDOPro replay, or not one this host can re-run."""
+
+
+@dataclass(frozen=True)
+class YrpFile:
+    """The contents of an EDOPro replay, as ``gframe/replay.cpp`` reads it.
+
+    ``yrp1`` files carry the duel parameters, the decks in load order and the
+    responses; ``yrpX`` files carry the broadcast packet stream and, as the
+    last packet (``OLD_REPLAY_MODE``), an embedded ``yrp1`` (``embedded``).
+    """
+
+    id: int
+    version: int
+    flag: int
+    timestamp: int
+    seed: tuple[int, ...] | None  # four core seed words (extended header), else None
+    names: tuple[str, ...]  # home players then opposing players
+    home_count: int
+    opposing_count: int
+    rule_flags: int
+    player: tuple[int, int, int] | None = None  # yrp1: starting LP, hand, draw per turn
+    decks: tuple[tuple[tuple[int, ...], tuple[int, ...]], ...] = ()  # yrp1: (main, extra) per duelist, load order
+    rule_cards: tuple[int, ...] = ()
+    responses: tuple[bytes, ...] = ()  # yrp1
+    packets: tuple[tuple[int, bytes], ...] = ()  # yrpX: (message type, payload), OLD_REPLAY_MODE included
+    embedded: YrpFile | None = None  # yrpX: the embedded yrp1
+
+    @property
+    def kind(self) -> str:
+        return "yrpX" if self.id == REPLAY_YRPX else "yrp1"
+
+    def replayable(self) -> YrpFile:
+        """The ``yrp1`` that re-runs this duel: the file itself, or the one a ``yrpX`` embeds."""
+        if self.id == REPLAY_YRP1:
+            return self
+        if self.embedded is None:
+            raise YrpError("yrpX replay has no embedded yrp1: it cannot be re-simulated")
+        return self.embedded
+
+
+class _Cursor:
+    def __init__(self, data: bytes, what: str) -> None:
+        self.data, self.pos, self.what = data, 0, what
+
+    def take(self, n: int) -> bytes:
+        if self.pos + n > len(self.data):
+            raise YrpError(f"truncated replay: {self.what} ends at byte {len(self.data)}, needed {self.pos + n}")
+        out = self.data[self.pos : self.pos + n]
+        self.pos += n
+        return out
+
+    def u8(self) -> int:
+        return self.take(1)[0]
+
+    def u16(self) -> int:
+        return struct.unpack("<H", self.take(2))[0]
+
+    def u32(self) -> int:
+        return struct.unpack("<I", self.take(4))[0]
+
+    def u64(self) -> int:
+        return struct.unpack("<Q", self.take(8))[0]
+
+    def name(self) -> str:
+        return self.take(_NAME_BYTES).decode("utf-16-le", "replace").split("\0", 1)[0]
+
+    @property
+    def eof(self) -> bool:
+        return self.pos >= len(self.data)
+
+
+def load_yrp(path: str | Path) -> YrpFile:
+    """Read an EDOPro replay file (``.yrp`` or ``.yrpX``)."""
+    path = Path(path)
+    try:
+        return parse_yrp(path.read_bytes())
+    except YrpError as exc:
+        raise YrpError(f"{path}: {exc}") from None
+
+
+def parse_yrp(data: bytes) -> YrpFile:
+    """Parse the bytes of an EDOPro replay (layout of ``gframe/replay.cpp``; LZMA bodies are decompressed)."""
+    if len(data) < 32:
+        raise YrpError(f"truncated header ({len(data)} bytes)")
+    ident, version, flag, timestamp, datasize, _hash = struct.unpack_from("<6I", data, 0)
+    props = data[24:29]
+    if ident not in (REPLAY_YRP1, REPLAY_YRPX):
+        raise YrpError(f"not an EDOPro replay (identifier 0x{ident:08x})")
+    header_len, seed = 32, None
+    if flag & REPLAY_EXTENDED_HEADER:
+        if len(data) < 72:
+            raise YrpError(f"truncated header ({len(data)} bytes, extended header needs 72)")
+        seed = struct.unpack_from("<4Q", data, 40)
+        header_len = 72
+    raw = data[header_len:]
+    if flag & REPLAY_COMPRESSED:
+        # EDOPro stores the 5 LZMA property bytes in the header and the raw stream after it (LzmaUncompress);
+        # rebuilding the classic .lzma header lets the standard library decode it.
+        try:
+            body = lzma.decompress(props + struct.pack("<Q", datasize) + raw, format=lzma.FORMAT_ALONE)
+        except lzma.LZMAError as exc:
+            raise YrpError(f"LZMA decompression failed: {exc}") from None
+    else:
+        body = raw
+    if len(body) < datasize:
+        raise YrpError(f"truncated body: {len(body)} bytes, header announces {datasize}")
+    cur = _Cursor(body[:datasize], "body")
+    if flag & REPLAY_SINGLE_MODE:
+        names = (cur.name(), cur.name())
+        home = opposing = 1
+    else:
+        counts, names_list = [], []
+        for _ in range(2):
+            n = cur.u32() if flag & REPLAY_NEWREPLAY else (2 if flag & REPLAY_TAG else 1)
+            counts.append(n)
+            names_list += [cur.name() for _ in range(n)]
+        home, opposing = counts
+        names = tuple(names_list)
+    fields: dict = {"id": ident, "version": version, "flag": flag, "timestamp": timestamp, "seed": seed, "names": names,
+                    "home_count": home, "opposing_count": opposing}  # fmt: skip
+    if ident == REPLAY_YRP1:
+        fields["player"] = (cur.u32(), cur.u32(), cur.u32())
+    fields["rule_flags"] = cur.u64() if flag & REPLAY_64BIT_DUELFLAG else cur.u32()
+    if ident == REPLAY_YRPX:
+        packets, embedded = [], None
+        while not cur.eof:
+            msg = cur.u8()
+            payload = cur.take(cur.u32())
+            packets.append((msg, payload))
+            if msg == OLD_REPLAY_MODE and embedded is None:
+                embedded = parse_yrp(payload)
+        return YrpFile(**fields, packets=tuple(packets), embedded=embedded)
+    if flag & REPLAY_SINGLE_MODE:
+        cur.take(cur.u16())  # puzzle script name
+        if not flag & REPLAY_HAND_TEST:
+            raise YrpError("single-mode (puzzle) replays carry no decks and are not supported")
+    decks = []
+    for _ in range(home + opposing):
+        main = struct.unpack(f"<{(n := cur.u32())}I", cur.take(4 * n))
+        extra = struct.unpack(f"<{(n := cur.u32())}I", cur.take(4 * n))
+        decks.append((main, extra))
+    rule_cards: tuple[int, ...] = ()
+    if flag & REPLAY_NEWREPLAY and not flag & REPLAY_HAND_TEST:
+        rule_cards = struct.unpack(f"<{(n := cur.u32())}I", cur.take(4 * n))
+    responses = []
+    while not cur.eof:
+        n = cur.u8()
+        if n == 0:  # optional terminator (the combo solver writes one, EDOPro stops at the end of the data)
+            break
+        responses.append(cur.take(n))
+    return YrpFile(**fields, decks=tuple(decks), rule_cards=rule_cards, responses=tuple(responses))
+
+
+__all__ = ["REPLAY_YRP1", "REPLAY_YRPX", "Replay", "ReplayEnvironmentMismatch", "YrpError", "YrpFile", "load_yrp",
+           "parse_yrp"]  # fmt: skip

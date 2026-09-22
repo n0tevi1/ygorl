@@ -1,0 +1,13 @@
+{
+  "_comment": "Target boards for tools/solve_openings.py (T4a.1), keyed by deck name: card passwords, password@zone[:fd] (see docs/solver.md). fire: hand traps of the --fire variant.",
+  "branded_despia": {"targets": ["87746184"], "fire": [14558127]},
+  "fiendsmith_ryzeal": {"targets": ["34909328"], "fire": [14558127]},
+  "kashtira": {"targets": ["73542331"], "fire": [14558127]},
+  "labrynth": {"targets": ["1225009", "5380979@szone:fd"], "fire": [14558127]},
+  "purrely": {"targets": ["52645235"], "fire": [14558127]},
+  "snake_eye": {"targets": ["48452496"], "fire": [14558127]},
+  "tearlaments": {"targets": ["92731385"], "fire": [14558127]},
+  "tenpai": {"targets": ["82570174"], "fire": [14558127]},
+  "voiceless_voice": {"targets": ["10774240"], "fire": [14558127]},
+  "yubel": {"targets": ["80453041"], "fire": [14558127]}
+}

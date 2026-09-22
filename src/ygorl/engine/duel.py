@@ -174,10 +174,22 @@ class Duel:
         record_messages: bool = False,
         record_steps: bool = False,
         snapshots: bool = False,
+        core_seed: list[int] | None = None,
     ) -> None:
         if first not in (0, 1):
             raise ValueError("first must be 0 (deck_a starts) or 1 (deck_b starts)")
         self.seed = seed
+        # The core's four RNG words: expand_seed(seed) unless given explicitly (replays recorded by other hosts,
+        # e.g. EDOPro or the combo solver, carry their own words; T4a.1).
+        if core_seed is None:
+            self.core_seed = expand_seed(seed)
+        else:
+            words = [int(w) for w in core_seed]
+            if len(words) != 4 or not all(0 <= w < 1 << 64 for w in words):
+                raise ValueError(f"core_seed must be four 64-bit words, not {core_seed!r}")
+            if not any(words):
+                raise ValueError("core_seed must not be all-zero (the core rejects it)")
+            self.core_seed = words
         self.env = env
         self.decks = (deck_a, deck_b)
         self.cards = cards if cards is not None else default_cards()
@@ -221,7 +233,7 @@ class Duel:
     def _setup(self) -> _core.Duel:
         p = self.config.player
         player = (p.starting_lp, p.starting_hand, p.draw_per_turn)
-        core = _core.Duel(expand_seed(self.seed), self.config.rule_flags, player, player, self.cards.to_core(), self.scripts,
+        core = _core.Duel(self.core_seed, self.config.rule_flags, player, player, self.cards.to_core(), self.scripts,
                           snapshots=self.snapshots)  # fmt: skip
         for base in ("constant.lua", "utility.lua"):
             if not core.load_script(base):
