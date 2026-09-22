@@ -20,7 +20,7 @@ tmp/
 temp/
 
 # 构建产物（按技术栈确定后再细化）
-build/
+/build/
 dist/
 out/
 target/
