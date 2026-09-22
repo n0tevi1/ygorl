@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include "core_backend.h"
+#include "duel_pool.h"
 
 namespace py = pybind11;
 using namespace ygorl;
@@ -195,6 +196,45 @@ PYBIND11_MODULE(_core, m) {
         }, "Return and clear [(OCG_LOG_TYPE_*, bytes)] emitted by the core.")
         .def("close", &Duel::close, py::call_guard<py::gil_scoped_release>())
         .def_property_readonly("closed", &Duel::closed);
+
+    py::class_<DuelPool>(m, "DuelPool",
+        "Advances many duels on a pool of worker threads (env i runs on thread i % num_threads).")
+        .def(py::init([](size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
+                         std::shared_ptr<ScriptDirectory> scripts) {
+                 return std::make_unique<DuelPool>(num_envs, num_threads, cards, scripts);
+             }),
+             py::arg("num_envs"), py::arg("num_threads"), py::arg("cards"), py::arg("scripts"))
+        .def("start", [](DuelPool& pool, int env, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple team1,
+                         py::tuple team2, DeckLists decks) {
+            auto t1 = to_player(team1), t2 = to_player(team2);
+            py::gil_scoped_release release;
+            pool.start(env, seed, flags, t1, t2, std::move(decks));
+        }, py::arg("env"), py::arg("seed"), py::arg("flags"), py::arg("team1"), py::arg("team2"), py::arg("decks"),
+           "Asynchronously create env's duel from [(main, extra), (main, extra)] and run it to its first stop.")
+        .def("respond", [](DuelPool& pool, int env, py::bytes response) {
+            std::string r = response;
+            py::gil_scoped_release release;
+            pool.respond(env, std::move(r));
+        }, py::arg("env"), py::arg("response"), "Asynchronously answer env's pending decision and run to the next stop.")
+        .def("recv", [](DuelPool& pool, size_t min_results, int timeout_ms) {
+            std::vector<PoolResult> results;
+            {
+                py::gil_scoped_release release;
+                results = pool.recv(min_results, timeout_ms);
+            }
+            py::list out;
+            for (auto& r : results) {
+                py::list logs;
+                for (auto& e : r.logs) logs.append(py::make_tuple(e.type, py::bytes(e.text)));
+                out.append(py::make_tuple(r.env_id, r.status, py::bytes(r.buffer), logs, r.error));
+            }
+            return out;
+        }, py::arg("min_results") = 1, py::arg("timeout_ms") = -1,
+           "Return finished jobs as [(env, status, buffer, logs, error)], waiting for at least min_results.")
+        .def("close_env", &DuelPool::close_env, py::arg("env"), py::call_guard<py::gil_scoped_release>())
+        .def("pending", &DuelPool::pending)
+        .def_property_readonly("num_envs", &DuelPool::num_envs)
+        .def_property_readonly("num_threads", &DuelPool::num_threads);
 
     m.attr("DUEL_STATUS_END") = static_cast<int>(OCG_DUEL_STATUS_END);
     m.attr("DUEL_STATUS_AWAITING") = static_cast<int>(OCG_DUEL_STATUS_AWAITING);

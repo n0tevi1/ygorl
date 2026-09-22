@@ -103,3 +103,16 @@ print(result.summary())
 已知残余风险：核心里还有以原始指针为键的**有序**容器（如 `std::map<effect*, chain>`、`std::set<std::pair<effect*, tevent>>`），其遍历顺序由地址大小决定。大规模扫描（`tools/check_determinism.py`）未观察到由此导致的差异；若出现，彻底方案是每局一个地址确定的 arena 分配器，这也是 T2.8 快照需要的基础设施。
 
 验证：`tests/test_determinism.py`（同种子字节一致、应答日志重放到同一终局、动作日志重放、截断日志、与参考流比对），以及 `uv run python tools/check_determinism.py --games 1000`。
+
+## 向量化环境（`ygorl.env`，T2.1）
+
+`csrc/duel_pool.{h,cpp}` 的 `DuelPool` 持有 `num_envs` 个槽位和 `num_threads` 个工作线程，槽位 `i` 固定由线程 `i % num_threads` 处理（每线程独立的核心句柄集合，为 T2.8 的每线程 arena 留好位置）。接口是 envpool 式的异步调用：
+
+- `start(env, seed[4], flags, team1, team2, decks)`：在工作线程上建局、加载基础脚本、按给定顺序加卡、开始，并运行到第一个停点；
+- `respond(env, bytes)`：设置应答并运行到下一个停点；
+- `recv(min_results, timeout_ms)`：取回完成的作业 `(env, status, buffer, logs, error)`，不会等待比在途作业更多的结果；
+- 停点 = 核心要求应答、对局结束，或缓冲区里出现 `MSG_WIN`（与单局一致，主机在第一个胜负处停止）。
+
+所有调用在等待与核心运行期间释放 GIL。Python 侧 `VecDuelEnv` 为每个槽位持有一个 `DuelTracker`（与 `Duel.run` 共用同一份主机逻辑），多选的中间步骤在本地完成，只有完整应答才回到核心；`DuelEnv` 是单局的 `reset/step` 包装；`run_games(specs, agent_factory, num_envs, num_threads)` 按规格顺序返回结果。
+
+验收：`tests/test_pool.py` 检查池化结果与逐局 `Duel.run` 完全一致、线程数不影响结果、上限在池中同样生效；`uv run python tools/check_pool.py --games 1000 --threads 4` 做 1,000 局比对。目前每个决策的消息解码与动作生成仍在 Python 中完成，吞吐受其限制，T2.2 把观测编码移到 C++ 后再做基准（T2.7）。

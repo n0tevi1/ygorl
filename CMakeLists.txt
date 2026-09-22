@@ -21,6 +21,7 @@ include(cmake/ocgcore.cmake)
 pybind11_add_module(_core MODULE
     csrc/binding.cpp
     csrc/core_backend.cpp
+    csrc/duel_pool.cpp
 )
 target_include_directories(_core PRIVATE csrc)
 target_link_libraries(_core PRIVATE ocgcore)

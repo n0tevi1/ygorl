@@ -98,12 +98,13 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── cmake/                   # CMake 片段（ocgcore.cmake：复制核心、打补丁、编成静态库）
 ├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序），构建时应用
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
-├── csrc/                    # C++：core_backend（OCG_* 封装）、binding（pybind11）
+├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、binding（pybind11）
 ├── src/ygorl/               # Python 包
 │   ├── agents/              # Agent 协议、RandomAgent
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
-│   └── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
+│   ├── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
+│   └── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games
 ├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对
 ├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据
 ├── docs/
