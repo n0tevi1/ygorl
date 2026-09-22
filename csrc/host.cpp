@@ -2,6 +2,8 @@
 // (tests/test_cpp_host.py fuzzes the decision states and runs real games in lockstep).
 #include "host.h"
 
+#include "event_encoder.h"
+
 #include <algorithm>
 #include <cstring>
 #include <functional>
@@ -959,6 +961,8 @@ void HostDuel::start(const std::array<uint64_t, 4>& seed, uint64_t flags, const 
     }
     core_->start();
     tracker_ = std::make_unique<Tracker>(TrackerConfig{team1.starting_lp, max_turns, max_decisions}, cards_.get());
+    events_ = event_length_ ? std::make_shared<EventHistory>(cards_.get(), vocab_.get(), event_length_, team1.starting_lp)
+                            : nullptr;
     advance();
 }
 
@@ -968,6 +972,7 @@ void HostDuel::advance() {
         std::string buf = core_->get_message();
         core_->pop_logs();
         tracker_->on_buffer(buf, status);
+        if (events_) events_->feed(buf);
         if (tracker_->done() || tracker_->awaiting()) return;
     }
 }
@@ -993,6 +998,8 @@ void HostDuel::act(size_t index) {
 
 void HostDuel::observe(Observation& out) {
     encode(*core_, *tracker_, actions(), *cards_, *vocab_, out);
+    out.has_events = events_ != nullptr;
+    if (events_) events_->encode(std::max(0, player()), out.events, out.event_mask);
 }
 
 }  // namespace ygorl::host
