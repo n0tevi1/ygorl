@@ -50,8 +50,11 @@ def _i32(*values: int) -> bytes:
 
 
 def _cards_response(indices: Sequence[int]) -> bytes:
-    if not indices:
-        return _i32(-1)
+    """An explicit selection (possibly empty); ``-1`` (cancel) is encoded separately.
+
+    The core treats them differently: for a cancelable script ``-1`` returns nil
+    (and cancels a summon's tributes), an empty list returns an empty group.
+    """
     return struct.pack(f"<iI{len(indices)}I", 0, len(indices), *indices)
 
 
@@ -313,9 +316,9 @@ class SelectCardState(_Picks):
         d: M.SelectCard = self.decision
         n = len(self.picked)
         acts = [Action("select", i, c) for i, c in enumerate(d.cards) if i not in self.picked] if n < d.max else []
-        if n >= d.min and (n > 0 or d.cancelable):
+        if n >= d.min:  # with min 0 an empty selection is a valid answer of its own
             acts.append(Action("finish"))
-        elif d.cancelable and n == 0:
+        if d.cancelable and n == 0:
             acts.append(Action("cancel"))
         return acts
 
@@ -347,10 +350,9 @@ class TributeState(_Picks):
             for i, c in enumerate(d.cards):
                 if i not in self.picked and self._can_reach(self.picked + [i]):
                     acts.append(Action("select", i, M.CardInfo(c.code, c.loc), value=c.release_param))
-        enough = self._sum(self.picked) >= d.min
-        if enough and (self.picked or d.cancelable):
+        if self._sum(self.picked) >= d.min:
             acts.append(Action("finish"))
-        elif d.cancelable and not self.picked:
+        if d.cancelable and not self.picked:
             acts.append(Action("cancel"))
         return acts
 
@@ -443,7 +445,7 @@ class SelectSumState(_Picks):
         d: M.SelectSum = self.decision
         acts = [Action("select", i, M.CardInfo(o.code, o.loc), value=o.param)
                 for i, o in enumerate(d.cards) if i not in self.picked and self._feasible(self.picked + [i])]  # fmt: skip
-        if self.picked and self._complete(self.picked):
+        if self._complete(self.picked):  # may be empty: the must-select cards alone can complete it
             acts.append(Action("finish"))
         return acts
 

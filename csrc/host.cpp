@@ -366,11 +366,9 @@ bool DecisionState::step(size_t index) {
     return done_;
 }
 
+// An explicit (possibly empty) selection; cancel (-1) is encoded by the CANCEL action. The core
+// treats them differently: -1 gives a cancelable script nil, an empty list an empty group.
 void DecisionState::set_cards_response() {
-    if (picked_.empty()) {
-        response_ = pack_i32({-1});
-        return;
-    }
     response_.clear();
     append<int32_t>(response_, 0);
     append<uint32_t>(response_, static_cast<uint32_t>(picked_.size()));
@@ -621,10 +619,8 @@ std::vector<Action> DecisionState::legal() const {
             if (n < d_.max)
                 for (size_t i = 0; i < d_.cards.size(); ++i)
                     if (!contains(picked_, i)) acts.push_back(with_card(SELECT, i, d_.cards[i]));
-            if (n >= d_.min && (n > 0 || d_.cancelable))
-                acts.push_back(make(FINISH));
-            else if (d_.cancelable && n == 0)
-                acts.push_back(make(CANCEL));
+            if (n >= d_.min) acts.push_back(make(FINISH));  // with min 0 an empty selection is an answer
+            if (d_.cancelable && n == 0) acts.push_back(make(CANCEL));
             break;
         }
         case MSG_SELECT_TRIBUTE: {
@@ -638,11 +634,8 @@ std::vector<Action> DecisionState::legal() const {
                 }
             int64_t sum = 0;
             for (int i : chosen) sum += d_.params[i];
-            bool enough = sum >= static_cast<int64_t>(d_.min);
-            if (enough && (!picked_.empty() || d_.cancelable))
-                acts.push_back(make(FINISH));
-            else if (d_.cancelable && picked_.empty())
-                acts.push_back(make(CANCEL));
+            if (sum >= static_cast<int64_t>(d_.min)) acts.push_back(make(FINISH));
+            if (d_.cancelable && picked_.empty()) acts.push_back(make(CANCEL));
             break;
         }
         case MSG_SELECT_SUM: {
@@ -653,7 +646,7 @@ std::vector<Action> DecisionState::legal() const {
                 next.push_back(static_cast<int>(i));
                 if (sum_feasible(next)) acts.push_back(with_card(SELECT, i, d_.cards[i], 0, d_.params[i]));
             }
-            if (!picked_.empty() && sum_complete(chosen)) acts.push_back(make(FINISH));
+            if (sum_complete(chosen)) acts.push_back(make(FINISH));  // must-select cards alone may complete it
             break;
         }
         case MSG_SELECT_COUNTER:
