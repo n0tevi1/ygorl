@@ -386,7 +386,7 @@ class SelectSumState(_Picks):
     def _exact_feasible(self, chosen: list[int]) -> bool:
         d: M.SelectSum = self.decision
         base = self._sums(list(d.must) + [d.cards[i] for i in chosen])
-        max_count = max(d.max, d.min)
+        max_count = min(max(d.max, d.min), len(d.cards))  # never more picks than offered cards
         if len(chosen) > max_count:
             return False
         # dp[k] = sums reachable with k additional cards from the rest

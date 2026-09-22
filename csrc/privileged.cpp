@@ -113,6 +113,7 @@ void encode_privileged(Duel& core, int viewer, const Vocab& vocab, Privileged& o
 }
 
 void HostDuel::observe_privileged(Privileged& out) {
+    require_started();
     const int viewer = player();
     encode_privileged(*core_, viewer < 0 ? 0 : viewer, *vocab_, out);
 }

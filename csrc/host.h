@@ -215,6 +215,7 @@ public:
                const PlayerOptions& team2,
                const std::vector<std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>& decks,
                uint32_t max_turns, uint32_t max_decisions);
+    bool started() const { return tracker_ != nullptr; }  // start() completed
     bool done() const { return tracker_ && tracker_->done(); }
     const std::vector<Action>& actions();
     int player() const;
@@ -222,12 +223,16 @@ public:
     void observe(Observation& out);
     // Training-only opponent ground truth (privileged.cpp); never part of observe().
     void observe_privileged(Privileged& out);
-    const Tracker& tracker() const { return *tracker_; }
+    const Tracker& tracker() const {
+        require_started();
+        return *tracker_;
+    }
     // Keep the last n event tokens per viewer from the next start() on (0 = no event stream).
     void set_event_length(size_t n) { event_length_ = n; }
 
 private:
     void advance();
+    void require_started() const;
 
     std::shared_ptr<CardDatabase> cards_;
     std::shared_ptr<ScriptSource> scripts_;

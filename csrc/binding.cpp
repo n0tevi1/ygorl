@@ -274,10 +274,13 @@ PYBIND11_MODULE(_core, m) {
             py::gil_scoped_release release;
             d.restore(snap);
         }, py::arg("snapshot"), "Return to a snapshot taken from this duel (ValueError for another duel's).")
-        .def_property_readonly("snapshots_enabled", &Duel::snapshots_enabled)
-        .def("arena_escapes", &Duel::arena_escapes,
+        .def_property_readonly("snapshots_enabled", [](const Duel& d) {
+            py::gil_scoped_release release;  // takes the duel's mutex (GIL before mutex would deadlock)
+            return d.snapshots_enabled();
+        })
+        .def("arena_escapes", &Duel::arena_escapes, py::call_guard<py::gil_scoped_release>(),
              "Allocations that escaped the arena while the core ran (must be 0 for exact snapshots).")
-        .def("arena_bytes", &Duel::arena_bytes, "Bytes of the duel's arena in use.")
+        .def("arena_bytes", &Duel::arena_bytes, py::call_guard<py::gil_scoped_release>(), "Bytes of the duel's arena in use.")
         .def("load_script", &Duel::load_script, py::arg("name"),
              py::call_guard<py::gil_scoped_release>())
         .def("new_card", &Duel::new_card, py::arg("team"), py::arg("duelist"), py::arg("code"),
@@ -313,7 +316,10 @@ PYBIND11_MODULE(_core, m) {
             return out;
         }, "Return and clear [(OCG_LOG_TYPE_*, bytes)] emitted by the core.")
         .def("close", &Duel::close, py::call_guard<py::gil_scoped_release>())
-        .def_property_readonly("closed", &Duel::closed);
+        .def_property_readonly("closed", [](const Duel& d) {
+            py::gil_scoped_release release;
+            return d.closed();
+        });
 
     py::class_<DuelPool>(m, "DuelPool",
         "Advances many duels on a pool of worker threads (env i runs on thread i % num_threads).")
