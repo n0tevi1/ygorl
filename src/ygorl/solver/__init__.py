@@ -27,6 +27,7 @@ from ygorl.solver.demo import (
     convert_line,
     iter_steps,
     read_jsonl,
+    verify_line,
 )
 from ygorl.solver.targets import TargetCard, board_summary, board_summary_missing, parse_targets
 
@@ -35,5 +36,5 @@ __all__ = [
     "HandJob", "SolutionFile", "SolveRequest", "SolverError", "SolverNotFound", "SolverRun", "TargetCard", "Workdir",
     "board_summary", "board_summary_missing", "canonical_response", "convert_line", "find_solver", "iter_steps",
     "make_template", "parse_events", "parse_solution_name", "parse_targets", "read_jsonl", "run_job", "run_solver",
-    "sample_hand", "solve_fire", "solve_hand",
+    "sample_hand", "solve_fire", "solve_hand", "verify_line",
 ]  # fmt: skip

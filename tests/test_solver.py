@@ -14,16 +14,15 @@ import pytest
 
 from ygorl.agents import RandomAgent
 from ygorl.cards.cdb import CardDB
-from ygorl.cards.ydk import Deck, load_ydk
+from ygorl.cards.ydk import load_ydk
 from ygorl.engine import constants as C
 from ygorl.engine.duel import Duel, DuelConfig
-from ygorl.engine.replay import Replay, load_yrp, parse_yrp
+from ygorl.engine.replay import Replay, load_yrp
 from ygorl.solver import (
     DEMO_FORMAT,
     DemoError,
     Demonstration,
     SolveRequest,
-    SolverError,
     SolverNotFound,
     TargetCard,
     Workdir,
@@ -37,6 +36,7 @@ from ygorl.solver import (
     parse_solution_name,
     read_jsonl,
     sample_hand,
+    verify_line,
 )
 
 DECKS = {p.stem: load_ydk(p) for p in sorted((Path(__file__).parent / "decks").glob("*.ydk"))}
@@ -235,6 +235,15 @@ def test_demonstration_roundtrip_and_iter_steps(db, tmp_path):
     assert all(0 <= a < len(p.actions) for p, a in steps)
     rep = loaded[0].replay(0)
     assert rep.play(cards=db).responses == line.responses
+    verify_line(loaded[0], 0, cards=db)
+    tampered = Demonstration.from_json(loaded[0].to_json())
+    tampered.lines[0].board["players"][0]["lp"] = 1
+    with pytest.raises(DemoError, match="board differs"):
+        verify_line(tampered, 0, cards=db)
+    first_multi = next(i for i, (p, _) in enumerate(steps) if len(p.actions) > 1)
+    tampered.lines[0].actions[first_multi] = (tampered.lines[0].actions[first_multi] + 1) % len(steps[first_multi][0].actions)
+    with pytest.raises(DemoError):
+        verify_line(tampered, 0, cards=db)
 
 
 # ------------------------------------------------------------------ with the real solver binary

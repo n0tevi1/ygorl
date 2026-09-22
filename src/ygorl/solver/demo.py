@@ -270,5 +270,38 @@ def iter_steps(demo: Demonstration, line: int = 0, *, env: Environment | None = 
         session.close()
 
 
+def verify_line(demo: Demonstration, line: int = 0, *, env: Environment | None = None, cards=None,
+                scripts: _core.ScriptDirectory | None = None) -> None:  # fmt: skip
+    """Re-check a stored line from scratch; raise :class:`DemoError` on any difference.
+
+    A fresh duel from ``demo.start`` is driven by the stored action indices: every step must be
+    legal, the core must never answer ``MSG_RETRY``, the responses must equal the stored ones, and
+    the final board must equal the stored summary and hold the target cards.
+    """
+    ln = demo.lines[line]
+    session = DuelSession(_duel_from(demo.replay(line), cards, scripts, env))
+    tracker = session.tracker
+    try:
+        for i, idx in enumerate(ln.actions):
+            point = session.point
+            if point is None:
+                raise DemoError(f"step {i}: the duel stopped ({tracker.result.reason}) before the line ended")
+            if not 0 <= idx < len(point.actions):
+                raise DemoError(f"step {i}: action {idx} out of range for {point.decision.name} ({len(point.actions)} actions)")
+            session.act(idx)
+            if tracker.result.retries:
+                raise DemoError(f"step {i}: the engine answered MSG_RETRY")
+        if tracker.result.responses != ln.responses:
+            raise DemoError("the action indices do not reproduce the stored responses")
+        board = board_summary(session.core, tracker.turn, (tracker.lp[0], tracker.lp[1]))
+    finally:
+        session.close()
+    if json.loads(json.dumps(board)) != ln.board:
+        raise DemoError("the final board differs from the stored summary")
+    missing = board_summary_missing(board, parse_targets(demo.targets), cards)
+    if missing:
+        raise DemoError(f"final board lacks {', '.join(t.to_arg() for t in missing)}")
+
+
 __all__ = ["DEMO_FORMAT", "DemoError", "DemoLine", "Demonstration", "canonical_response", "convert_line", "iter_steps",
-           "read_jsonl"]  # fmt: skip
+           "read_jsonl", "verify_line"]  # fmt: skip
