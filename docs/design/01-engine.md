@@ -27,7 +27,7 @@
 | R5 消息/查询 | `process/get_message/set_responsei/b`，`query_*`；消息集完整 | `OCG_DuelProcess/GetMessage/SetResponse`，`OCG_DuelQuery*`；消息集更新（如 `MSG_REMOVE_CARDS`），`OCG_VERSION` 显式版本化 |
 | R6 RL 先例 | **ygo-agent**（最成熟：编码方案、1 亿局训练） | cjiang1209/yugioh-agent（ctypes + PPO，2026-09 活跃）、ygo-harness、YGO-Bench；ygo-agent 的 edopro 后端未维护 |
 | R7 数据 | MyCard cards.cdb；禁限表需自取 | BabelCDB（含 rush/prerelease）+ LFLists（TCG/OCG/GOAT/Speed/Rush 的 `.lflist.conf`）；**无 MD 表** |
-| R8 构建 | 源码 + Lua，简单 | 源码 + Lua 5.3，meson/premake，C++17，简单 |
+| R8 构建 | 源码 + Lua，简单 | 源码 + Lua 5.4（核心自带子模块），meson/premake，C++17，简单 |
 
 两者 API 形状几乎同构（创建 → 加卡 → 循环 process/get_message/set_response），脚本互不兼容（edo9300 明确声明与非其派生的分支不兼容）。**MD 禁限表两边都没有**，都得自己维护（来源：masterduelmeta 非官方 JSON + 手工校对）。
 

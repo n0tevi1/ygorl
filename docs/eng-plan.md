@@ -25,7 +25,7 @@
 | ID | 任务 | 依赖 | 验收标准 | Issue |
 |----|------|------|---------|-------|
 | T0.1 | 项目骨架：uv + `pyproject.toml`（scikit-build-core）+ CMake + pybind11，编译一个 hello 扩展 | — | `uv sync && uv run python -c "import ygorl._core"` 成功；`uv run pytest` 跑通空测试 | [#1](https://github.com/n0tevi1/ygorl/issues/1) |
-| T0.2 | 子模块引入 edo9300/ygopro-core、ProjectIgnis/CardScripts、BabelCDB、LFLists；CMake 把核心（含 Lua 5.3）编成静态库并链接进扩展 | T0.1 | `OCG_GetVersion` 能从 Python 调到并返回 11.x | [#2](https://github.com/n0tevi1/ygorl/issues/2) |
+| T0.2 | 子模块引入 edo9300/ygopro-core、ProjectIgnis/CardScripts、BabelCDB、LFLists；CMake 把核心（含其自带的 Lua 5.4 子模块）编成静态库并链接进扩展 | T0.1 | `OCG_GetVersion` 能从 Python 调到并返回 11.x | [#2](https://github.com/n0tevi1/ygorl/issues/2) |
 | T0.3 | CI：GitHub Actions 在 Linux 上构建扩展并跑 pytest；缓存子模块与构建 | T0.2 | PR 上 CI 绿 | [#3](https://github.com/n0tevi1/ygorl/issues/3) |
 | T0.4 | `Environment` 数据类与 `environments/<version>/` 目录规范（`pool.json`、`banlist.lflist.conf`、`meta/*.ydk`、`meta.json`、`artifacts/`）；加载/校验/版本号 | T0.1 | 单测覆盖加载与缺文件报错；`docs/environments.md` | [#4](https://github.com/n0tevi1/ygorl/issues/4) |
 

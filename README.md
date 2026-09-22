@@ -29,7 +29,8 @@
 Python 3.11 由 uv 自动选择或下载；pybind11 与 scikit-build-core 作为构建依赖由 uv 自动安装。
 
 ```bash
-git clone https://github.com/n0tevi1/ygorl && cd ygorl
+git clone --recurse-submodules --shallow-submodules https://github.com/n0tevi1/ygorl && cd ygorl
+# 已克隆但没带子模块时：git submodule update --init --recursive
 uv sync                                   # 创建 .venv，编译并安装 C++ 扩展 ygorl._core
 uv run python -c "import ygorl._core"     # 冒烟测试
 uv run pytest                             # 跑单测
@@ -37,6 +38,27 @@ uv run pytest                             # 跑单测
 
 修改 `csrc/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
 需要强制重编时用 `uv sync --reinstall-package ygorl`。
+
+### 第三方子模块
+
+规则核心与卡片数据以 git submodule 形式放在 `third_party/`，每个都固定到明确的 commit（`git submodule status` 查看）：
+
+| 路径 | 上游 | 用途 |
+|------|------|------|
+| `third_party/ygopro-core` | [edo9300/ygopro-core](https://github.com/edo9300/ygopro-core)（含 Lua 5.4 嵌套子模块） | 规则核心，CMake 编成静态库链接进 `ygorl._core` |
+| `third_party/CardScripts` | [ProjectIgnis/CardScripts](https://github.com/ProjectIgnis/CardScripts) | 卡片效果 Lua 脚本 |
+| `third_party/BabelCDB` | [ProjectIgnis/BabelCDB](https://github.com/ProjectIgnis/BabelCDB) | 卡片数据库 `cards.cdb` |
+| `third_party/LFLists` | [ProjectIgnis/LFLists](https://github.com/ProjectIgnis/LFLists) | 禁限表 `.lflist.conf` |
+
+脚本与数据库子模块标记为 shallow，只拉取固定的那个 commit。更新某个子模块到上游最新：
+
+```bash
+git submodule update --remote third_party/CardScripts   # 换成要更新的路径
+git add third_party/CardScripts && git commit -m "Bump CardScripts to <short-sha>"
+uv sync --reinstall-package ygorl                        # 更新 ygopro-core 后需要重编
+```
+
+更新核心或脚本会改变对局结果，提交前跑一遍 `uv run pytest`，并在提交信息里写明新旧 commit。
 
 ## 目录结构
 
@@ -47,6 +69,8 @@ uv run pytest                             # 跑单测
 ├── pyproject.toml           # uv 项目 + scikit-build-core 构建配置
 ├── uv.lock
 ├── CMakeLists.txt           # 构建 C++ 扩展 ygorl._core
+├── cmake/                   # CMake 片段（ocgcore.cmake：核心 + Lua 静态库）
+├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
 ├── csrc/                    # C++ 源码（pybind11 绑定）
 ├── src/ygorl/               # Python 包
 ├── tests/                   # pytest 单测
