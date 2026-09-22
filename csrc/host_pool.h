@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "host.h"
+#include "privileged.h"
 #include "worker_pool.h"
 
 namespace ygorl::host {
@@ -15,6 +16,8 @@ struct PoolEvent {
     bool done = false;
     int player = -1;
     Observation obs;  // valid when !done
+    bool has_privileged = false;
+    Privileged privileged;  // training mode only (HostPool privileged = true), valid when !done
     // final result (valid when done)
     int winner = -1, win_reason = -1;
     std::string reason, error;
@@ -36,7 +39,7 @@ struct PoolJob {
 class HostPool {
 public:
     HostPool(size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
-             std::shared_ptr<ScriptSource> scripts, std::shared_ptr<const Vocab> vocab);
+             std::shared_ptr<ScriptSource> scripts, std::shared_ptr<const Vocab> vocab, bool privileged = false);
     ~HostPool();
     void reset(int env, PoolJob job);
     void step(int env, size_t action);
@@ -49,6 +52,7 @@ private:
     std::shared_ptr<CardDatabase> cards_;
     std::shared_ptr<ScriptSource> scripts_;
     std::shared_ptr<const Vocab> vocab_;
+    bool privileged_ = false;  // training mode: also emit opponent ground truth
     std::vector<std::unique_ptr<HostDuel>> slots_;
     std::unique_ptr<WorkerPool<std::pair<int, PoolJob>, PoolEvent>> pool_;
 };

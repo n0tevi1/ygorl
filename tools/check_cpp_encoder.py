@@ -1,5 +1,8 @@
 """T2.2 acceptance: the C++ host (actions + encoder) equals the Python reference at N decision points.
 
+Also checks the training-mode ground truth (T2.5, ``HostDuel.observe_privileged`` vs
+``ObservationEncoder.encode_privileged``) at every point.
+
 Usage: uv run python tools/check_cpp_encoder.py [--points 10000]
 
 Plays random games with the Python Duel while a C++ HostDuel follows the same
@@ -42,11 +45,12 @@ def main() -> int:
     db = CardDB.load()
     vocab = CardVocab.from_db(db)
     passwords = [vocab.password(i) for i in range(vocab.FIRST_INDEX, len(vocab))]
-    encoder = ObservationEncoder(db, vocab)
+    encoder = ObservationEncoder(db, vocab, privileged=True)
     decks = {p.stem: load_ydk(p) for p in sorted(DECK_DIR.glob("*.ydk"))}
     names = sorted(decks)
     points, games, mismatches = 0, 0, []
     by_type = collections.Counter()
+    privileged_nonempty = collections.Counter()  # points where the set / face-down banish tensors are non-empty
     t0 = time.time()
     while points < args.points:
         seed = 900_000 + games
@@ -64,6 +68,10 @@ def main() -> int:
                 ok = host.actions() == [py_action(x) for x in point.actions]
                 cpp, py = host.observe(), encoder.encode(point, duel._core)
                 ok = ok and all(np.array_equal(cpp[k], py[k]) for k in py)
+                cpp_p, py_p = host.observe_privileged(), encoder.encode_privileged(point, duel._core)
+                ok = ok and cpp_p.keys() == py_p.keys() and all(np.array_equal(cpp_p[k], py_p[k]) for k in py_p)
+                privileged_nonempty["op_set"] += int(py_p["counts"][3] > 0)
+                privileged_nonempty["op_removed"] += int(py_p["counts"][4] > 0)
                 if not ok:
                     mismatches.append((games, point.index, point.decision.name))
                 points += 1
@@ -79,7 +87,7 @@ def main() -> int:
             mismatches.append((games, "result", ""))
         games += 1
     summary = {"points": points, "games": games, "mismatches": len(mismatches), "seconds": round(time.time() - t0, 1),
-               "decision_types": dict(by_type.most_common())}  # fmt: skip
+               "privileged_nonempty": dict(privileged_nonempty), "decision_types": dict(by_type.most_common())}  # fmt: skip
     print(json.dumps(summary, indent=2))
     for m in mismatches[:10]:
         print("MISMATCH", m, file=sys.stderr)

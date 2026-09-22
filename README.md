@@ -115,7 +115,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── cmake/                   # CMake 片段（ocgcore.cmake：复制核心、打补丁、编成静态库）
 ├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序），构建时应用
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
-├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、host_pool + worker_pool（C++ 步进环境）、binding（pybind11）
+├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、privileged（训练态对手真值）、host_pool + worker_pool（C++ 步进环境）、binding（pybind11）
 ├── src/ygorl/               # Python 包
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
 │   ├── commands/            # 各子命令一个模块：branch.py（`ygorl branch`）
@@ -124,14 +124,14 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、回放、分支探索（branch.py）、课程模式（curriculum.py）；constants.py 为生成文件
-│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；encoded.py 为 C++ 步进的 EncodedVecEnv
+│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；encoded.py 为 C++ 步进的 EncodedVecEnv
 │   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
 ├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准、信念基线表、吞吐基准、课程模式检查
 ├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据（含代理引擎包）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
 │   ├── engine.md            # 引擎层：CoreBackend、消息、动作模型、确定性
-│   ├── encoding.md          # 观测编码规范（卡片表、全局向量、候选动作表）
+│   ├── encoding.md          # 观测编码规范（卡片表、全局向量、候选动作表、训练态真值）
 │   ├── evaluation.md        # 基线 agent 与评估
 │   ├── belief-eval.md       # 信念校准评估：指标定义与基线数字
 │   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）

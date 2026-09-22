@@ -99,3 +99,62 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 - Python 参考：`ygorl.env.encoding.ObservationEncoder`（`tests/test_encoding.py`）。
 - C++：`csrc/host.{h,cpp}`（决策解码、动作状态机、主机侧 tracker）与 `csrc/obs_encoder.cpp`（编码），通过 `ygorl._core.HostDuel` / `ygorl._core.DecisionState` 暴露。
 - 校验：`tests/test_cpp_host.py` 对 19 种决策消息做随机报文 + 随机选择路径的差分测试（动作列表与应答字节必须与 `ygorl.engine.actions` 一致），并在 5 局真实对局中逐步比对动作、四个观测数组与终局；`uv run python tools/check_cpp_encoder.py --points 10000` 做验收。2026-09-22 的一次运行：8 局、10,530 个决策点、0 处不一致，覆盖 16 种决策类型（其余类型由差分测试覆盖）。
+
+## 训练态真值（privileged，T2.5）
+
+训练时环境另输出一组**真值张量**：对手（相对 viewer，即 `1 - viewer`）的隐藏信息，供特权 critic（设计 I2/I9）与信念头的损失
+（[设计 04](design/04-opponent-model.md)）使用。推理态不计算、不输出。
+
+**隔离约定（actor 拿不到）**：
+
+- 真值从不进入上文四个 actor 数组，也不进入 actor 的 obs dict。它放在单独的结构里：`EncodedEvent.privileged`
+  （`EncodedVecEnv`）、`ObservationEncoder.encode_privileged()`（Python 参考）、`HostDuel.observe_privileged()`（C++ 调试句柄）。
+  actor 只接 `event.obs`，critic / 信念头的损失另接 `event.privileged`。
+- 模式是构造期开关：`EncodedVecEnv(..., privileged=False)`、`_core.HostPool(..., privileged=False)`、
+  `ObservationEncoder(..., privileged=False)`，默认关闭（推理态）。推理态下 C++ 工作线程不做任何真值查询，
+  `event.privileged is None`；`ObservationEncoder.encode_privileged()` 直接抛 `RuntimeError`。评估 / 对战（arena、agent）一律用推理态。
+- 两种模式下 actor 观测逐元素相同（真值开关不改变 actor 输入）；actor 编码本身从不查询对手卡组（单测用查询探针检查）。
+
+### 张量
+
+全部是 `int32`，每一行是 `(card_index, public, sequence)`：`card_index` 为 `CardVocab` 下标（真实身份，不做可见性遮蔽），
+`public` 为核心的 `QUERY_IS_PUBLIC`（1 = 该张对 viewer 已公开，actor 表里本就可见），`sequence` 为区域内序号。
+未用行全 0（`card_index = 0` 即填充）。
+
+| 键 | 形状 | 内容 | 行序 |
+|----|------|------|------|
+| `op_hand` | `[P_HAND=32, 3]` | 对手全部手牌（含已公开的） | 手牌序号（与 actor 表中对手手牌行按 `sequence` 对齐） |
+| `op_deck` | `[P_DECK=64, 3]` | 对手主卡组剩余构成 | 按 `(card_index, public)` 排序，`sequence` 置 0（只给构成，不泄露顺序） |
+| `op_extra` | `[P_EXTRA=32, 3]` | 对手额外卡组全部卡（里侧 + 表侧灵摆，`public` 区分） | 同 `op_deck` |
+| `op_set` | `[P_SET=15, 3]` | 对手场上**里侧**的卡：第 0–6 行 = 怪兽区序号 0–6，第 7–14 行 = 魔陷区序号 0–7 | 按区域固定；空区域或表侧卡为全 0 行 |
+| `op_removed` | `[P_REMOVED=64, 3]` | 对手里侧除外的卡 | 除外区序号（与 actor 表中除外行对齐） |
+| `counts` | `[5]` | 截断前的真实张数：手牌、主卡组、额外卡组、里侧场上、里侧除外 | — |
+
+各列表超出宽度时截断（保留排序后的前若干行），`counts` 记录真实张数，据此可发现截断；宽度按「主卡组 ≤ 60、额外 ≤ 15」留了余量：
+2026-09-22 用 10 套测试牌组随机对局 200 局（240,587 个决策点）统计的最大张数为手牌 8、主卡组 37、额外 15、里侧场上 8、
+里侧除外 21，没有截断。训练态每个决策点多 6 次位置查询，同一批对局的 C++ 步进吞吐约低 5%（5,478 → 5,208 决策/秒，8 个 env、4 线程）。超量素材总是公开的，不在真值里；viewer 自己的卡组顺序也不输出（真值只描述对手）。
+
+### 与信念头目标的对应
+
+`ygorl.env.privileged.belief_targets(priv, candidates)` 把真值换算成 [belief-eval.md](belief-eval.md) 的
+`Head(targets, mask)` 形状（可带前导批维）。`candidates` 是候选卡集合（「meta 并集 + 泛用卡」，按 8 位 `password` 给出，
+经 `CandidateCards(vocab, passwords)` 映射成 C 列；不在集合里的卡不计数）：
+
+| 头 | targets | mask（True = 参与损失 / 评估） |
+|----|---------|------|
+| `hand` | `[C]` 0/1：该卡 ≥ 1 张在对手手牌 | 手牌里没有该卡的已公开张（已公开 → 按构造置 1，掩掉） |
+| `remaining_copies` | `[C]` ∈ 0..3：主卡组 + 额外卡组中**未公开**的份数，截断到 3 | 全 True（已现份数不计入，即「已现份数从剩余中扣除」） |
+| `set_cards` | `[15]`：里侧卡的候选列号，空区域 / 非候选卡为 −1 | 区域有里侧卡、未公开且是候选卡 |
+
+`copy_counts(rows, candidates)` 给出任意列表在候选集上的原始份数 `[C]`（不截断），例如 `copy_counts(priv["op_deck"], cands)`
+即主卡组剩余构成；传入 `CardVocab` 本身时按整个词表计数（`[len(vocab)]`，填充 / 未知不计）。这两个函数是纯 numpy，C++ / Python 两条路径共用。
+
+### 实现与校验
+
+- Python 参考：`ygorl.env.privileged.encode_privileged(core, viewer, vocab)`；C++：`csrc/privileged.{h,cpp}`（只查
+  `QUERY_CODE | QUERY_POSITION`，`QUERY_IS_PUBLIC` 总会返回）。
+- `tests/test_privileged.py`：推理态 `privileged is None` 且 Python 入口抛错；训练态与直接的引擎查询（逐张 `core.query` +
+  `query_count`，不经位置查询解析）一致；C++ 与 Python 在 5 局随机对局的全部决策点上逐元素一致；`EncodedVecEnv` 两种模式的
+  actor 观测逐元素相同、训练态真值与单局 `HostDuel` 一致；`belief_targets` 的形状能直接构造 `BeliefBatch`。
+- `tools/check_cpp_encoder.py` 同时比对真值：2026-09-22 的一次运行 8 局、10,530 个决策点、0 处不一致，其中 8,025 个点
+  `op_set` 非空、921 个点 `op_removed` 非空。
