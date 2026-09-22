@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Submodule cache key
+        id: submodules
+        run: echo "key=$(git ls-tree HEAD third_party | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore submodules
+        uses: actions/cache@v4
+        with:
+          path: |
+            .git/modules
+            third_party
+          key: submodules-${{ steps.submodules.outputs.key }}
+
+      - name: Fetch submodules
+        run: git submodule update --init --recursive --depth 1
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ccache ninja-build
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ steps.submodules.outputs.key }}-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'csrc/**') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ steps.submodules.outputs.key }}-
+            ccache-${{ runner.os }}-
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.11"
+
+      - name: Build extension
+        run: uv sync --locked --verbose
+
+      - name: Import smoke test
+        run: uv run --no-sync python -c "import ygorl._core as c; print(c.ocg_version())"
+
+      - name: Test
+        run: uv run --no-sync pytest -v
+
+      - name: ccache stats
+        if: always()
+        run: ccache --show-stats || true
