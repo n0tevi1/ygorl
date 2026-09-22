@@ -4,7 +4,7 @@
 
 ## 项目状态
 
-设计已评审通过，进入实施（里程碑 M0 骨架）。技术栈与方向见下。
+设计已评审通过。M0（骨架）完成；M1（引擎绑定）实现中：核心绑定、卡片数据、合法性、消息解码、单局 API、确定性重放、回放格式已落地。技术栈与方向见下。
 
 ## 简介
 
@@ -21,6 +21,8 @@
 ## 文档
 
 - [设计文档](docs/design/README.md)：目标、引擎裁决、RL 挑战、对局策略、对手预测、组牌与 off-meta 发现、架构、风险。
+- [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁。
+- [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
@@ -37,7 +39,18 @@ uv run python -c "import ygorl._core"     # 冒烟测试
 uv run pytest                             # 跑单测
 ```
 
-修改 `csrc/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
+跑一局随机对局：
+
+```bash
+uv run python -c "
+from ygorl.agents import RandomAgent
+from ygorl.cards.ydk import load_ydk
+from ygorl.engine.duel import Duel
+a, b = load_ydk('tests/decks/snake_eye.ydk'), load_ydk('tests/decks/kashtira.ydk')
+print(Duel(1, None, a, b).run(RandomAgent(1), RandomAgent(2)).summary())"
+```
+
+修改 `csrc/`、`patches/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
 需要强制重编时用 `uv sync --reinstall-package ygorl`。
 
 ### Claude Code 云端会话
@@ -82,18 +95,22 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── pyproject.toml           # uv 项目 + scikit-build-core 构建配置
 ├── uv.lock
 ├── CMakeLists.txt           # 构建 C++ 扩展 ygorl._core
-├── cmake/                   # CMake 片段（ocgcore.cmake：核心 + Lua 静态库）
+├── cmake/                   # CMake 片段（ocgcore.cmake：复制核心、打补丁、编成静态库）
+├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序），构建时应用
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
-├── csrc/                    # C++ 源码（pybind11 绑定）
+├── csrc/                    # C++：core_backend（OCG_* 封装）、binding（pybind11）
 ├── src/ygorl/               # Python 包
-│   ├── cards/               # 禁限表（.lflist.conf）、牌组（.ydk）、卡片数据
+│   ├── agents/              # Agent 协议、RandomAgent
+│   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
-│   └── engine/              # 核心绑定；constants.py 由 tools/gen_constants.py 生成
-├── tools/                   # 开发脚本（gen_constants.py 等）
-├── tests/                   # pytest 单测
+│   └── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
+├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对
+├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
+│   ├── engine.md            # 引擎层：CoreBackend、消息、动作模型、确定性
 │   ├── environments.md      # environments/<version>/ 目录规范
+│   ├── replays.md           # 回放格式与 .yrpX 导出
 │   └── eng-plan.md          # 工程计划
 ├── .editorconfig
 └── .gitignore

@@ -121,6 +121,7 @@ class DuelResult:
     responses: list[bytes] = field(default_factory=list)  # every set_response, in order
     actions: list[int] = field(default_factory=list)  # every agent action index, in order
     message_log: list[bytes] = field(default_factory=list)  # raw engine buffers (record_messages=True)
+    steps: list[dict] = field(default_factory=list)  # per-action candidates/choice/probs (record_steps=True)
     error: str = ""
 
     def summary(self) -> str:
@@ -156,6 +157,7 @@ class Duel:
         first: int = 0,
         validate: bool = False,
         record_messages: bool = False,
+        record_steps: bool = False,
     ) -> None:
         if first not in (0, 1):
             raise ValueError("first must be 0 (deck_a starts) or 1 (deck_b starts)")
@@ -167,6 +169,7 @@ class Duel:
         self.config = config or (DuelConfig.from_environment(env) if env is not None else DuelConfig())
         self.first = first
         self.record_messages = record_messages
+        self.record_steps = record_steps
         if validate:
             for deck in self.decks:
                 if env is not None:
@@ -189,6 +192,15 @@ class Duel:
         assert isinstance(msg, M.ReloadField), msg
         return msg
 
+    def loaded_decks(self) -> tuple[tuple[list[int], list[int]], tuple[list[int], list[int]]]:
+        """(main, extra) per engine player, in the order the cards are loaded into the core."""
+        out = []
+        for team in (0, 1):
+            deck = self.decks[self.deck_of(team)]
+            main = shuffle_deck(deck.main, self.seed, team) if self.config.shuffle_decks else list(deck.main)
+            out.append((main, list(deck.extra)))
+        return out[0], out[1]
+
     def _setup(self) -> _core.Duel:
         p = self.config.player
         player = (p.starting_lp, p.starting_hand, p.draw_per_turn)
@@ -196,12 +208,10 @@ class Duel:
         for base in ("constant.lua", "utility.lua"):
             if not core.load_script(base):
                 raise RuntimeError(f"failed to load base script {base}")
-        for team in (0, 1):
-            deck = self.decks[self.deck_of(team)]
-            main = shuffle_deck(deck.main, self.seed, team) if self.config.shuffle_decks else deck.main
+        for team, (main, extra) in enumerate(self.loaded_decks()):
             for code in main:
                 core.new_card(team, 0, code, team, C.LOCATION_DECK, 0, C.POS_FACEDOWN_DEFENSE)
-            for code in deck.extra:
+            for code in extra:
                 core.new_card(team, 0, code, team, C.LOCATION_EXTRA, 0, C.POS_FACEDOWN_DEFENSE)
         core.start()
         return core
@@ -341,13 +351,30 @@ class Duel:
                 return None
             point = DecisionPoint(res.decisions, player, turn, phase, (lp[0], lp[1]), decision, actions, state, tuple(events))
             events = []
-            idx = seat[player].act(point)
+            agent = seat[player]
+            idx = agent.act(point)
             if not isinstance(idx, int) or not 0 <= idx < len(actions):
                 raise ValueError(f"agent returned action {idx!r}, out of range 0..{len(actions) - 1} for {decision.name}")
+            if self.record_steps:
+                res.steps.append(_step_record(point, idx, getattr(agent, "last_probs", None)))
             res.actions.append(idx)
             res.decisions += 1
             state.step(idx)
         return state.response
+
+
+def _step_record(point: DecisionPoint, chosen: int, probs) -> dict:
+    def action(a: Action) -> dict:
+        d = {"kind": a.kind, "index": a.index, "code": a.card.code if a.card else 0, "description": a.description, "value": a.value}
+        if a.card is not None:
+            d["location"] = [a.card.loc.controller, a.card.loc.location, a.card.loc.sequence]
+        return d
+
+    rec = {"index": point.index, "player": point.player, "turn": point.turn, "decision": point.decision.name,
+           "actions": [action(a) for a in point.actions], "chosen": chosen}  # fmt: skip
+    if probs is not None:
+        rec["probs"] = [float(p) for p in probs]
+    return rec
 
 
 class ScriptedAgent:
