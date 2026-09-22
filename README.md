@@ -23,6 +23,7 @@
 - [设计文档](docs/design/README.md)：目标、引擎裁决、RL 挑战、对局策略、对手预测、组牌与 off-meta 发现、架构、风险。
 - [引擎层](docs/engine.md)：核心绑定、消息解码、动作模型、单局 API、确定性补丁。
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出。
+- [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
@@ -30,6 +31,7 @@
 
 依赖：Linux、[uv](https://docs.astral.sh/uv/)（≥ 0.8）、CMake（≥ 3.20）、支持 C++17 的编译器（GCC ≥ 9 / Clang ≥ 10）。
 Python 3.11 由 uv 自动选择或下载；pybind11 与 scikit-build-core 作为构建依赖由 uv 自动安装。
+Python 运行时依赖（numpy）声明在 `pyproject.toml` 并锁定在 `uv.lock`，`uv sync` 时自动安装；新增依赖用 `uv add <包名>`。
 
 ```bash
 git clone --recurse-submodules --shallow-submodules https://github.com/n0tevi1/ygorl && cd ygorl
@@ -103,12 +105,14 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── agents/              # Agent 协议、RandomAgent
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
-│   └── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
-├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对
+│   ├── engine/              # 消息解码、动作模型、单局 Duel、回放；constants.py 为生成文件
+│   └── eval/                # 评估：calibration.py（ECE / AUC / top-k 等指标）、beliefs.py（信念头报告与基线）
+├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对、信念基线表
 ├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
 │   ├── engine.md            # 引擎层：CoreBackend、消息、动作模型、确定性
+│   ├── belief-eval.md       # 信念校准评估：指标定义与基线数字
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── replays.md           # 回放格式与 .yrpX 导出
 │   ├── spikes/              # 技术调研结论（combo-solver.md）
