@@ -43,7 +43,8 @@ class IllegalDeck(ValueError):
         super().__init__(head + ":\n" + "\n".join(f"  - {v.message}" for v in violations))
 
 
-def _canonical(password: int, cards: Mapping[int, object]) -> int:
+def canonical_password(password: int, cards: Mapping[int, object]) -> int:
+    """The password copies of ``password`` count as: the original of an alternate artwork, else itself."""
     card = cards.get(password)
     if card is not None and card.alias and card.alias in cards and cards[card.alias].name == card.name:
         return card.alias
@@ -83,7 +84,7 @@ def validate_deck(
             out.append(Violation("unknown_card", f"Card {pw} does not exist in the card database", pw))
             continue
         known.add(pw)
-        if pool is not None and pw not in pool and _canonical(pw, cards) not in pool:
+        if pool is not None and pw not in pool and canonical_password(pw, cards) not in pool:
             out.append(Violation("not_in_pool", f"{_label(pw, cards)} is not in this format's card pool", pw))
         if cards[pw].type & C.TYPE_TOKEN:
             out.append(Violation("token", f"{_label(pw, cards)} is a token and cannot be in a deck", pw))
@@ -95,7 +96,7 @@ def validate_deck(
         if pw in known and not (cards[pw].type & C.TYPE_MONSTER and cards[pw].type & EXTRA_DECK_TYPES):
             out.append(Violation("main_in_extra", f"{_label(pw, cards)} is not an Extra Deck monster but is in the Extra Deck", pw))
 
-    counts = Counter(_canonical(pw, cards) for pw in deck.main + deck.extra + deck.side if pw in known)
+    counts = Counter(canonical_password(pw, cards) for pw in deck.main + deck.extra + deck.side if pw in known)
     for pw, n in counts.items():
         allowed = rules.max_copies if banlist is None else min(rules.max_copies, banlist.limit(pw))
         if n <= allowed:
