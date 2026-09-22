@@ -27,7 +27,7 @@ from ygorl.eval.beliefs import BeliefBatch, Head
 
 DECKS = {p.stem: load_ydk(p) for p in sorted((Path(__file__).parent / "decks").glob("*.ydk"))}
 NAMES = sorted(DECKS)
-ACTOR_KEYS = {"cards", "globals", "actions", "action_mask"}
+ACTOR_KEYS = {"cards", "globals", "actions", "action_mask", "events", "event_mask"}  # events: public stream (T2.4)
 
 
 @pytest.fixture(scope="module")

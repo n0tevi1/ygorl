@@ -16,9 +16,14 @@
 #include "host.h"
 #include "host_pool.h"
 #include "privileged.h"
+#include "event_encoder.h"
 
 namespace py = pybind11;
 using namespace ygorl;
+
+namespace ygorl {
+void bind_event_history(py::module_& m);  // event_binding.cpp
+}
 
 namespace {
 
@@ -138,6 +143,11 @@ py::dict observation_dict(const host::Observation& o) {
     d["globals"] = to_array(o.globals, {host::G_GLOBAL});
     d["actions"] = to_array(o.actions, {host::MAX_OPTIONS, host::A_ACTION});
     d["action_mask"] = to_array(o.action_mask, {host::MAX_OPTIONS});
+    if (o.has_events) {
+        const auto n = static_cast<py::ssize_t>(o.event_mask.size());
+        d["events"] = to_array(o.events, {n, host::E_EVENT});
+        d["event_mask"] = to_array(o.event_mask, {n});
+    }
     return d;
 }
 
@@ -352,10 +362,12 @@ PYBIND11_MODULE(_core, m) {
 
     py::class_<host::HostDuel>(m, "HostDuel", "A duel driven entirely in C++: tracker, actions and encoder.")
         .def(py::init([](std::shared_ptr<CardDatabase> cards, std::shared_ptr<ScriptDirectory> scripts,
-                         const std::vector<uint32_t>& vocab) {
-                 return std::make_unique<host::HostDuel>(cards, scripts, std::make_shared<host::Vocab>(vocab));
+                         const std::vector<uint32_t>& vocab, size_t event_length) {
+                 auto h = std::make_unique<host::HostDuel>(cards, scripts, std::make_shared<host::Vocab>(vocab));
+                 h->set_event_length(event_length);
+                 return h;
              }),
-             py::arg("cards"), py::arg("scripts"), py::arg("vocab"))
+             py::arg("cards"), py::arg("scripts"), py::arg("vocab"), py::arg("event_length") = 0)
         .def("start", [](host::HostDuel& h, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1, py::tuple t2,
                          DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
             auto p1 = to_player(t1), p2 = to_player(t2);
@@ -406,12 +418,14 @@ PYBIND11_MODULE(_core, m) {
     py::class_<host::HostPool>(m, "HostPool",
         "Vectorized env with the step loop, action states and encoder in C++ (env i on thread i % threads).")
         .def(py::init([](size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
-                         std::shared_ptr<ScriptDirectory> scripts, const std::vector<uint32_t>& vocab, bool privileged) {
+                         std::shared_ptr<ScriptDirectory> scripts, const std::vector<uint32_t>& vocab, bool privileged,
+                         size_t event_length) {
                  return std::make_unique<host::HostPool>(num_envs, num_threads, cards, scripts,
-                                                         std::make_shared<host::Vocab>(vocab), privileged);
+                                                         std::make_shared<host::Vocab>(vocab), privileged,
+                                                         event_length);
              }),
              py::arg("num_envs"), py::arg("num_threads"), py::arg("cards"), py::arg("scripts"), py::arg("vocab"),
-             py::arg("privileged") = false)
+             py::arg("privileged") = false, py::arg("event_length") = 0)
         .def("reset", [](host::HostPool& p, int env, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1,
                          py::tuple t2, DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
             host::PoolJob job;
@@ -444,6 +458,8 @@ PYBIND11_MODULE(_core, m) {
             return out;
         }, py::arg("min_results") = 1, py::arg("timeout_ms") = -1)
         .def("pending", &host::HostPool::pending);
+
+    bind_event_history(m);
 
     m.attr("DUEL_STATUS_END") = static_cast<int>(OCG_DUEL_STATUS_END);
     m.attr("DUEL_STATUS_AWAITING") = static_cast<int>(OCG_DUEL_STATUS_AWAITING);

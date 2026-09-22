@@ -18,6 +18,7 @@ import numpy as np
 from ygorl import _core
 from ygorl.cards.cdb import CardVocab
 from ygorl.engine.duel import Duel, default_cards, default_scripts, expand_seed
+from ygorl.env.events import DEFAULT_EVENT_LENGTH
 from ygorl.env.pool import GameSpec
 
 MASK64 = (1 << 64) - 1
@@ -43,11 +44,15 @@ class EncodedEvent:
 
 
 class EncodedVecEnv:
+    """``event_length``: event tokens per observation (``events`` / ``event_mask``, T2.4); 0 leaves them out."""
+
     def __init__(self, num_envs: int, num_threads: int | None = None, cards=None, scripts=None,
-                 vocab: CardVocab | None = None, privileged: bool = False) -> None:  # fmt: skip
+                 vocab: CardVocab | None = None, privileged: bool = False,
+                 event_length: int = DEFAULT_EVENT_LENGTH) -> None:  # fmt: skip
         """``privileged=True`` is training mode: events also carry ``privileged`` (opponent ground truth).
 
         The default (inference mode) never computes it. Evaluation and play must use the default.
+        ``event_length`` is the number of event tokens per observation (docs/encoding.md; 0 = none).
         """
         self.cards = cards if cards is not None else default_cards()
         self.vocab = vocab if vocab is not None else CardVocab.from_db(self.cards)
@@ -55,10 +60,11 @@ class EncodedVecEnv:
         threads = num_threads or max(1, min(num_envs, os.cpu_count() or 1))
         self._pool = _core.HostPool(num_envs, threads, self.cards.to_core(),
                                     scripts if scripts is not None else default_scripts(), passwords,
-                                    privileged)  # fmt: skip
+                                    privileged, event_length)  # fmt: skip
         self.num_envs = num_envs
         self.num_threads = threads
         self.privileged = privileged
+        self.event_length = event_length
 
     def reset(self, env_id: int, spec: GameSpec) -> None:
         if spec.config.curriculum != "full" or spec.config.augmented_start:

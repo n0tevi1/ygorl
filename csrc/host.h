@@ -191,7 +191,11 @@ private:
 
 struct Observation {
     std::vector<int32_t> cards, globals, actions, action_mask;
+    bool has_events = false;  // event token stream (T2.4, event_encoder.h): [L, E_EVENT] + [L]
+    std::vector<int32_t> events, event_mask;
 };
+
+class EventHistory;  // event_encoder.h
 
 void encode(Duel& core, const Tracker& tracker, const std::vector<Action>& actions, const CardDatabase& cards,
             const Vocab& vocab, Observation& out);
@@ -215,6 +219,8 @@ public:
     // Training-only opponent ground truth (privileged.cpp); never part of observe().
     void observe_privileged(Privileged& out);
     const Tracker& tracker() const { return *tracker_; }
+    // Keep the last n event tokens per viewer from the next start() on (0 = no event stream).
+    void set_event_length(size_t n) { event_length_ = n; }
 
 private:
     void advance();
@@ -225,6 +231,8 @@ private:
     std::unique_ptr<Duel> core_;
     std::unique_ptr<Tracker> tracker_;
     std::vector<Action> empty_;
+    size_t event_length_ = 0;
+    std::shared_ptr<EventHistory> events_;
 };
 
 }  // namespace ygorl::host

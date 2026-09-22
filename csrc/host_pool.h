@@ -39,7 +39,8 @@ struct PoolJob {
 class HostPool {
 public:
     HostPool(size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
-             std::shared_ptr<ScriptSource> scripts, std::shared_ptr<const Vocab> vocab, bool privileged = false);
+             std::shared_ptr<ScriptSource> scripts, std::shared_ptr<const Vocab> vocab, bool privileged = false,
+             size_t event_length = 0);
     ~HostPool();
     void reset(int env, PoolJob job);
     void step(int env, size_t action);
@@ -53,6 +54,7 @@ private:
     std::shared_ptr<ScriptSource> scripts_;
     std::shared_ptr<const Vocab> vocab_;
     bool privileged_ = false;  // training mode: also emit opponent ground truth
+    size_t event_length_ = 0;  // event tokens per observation (T2.4); 0 = none
     std::vector<std::unique_ptr<HostDuel>> slots_;
     std::unique_ptr<WorkerPool<std::pair<int, PoolJob>, PoolEvent>> pool_;
 };
