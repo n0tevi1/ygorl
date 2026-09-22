@@ -358,3 +358,39 @@ def test_curriculum_games_can_be_forked(mode):
     for t in (0, n // 2, n - 1):
         again = fork(rep, t).rollout(result.actions[t], script, script)
         assert end(again) == end(result), f"t={t}"
+
+
+# ------------------------------------------------------------------ snapshots (T2.8)
+
+
+def test_rollouts_restore_one_snapshot_instead_of_replaying(short_game, monkeypatch):
+    """try_all builds a single snapshot-enabled duel for the fork; results equal the replay-based path."""
+    rep, result = short_game
+    t = len(result.actions) // 2
+    branch = fork(rep, t)
+    made = []
+    original = Replay.duel
+
+    def counting(self, *args, **kwargs):
+        made.append(kwargs.get("snapshots", False))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Replay, "duel", counting)
+    outcomes = branch.try_all(RandomAgent, rollouts=2, seed=5)
+    assert made == [True]
+    for outcome in outcomes:
+        for r, res in enumerate(outcome.results):  # record_steps forces the replay path
+            again = branch.rollout(outcome.index, RandomAgent(5 + 2 * r), RandomAgent(6 + 2 * r), record_steps=True)
+            assert end(res) == end(again) and res.actions == again.actions
+    assert made.count(True) == 1
+
+
+def test_snapshot_rollouts_of_the_recorded_action_reproduce_the_game(game):
+    rep, result = game
+    script = RecordedAgent(result.actions)
+    n = len(result.actions)
+    for t in (0, n // 2, n - 1):
+        branch = fork(rep, t)
+        for _ in range(2):  # repeated rollouts from the same fork
+            again = branch.rollout(result.actions[t], script, script)
+            assert end(again) == end(result), f"t={t}"

@@ -130,7 +130,7 @@ core.restore(snap)        # 回到快照时刻，之后的消息流与从头重�
 
 验证：`tests/test_snapshot.py`（恢复后续跑与不中断的消息流逐字节一致、多快照乱序恢复、从快照分叉走不同应答与全新重放一致、跨局拒绝、恢复耗时 < 重放 1/5；把恢复改成空操作时其中 3 项失败，作为阳性对照）；`uv run python tools/check_snapshots.py --games 200` 在随机时刻拍快照、先跑出去若干步再恢复，全局比对并记录耗时，数字见 [benchmarks.md](benchmarks.md)。
 
-目前快照只覆盖规则核心；主机侧的追踪状态（Python `DuelTracker` / C++ `Tracker`）由调用方自行保存。分支探索（T2.9）仍用「重放到 t」，改用快照是后续工作。
+`_core.Duel` 的快照只覆盖规则核心。Python 侧的 `engine.duel.DuelSession` 把一局改成逐步推进（`point` / `act(idx)`，课程模式的主机代答照常在内部完成），它的 `snapshot()` / `restore()` 同时保存核心快照与 `DuelTracker` 的深拷贝，可直接在任意 agent 步分叉；分支探索（T2.9）的 rollout 已改用它。C++ 步进环境（`HostDuel` / `HostPool`）的追踪器快照尚未实现。
 
 ## 向量化环境（`ygorl.env`，T2.1）
 

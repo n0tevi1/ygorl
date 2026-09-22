@@ -77,14 +77,14 @@ rollouts  policy random, seed 1, 10 rollouts per candidate; * = recorded action
 
 课程模式（[curriculum.md](curriculum.md)）下，部分对手决策由主机代答，这些应答也在回放里，但不对应任何 agent 步。重建的对局按同一配置由主机重新代答，所以每个 agent 决策按 `DecisionPoint.response_index`（该决策的应答在应答日志中的位置）取对应的记录应答，而不是按 agent 决策的顺序计数；对局结束时再核对整份应答日志与记录一致。
 
-`rollout` 再从头重放：`t` 之前按前缀动作、`t` 处走候选、之后问策略；并核对 `t` 处的决策与分叉时相同，否则报「replay diverged」。
+`rollout` 用快照（T2.8）：第一次 rollout 时以 `snapshots=True` 重建对局，用 `DuelSession`（`engine.duel`，逐步推进的对局）按前缀动作走到 `t` 并拍快照（核心 arena 镜像 + 主机追踪器的深拷贝）；之后每次 rollout 都从这个快照恢复，`t` 处走候选、之后问策略。每次恢复都核对 `t` 处的决策与分叉时相同，否则报「replay diverged」。要求 `record_steps` / `record_messages` 的 rollout，或在关闭 arena 的构建（`-DYGORL_ARENA=OFF`）里，仍走从头重放的旧路径；测试保证两条路径结果完全一致。
 
 测试（`tests/test_branch.py`）：从一局的每个 `t` 分叉并按原动作继续，终局（胜者、原因、回合、LP、全部应答）与原局一致；多选中间分叉；每种多选的反解都能还原任意路径的应答；`try_all` 每个合法动作一个结果且可复现；越界报错。`tests/test_cli.py` 覆盖命令行输出表。
 
 ## 限制
 
 - **上帝视角分支**：各分支保留原局的全部隐藏状态（双方手牌、卡组顺序、核心随机数状态都来自同一种子），分叉只改变 `t` 处的选择。对手未知信息的重采样（确定化，determinization）需要按信念重建局面，留作后续；在此之前，用 rollout 结果评估一手棋会高估「知道对手手牌」带来的收益，不能直接当作 PIMC 的估值。
-- **重放成本**：每次 `fork` 和每次 `rollout` 都从开局重放到 `t`，代价与 `t` 成正比。实测（本机，约 100 步的小局）：`fork` 约 20–30 ms，`rollout` 约 30 ms，其中建局与加载基础脚本占大头；`try_all` 的代价为 候选数 × rollout 次数 × 整局。T2.8 的 arena 快照落地后，`fork` 保存快照、`rollout` 从快照恢复，接口不变。
+- **重放成本**：`fork` 仍从开局重放到 `t`（约 100 步的小局约 20–30 ms），每个分支第一次 rollout 再重放一次以建立快照；此后每次 rollout 只需恢复快照（约 0.6 ms）加上从 `t` 打完的代价。实测一局 278 步、在 t=208 分叉：每次 rollout 从 106 ms 降到 74 ms，省下的正是前缀重放；剩余时间是随机策略把残局打完。每个 `Branch` 持有一个活着的核心（约 4–6 MiB）。
 - rollout 用回放记录的上限（`max_turns` / `max_decisions`），与原局相同。
 - 策略从 `t + 1` 才被询问，看不到 `t` 之前的事件（`DecisionPoint.events` 只含上一个决策点以来的消息）；依赖完整历史的策略（循环网络、信念头）需要以后加一个「旁观前缀」的钩子。
 - 反解搜索有节点上限（`MAX_SEARCH_NODES`）；对 agent 产生的应答不会触及。无法反解的应答（非本动作模型产生、或曾被核心拒绝的应答）报 `BranchError`。

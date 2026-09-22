@@ -42,7 +42,8 @@ from ygorl.engine.actions import (
     SortState,
     TributeState,
 )
-from ygorl.engine.duel import DecisionPoint, Duel, DuelResult
+from ygorl import _core
+from ygorl.engine.duel import DecisionPoint, DuelResult, DuelSession, SessionSnapshot
 from ygorl.engine.replay import Replay
 
 MAX_SEARCH_NODES = 200_000
@@ -283,6 +284,8 @@ class Branch:
         self.prefix = prefix  # action indices of steps 0..t-1
         self.recorded_action = recorded_action  # action taken at t in the recorded game (None if not recorded)
         self._duel_kwargs = duel_kwargs
+        self._session: DuelSession | None = None  # built on the first rollout: the duel at t, with core snapshots
+        self._snapshot: SessionSnapshot | None = None
 
     @property
     def side(self) -> int:
@@ -300,8 +303,39 @@ class Branch:
         n = len(self.point.actions)
         if not isinstance(action, int) or not 0 <= action < n:
             raise ValueError(f"action {action!r} out of range 0..{n - 1} at t={self.t}")
+        if not (record_steps or record_messages) and _core.ARENA_AVAILABLE:
+            return self._rollout_from_snapshot(action, (policy_a, policy_b))
         duel = self.replay.duel(self.env, record_steps=record_steps, record_messages=record_messages, **self._duel_kwargs)
         return duel.run(_BranchSeat(self, action, policy_a), _BranchSeat(self, action, policy_b))
+
+    def _at_t(self) -> DuelSession:
+        """The session paused at t (replayed once, then restored for every rollout)."""
+        if self._session is None:
+            session = DuelSession(self.replay.duel(self.env, snapshots=True, **self._duel_kwargs))
+            for i, idx in enumerate(self.prefix):
+                point = session.point
+                if point is None or point.index != i:
+                    raise BranchError(f"replay diverged before t={self.t} (step {i})")
+                session.act(idx)
+            self._session, self._snapshot = session, session.snapshot()
+        else:
+            self._session.restore(self._snapshot)
+        point = self._session.point
+        if point is None or point.decision != self.point.decision or point.actions != self.point.actions:
+            raise BranchError(f"replay diverged: the decision at t={self.t} differs from the forked one")
+        return self._session
+
+    def _rollout_from_snapshot(self, action: int, policies) -> DuelResult:
+        session = self._at_t()
+        session.act(action)
+        duel = session.duel
+        while not session.done:
+            point = session.point
+            if point is None:
+                break
+            policy = policies[duel.deck_of(point.player)]
+            session.act(policy.act(point), getattr(policy, "last_probs", None))
+        return session.result()
 
     def try_all(self, policy_factory: Callable[[int], object], *, candidates: Sequence[int] | None = None,
                 rollouts: int = 1, seed: int = 0) -> list[CandidateOutcome]:  # fmt: skip

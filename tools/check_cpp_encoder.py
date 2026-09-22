@@ -25,7 +25,6 @@ from ygorl import _core
 from ygorl.agents import RandomAgent
 from ygorl.cards.cdb import CardDB, CardVocab
 from ygorl.cards.ydk import load_ydk
-from ygorl.engine import messages as M
 from ygorl.engine.duel import Duel, DuelConfig, default_scripts, expand_seed
 from ygorl.env.encoding import ACTION_KINDS, ObservationEncoder
 

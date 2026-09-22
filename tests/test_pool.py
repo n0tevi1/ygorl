@@ -1,6 +1,5 @@
 """C++ DuelPool + Python VecDuelEnv / DuelEnv (T2.1)."""
 
-import itertools
 from pathlib import Path
 
 import pytest

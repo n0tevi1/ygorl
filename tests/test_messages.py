@@ -2,7 +2,6 @@
 
 import struct
 
-import pytest
 
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M

@@ -8,7 +8,6 @@ from ygorl.agents import RandomAgent
 from ygorl.cards.cdb import CardDB
 from ygorl.cards.legality import IllegalDeck
 from ygorl.cards.ydk import Deck, load_ydk
-from ygorl.engine import constants as C
 from ygorl.engine import messages as M
 from ygorl.engine.duel import WIN_REASON_LP, DecisionPoint, Duel, DuelConfig, DuelResult, expand_seed
 

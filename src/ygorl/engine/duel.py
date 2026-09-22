@@ -16,6 +16,7 @@ environment layer (T2.2 / T2.5).
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from functools import cache
 
@@ -288,6 +289,90 @@ class Duel:
         """Host-side bookkeeping for this duel (used by :meth:`run` and by the vectorized env)."""
         return DuelTracker(self.config, self.first, self.cards, record_messages=self.record_messages,
                            record_steps=self.record_steps, reference_log=reference_log)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class SessionSnapshot:
+    """State of a :class:`DuelSession` at one agent step: the core's arena image plus the host tracker."""
+
+    core: _core.DuelSnapshot
+    tracker: DuelTracker
+    session_id: int
+
+
+class DuelSession:
+    """A duel advanced one agent step at a time, instead of :meth:`Duel.run` asking agents.
+
+    ``point`` is the pending :class:`DecisionPoint` (``None`` once ``done``);
+    :meth:`act` answers it with an action index. With a ``Duel(...,
+    snapshots=True)``, :meth:`snapshot` / :meth:`restore` capture and return
+    to the complete state (core arena + host tracker), so branches can be
+    explored without replaying from the start (T2.8 / T2.9). Host answers of
+    curriculum modes happen inside, exactly as in :meth:`Duel.run`.
+    """
+
+    def __init__(self, duel: Duel) -> None:
+        if duel._ran:
+            raise RuntimeError("a Duel can only be run once")
+        duel._ran = True
+        self.duel = duel
+        self.tracker = duel.tracker()
+        self.core = duel._core = duel._setup()
+        self._advance(None)
+
+    @property
+    def done(self) -> bool:
+        return self.tracker.done
+
+    @property
+    def point(self) -> DecisionPoint | None:
+        return None if self.tracker.done else self.tracker.point()
+
+    def act(self, idx: int, probs=None) -> None:
+        response = self.tracker.act(idx, probs)
+        if response is not None and not self.tracker.done:
+            self._advance(response)
+
+    def _advance(self, response: bytes | None) -> None:
+        """Run the core until an agent decision is pending or the duel is over."""
+        tracker, core = self.tracker, self.core
+        while True:
+            if response is not None:
+                core.set_response(response)
+                response = None
+            status = core.process()
+            tracker.on_buffer(core.get_message(), status, core.pop_logs())
+            if tracker.done:
+                return
+            if not tracker.awaiting:
+                continue
+            response = tracker.auto_response()
+            if response is None:
+                tracker.point()  # may stop the duel (decision limit)
+                return
+
+    def result(self) -> DuelResult:
+        """The finished game's result (whole game from the start); only valid once ``done``."""
+        if not self.tracker.done:
+            raise RuntimeError("the duel is not over")
+        return self.tracker.finish()
+
+    def _copy_tracker(self, tracker: DuelTracker) -> DuelTracker:
+        return copy.deepcopy(tracker, {id(self.duel.cards): self.duel.cards})
+
+    def snapshot(self) -> SessionSnapshot:
+        if not self.core.snapshots_enabled:
+            raise RuntimeError("this duel was created without snapshots (Duel(..., snapshots=True))")
+        return SessionSnapshot(self.core.snapshot(), self._copy_tracker(self.tracker), id(self))
+
+    def restore(self, snapshot: SessionSnapshot) -> None:
+        if snapshot.session_id != id(self):
+            raise ValueError("the snapshot was taken from another session")
+        self.core.restore(snapshot.core)
+        self.tracker = self._copy_tracker(snapshot.tracker)
+
+    def close(self) -> None:
+        self.core.close()
 
 
 class DuelTracker:
