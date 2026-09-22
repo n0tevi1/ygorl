@@ -4,13 +4,16 @@
 // card/script sources re-acquire it inside the callback. This ordering avoids
 // the deadlock where one thread holds the GIL waiting on the duel mutex while
 // another holds the mutex waiting on the GIL.
+#include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <cstring>
 #include <unordered_map>
 
 #include "core_backend.h"
 #include "duel_pool.h"
+#include "host.h"
 
 namespace py = pybind11;
 using namespace ygorl;
@@ -107,6 +110,54 @@ py::bytes bytes_without_gil(F&& f) {
     }
     return py::bytes(s);
 }
+
+py::tuple action_tuple(const host::Action& a) {
+    const auto& l = a.card.loc;
+    return py::make_tuple(static_cast<int>(a.kind), a.index, a.has_card, a.card.code,
+                          py::make_tuple(l.controller, l.location, l.sequence, l.position), a.description, a.value);
+}
+
+py::list action_list(const std::vector<host::Action>& acts) {
+    py::list out;
+    for (const auto& a : acts) out.append(action_tuple(a));
+    return out;
+}
+
+py::array_t<int32_t> to_array(const std::vector<int32_t>& v, std::vector<py::ssize_t> shape) {
+    py::array_t<int32_t> arr(shape);
+    std::memcpy(arr.mutable_data(), v.data(), v.size() * sizeof(int32_t));
+    return arr;
+}
+
+py::dict observation_dict(const host::Observation& o) {
+    py::dict d;
+    d["cards"] = to_array(o.cards, {host::N_CARDS, host::F_CARD});
+    d["globals"] = to_array(o.globals, {host::G_GLOBAL});
+    d["actions"] = to_array(o.actions, {host::MAX_OPTIONS, host::A_ACTION});
+    d["action_mask"] = to_array(o.action_mask, {host::MAX_OPTIONS});
+    return d;
+}
+
+// Owns a DecisionState plus the record it was decoded from (for fuzz tests against actions.py).
+class PyDecisionState {
+public:
+    PyDecisionState(py::bytes record, std::shared_ptr<CardDatabase> cards) : cards_(std::move(cards)) {
+        std::string r = record;
+        auto d = host::decode_decision(reinterpret_cast<const uint8_t*>(r.data()), r.size());
+        if (!d) throw py::value_error("not a decodable decision record");
+        state_ = std::make_unique<host::DecisionState>(std::move(*d), cards_.get());
+    }
+    py::list actions() { return action_list(state_->actions()); }
+    py::object step(size_t index) {
+        if (state_->step(index)) return py::bytes(state_->response());
+        return py::none();
+    }
+    bool done() const { return state_->done(); }
+
+private:
+    std::shared_ptr<CardDatabase> cards_;
+    std::unique_ptr<host::DecisionState> state_;
+};
 
 }  // namespace
 
@@ -235,6 +286,57 @@ PYBIND11_MODULE(_core, m) {
         .def("pending", &DuelPool::pending)
         .def_property_readonly("num_envs", &DuelPool::num_envs)
         .def_property_readonly("num_threads", &DuelPool::num_threads);
+
+    py::class_<PyDecisionState>(m, "DecisionState", "C++ mirror of ygorl.engine.actions (for cross-checking).")
+        .def(py::init<py::bytes, std::shared_ptr<CardDatabase>>(), py::arg("record"), py::arg("cards"))
+        .def("actions", &PyDecisionState::actions)
+        .def("step", &PyDecisionState::step, py::arg("index"))
+        .def_property_readonly("done", &PyDecisionState::done);
+
+    py::class_<host::HostDuel>(m, "HostDuel", "A duel driven entirely in C++: tracker, actions and encoder.")
+        .def(py::init([](std::shared_ptr<CardDatabase> cards, std::shared_ptr<ScriptDirectory> scripts,
+                         const std::vector<uint32_t>& vocab) {
+                 return std::make_unique<host::HostDuel>(cards, scripts, std::make_shared<host::Vocab>(vocab));
+             }),
+             py::arg("cards"), py::arg("scripts"), py::arg("vocab"))
+        .def("start", [](host::HostDuel& h, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1, py::tuple t2,
+                         DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
+            auto p1 = to_player(t1), p2 = to_player(t2);
+            py::gil_scoped_release release;
+            h.start(seed, flags, p1, p2, decks, max_turns, max_decisions);
+        })
+        .def("player", &host::HostDuel::player)
+        .def("done", &host::HostDuel::done)
+        .def("actions", [](host::HostDuel& h) { return action_list(h.actions()); })
+        .def("act", [](host::HostDuel& h, size_t index) {
+            py::gil_scoped_release release;
+            h.act(index);
+        }, py::arg("index"))
+        .def("observe", [](host::HostDuel& h) {
+            host::Observation o;
+            {
+                py::gil_scoped_release release;
+                h.observe(o);
+            }
+            return observation_dict(o);
+        })
+        .def("result", [](host::HostDuel& h) {
+            const auto& t = h.tracker();
+            py::dict d;
+            int w = t.winner();
+            d["winner"] = w < 0 ? py::object(py::none()) : py::object(py::int_(w));
+            d["reason"] = t.reason();
+            d["win_reason"] = t.win_reason() < 0 ? py::object(py::none()) : py::object(py::int_(t.win_reason()));
+            d["turns"] = t.turn();
+            d["lp"] = py::make_tuple(t.lp()[0], t.lp()[1]);
+            d["decisions"] = t.decisions();
+            py::list responses;
+            for (const auto& r : t.responses()) responses.append(py::bytes(r));
+            d["responses"] = responses;
+            d["retries"] = t.retries();
+            d["error"] = t.error();
+            return d;
+        });
 
     m.attr("DUEL_STATUS_END") = static_cast<int>(OCG_DUEL_STATUS_END);
     m.attr("DUEL_STATUS_AWAITING") = static_cast<int>(OCG_DUEL_STATUS_AWAITING);

@@ -93,3 +93,9 @@
 EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），所以描述的高位是卡片密码、低 20 位是串序号；比 `1 << 20` 小的描述是系统串。`effect_card` + `effect_index` 就是效果级文本嵌入（设计 I5）的查表键。
 
 **截断**：合法动作超过 128 个时（主要是宣言卡名）只编码前 128 个，`globals[20]` 记录真实数量，`action_mask` 只标前 128 行；这类决策的处理在 T2.3 细化。
+
+## 实现与交叉校验
+
+- Python 参考：`ygorl.env.encoding.ObservationEncoder`（`tests/test_encoding.py`）。
+- C++：`csrc/host.{h,cpp}`（决策解码、动作状态机、主机侧 tracker）与 `csrc/obs_encoder.cpp`（编码），通过 `ygorl._core.HostDuel` / `ygorl._core.DecisionState` 暴露。
+- 校验：`tests/test_cpp_host.py` 对 19 种决策消息做随机报文 + 随机选择路径的差分测试（动作列表与应答字节必须与 `ygorl.engine.actions` 一致），并在 5 局真实对局中逐步比对动作、四个观测数组与终局；`uv run python tools/check_cpp_encoder.py --points 10000` 做验收。2026-09-22 的一次运行：8 局、10,530 个决策点、0 处不一致，覆盖 16 种决策类型（其余类型由差分测试覆盖）。

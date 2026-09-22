@@ -56,6 +56,7 @@ public:
              uint32_t lscale, uint32_t rscale, uint32_t link_marker);
     const CardRecord* find(uint32_t code) const;
     size_t size() const { return cards_.size(); }
+    const std::unordered_map<uint32_t, CardRecord>& all() const { return cards_; }
     bool read(uint32_t code, OCG_CardData* out) override;
 
 private:
