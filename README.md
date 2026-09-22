@@ -40,6 +40,16 @@ uv run pytest                             # 跑单测
 修改 `csrc/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
 需要强制重编时用 `uv sync --reinstall-package ygorl`。
 
+### Claude Code 云端会话
+
+`.claude/hooks/session-start.sh` 是 SessionStart hook（在 `.claude/settings.json` 注册），只在 Claude Code on the web
+（`CLAUDE_CODE_REMOTE=true`）中运行：补装缺失的工具（uv / cmake / ninja / g++ / ccache）、拉取子模块、`uv sync` 编译扩展，
+会话开始时即可直接 `uv run pytest`。脚本幂等，也可以粘贴进云环境的 setup script，或手动执行：
+
+```bash
+CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh
+```
+
 ### 第三方子模块
 
 规则核心与卡片数据以 git submodule 形式放在 `third_party/`，每个都固定到明确的 commit（`git submodule status` 查看）：
@@ -67,6 +77,8 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 .
 ├── README.md
 ├── CLAUDE.md                # 给 AI 协作工具的项目约定
+├── .claude/                 # Claude Code 配置：settings.json + hooks/session-start.sh（云端会话初始化）
+├── .github/workflows/       # CI：构建扩展 + pytest
 ├── pyproject.toml           # uv 项目 + scikit-build-core 构建配置
 ├── uv.lock
 ├── CMakeLists.txt           # 构建 C++ 扩展 ygorl._core
