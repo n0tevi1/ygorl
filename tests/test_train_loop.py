@@ -215,6 +215,21 @@ def test_policy_agent_plays_legal_moves_in_lockstep(run, db):
     assert both.reason in ("win", "turn_limit")
 
 
+def test_parallel_arena_plays_a_checkpoint_like_one_worker(run):
+    """Workers are spawned when PyTorch is loaded (forking it can deadlock); results do not depend on workers."""
+    from ygorl.agents.registry import agent_factory
+    from ygorl.eval.arena import Arena
+
+    _, out = run
+    decks = [load_ydk(p) for p in PAIR]
+    reports = []
+    for workers in (1, 2):
+        arena = Arena(agent_factory(f"policy:{out / 'best.pt'}"), agent_factory("random"),
+                      config=DuelConfig(max_turns=2), workers=workers)  # fmt: skip
+        reports.append(arena.run(decks[0], decks[1], pairs=1, seed=5))
+    assert reports[0].errors == 0 and reports[0].records == reports[1].records
+
+
 def test_policy_agent_needs_duel_run_and_a_checkpoint(run):
     _, out = run
     agent = make_agent(f"policy:{out / 'best.pt'}", seed=0)
