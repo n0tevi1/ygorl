@@ -30,6 +30,7 @@
 - [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局等实测数字。
 - [观测编码](docs/encoding.md)：卡片表、全局向量、候选动作表的每一列。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
+- [语义协同图](docs/synergy.md)：CardScripts 脚本挖掘、边语义、解析覆盖率、代理召回检验、引擎包枚举。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
 ## 快速开始
@@ -119,13 +120,14 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
 │   ├── commands/            # 各子命令一个模块：branch.py（`ygorl branch`）
 │   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；registry.py（按名字构造 agent，供 --policy）
+│   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、引擎包枚举（packages）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、回放、分支探索（branch.py）、课程模式（curriculum.py）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；encoded.py 为 C++ 步进的 EncodedVecEnv
 │   └── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
-├── tools/                   # 开发脚本：常量生成、测试牌组生成、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准、信念基线表、吞吐基准、课程模式检查
-├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据
+├── tools/                   # 开发脚本：常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准、信念基线表、吞吐基准、课程模式检查
+├── tests/                   # pytest 单测；decks/ 放 10 套测试牌组，data/ 放测试数据（含代理引擎包）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
 │   ├── engine.md            # 引擎层：CoreBackend、消息、动作模型、确定性
@@ -137,6 +139,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── replays.md           # 回放格式与 .yrpX 导出
 │   ├── branching.md         # 分支探索：fork(replay, t)、ygorl branch、限制
 │   ├── curriculum.md        # 课程模式、先后攻配平、增广开局标志位
+│   ├── synergy.md           # 脚本挖掘协同图与引擎包
 │   ├── spikes/              # 技术调研结论（combo-solver.md）
 │   └── eng-plan.md          # 工程计划
 ├── .editorconfig
