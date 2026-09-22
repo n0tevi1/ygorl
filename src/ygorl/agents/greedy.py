@@ -73,11 +73,11 @@ class GreedyAgent:
             self._cards = default_cards()
         return self._cards
 
-    def _atk(self, code: int) -> int:
+    def _attack(self, code: int) -> int:
         c = self.cards.get(code)
         return c.attack if c is not None else 0
 
-    def _def(self, code: int) -> int:
+    def _defense(self, code: int) -> int:
         c = self.cards.get(code)
         return c.defense if c is not None else 0
 
@@ -125,7 +125,7 @@ class GreedyAgent:
 
     def _strongest(self, actions: list[Action], kind: str) -> Action | None:
         cands = [a for a in actions if a.kind == kind]
-        return max(cands, key=lambda a: self._atk(a.card.code) if a.card else 0, default=None)
+        return max(cands, key=lambda a: self._attack(a.card.code) if a.card else 0, default=None)
 
     def _fallback(self, point: DecisionPoint) -> int:
         return self.rng.randrange(len(point.actions))
@@ -148,7 +148,7 @@ class GreedyAgent:
         acts = point.actions
         attacks = [a for a in acts if a.kind == "attack" and _key(a) not in self._blocked]
         if attacks:
-            a = max(attacks, key=lambda a: (a.value, self._atk(a.card.code)))  # direct first, then ATK
+            a = max(attacks, key=lambda a: (a.value, self._attack(a.card.code)))  # direct first, then ATK
             self._attacker = a
             return self._take(point, a)
         for kind in ("activate", "main2", "end_phase"):
@@ -159,11 +159,11 @@ class GreedyAgent:
 
     def _target(self, point: DecisionPoint, attacker: Action) -> int:
         acts = point.actions
-        power = self._atk(attacker.card.code)
+        power = self._attack(attacker.card.code)
 
         def stat(a: Action) -> int:
             pos = a.card.loc.position
-            return self._atk(a.card.code) if pos & C.POS_ATTACK else self._def(a.card.code)
+            return self._attack(a.card.code) if pos & C.POS_ATTACK else self._defense(a.card.code)
 
         targets = [a for a in acts if a.kind == "select"]
         beaten = [a for a in targets if power > stat(a)]
@@ -187,7 +187,7 @@ class GreedyAgent:
     def _position(self, point: DecisionPoint) -> int:
         d: M.SelectPosition = point.decision
         prefer = ((C.POS_FACEUP_ATTACK, C.POS_FACEUP_DEFENSE, C.POS_FACEDOWN_DEFENSE, C.POS_FACEDOWN_ATTACK)
-                  if self._atk(d.code) >= self._def(d.code) else
+                  if self._attack(d.code) >= self._defense(d.code) else
                   (C.POS_FACEUP_DEFENSE, C.POS_FACEDOWN_DEFENSE, C.POS_FACEUP_ATTACK, C.POS_FACEDOWN_ATTACK))  # fmt: skip
         values = [a.value for a in point.actions]
         for pos in prefer:
@@ -208,7 +208,7 @@ class GreedyAgent:
         return self._fallback(point)
 
     def _tribute(self, point: DecisionPoint) -> int:
-        return self._select(point, key=lambda a: self._atk(a.card.code))
+        return self._select(point, key=lambda a: self._attack(a.card.code))
 
 
 def _is_attack_target(point: DecisionPoint) -> bool:
