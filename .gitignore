@@ -1,0 +1,35 @@
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 编辑器 / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# 日志与临时文件
+*.log
+tmp/
+temp/
+
+# 构建产物（按技术栈确定后再细化）
+build/
+dist/
+out/
+target/
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 缓存
+.cache/
+*.egg-info/
