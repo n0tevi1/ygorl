@@ -65,4 +65,5 @@ ygorl/
 - **训练流水**：(1) `solver/` 离线求解 meta 牌组起手 → 示范集；(2) `train/bc.py` BC 预热；(3) `train/ppo.py`：PPO 裁剪目标 + Q-boosted 优势（VRPO）+ 熵 0.05–0.2 + KL 到慢速参考/BC 先验；当前策略自博弈 + 小历史快照池 + keep-best；牌组按 meta 分布 + off-meta 噪声采样；课程三阶段 + 中局开局（带标志位）+ 先后攻配平；平台期启动 `exploiter.py`。
 - **对局接口（目标 1）**：`Agent.act(obs) -> action` 协议；Random / Greedy / Policy；`Arena` 配对种子 + 先后互换；CLI `ygorl duel`、`ygorl arena`。人类/EDOPro 客户端联机不在首期。
 - **组牌（目标 2）**：候选生成来自协同图引擎包 + LLM emitter；基因型 = 引擎包份数 + 泛用槽 + 额外卡组；硬约束；漏斗 (1) 求解器起手分析（最佳线存在性、卡手率、抗手坑率）(2) 代理模型（计数向量 + 卡文本嵌入均值 → 胜率 + 描述符，在线更新）(3) 微调 B 局后的真实对局（vs Nash 加权 meta 池 + 最佳应对）；pyribs MAP-Elites + DNS，描述符 = {先攻胜率, 后攻胜率, 手坑数, combo 长度, 卡手率} + AURORA 学习型描述符；两阶段对手池；输出精英档案、对局矩阵、Nash 混合、off-meta 三元组报告。
+- **回放与分支探索**：回放是一等公民（环境版本 + 种子 + 牌组 + 规则 flag + 应答日志，可选每步候选与策略概率），任意一局可记录、重放、导出 `.yrpX` 供 EDOPro 回看。`fork(replay, t)` 从任意决策点分叉并对多个候选 rollout，用于反事实分析、中局开局（I7）与后期 PIMC 搜索；首版以确定性「重放到 t」实现，arena 快照（I3）落地后切换，接口不变。限制：分叉保留同一隐藏状态（上帝视角），对手未知信息的重采样（确定化）需重建局面，留作后续。
 - **可扩展点**：`VecDuelEnv` 异步 send/recv 与 envpool 同构，可换 PufferLib 或 actor/learner 分离；`CoreBackend` 可换核心；信念头可复用为 PIMC 采样器。
