@@ -38,6 +38,11 @@ JSON 对象（`.json.gz` 为 gzip 压缩的同一内容）：
 | `result` | 录制时的胜者、原因、回合、LP、决策数（参考信息） |
 | `steps` | 可选：每个动作步的候选动作列表、所选下标、玩家、决策类型，以及 agent 暴露的 `last_probs`（策略概率） |
 
+`Replay.load` / `Replay.from_json` 在加载时检查字段类型，文件损坏一律抛 `ValueError`（指明文件或字段），不会等到重放时在核心里抛 `TypeError`：
+gzip 截断或损坏、不是合法 JSON / 不是 JSON 对象、缺少必需键（`seed`、`first`、`rule_flags`、`player`、`shuffle_decks`、`decks`、`responses`）或有未知键、
+`seed` 不是整数、`first` 不是 0 / 1、`player` 的三个键不是非负整数、`decks` 不是含 `a` / `b` 的对象或卡片密码不是 32 位正整数、
+`responses` 不是十六进制字符串列表、`environment` / `seed_words` / `result` / `engine` 结构不对。
+
 应答日志是回放的唯一真相：核心种子由 `seed` 经 `expand_seed` 得到，洗牌由 `shuffle_deck` 从同一 `seed` 得到（见 [engine.md](engine.md)）。从回放的任意决策点分叉、尝试其它动作见 [branching.md](branching.md)。
 
 ## 环境绑定

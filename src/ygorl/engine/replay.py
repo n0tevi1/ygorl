@@ -24,7 +24,8 @@ import gzip
 import json
 import lzma
 import struct
-from dataclasses import asdict, dataclass, field
+import zlib
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -179,13 +180,17 @@ class Replay:
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Replay:
+        """Replay from its JSON form; raises ValueError naming the first malformed field."""
+        if not isinstance(data, dict):
+            raise ValueError(f"not a ygorl replay (expected a JSON object, not {type(data).__name__})")
         if data.get("format") != FORMAT:
             raise ValueError(f"not a ygorl replay (format={data.get('format')!r})")
         if data.get("format_version") != FORMAT_VERSION:
             raise ValueError(f"unsupported replay format_version {data.get('format_version')} (expected {FORMAT_VERSION})")
-        fields = {k: v for k, v in data.items() if k not in ("format", "format_version")}
-        fields["responses"] = [bytes.fromhex(r) for r in fields["responses"]]
-        return cls(**fields)
+        values = {k: v for k, v in data.items() if k not in ("format", "format_version")}
+        _check_replay_fields(values)
+        values["responses"] = [bytes.fromhex(r) for r in values["responses"]]
+        return cls(**values)
 
     def save(self, path: str | Path) -> None:
         path = Path(path)
@@ -197,11 +202,19 @@ class Replay:
 
     @classmethod
     def load(cls, path: str | Path) -> Replay:
+        """Read a ``.json`` / ``.json.gz`` replay; a malformed file raises ValueError (a missing one OSError)."""
         path = Path(path)
         raw = path.read_bytes()
         if path.suffix == ".gz":
-            raw = gzip.decompress(raw)
-        return cls.from_json(json.loads(raw))
+            try:
+                raw = gzip.decompress(raw)
+            except (EOFError, OSError, zlib.error) as exc:
+                raise ValueError(f"{path}: truncated or corrupt gzip data ({exc})") from None
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError(f"{path}: not valid JSON ({exc})") from None
+        return cls.from_json(data)
 
     # -- EDOPro export ----------------------------------------------------
     def to_yrpx(self, path: str | Path, names: tuple[str, str] = ("Player A", "Player B"), env: Environment | None = None,
@@ -247,6 +260,103 @@ class Replay:
                 raise ValueError(f"response of {len(r)} bytes cannot be stored in a yrp1 replay")
             body += bytes([len(r)]) + r
         return _header(REPLAY_YRP1, self.core_seed, len(body), self.seed) + bytes(body)
+
+
+MAX_CARD_CODE = (1 << 32) - 1  # the core's card codes are 32-bit
+MAX_WORD = (1 << 64) - 1
+
+
+def _is_int(v: object, lo: int | None = None, hi: int | None = None) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool) and (lo is None or v >= lo) and (hi is None or v <= hi)
+
+
+def _need_int(obj: dict, key: str, name: str, lo: int | None = None, hi: int | None = None) -> None:
+    v = obj[key]
+    if not _is_int(v, lo, hi):
+        bounds = "" if lo is None else f" >= {lo}" if hi is None else f" in [{lo}, {hi}]"
+        got = repr(v) if _is_int(v) else type(v).__name__
+        raise ValueError(f"replay field {name!r} must be an integer{bounds}, not {got}")
+
+
+def _check_replay_fields(d: dict[str, Any]) -> None:
+    """Type-check a replay's JSON fields (``format`` keys removed) so that loading, ``--verify`` and export
+    fail with a ValueError naming the field instead of a TypeError deep in the engine."""
+    unknown = sorted(set(d) - {f.name for f in fields(Replay)})
+    if unknown:
+        raise ValueError(f"unknown replay field(s) {unknown}")
+    for key in ("seed", "first", "rule_flags", "player", "shuffle_decks", "decks", "responses"):
+        if key not in d:
+            raise ValueError(f"replay is missing field {key!r}")
+    _need_int(d, "seed", "seed")
+    if not _is_int(d["first"], 0, 1):
+        raise ValueError(f"replay field 'first' must be 0 or 1, not {d['first']!r}")
+    _need_int(d, "rule_flags", "rule_flags", 0, MAX_WORD)
+    player = d["player"]
+    if not isinstance(player, dict):
+        raise ValueError(f"replay field 'player' must be an object, not {type(player).__name__}")
+    keys = {f.name for f in fields(PlayerRules)}
+    if set(player) != keys:
+        raise ValueError(f"replay field 'player' needs keys {sorted(keys)}, has {sorted(player)}")
+    for key in sorted(keys):
+        _need_int(player, key, f"player.{key}", 0, (1 << 31) - 1)
+    for key in ("shuffle_decks", "augmented_start"):
+        if key in d and not isinstance(d[key], bool):
+            raise ValueError(f"replay field {key!r} must be true or false, not {d[key]!r}")
+    decks = d["decks"]
+    if not isinstance(decks, dict) or set(decks) != {"a", "b"}:
+        raise ValueError("replay field 'decks' must be an object with decks 'a' and 'b'")
+    for side, deck in decks.items():
+        if not isinstance(deck, dict) or not {"main", "extra"} <= set(deck):
+            raise ValueError(f"replay field 'decks.{side}' must be an object with 'main' and 'extra' lists")
+        if not isinstance(deck.get("name", ""), str):
+            raise ValueError(f"replay field 'decks.{side}.name' must be a string")
+        for section in ("main", "extra", "side"):
+            cards = deck.get(section, [])
+            if not isinstance(cards, list):
+                raise ValueError(f"replay field 'decks.{side}.{section}' must be a list of card passwords")
+            for i, code in enumerate(cards):
+                if not _is_int(code, 1, MAX_CARD_CODE):
+                    raise ValueError(f"replay field 'decks.{side}.{section}[{i}]' is not a card password: {code!r}")
+    responses = d["responses"]
+    if not isinstance(responses, list):
+        raise ValueError("replay field 'responses' must be a list of hex strings")
+    for i, r in enumerate(responses):
+        try:
+            bytes.fromhex(r)
+        except (TypeError, ValueError):
+            raise ValueError(f"replay field 'responses[{i}]' is not a hex string: {r!r}") from None
+    env = d.get("environment")
+    if env is not None:
+        if not isinstance(env, dict):
+            raise ValueError(f"replay field 'environment' must be null or an object, not {type(env).__name__}")
+        if not isinstance(env.get("version"), str):
+            raise ValueError("replay field 'environment.version' must be a string")
+        if not isinstance(env.get("fingerprint", ""), str):
+            raise ValueError("replay field 'environment.fingerprint' must be a string")
+    words = d.get("seed_words")
+    four_words = isinstance(words, list) and len(words) == 4 and all(_is_int(w, 0, MAX_WORD) for w in words)
+    if words is not None and not four_words:
+        raise ValueError(f"replay field 'seed_words' must be null or four 64-bit words, not {words!r}")
+    for key in ("max_turns", "max_decisions", "learner"):
+        if key in d:
+            _need_int(d, key, key, 0)
+    if not isinstance(d.get("curriculum", ""), str):
+        raise ValueError("replay field 'curriculum' must be a string")
+    for key, typ, what in (("engine", dict, "an object"), ("result", dict, "an object"), ("steps", list, "a list")):
+        if key in d and not isinstance(d[key], typ):
+            raise ValueError(f"replay field {key!r} must be {what}, not {type(d[key]).__name__}")
+    ocg = d.get("engine", {}).get("ocgcore")
+    if ocg is not None and not (isinstance(ocg, list) and len(ocg) == 2 and all(_is_int(x) for x in ocg)):
+        raise ValueError(f"replay field 'engine.ocgcore' must be [major, minor], not {ocg!r}")
+    result = d.get("result", {})
+    lp = result.get("lp")
+    if lp is not None and not (isinstance(lp, list) and len(lp) == 2 and all(_is_int(x) for x in lp)):
+        raise ValueError(f"replay field 'result.lp' must be [lp_a, lp_b], not {lp!r}")
+    if result.get("winner") is not None and not _is_int(result["winner"], 0, 1):
+        raise ValueError(f"replay field 'result.winner' must be 0, 1 or null, not {result['winner']!r}")
+    for key in ("turns", "decisions", "win_reason"):
+        if result.get(key) is not None and not _is_int(result[key]):
+            raise ValueError(f"replay field 'result.{key}' must be an integer, not {result[key]!r}")
 
 
 def _names_block(names: tuple[str, str]) -> bytes:

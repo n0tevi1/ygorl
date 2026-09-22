@@ -104,7 +104,11 @@ def parse_lflist(text: str, source: str = "<string>", strict: bool = True) -> li
 
 def load_lflist(path: str | Path, strict: bool = True) -> list[Banlist]:
     path = Path(path)
-    return parse_lflist(path.read_text(encoding="utf-8"), source=str(path), strict=strict)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise LflistError(f"{path}: not valid UTF-8 ({exc.reason} at byte {exc.start})") from None
+    return parse_lflist(text, source=str(path), strict=strict)
 
 
 def select(lists: Iterable[Banlist], name: str | None = None) -> Banlist:

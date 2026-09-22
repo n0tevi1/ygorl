@@ -18,8 +18,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+MAX_PASSWORD = 99_999_999  # card passwords have at most 8 digits
+
+
 class YdkError(ValueError):
     """Malformed .ydk file."""
+
+
+def valid_password(password: object) -> bool:
+    """True for an int card password: 1 to 99999999 (at most 8 digits)."""
+    return isinstance(password, int) and not isinstance(password, bool) and 0 < password <= MAX_PASSWORD
 
 
 @dataclass(frozen=True)
@@ -59,12 +67,16 @@ def parse_ydk(text: str, name: str = "", source: str = "<string>") -> Deck:
             password = int(line.split()[0])
         except ValueError:
             raise YdkError(f"{source}:{lineno}: expected a card password, got {raw!r}") from None
-        if password <= 0:
-            raise YdkError(f"{source}:{lineno}: invalid card password {password}")
+        if not valid_password(password):
+            raise YdkError(f"{source}:{lineno}: invalid card password {password} (expected 1 to {MAX_PASSWORD})")
         sections[current].append(password)
     return Deck(tuple(sections["main"]), tuple(sections["extra"]), tuple(sections["side"]), name=name)
 
 
 def load_ydk(path: str | Path) -> Deck:
     path = Path(path)
-    return parse_ydk(path.read_text(encoding="utf-8"), name=path.stem, source=str(path))
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise YdkError(f"{path}: not valid UTF-8 ({exc.reason} at byte {exc.start})") from None
+    return parse_ydk(text, name=path.stem, source=str(path))
