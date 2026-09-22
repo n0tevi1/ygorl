@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 
 
 class RandomAgent:
+    name = "random"
+
     def __init__(self, seed: int | None = None) -> None:
         self.rng = random.Random(seed)
 

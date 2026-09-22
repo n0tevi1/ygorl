@@ -9,6 +9,7 @@ description = "Yu-Gi-Oh! reinforcement learning engine: play, deck building, opp
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "nashpy>=0.0.43",
     "numpy>=2.4.6",
 ]
 
