@@ -2,6 +2,7 @@
 
 import json
 import struct
+import time
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from ygorl.cards.ydk import load_ydk
 from ygorl.data import load_environment
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
-from ygorl.engine.duel import Duel, default_scripts
+from ygorl.engine.duel import Duel, DuelConfig, default_scripts
 from ygorl.engine.replay import Replay, ReplayEnvironmentMismatch
 
 DECKS = {p.stem: load_ydk(p) for p in sorted((Path(__file__).parent / "decks").glob("*.ydk"))}
@@ -232,3 +233,186 @@ def test_embedded_yrp1_resimulates_like_edopro_old_mode(db, env, tmp_path):
         if status == _core.DUEL_STATUS_AWAITING:
             core.set_response(next(feed))
     assert stream == result.message_log
+
+
+# ------------------------------------------------ .yrpX: header date, host refreshes, limit results
+
+TIMESTAMP_OFFSET = 12  # u32 after id, version, flag
+
+
+def header_timestamp(buf):
+    return struct.unpack_from("<I", buf, TIMESTAMP_OFFSET)[0]
+
+
+def test_recorded_at_is_the_header_date_of_both_replays(db, env, tmp_path):
+    duel, result = record(db, env, seed=29, config=DuelConfig.from_environment(env, max_turns=2))
+    rep = Replay.from_duel(duel, result)
+    assert isinstance(rep.recorded_at, int) and abs(rep.recorded_at - time.time()) < 600
+    rep.recorded_at = 1_790_000_000
+    first, second = tmp_path / "a.yrpX", tmp_path / "b.yrpX"
+    rep.to_yrpx(first, env=env)
+    Replay.load(_saved(rep, tmp_path)).to_yrpx(second, env=env)
+    assert first.read_bytes() == second.read_bytes()  # the date travels with the replay file: exports are reproducible
+    *_, packets = parse_yrpx(first.read_bytes())
+    assert header_timestamp(first.read_bytes()) == header_timestamp(packets[-1][1]) == 1_790_000_000
+    # a round trip through the EDOPro file keeps the date; the seed words are explicit, not the timestamp
+    back = Replay.from_yrp(first)
+    assert back.recorded_at == 1_790_000_000 and back.core_seed == rep.core_seed and back.seed == 0
+    # replays saved before recorded_at existed load unchanged and export with date 0 (unknown)
+    data = rep.to_json()
+    del data["recorded_at"]
+    old = Replay.from_json(data)
+    assert old.recorded_at is None and "recorded_at" not in old.to_json()
+    old.to_yrpx(second, env=env)
+    assert header_timestamp(second.read_bytes()) == 0
+
+
+def _saved(rep, tmp_path):
+    path = tmp_path / "r.json.gz"
+    rep.save(path)
+    return path
+
+
+def parse_queries(blob):
+    """Split a query blob (EDOPro QueryStream / Query layout) into per-card [(flag, data)] lists; [] = empty slot."""
+    cards, pos = [], 0
+    while pos < len(blob):
+        (size,) = struct.unpack_from("<H", blob, pos)
+        pos += 2
+        if size == 0:
+            cards.append([])
+            continue
+        fields = []
+        while True:
+            (flag,) = struct.unpack_from("<I", blob, pos)
+            fields.append((flag, bytes(blob[pos + 4 : pos + size])))
+            pos += size
+            if flag == C.QUERY_END:
+                break
+            (size,) = struct.unpack_from("<H", blob, pos)
+            pos += 2
+        cards.append(fields)
+    return cards
+
+
+def location_queries(payload):
+    (size,) = struct.unpack_from("<I", payload, 2)
+    assert size == len(payload) - 6
+    return parse_queries(payload[6:])
+
+
+def host_form(fields):
+    """What EDOPro's CoreUtils::Query::GenerateBuffer(check_hidden=false) makes of one card's raw core query."""
+    kept = [(f, d) for f, d in fields if not (f in (C.QUERY_REASON_CARD, C.QUERY_EQUIP_CARD) and d[1] == 0)]
+    return sorted(kept)
+
+
+def edopro_core(db, yrp1_packet):
+    header, _, (lp, hand, draw, flags), decks, _ = parse_yrp1(yrp1_packet)
+    core = _core.Duel(header["seed"], flags, (lp, hand, draw), (lp, hand, draw), db.to_core(), default_scripts())
+    assert core.load_script("constant.lua") and core.load_script("utility.lua")
+    for team, (main, extra) in enumerate(decks):
+        for code in main:
+            core.new_card(team, 0, code, team, C.LOCATION_DECK, 0, C.POS_FACEDOWN_DEFENSE)
+        for code in extra:
+            core.new_card(team, 0, code, team, C.LOCATION_EXTRA, 0, C.POS_FACEDOWN_DEFENSE)
+    return core
+
+
+Q_MZONE, Q_SZONE, Q_HAND, Q_EXTRA, Q_DECK = 0x3981FFF, 0x3F81FFF, 0x3781FFF, 0x381FFF, 0x1181FFF
+
+
+def test_stream_carries_the_host_refresh_packets(db, env, tmp_path):
+    """The packets EDOPro's host (GenericDuel) records around the engine messages, checkable without EDOPro."""
+    duel, result = record(db, env, seed=41)
+    path = tmp_path / "g.yrpX"
+    Replay.from_duel(duel, result).to_yrpx(path, env=env)
+    *_, packets = parse_yrpx(path.read_bytes())
+    refresh = {C.MSG_UPDATE_DATA, C.MSG_UPDATE_CARD}
+
+    # the engine messages themselves are unchanged: all but decisions, MSG_RETRY and private hints, in order
+    engine = [(r[0], r[1:]) for buf in result.message_log for r in M.split_messages(buf)
+              if r[0] not in M.DECISION_TYPES and r[0] != C.MSG_RETRY and not (r[0] == C.MSG_HINT and r[1] in (1, 2, 3, 5))]  # fmt: skip
+    assert [p for p in packets[1:-1] if p[0] not in refresh] == engine
+
+    # after MSG_START: deck of both players (raw core query), then both extra decks, as at the start of the duel
+    core = edopro_core(db, packets[-1][1])
+    core.start()
+    assert [(m, p[:2]) for m, p in packets[1:5]] == [(C.MSG_UPDATE_DATA, bytes([0, C.LOCATION_DECK])),
+                                                     (C.MSG_UPDATE_DATA, bytes([1, C.LOCATION_DECK])),
+                                                     (C.MSG_UPDATE_DATA, bytes([0, C.LOCATION_EXTRA])),
+                                                     (C.MSG_UPDATE_DATA, bytes([1, C.LOCATION_EXTRA]))]  # fmt: skip
+    for p in (0, 1):
+        assert packets[1 + p][1][2:] == core.query_location(Q_DECK, p, C.LOCATION_DECK)
+        direct = parse_queries(core.query_location(Q_EXTRA, p, C.LOCATION_EXTRA)[4:])
+        assert location_queries(packets[3 + p][1]) == [host_form(c) for c in direct]
+    core.close()
+
+    def data(i):
+        m, p = packets[i]
+        return (m, p[0], p[1]) if m == C.MSG_UPDATE_DATA else None
+
+    field_before = [(C.MSG_UPDATE_DATA, 0, C.LOCATION_MZONE), (C.MSG_UPDATE_DATA, 1, C.LOCATION_MZONE),
+                    (C.MSG_UPDATE_DATA, 0, C.LOCATION_SZONE), (C.MSG_UPDATE_DATA, 1, C.LOCATION_SZONE)]  # fmt: skip
+    turns = draws = moves = 0
+    for i, (m, p) in enumerate(packets):
+        if m == C.MSG_NEW_TURN:  # recorded last, after the monster and spell/trap zone refreshes
+            assert [data(j) for j in range(i - 4, i)] == field_before
+            turns += 1
+        elif m == C.MSG_DRAW:  # followed by the hand of the drawing player
+            assert data(i + 1) == (C.MSG_UPDATE_DATA, p[0], C.LOCATION_HAND)
+            draws += 1
+        elif m == C.MSG_MOVE:
+            prev_con, prev_loc = p[4], p[5]
+            con, loc, seq = p[14], p[15], struct.unpack_from("<I", p, 16)[0]
+            if loc and not loc & C.LOCATION_OVERLAY and (loc != prev_loc or con != prev_con):
+                nm, np_ = packets[i + 1]
+                assert nm == C.MSG_UPDATE_CARD and np_[:3] == bytes([con, loc, seq])
+                assert len(parse_queries(np_[3:])) == 1
+                moves += 1
+        if m == C.MSG_UPDATE_DATA and p[1] != C.LOCATION_DECK:
+            for card in location_queries(p):  # EDOPro's re-serialisation: ascending flags, ending with QUERY_END
+                flags = [f for f, _ in card]
+                assert flags == sorted(flags) and (not card or flags[-1] == C.QUERY_END)
+    assert turns == result.turns and draws and moves
+    # the refreshes EDOPro's host sends before every idle/battle command: both monster, spell/trap zones and hands
+    idle = sum(r[0] in (C.MSG_SELECT_IDLECMD, C.MSG_SELECT_BATTLECMD) for buf in result.message_log for r in M.split_messages(buf))
+    six = field_before + [(C.MSG_UPDATE_DATA, 0, C.LOCATION_HAND), (C.MSG_UPDATE_DATA, 1, C.LOCATION_HAND)]
+    runs = sum([data(j) for j in range(i, i + 6)] == six for i in range(len(packets) - 6))
+    assert runs >= idle > 0
+
+
+@pytest.mark.parametrize(("limit", "reason"), [({"max_turns": 2}, "turn_limit"), ({"max_decisions": 40}, "decision_limit")])
+def test_limit_games_end_with_a_host_msg_win(db, env, tmp_path, limit, reason):
+    duel, result = record(db, env, seed=37, config=DuelConfig.from_environment(env, **limit))
+    assert result.reason == reason
+    rep = Replay.from_duel(duel, result)
+    path = tmp_path / "g.yrpX"
+    rep.to_yrpx(path, env=env)
+    *_, packets = parse_yrpx(path.read_bytes())
+    wins = [p for m, p in packets if m == C.MSG_WIN]
+    seat = 2 if result.winner is None else (result.winner - duel.first) % 2
+    assert wins == [bytes([seat, 0x3])] and packets[-2][0] == C.MSG_WIN  # [player, reason] like the host's timeout
+    # the winner comes from the recorded result, not from a rule baked into the exporter
+    rep.result = {**rep.result, "winner": None}
+    rep.to_yrpx(path, env=env)
+    *_, packets = parse_yrpx(path.read_bytes())
+    assert packets[-2] == (C.MSG_WIN, bytes([2, 0x3]))
+    # a replay read back from another host's file records no end, so it gets none
+    again = tmp_path / "again.yrpX"
+    Replay.from_yrp(path).to_yrpx(again, cards=db)
+    *_, packets = parse_yrpx(again.read_bytes())
+    assert C.MSG_WIN not in [m for m, _ in packets]
+
+
+def test_games_ended_by_the_engine_get_no_extra_msg_win(db, env, tmp_path):
+    duel, result = record(db, env)
+    assert result.reason == "win"
+    path = tmp_path / "g.yrpX"
+    Replay.from_duel(duel, result).to_yrpx(path, env=env)
+    *_, packets = parse_yrpx(path.read_bytes())
+    assert [m for m, _ in packets].count(C.MSG_WIN) == 1
+    again = tmp_path / "again.yrpX"
+    Replay.from_yrp(path).to_yrpx(again, cards=db)
+    *_, packets = parse_yrpx(again.read_bytes())
+    assert [m for m, _ in packets].count(C.MSG_WIN) == 1

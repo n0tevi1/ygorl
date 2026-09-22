@@ -252,26 +252,36 @@ class Duel:
         agents = (agent_a, agent_b)
         return self._loop(seat=(agents[self.deck_of(0)], agents[self.deck_of(1)]))
 
-    def replay(self, responses: list[bytes], reference_log: list[bytes] | None = None) -> DuelResult:
+    def replay(self, responses: list[bytes], reference_log: list[bytes] | None = None, observer=None) -> DuelResult:
         """Feed recorded ``set_response`` payloads instead of asking agents.
 
         Stops with reason ``log_exhausted`` when the engine asks for more
         responses than were recorded. With ``reference_log`` (a previous
         ``message_log``), every engine message buffer is compared as it is
         produced and a :class:`ValueError` is raised at the first difference.
+        An ``observer`` sees the live core: ``observer.on_start(core)`` once
+        the cards are loaded (before the first ``process()``) and
+        ``observer.on_buffer(core, buf)`` after every ``process()``, before
+        the next response is set (the ``.yrpX`` export queries the core there).
         """
-        return self._loop(responses=list(responses), reference_log=reference_log)
+        return self._loop(responses=list(responses), reference_log=reference_log, observer=observer)
 
-    def _loop(self, seat=None, responses: list[bytes] | None = None, reference_log: list[bytes] | None = None) -> DuelResult:
+    def _loop(self, seat=None, responses: list[bytes] | None = None, reference_log: list[bytes] | None = None,
+              observer=None) -> DuelResult:  # fmt: skip
         if self._ran:
             raise RuntimeError("a Duel can only be run once")
         self._ran = True
         tracker = self.tracker(reference_log=reference_log)
         core = self._core = self._setup()
         try:
+            if observer is not None:
+                observer.on_start(core)
             while True:
                 status = core.process()
-                tracker.on_buffer(core.get_message(), status, core.pop_logs())
+                buf = core.get_message()
+                if observer is not None:
+                    observer.on_buffer(core, buf)
+                tracker.on_buffer(buf, status, core.pop_logs())
                 if tracker.done:
                     break
                 if not tracker.awaiting:
