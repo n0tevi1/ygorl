@@ -218,3 +218,8 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 **已知局限**：从卡组以外（额外卡组、墓地）的检索与特召、「宣言卡名」等只在提示消息里出现的公开信息不单独编码；场上图之外的位置（墓地、除外）被取对象时 `card` 记 0；手牌里被公开（`QUERY_IS_PUBLIC`）的卡在之后的移动中仍按上表规则判定；增殖的 G 类「对方特殊召唤时」、屋敷童 / 墓穴类「墓地效果发动时」没有专门的触发位（落在 `other` 或不产生窗口）。
 
+### 实现与交叉校验
+
+- Python 参考：`ygorl.env.events.EventHistory`；C++：`csrc/event_encoder.{h,cpp}`，经 `_core.HostDuel(..., event_length=L)`、`_core.HostPool(..., event_length=L)`（`EncodedVecEnv(event_length=L)`）输出 `events` / `event_mask`，另以 `_core.EventHistory` 单独暴露供差分测试。
+- `tests/test_events.py`：手工构造的灰流丽场景（A 发动增援检索，B 手里 5 张灰流丽、被问到连锁且选择不连锁 → 双方流里出现 `player` = B、触发 `search`、B 场上 0 张 / 手牌 5 张的 `abstain` token；B 连锁灰流丽时该环不产生 token）、信息集检验（B 手里是灰流丽还是无法响应的通常怪兽，A 在每个决策点的 token 流逐行相同）、对手抽卡 / 盖放 / 检索的隐藏、卡组序号置 0、手牌与场上张数逐决策点与核心查询一致、`L` 可配（0 / 1 / 8 / 300 与完整历史的末尾一致）、合成的第 5 次召唤与攻击宣言窗口、全部 46 种事件类型的随机报文（含截断与尾随字节）C++ 与 Python 逐元素一致、3 局真实对局 `HostDuel` 逐决策点一致、`EncodedVecEnv` 的形状与开关。
+- 验收：`uv run python tools/check_cpp_events.py --points 100000 --length 512`。2026-09-22 的一次运行：81 局、100,842 个决策点、0 处不一致（viewer 0 共 85,057 个 token；`abstain` 触发位：other 4,308、attack 476、search 443、spsummon_deck 213、send_deck_gy 61、fifth_summon 42）；`--length 8` 另跑 16 局 20,268 个决策点，0 处不一致。随机对局平均每回合约 20 个 token（每决策点 0.8 个）；真实 combo 回合会多得多，训练时按需调大 `L`。
