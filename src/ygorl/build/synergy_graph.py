@@ -9,7 +9,7 @@ type              meaning (``locations`` = where B is taken from, own side)
 ================  =====================================================================
 ``search``        A adds B from the Deck to the hand, or Sets / places / equips it from the Deck
 ``special_summon`` A Special Summons B (hand, Deck, GY, banished or Extra Deck)
-``send_to_gy``    A sends B from the Deck, hand or Extra Deck to the GY
+``send_to_grave`` A sends B from the Deck, hand or Extra Deck to the GY
 ``recover``       A adds B to the hand from the GY or banishment
 ``material``      A can be used as material for B (Link/Xyz/Synchro/Fusion procedure of B)
 ================  =====================================================================
@@ -50,7 +50,7 @@ from ygorl.cards.cdb import CardDB
 
 FORMAT = "ygorl-synergy-graph"
 FORMAT_VERSION = 1
-EDGE_TYPES = ("search", "special_summon", "send_to_gy", "recover", "material")
+EDGE_TYPES = ("search", "special_summon", "send_to_grave", "recover", "material")
 REACH_TYPES = ("search", "special_summon")  # edges that bring a card to the hand / field
 DEFAULT_MAX_FANOUT = 100
 
@@ -298,7 +298,7 @@ def query_targets(q: Query, K: Mapping[str, int], scopes: Mapping[str, int]) -> 
         where = loc & (deck | hand | extra)
         scope = (scopes["main"] if where & (deck | hand) else 0) | (scopes["extra"] if where & extra else 0)
         if where:
-            out.append(("send_to_gy", where, scope))
+            out.append(("send_to_grave", where, scope))
     return out
 
 

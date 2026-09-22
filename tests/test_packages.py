@@ -42,7 +42,7 @@ def test_score_chain_example():
 
 
 def test_score_uses_only_reach_edges_and_counts_starters():
-    g = graph([(1, 2, "search", 1), (3, 2, "material", 1), (3, 4, "send_to_gy", 1)])
+    g = graph([(1, 2, "search", 1), (3, 2, "material", 1), (3, 4, "send_to_grave", 1)])
     p = score_package(g, [1, 2, 3, 4], k=1)
     assert p.starters == (1, 3, 4)  # 3 and 4 are not reached through search / special_summon
     assert p.reach_mass == 1.0 and p.score == pytest.approx(1 / 3)

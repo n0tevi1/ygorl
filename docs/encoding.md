@@ -265,14 +265,14 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 |----|------|------|
 | 1 | `search` | 该连锁处理时有卡从卡组加入手牌（`MSG_MOVE` 卡组 → 手牌） |
 | 2 | `spsummon_deck` | 该连锁处理时有卡从卡组特殊召唤（`MSG_MOVE` 卡组 → 怪兽区） |
-| 4 | `send_deck_gy` | 该连锁处理时有卡从卡组送去墓地（堆墓） |
+| 4 | `send_deck_grave` | 该连锁处理时有卡从卡组送去墓地（堆墓） |
 | 8 | `fifth_summon` | 回合玩家本回合第 5 次召唤 / 特殊召唤（尼比鲁的条件） |
 | 16 | `attack` | 攻击宣言 |
 | 32 | `other` | 该连锁处理时以上三种都没有发生（包括被无效） |
 
 两类窗口：
 
-1. **发动窗口**（灰流丽、效果遮蒙者、无限泡影类）：连锁第 `n` 环由玩家 A 发动。它处理完毕（`MSG_CHAIN_SOLVED n`）时，若对手 B 在第 `n` 环之后没有加入任何一环（B 在第 n 环之上没有连锁），就生成一个 `abstain` token：`player` = B，`card` / from = 第 `n` 环发动的卡，触发类型取第 `n` 环处理期间（`MSG_CHAIN_SOLVING n` 到 `MSG_CHAIN_SOLVED n`）观察到的卡组移动（`search` / `spsummon_deck` / `send_deck_gy` 的并集，都没有则 `other`）。处理期间才归类，是因为「这个效果含检索」只在处理后才由公开事件确认；被 B 连锁（包括被灰流丽无效）的环不生成 token——连锁本身已经是可见的 `chaining` token。双方对称：B 发动、A 不连锁同样生成 `player` = A 的 token。
+1. **发动窗口**（灰流丽、效果遮蒙者、无限泡影类）：连锁第 `n` 环由玩家 A 发动。它处理完毕（`MSG_CHAIN_SOLVED n`）时，若对手 B 在第 `n` 环之后没有加入任何一环（B 在第 n 环之上没有连锁），就生成一个 `abstain` token：`player` = B，`card` / from = 第 `n` 环发动的卡，触发类型取第 `n` 环处理期间（`MSG_CHAIN_SOLVING n` 到 `MSG_CHAIN_SOLVED n`）观察到的卡组移动（`search` / `spsummon_deck` / `send_deck_grave` 的并集，都没有则 `other`）。处理期间才归类，是因为「这个效果含检索」只在处理后才由公开事件确认；被 B 连锁（包括被灰流丽无效）的环不生成 token——连锁本身已经是可见的 `chaining` token。双方对称：B 发动、A 不连锁同样生成 `player` = A 的 token。
 2. **事件窗口**（尼比鲁、攻击反应类）：`MSG_ATTACK`（放弃者 = 攻击怪兽控制者的对手）与回合玩家本回合第 5 次 `summoning` / `spsummoning`（按召唤位置的控制者计，`MSG_NEW_TURN` 清零；放弃者 = 非回合玩家）各打开一个窗口；放弃者在窗口内发动任何效果（`MSG_CHAINING` 的发动者是他）即视为已响应；窗口在下一次回到开放局面时关闭——即下一个 `MSG_SELECT_IDLECMD` / `MSG_SELECT_BATTLECMD`（任何一方）、`MSG_NEW_PHASE` 或 `MSG_NEW_TURN`，此时对每个未响应的窗口生成 `abstain` token（先于该消息自身的 token）。`card` 为攻击怪兽 / 第 5 次召唤的怪兽（按 `*summoning` 的可见性），from 为其位置。
 
 `abstain` token 的 `value2` / `value3` 是放弃者当时的场上卡数（怪兽区 + 魔陷区）与手牌张数，`my_lp` / `op_lp` / `turn` 列给出 LP 与回合——即设计中的「对手场面、LP、回合」。
@@ -283,4 +283,4 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 - Python 参考：`ygorl.env.events.EventHistory`；C++：`csrc/event_encoder.{h,cpp}`，经 `_core.HostDuel(..., event_length=L)`、`_core.HostPool(..., event_length=L)`（`EncodedVecEnv(event_length=L)`）输出 `events` / `event_mask`，另以 `_core.EventHistory` 单独暴露供差分测试。
 - `tests/test_events.py`：手工构造的灰流丽场景（A 发动增援检索，B 手里 5 张灰流丽、被问到连锁且选择不连锁 → 双方流里出现 `player` = B、触发 `search`、B 场上 0 张 / 手牌 5 张的 `abstain` token；B 连锁灰流丽时该环不产生 token）、信息集检验（B 手里是灰流丽还是无法响应的通常怪兽，A 在每个决策点的 token 流逐行相同）、对手抽卡 / 盖放 / 检索的隐藏、卡组序号置 0、手牌与场上张数逐决策点与核心查询一致、`L` 可配（0 / 1 / 8 / 300 与完整历史的末尾一致）、合成的第 5 次召唤与攻击宣言窗口、全部 46 种事件类型的随机报文（含截断与尾随字节）C++ 与 Python 逐元素一致、3 局真实对局 `HostDuel` 逐决策点一致、`EncodedVecEnv` 的形状与开关。
-- 验收：`uv run python tools/check_cpp_events.py --points 100000 --length 512`。2026-09-22 的一次运行：81 局、100,842 个决策点、0 处不一致（viewer 0 共 85,057 个 token；`abstain` 触发位：other 4,308、attack 476、search 443、spsummon_deck 213、send_deck_gy 61、fifth_summon 42）；`--length 8` 另跑 16 局 20,268 个决策点，0 处不一致。随机对局平均每回合约 20 个 token（每决策点 0.8 个）；真实 combo 回合会多得多，训练时按需调大 `L`。
+- 验收：`uv run python tools/check_cpp_events.py --points 100000 --length 512`。2026-09-22 的一次运行：81 局、100,842 个决策点、0 处不一致（viewer 0 共 85,057 个 token；`abstain` 触发位：other 4,308、attack 476、search 443、spsummon_deck 213、send_deck_grave 61、fifth_summon 42）；`--length 8` 另跑 16 局 20,268 个决策点，0 处不一致。随机对局平均每回合约 20 个 token（每决策点 0.8 个）；真实 combo 回合会多得多，训练时按需调大 `L`。

@@ -112,7 +112,7 @@ def test_edges_from_scripts(mini):
         (1001, 2002, "material"),  # material -> the Extra Deck monster it summons
         (1002, 1001, "special_summon"),
         (1002, 1003, "special_summon"),
-        (1003, 2001, "send_to_gy"),
+        (1003, 2001, "send_to_grave"),
         (1003, 2002, "material"),
     ]
     assert mini.edge(1002, 1001, "special_summon").locations == C.LOCATION_DECK | C.LOCATION_GRAVE
@@ -131,14 +131,14 @@ def test_adjacency_queries(mini):
     assert mini.successors(1001, types=("search",)) == {1002}
     assert mini.predecessors(2002) == {1001, 1003}
     assert mini.neighbors(1001) == {1002, 2002}
-    assert [e.type for e in mini.out_edges(1003)] == ["send_to_gy", "material"]
+    assert [e.type for e in mini.out_edges(1003)] == ["send_to_grave", "material"]
     assert mini.in_edges(1002)[0].src == 1001
 
 
 def test_summary_and_coverage_stats(mini):
     s = mini.summary()
     assert s["nodes"] == 7 and s["edges"] == 6
-    assert s["edges_by_type"] == {"search": 1, "special_summon": 2, "send_to_gy": 1, "recover": 0, "material": 2}
+    assert s["edges_by_type"] == {"search": 1, "special_summon": 2, "send_to_grave": 1, "recover": 0, "material": 2}
     assert s["scripts"] == 6 and s["scripts_in_db"] == 5 and s["parse_errors"] == 1
     assert s["nodes_with_out_edges"] == 3
     assert s["queries_over_fanout"] == 1  # the "any monster" searcher

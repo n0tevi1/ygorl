@@ -48,6 +48,7 @@
 - [求解器示范集](docs/solver.md)：封装 ygo-combo-solver 求解起手展开线（含 `--fire` 手坑变体），在我们的核心里新鲜重放验证并转成动作下标，示范集 JSONL 格式、批量驱动与成本。
 - [组牌基因型](docs/genotype.md)：引擎包份数 + 泛用槽 + 额外卡组的表示、禁限 / 同名 3 张 / 40–60 / ≤ 15 硬约束与修复、变异 / 交叉算子、计数向量编码、10k 合法性验收。
 - [代理模型](docs/surrogate.md)：牌组特征（计数向量、引擎包、卡片结构、可插拔的卡文本嵌入均值）、自助 ridge 集成与不确定性、DSA-ME 在线更新与采集规则、真实对局标签缓存、留出集误差实测。
+- [术语表](docs/glossary.md)：代码标识符与中文术语对照（卡片、区域、对局流程、引擎、组牌）。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
 ## 快速开始
@@ -173,6 +174,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组及其求解目标（solver_targets.json），data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
+│   ├── glossary.md          # 术语表（标识符与中文术语对照）
 │   ├── engine.md            # 引擎层：CoreBackend、消息、动作模型、确定性
 │   ├── encoding.md          # 观测编码规范（卡片表、全局向量、候选动作表、训练态真值、事件 token 流）
 │   ├── nets.md              # 策略网络：编码器、局面 Transformer、历史模块（GTrXL / LSTM）、动作打分头、文本向量接口

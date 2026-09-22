@@ -23,7 +23,7 @@ enum Ev : int {
 };
 
 // ygorl.env.events.TRIGGERS
-constexpr int32_t kSearch = 1, kSpsummonDeck = 2, kSendDeckGy = 4, kFifthSummon = 8, kAttack = 16, kOther = 32;
+constexpr int32_t kSearch = 1, kSpsummonDeck = 2, kSendDeckGrave = 4, kFifthSummon = 8, kAttack = 16, kOther = 32;
 
 namespace col {
 enum Col { TYPE, PLAYER, CARD, CARD2, FROM, TO = 8, VALUE1 = 12, VALUE2, VALUE3, TURN, PHASE, MY_TURN, MY_LP, OP_LP };
@@ -317,7 +317,7 @@ void EventHistory::on_record(const uint8_t* rec, size_t len) {
             if (solving_ && link != links_.end() && prev.location == LOCATION_DECK) {
                 if (cur.location == LOCATION_HAND) link->second.triggers |= kSearch;
                 else if (cur.location == LOCATION_MZONE) link->second.triggers |= kSpsummonDeck;
-                else if (cur.location == LOCATION_GRAVE) link->second.triggers |= kSendDeckGy;
+                else if (cur.location == LOCATION_GRAVE) link->second.triggers |= kSendDeckGrave;
             }
             break;
         }
