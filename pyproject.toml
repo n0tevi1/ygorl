@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "Yu-Gi-Oh! reinforcement learning engine: play, deck building, opponent modeling."
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2.4.6",
+]
 
 [project.scripts]
 ygorl = "ygorl.cli:main"
