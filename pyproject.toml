@@ -1,0 +1,39 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.13"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "ygorl"
+version = "0.1.0"
+description = "Yu-Gi-Oh! reinforcement learning engine: play, deck building, opponent modeling."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[project.scripts]
+ygorl = "ygorl.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+cmake.version = ">=3.20"
+cmake.build-type = "Release"
+build-dir = "build/{wheel_tag}"
+wheel.packages = ["src/ygorl"]
+
+[tool.uv]
+# Rebuild the C++ extension whenever native sources or build files change.
+cache-keys = [
+  { file = "pyproject.toml" },
+  { file = "CMakeLists.txt" },
+  { file = "cmake/**/*.cmake" },
+  { file = "csrc/**/*.cpp" },
+  { file = "csrc/**/*.h" },
+  { git = { commit = true, tags = false } },
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

@@ -25,7 +25,18 @@
 
 ## 快速开始
 
-待 M0 完成后补充（uv + CMake 构建）。
+依赖：Linux、[uv](https://docs.astral.sh/uv/)（≥ 0.8）、CMake（≥ 3.20）、支持 C++17 的编译器（GCC ≥ 9 / Clang ≥ 10）。
+Python 3.11 由 uv 自动选择或下载；pybind11 与 scikit-build-core 作为构建依赖由 uv 自动安装。
+
+```bash
+git clone https://github.com/n0tevi1/ygorl && cd ygorl
+uv sync                                   # 创建 .venv，编译并安装 C++ 扩展 ygorl._core
+uv run python -c "import ygorl._core"     # 冒烟测试
+uv run pytest                             # 跑单测
+```
+
+修改 `csrc/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
+需要强制重编时用 `uv sync --reinstall-package ygorl`。
 
 ## 目录结构
 
@@ -33,6 +44,12 @@
 .
 ├── README.md
 ├── CLAUDE.md                # 给 AI 协作工具的项目约定
+├── pyproject.toml           # uv 项目 + scikit-build-core 构建配置
+├── uv.lock
+├── CMakeLists.txt           # 构建 C++ 扩展 ygorl._core
+├── csrc/                    # C++ 源码（pybind11 绑定）
+├── src/ygorl/               # Python 包
+├── tests/                   # pytest 单测
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
 │   └── eng-plan.md          # 工程计划
