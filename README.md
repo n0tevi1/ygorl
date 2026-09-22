@@ -107,13 +107,41 @@ uv run python tools/solve_openings.py tests/decks/labrynth.ydk --hands 2 --solve
 
 ### Claude Code 云端会话
 
-`.claude/hooks/session-start.sh` 是 SessionStart hook（在 `.claude/settings.json` 注册），只在 Claude Code on the web
-（`CLAUDE_CODE_REMOTE=true`）中运行：补装缺失的工具（uv / cmake / ninja / g++ / ccache）、拉取子模块、`uv sync --extra train` 编译扩展并安装 PyTorch（首次约 2 分钟、5 GB），
-会话开始时即可直接 `uv run pytest`。脚本幂等，也可以粘贴进云环境的 setup script，或手动执行：
+两个脚本分工（参见 [Cloud environments 文档](https://code.claude.com/docs/en/cloud-environments)）：
 
-```bash
-CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh
-```
+- `.claude/cloud-setup.sh`：云环境的 **setup script**，以 root 在 Claude Code 启动前运行，结果被快照、约 7 天内的新会话直接复用。
+  装 ccache 与 libsqlite3-dev（combo 求解器用），并执行一次 `uv sync --extra train` 预热 uv 缓存（PyTorch 约 3 GB 下载）与 ccache；
+  若运行时仓库尚未克隆，则只把 Python 3.11 和固定版本的 torch 放进 uv 缓存（版本写在脚本里，升级 torch 时同步改）。冷启动实测约 1 分钟，
+  始终以 0 退出。
+- `.claude/hooks/session-start.sh`：SessionStart hook（在 `.claude/settings.json` 注册），只在 Claude Code on the web
+  （`CLAUDE_CODE_REMOTE=true`）中运行，每个会话都跑且不进快照：补装缺失的工具（uv / cmake / ninja / g++ / ccache）、拉取子模块、
+  `uv sync --extra train` 编译扩展并安装 PyTorch，会话开始时即可直接 `uv run pytest`。缓存已预热时约 15 秒（ccache 命中率 > 95%），
+  没配 setup script 时约 1 分钟。脚本幂等，也可手动执行：`CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh`。
+
+在 [claude.ai/code](https://claude.ai/code) 的环境选择器里编辑（或新建）云环境：
+
+1. **Setup script**：粘贴 `.claude/cloud-setup.sh` 的全部内容。
+2. **Network access**：选 **Custom**，勾选 *Also include default list of common package managers*，Allowed domains 填下面的列表。
+   默认的 Trusted 级别只放行包管理源与 GitHub，T5.1 数据抓取（YGOPRODECK、masterduelmeta、Yugipedia）与 T5.2 文本嵌入（HuggingFace 模型下载）
+   需要的站点都被拒；`ppa.launchpadcontent.net` 是镜像自带的 deadsnakes PPA，缺了它 `apt-get update` 会报 403。
+
+   ```text
+   db.ygoprodeck.com
+   ygoprodeck.com
+   masterduelmeta.com
+   www.masterduelmeta.com
+   yugipedia.com
+   huggingface.co
+   *.huggingface.co
+   *.hf.co
+   ppa.launchpadcontent.net
+   ```
+
+3. **Environment variables**：不需要。GitHub 由会话的 GitHub 代理认证；若将来要用需授权的 HuggingFace 模型，Pro / Max 计划用环境的
+   API credentials（host 填 `huggingface.co`），不要把 token 写进环境变量（用该环境的人都能读到）。
+
+云端 VM 约 4 vCPU / 16 GB 内存 / 30 GB 磁盘、无 GPU：适合开发、单测、数据抓取与离线嵌入生成；T2.7 的 16 核吞吐数字与 M4 正式训练
+需要在自有机器上跑（[self-hosted environment](https://code.claude.com/docs/en/self-hosted-environments) 或 Remote Control）。
 
 ### 第三方子模块
 
@@ -142,7 +170,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 .
 ├── README.md
 ├── CLAUDE.md                # 给 AI 协作工具的项目约定
-├── .claude/                 # Claude Code 配置：settings.json + hooks/session-start.sh（云端会话初始化）
+├── .claude/                 # Claude Code 配置：settings.json + hooks/session-start.sh（每个云端会话的初始化）+ cloud-setup.sh（云环境 setup script）
 ├── .github/workflows/       # CI：构建扩展 + pytest
 ├── pyproject.toml           # uv 项目 + scikit-build-core 构建配置
 ├── uv.lock

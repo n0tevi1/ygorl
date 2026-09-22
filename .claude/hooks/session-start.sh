@@ -1,9 +1,10 @@
 #!/bin/bash
 # SessionStart hook for Claude Code on the web: fetch submodules and build
 # the ygorl._core extension so `uv run pytest` works as soon as the session
-# starts. Idempotent; the container is cached after this completes.
-# Can also be run by hand (or as a cloud environment setup script) with
-# CLAUDE_CODE_REMOTE=true.
+# starts. Idempotent. Runs in every session and is not part of the cloud
+# environment's snapshot; .claude/cloud-setup.sh (the environment's setup
+# script) warms uv's cache and ccache so this step stays short.
+# Can also be run by hand with CLAUDE_CODE_REMOTE=true.
 set -euo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
