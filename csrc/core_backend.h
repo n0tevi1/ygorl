@@ -122,22 +122,37 @@ public:
     std::string query_field();
     std::vector<LogEntry> pop_logs();
     void close();
-    bool closed() const { return handle_ == nullptr; }
+    bool closed() const;
 
     // Snapshots (duels created with snapshots=true): the core's whole state lives in a
     // private arena (csrc/arena.h), so taking and restoring a snapshot is a memory copy.
-    bool snapshots_enabled() const { return arena_ != nullptr; }
+    bool snapshots_enabled() const;
     std::shared_ptr<const DuelSnapshot> snapshot();
     void restore(const DuelSnapshot& snapshot);  // std::invalid_argument if taken from another duel
-    uint64_t arena_escapes() const { return arena_ ? arena_->escapes() : 0; }
-    size_t arena_bytes() const { return arena_ ? arena_->used() : 0; }
+    uint64_t arena_escapes() const;  // take the duel's mutex: close() may run on another thread
+    size_t arena_bytes() const;
 
     // Callback error captured at the C boundary; rethrown by the caller-facing method.
     void capture_error(std::exception_ptr e);
     void rethrow_pending();
 
 private:
-    void ensure_open() const;
+    void ensure_open() const;  // also rejects re-entrant calls from this duel's own callbacks
+
+    // RAII around a call into the core: activates the duel's arena and marks the duel busy, so a
+    // callback that calls back into the same duel (close, process, ...) gets an error instead of
+    // freeing memory the core is still using.
+    class CoreCall {
+    public:
+        explicit CoreCall(Duel& d) : duel_(d), scope_(d.arena_.get()) { duel_.in_core_ = true; }
+        ~CoreCall() { duel_.in_core_ = false; }
+        CoreCall(const CoreCall&) = delete;
+        CoreCall& operator=(const CoreCall&) = delete;
+
+    private:
+        Duel& duel_;
+        arena::Scope scope_;
+    };
     static void card_reader(void* payload, uint32_t code, OCG_CardData* data);
     static void card_reader_done(void* payload, OCG_CardData* data);
     static int script_reader(void* payload, OCG_Duel duel, const char* name);
@@ -149,7 +164,8 @@ private:
     std::shared_ptr<ScriptSource> scripts_;
     std::vector<LogEntry> logs_;
     std::exception_ptr pending_;
-    std::recursive_mutex mutex_;
+    mutable std::recursive_mutex mutex_;
+    bool in_core_ = false;
 };
 
 }  // namespace ygorl

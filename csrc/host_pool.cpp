@@ -52,7 +52,8 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
             return ev;
         }
     } catch (const std::exception& e) {
-        if (!host) {
+        if (!host || !host->started()) {  // start() failed: there is no game to report on
+            host.reset();
             ev.done = true;
             ev.reason = "error";
             ev.error = e.what();
