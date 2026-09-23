@@ -14,7 +14,7 @@ from ygorl.data import load_environment
 from ygorl.engine import constants as C
 from ygorl.engine.branch import fork
 from ygorl.engine.duel import Duel, DuelConfig, default_cards
-from ygorl.engine.replay import Replay
+from ygorl.engine.replay import REPLAY_COMPRESSED, Replay, load_yrp
 from ygorl.eval.arena import Arena, derive_seed, merge
 
 DECKS = Path(__file__).parent / "decks"
@@ -196,7 +196,7 @@ def test_duel_prints_the_same_result_as_the_api(tmp_path, capsys):
     assert "snake_eye" in f["duel"] and "tearlaments" in f["duel"] and "b moves first" in f["duel"]
     rep = Replay.load(rep_path)
     assert rep.responses == want.responses and rep.first == 1 and rep.max_turns == 3
-    assert yrpx.read_bytes()[:4] == b"yrpX"
+    assert yrpx.read_bytes()[:4] == b"yrpX" and load_yrp(yrpx).flag & REPLAY_COMPRESSED
     assert str(rep_path) in out and str(yrpx) in out
 
 
@@ -227,6 +227,7 @@ def test_duel_under_an_environment(tmp_path, capsys, monkeypatch):
         (["missing.ydk", str(DECKS / "kashtira.ydk")], "missing.ydk"),
         ([str(DECKS / "kashtira.ydk"), str(DECKS / "kashtira.ydk"), "--agent-a", "nope"], "unknown agent 'nope'"),
         ([str(DECKS / "kashtira.ydk"), str(DECKS / "kashtira.ydk"), "--env", "no-such-env"], "no-such-env"),
+        ([str(DECKS / "kashtira.ydk"), str(DECKS / "kashtira.ydk"), "--yrpx-uncompressed"], "needs --yrpx PATH"),
     ],
 )
 def test_duel_errors_are_reported(capsys, args, message):
@@ -265,6 +266,14 @@ def test_replay_verify_and_export(replay_file, tmp_path, capsys):
     out = capsys.readouterr().out
     assert fields(out)["verify"].startswith("ok")
     assert out_path.read_bytes()[:4] == b"yrpX" and str(out_path) in out
+    packed = load_yrp(out_path)
+    assert packed.flag & REPLAY_COMPRESSED
+    assert main(["replay", str(path), "--export-yrpx", str(out_path), "--yrpx-uncompressed"]) == 0
+    raw = load_yrp(out_path)
+    assert not raw.flag & REPLAY_COMPRESSED and not raw.embedded.flag & REPLAY_COMPRESSED
+    assert raw.packets[:-1] == packed.packets[:-1] and raw.embedded.responses == packed.embedded.responses
+    assert main(["replay", str(path), "--yrpx-uncompressed"]) == 2
+    assert "needs --export-yrpx OUT" in capsys.readouterr().err
 
 
 def test_replay_verify_detects_a_different_end(replay_file, tmp_path, capsys):
