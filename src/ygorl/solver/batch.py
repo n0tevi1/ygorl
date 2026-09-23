@@ -87,6 +87,7 @@ class HandJob:
     fire_ms: int = DEFAULT_FIRE_MS
     binary: Path | None = None
     solver_seed: int | None = None
+    max_rollouts: int | None = None  # solver --max-rollouts (count budget; see SolveRequest)
     env: str | None = None  # environment directory or version
     timeout_s: float | None = None
     keep_files: bool = False
@@ -106,6 +107,7 @@ def _load_env(spec: str | None) -> Environment | None:
 
 def _solver_meta(run: SolverRun, request: SolveRequest) -> dict:
     meta = {**solver_version(), "solve_ms": request.solve_ms, "threads": request.threads, "seed": run.seed,
+            **({"max_rollouts": request.max_rollouts} if request.max_rollouts is not None else {}),
             "returncode": run.returncode, "elapsed_s": round(run.elapsed_s, 2), "candidates": run.candidates,
             "written": len(run.solutions), "timed_out": run.timed_out}  # fmt: skip
     if request.fire is not None:
@@ -175,7 +177,7 @@ def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | Non
         template = make_template(scratch / "template.yrpX", deck, job.hand_seed, config, cards, scripts)
         request = SolveRequest(template=template, deck=deck_file, hand=tuple(hand), targets=tuple(targets),
                                solve_ms=job.solve_ms, threads=job.threads, seed=job.solver_seed,
-                               max_written=max(4, 2 * job.lines))  # fmt: skip
+                               max_written=max(4, 2 * job.lines), max_rollouts=job.max_rollouts)  # fmt: skip
         run = run_solver(request, Workdir.create(job.workdir), scratch / "out", binary=job.binary, timeout=job.timeout_s)
         demo.solver = _solver_meta(run, request)
         if run.returncode != 0 and not run.solutions:
@@ -212,7 +214,8 @@ def solve_fire(job: HandJob, base: Demonstration, fire: int, *, cards=None,
         rep.environment = None  # the solver re-runs the file itself; the environment was checked when solving
         rep.to_yrpx(reference, names=(base.deck["name"], PASSIVE_OPPONENT.name), **_engine_kwargs(cards, scripts))
         request = SolveRequest(template=reference, fire=fire, fire_ms=job.fire_ms, solve_ms=job.solve_ms,
-                               threads=job.threads, seed=job.solver_seed, max_written=max(4, 2 * job.lines))  # fmt: skip
+                               threads=job.threads, seed=job.solver_seed, max_written=max(4, 2 * job.lines),
+                               max_rollouts=job.max_rollouts)  # fmt: skip
         timeout = job.timeout_s if job.timeout_s is not None else job.solve_ms / 1000 + 120 + job.fire_ms / 1000 * 12
         run = run_solver(request, Workdir.create(job.workdir), scratch / "out", binary=job.binary, timeout=timeout)
         demo.solver = _solver_meta(run, request)

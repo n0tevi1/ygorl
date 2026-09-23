@@ -2,7 +2,7 @@
 
 Usage: uv run python tools/funnel_eval.py DECK.ydk|DIR ... [--targets tests/decks/solver_targets.json]
            [--hands 12] [--seed 0] [--solve-ms 5000] [--fire 14558127 ...] [--no-fire] [--fire-ms 3000]
-           [--workers 1] [--max-brick-rate 0.5] [--min-survival 0] [--no-filter] [--keep-demos]
+           [--workers 1] [--max-rollouts N] [--max-brick-rate 0.5] [--min-survival 0] [--no-filter] [--keep-demos]
            [--env VERSION] [--out out/funnel/results.jsonl]
 
 Every deck gets --hands opening hands with fixed seeds (the same shuffle permutations for every deck);
@@ -72,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-fire", action="store_true", help="skip the --fire variant")
     parser.add_argument("--fire-ms", type=int, default=FunnelConfig.fire_ms, help="solver budget per --fire window (ms)")
     parser.add_argument("--workers", type=int, default=1, help="parallel solver processes per deck")
+    parser.add_argument("--max-rollouts", type=int, default=None,
+                        help="solver count budget per phase and worker (reproducible runs; set --solve-ms well above it)")
     parser.add_argument("--budget", type=float, default=DEFAULT_BUDGET_S, help="stage-1 budget, solver process-seconds per deck")
     parser.add_argument("--max-brick-rate", type=float, default=FunnelFilter.max_brick_rate)
     parser.add_argument("--min-survival", type=float, default=FunnelFilter.min_hand_trap_survival)
@@ -90,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     targets = load_deck_targets(args.targets)
     fire = () if args.no_fire else tuple(args.fire if args.fire is not None else FunnelConfig.fire)
     config = FunnelConfig(hands=args.hands, seed=args.seed, solve_ms=args.solve_ms, fire=fire, fire_ms=args.fire_ms,
-                          workers=args.workers, env=args.env, binary=binary, budget_s=args.budget,
+                          workers=args.workers, env=args.env, binary=binary, budget_s=args.budget, max_rollouts=args.max_rollouts,
                           keep_demos=args.keep_demos)  # fmt: skip
     gate = None if args.no_filter else FunnelFilter(args.max_brick_rate, args.min_survival)
     args.out.parent.mkdir(parents=True, exist_ok=True)

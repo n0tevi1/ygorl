@@ -183,6 +183,15 @@ def test_evaluate_deck_errors_and_bad_targets(tmp_path):
         evaluate_deck(PURRELY, ["99999999"], FunnelConfig(hands=1, binary=failing), scratch=tmp_path / "f")
 
 
+def test_max_rollouts_reaches_the_solver(tmp_path):
+    log = tmp_path / "args.txt"
+    recorder = _fake_solver(tmp_path, f'#!/bin/sh\necho "$@" >> {log}\necho "at best 0 of the 1 target cards"\nexit 0\n')
+    r = evaluate_deck(PURRELY, ["52645235"], FunnelConfig(hands=1, solve_ms=100, max_rollouts=300, binary=recorder),
+                      scratch=tmp_path / "m")  # fmt: skip
+    assert r.config["max_rollouts"] == 300 and "--max-rollouts 300" in log.read_text()
+    assert FunnelConfig().max_rollouts is None  # opt-in: the default budget stays wall time
+
+
 def test_evaluate_deck_in_worker_processes(tmp_path):
     cfg = FunnelConfig(hands=3, solve_ms=100, workers=2, binary=_fake_solver(tmp_path))
     r = evaluate_deck(PURRELY, [["52645235"], ["52645235@def"]], cfg, scratch=tmp_path / "w")
