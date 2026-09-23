@@ -23,7 +23,8 @@ from torch import Tensor, nn
 
 from ygorl.nets.batch import Batch, collate
 from ygorl.nets.config import NetConfig
-from ygorl.nets.policy import PolicyNet
+from ygorl.nets.heads import MASKED_LOGIT
+from ygorl.nets.policy import PolicyNet, _pad_to, trim_padding
 from ygorl.nets.text import TextFeatures
 from ygorl.train.critic import Critic
 
@@ -88,6 +89,14 @@ class ActorCritic(nn.Module):
         return self.actor(obs).logits
 
     def forward(self, obs: Batch, privileged: Mapping[str, Tensor] | None = None) -> ActorCriticOutput:
+        # Heads on the trimmed batch (the critic's Q head then scores only the used action rows, not all 128);
+        # logits / Q are padded back to the batch's action width.
+        width = obs["action_mask"].shape[1]
+        obs = trim_padding(obs)
+        out = self._forward(obs, privileged)
+        return ActorCriticOutput(_pad_to(out.logits, width, value=MASKED_LOGIT), _pad_to(out.q, width), out.v)
+
+    def _forward(self, obs: Batch, privileged: Mapping[str, Tensor] | None) -> ActorCriticOutput:
         f = self.actor.features(obs)
         logits = self.actor.logits(f)
         cf = f if self.critic_trunk is None else self.critic_trunk.features(obs)

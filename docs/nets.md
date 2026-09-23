@@ -125,6 +125,21 @@ summary, state, tokens = net.history(events, event_mask, state=None)
 
 LSTM 历史合计 3,164,288；关 ID 嵌入且不用历史 915,072；加 384 维卡文本与效果文本（三个投影：卡文本、效果均值、效果串）+147,456。
 
+## 实现上的性能处理（结果不变）
+
+CPU 训练时的热点做了等价改写，都有与原写法逐项比对的单测（`tests/test_nets.py`、`tests/test_train_loop.py`）：
+
+- **裁掉填充**：`PolicyNet.features` 与 `ActorCritic.forward` 先把一批观测裁到最长的有效前缀（`nets.policy.trim_padding`），
+  输出再补回原宽度（logits 补 `MASKED_LOGIT`、Q 补 0）；critic 的 Q 头因此不再给 128 行全打分。
+- **类别嵌入求和**（`CategoricalEmbedding`）：原写法 `table(idx).sum(-2)` 会生成 `[B, N, 列数, d]` 的中间张量，反向还要对
+  上百万个下标排序。现在前向用 `F.embedding_bag(mode="sum")`；不超过 1,024 行的表（卡片 288、事件 453、全局 331 行）反向用
+  多热计数矩阵乘梯度（`_SummedRows`，`gradcheck` 精确），更大的表（动作 2,454 行）用 `embedding_bag` 自带的反向。
+- **局面自注意力**：`BoardEncoder` 逐层手写 pre-norm 层（打包投影 + `scaled_dot_product_attention`），参数与
+  `nn.TransformerEncoderLayer` 完全相同（state dict 不变），省掉 `multi_head_attention_forward` 的投影拷贝；
+  eval 模式也不再切到融合推理核，训练 / 评估两种模式输出一致。
+
+合计每次 PPO 更新约快 1.6 倍，端到端约 1.46 倍（[benchmarks.md](benchmarks.md)「PPO 训练吞吐」）。
+
 ## 已知局限
 
 - Python `DecisionPoint` 路径（`Duel.run` / Arena）上的适配器是 `policy:<checkpoint>`（`ygorl.agents.checkpoint`，T4b.4）：

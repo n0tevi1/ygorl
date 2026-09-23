@@ -269,7 +269,8 @@ def test_padding_trimming_leaves_the_ppo_update_unchanged(db, vocab, monkeypatch
     """The learner cuts the rollout's padding once and the net cuts each batch's: the same update either way."""
     import copy
 
-    from ygorl.nets.policy import PolicyNet
+    from ygorl.nets import actor_critic as ac_mod
+    from ygorl.nets.policy import PolicyNet, trim_padding
     from ygorl.train import ppo as ppo_mod
     from ygorl.train.ppo import PPOLearner
 
@@ -280,7 +281,8 @@ def test_padding_trimming_leaves_the_ppo_update_unchanged(db, vocab, monkeypatch
     for trim in (False, True):
         model = copy.deepcopy(base)
         monkeypatch.setattr(PolicyNet, "trim_padding", trim)
-        monkeypatch.setattr(ppo_mod, "trim_padding", ppo_mod.trim_padding if trim else (lambda obs: obs))
+        for mod in (ppo_mod, ac_mod):
+            monkeypatch.setattr(mod, "trim_padding", trim_padding if trim else (lambda obs: obs))
         learner = PPOLearner(model, PPOConfig(minibatch_size=16, epochs=2))
         torch.manual_seed(3)
         stats = learner.update(ro)
@@ -290,3 +292,26 @@ def test_padding_trimming_leaves_the_ppo_update_unchanged(db, vocab, monkeypatch
         assert abs(s0[key] - s1[key]) < 1e-4 * max(1.0, abs(s0[key])), key
     for name in p0:
         assert torch.allclose(p0[name].float(), p1[name].float(), atol=1e-5, rtol=1e-4), name
+
+
+def test_actor_critic_heads_on_the_trimmed_batch_match_the_padded_one(db, vocab, monkeypatch):
+    """ActorCritic scores only the batch's used action rows and pads logits / Q back to the input width."""
+    from ygorl.nets import actor_critic as ac_mod
+    from ygorl.nets.heads import MASKED_LOGIT
+    from ygorl.nets.policy import PolicyNet
+
+    ro = collector(db, vocab, max_decisions=120, steps=24).collect()
+    model = tiny_model(vocab)
+    obs, priv = ro.obs, ro.privileged
+    with torch.no_grad():
+        trimmed = model(obs, priv)
+        monkeypatch.setattr(PolicyNet, "trim_padding", False)
+        monkeypatch.setattr(ac_mod, "trim_padding", lambda o: o)
+        padded = model(obs, priv)
+    mask = obs["action_mask"]
+    assert trimmed.logits.shape == padded.logits.shape == trimmed.q.shape == mask.shape
+    assert mask.sum(1).max() < mask.shape[1]  # the trimmed run really dropped columns
+    assert torch.allclose(trimmed.logits[mask], padded.logits[mask], atol=1e-5)
+    assert (trimmed.logits[~mask] == MASKED_LOGIT).all() and (trimmed.q[~mask] == 0).all()
+    assert torch.allclose(trimmed.q[mask], padded.q[mask], atol=1e-5)
+    assert torch.allclose(trimmed.v, padded.v, atol=1e-5)
