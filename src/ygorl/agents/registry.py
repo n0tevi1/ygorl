@@ -83,7 +83,21 @@ def _greedy(arg: str | None, seed: int) -> Agent:
     return GreedyAgent(seed)
 
 
+def _policy(arg: str | None, seed: int) -> Agent:
+    from ygorl.agents.checkpoint import make_policy_agent  # needs PyTorch (the train extra)
+
+    return make_policy_agent(arg, seed)
+
+
+def _policy_greedy(arg: str | None, seed: int) -> Agent:
+    from ygorl.agents.checkpoint import make_policy_agent
+
+    return make_policy_agent(arg, seed, greedy=True)
+
+
 register_agent("random", _random, "uniformly random legal actions (seeded)")
 register_agent("greedy", _greedy, "one-ply heuristic baseline (docs/evaluation.md)")
+register_agent("policy", _policy, "a trained PPO checkpoint, sampling (policy:PATH.pt; needs the train extra)")
+register_agent("policy-greedy", _policy_greedy, "a trained PPO checkpoint, argmax (policy-greedy:PATH.pt)")
 
 __all__ = ["AgentFactory", "AgentSpec", "agent_factory", "available_agents", "make_agent", "register_agent"]

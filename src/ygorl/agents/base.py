@@ -15,6 +15,10 @@ rely on):
   choices (reproducible games, worker-count independent arenas).
 * Optionally an agent exposes ``last_probs``: the probabilities it assigned to
   ``point.actions`` at its last call (recorded by ``Duel(record_steps=True)``).
+* Optional hooks, called by :meth:`Duel.run` only: ``on_duel_start(duel)`` once
+  before the first decision, and ``on_decision(point, index)`` after every
+  answered decision of *both* seats (once per agent object). Agents that must
+  follow the whole game (``policy:<checkpoint>``) use them.
 """
 
 from __future__ import annotations

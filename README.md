@@ -10,7 +10,7 @@
 - **M1 引擎绑定**：完成；待办是两项人工核对（T1.2 卡片字段与效果串的人工抽检、T1.8 `.yrpX` 在 EDOPro 客户端中回看）。
 - **M2 向量化环境**：完成（C++ 线程池、C++ 步进与观测编码、多选可行集核对、事件 token 流、训练态真值、课程模式、arena 快照、分支探索）；待办是 16 核吞吐数字，以及 C++ 步进路径上的课程模式。
 - **M3 基线与评估**：完成（Greedy、配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念校准指标、命令行 `ygorl duel / replay / branch / arena / matrix`）。
-- **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）。
+- **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）；策略网络、特权 critic 与 PPO 自博弈训练循环（T4b.1–T4b.4）已落地。
 - **M5 数据与组牌**：协同图（T5.3，代理召回检验）、引擎包枚举（T5.4）、基因型与算子（T5.5）已落地；T5.1 数据抓取与 T5.2 文本嵌入受当前网络环境限制（YGOPRODECK、masterduelmeta、Yugipedia、HuggingFace 不可达）尚未开始。
 - **M6**：未开始。
 
@@ -39,8 +39,8 @@
 - [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
 - [课程与开局配平](docs/curriculum.md)：单人展开 / 仅手坑 / 完整三种课程模式、先后攻配平、增广开局标志位。
 - [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
-- [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局等实测数字。
-- [优势估计与特权 critic](docs/training.md)：rollout 数据布局与两人零和的符号约定、GAE(λ) 对照、Expected-SARSA(λ) 回报与 Q-boosted 优势（VRPO）、候选动作 Q 头 + V 头。
+- [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局、吞吐、PPO 自博弈 1 小时等实测数字。
+- [策略训练](docs/training.md)：rollout 数据布局与两人零和的符号约定、截断对局的 critic 自举、GAE(λ) 对照、Expected-SARSA(λ) 回报与 Q-boosted 优势（VRPO）、候选动作 Q 头 + V 头；PPO 自博弈训练循环（可插拔策略目标、熵、KL 到慢速参考 / BC 先验、快照池 + keep-best、牌组池、checkpoint 与日志）。
 - [观测编码](docs/encoding.md)：卡片表、全局向量、候选动作表的每一列；事件 token 流与响应窗口 / 放弃 token。
 - [策略网络](docs/nets.md)：卡片 / 效果编码器、局面 Transformer、事件历史模块（GTrXL / LSTM）、动作打分头、冻结文本向量接口、给 critic / 信念头的接口。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
@@ -96,6 +96,20 @@ uv run ygorl matrix tests/decks/snake_eye.ydk tests/decks/kashtira.ydk tests/dec
 修改 `csrc/`、`patches/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
 需要强制重编时用 `uv sync --reinstall-package ygorl`。
 
+### 可选：PPO 自博弈训练（T4b.4）
+
+需要 `uv sync --extra train`。单牌组对训练，产物写到 `out/train/<名字>/`（配置、词表、`metrics.jsonl`、`eval.jsonl`、
+`checkpoints/`、`best.pt`；给 `--env` 时写到该环境的 `artifacts/train/`）。参数与产物说明见 [docs/training.md](docs/training.md) §8。
+
+```bash
+uv run python tools/train_ppo.py tests/decks/snake_eye.ydk tests/decks/kashtira.ydk --minutes 60 --out out/train/snake-kashtira
+uv run python tools/train_ppo.py --resume out/train/snake-kashtira/checkpoints/latest.pt --minutes 30   # 续训
+uv run python tools/train_ppo.py --summary out/train/snake-kashtira/metrics.jsonl                      # 首末指标
+```
+
+训练出的 checkpoint 可以作为 agent 用在任何命令里：`--agent-a policy:out/train/snake-kashtira/best.pt`（按策略采样；
+`policy-greedy:` 取 argmax），例如 `ygorl arena tests/decks/snake_eye.ydk --vs tests/decks/kashtira.ydk --agent-a policy:... --agent-b greedy`。
+
 ### 可选：combo 求解器（示范集，T4a.1）
 
 [ygo-combo-solver](https://github.com/96jonesa/ygo-combo-solver)（AGPL-3.0）不随仓库分发，由脚本在 `build/combo-solver/` 里按固定提交拉取源码、
@@ -109,13 +123,41 @@ uv run python tools/solve_openings.py tests/decks/labrynth.ydk --hands 2 --solve
 
 ### Claude Code 云端会话
 
-`.claude/hooks/session-start.sh` 是 SessionStart hook（在 `.claude/settings.json` 注册），只在 Claude Code on the web
-（`CLAUDE_CODE_REMOTE=true`）中运行：补装缺失的工具（uv / cmake / ninja / g++ / ccache）、拉取子模块、`uv sync --extra train` 编译扩展并安装 PyTorch（首次约 2 分钟、5 GB），
-会话开始时即可直接 `uv run pytest`。脚本幂等，也可以粘贴进云环境的 setup script，或手动执行：
+两个脚本分工（参见 [Cloud environments 文档](https://code.claude.com/docs/en/cloud-environments)）：
 
-```bash
-CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh
-```
+- `.claude/cloud-setup.sh`：云环境的 **setup script**，以 root 在 Claude Code 启动前运行，结果被快照、约 7 天内的新会话直接复用。
+  装 ccache 与 libsqlite3-dev（combo 求解器用），并执行一次 `uv sync --extra train` 预热 uv 缓存（PyTorch 约 3 GB 下载）与 ccache；
+  若运行时仓库尚未克隆，则只把 Python 3.11 和固定版本的 torch 放进 uv 缓存（版本写在脚本里，升级 torch 时同步改）。冷启动实测约 1 分钟，
+  始终以 0 退出。
+- `.claude/hooks/session-start.sh`：SessionStart hook（在 `.claude/settings.json` 注册），只在 Claude Code on the web
+  （`CLAUDE_CODE_REMOTE=true`）中运行，每个会话都跑且不进快照：补装缺失的工具（uv / cmake / ninja / g++ / ccache）、拉取子模块、
+  `uv sync --extra train` 编译扩展并安装 PyTorch，会话开始时即可直接 `uv run pytest`。缓存已预热时约 15 秒（ccache 命中率 > 95%），
+  没配 setup script 时约 1 分钟。脚本幂等，也可手动执行：`CLAUDE_CODE_REMOTE=true .claude/hooks/session-start.sh`。
+
+在 [claude.ai/code](https://claude.ai/code) 的环境选择器里编辑（或新建）云环境：
+
+1. **Setup script**：粘贴 `.claude/cloud-setup.sh` 的全部内容。
+2. **Network access**：选 **Custom**，勾选 *Also include default list of common package managers*，Allowed domains 填下面的列表。
+   默认的 Trusted 级别只放行包管理源与 GitHub，T5.1 数据抓取（YGOPRODECK、masterduelmeta、Yugipedia）与 T5.2 文本嵌入（HuggingFace 模型下载）
+   需要的站点都被拒；`ppa.launchpadcontent.net` 是镜像自带的 deadsnakes PPA，缺了它 `apt-get update` 会报 403。
+
+   ```text
+   db.ygoprodeck.com
+   ygoprodeck.com
+   masterduelmeta.com
+   www.masterduelmeta.com
+   yugipedia.com
+   huggingface.co
+   *.huggingface.co
+   *.hf.co
+   ppa.launchpadcontent.net
+   ```
+
+3. **Environment variables**：不需要。GitHub 由会话的 GitHub 代理认证；若将来要用需授权的 HuggingFace 模型，Pro / Max 计划用环境的
+   API credentials（host 填 `huggingface.co`），不要把 token 写进环境变量（用该环境的人都能读到）。
+
+云端 VM 约 4 vCPU / 16 GB 内存 / 30 GB 磁盘、无 GPU：适合开发、单测、数据抓取与离线嵌入生成；T2.7 的 16 核吞吐数字与 M4 正式训练
+需要在自有机器上跑（[self-hosted environment](https://code.claude.com/docs/en/self-hosted-environments) 或 Remote Control）。
 
 ### 第三方子模块
 
@@ -144,7 +186,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 .
 ├── README.md
 ├── CLAUDE.md                # 给 AI 协作工具的项目约定
-├── .claude/                 # Claude Code 配置：settings.json + hooks/session-start.sh（云端会话初始化）
+├── .claude/                 # Claude Code 配置：settings.json + hooks/session-start.sh（每个云端会话的初始化）+ cloud-setup.sh（云环境 setup script）
 ├── .github/workflows/       # CI：构建扩展 + pytest
 ├── pyproject.toml           # uv 项目 + scikit-build-core 构建配置
 ├── uv.lock
@@ -160,17 +202,17 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
 │   ├── paths.py             # 子模块数据路径（cards.cdb、脚本目录、禁限表）与环境根目录
 │   ├── commands/            # 各子命令一个模块：duel / replay / branch / arena / matrix；__init__.py 放共用选项（牌组、环境、agent）
-│   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；registry.py（按规格构造 agent 与可 pickle 的 factory，供 CLI）
+│   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；checkpoint.py（policy:<checkpoint> agent，锁步 C++ 主机）；registry.py（按规格构造 agent 与可 pickle 的 factory，供 CLI）
 │   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、引擎包枚举（packages）、基因型与算子（genotype）、代理模型（surrogate）与真实对局标签（labels）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、卡片查询解析（query.py）、回放（含 .yrp / .yrpX 读取）、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv
-│   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）
+│   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）、actor_critic（PolicyNet + 特权 Q / V critic）
 │   ├── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
 │   ├── solver/              # combo 求解器封装（combo_solver.py）、目标场面（targets.py）、线的重放验证与示范集格式（demo.py）、起手批量求解（batch.py）
-│   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）
-├── tools/                   # 开发脚本：combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、基因型采样与合法性检查、代理模型实验（surrogate_experiment：标注 + 留出集误差）、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
+│   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）、rollout.py（EncodedVecEnv 上的 rollout 收集）、ppo.py（PPO 更新与可插拔策略目标）、selfplay.py（快照池 + keep-best、牌组池、配对发局）、trainer.py（训练循环、评估、续训、日志）、checkpoint.py、toy.py（玩具博弈 Nim）
+├── tools/                   # 开发脚本：PPO 自博弈训练（train_ppo.py）、combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、协同图构建、引擎包列表、基因型采样与合法性检查、代理模型实验（surrogate_experiment：标注 + 留出集误差）、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组及其求解目标（solver_targets.json），data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
@@ -180,7 +222,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── nets.md              # 策略网络：编码器、局面 Transformer、历史模块（GTrXL / LSTM）、动作打分头、文本向量接口
 │   ├── evaluation.md        # 基线 agent 与评估
 │   ├── belief-eval.md       # 信念校准评估：指标定义与基线数字
-│   ├── training.md          # 优势估计与特权 critic：公式、符号约定、rollout 数据布局
+│   ├── training.md          # 策略训练：优势估计与特权 critic 的公式、符号约定、rollout 数据布局；PPO 自博弈训练循环
 │   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── replays.md           # 回放格式、.yrpX 导出与 .yrp / .yrpX 读取

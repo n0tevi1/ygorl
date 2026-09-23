@@ -24,7 +24,9 @@
     只能在额外卡组且额外卡组只能放它们、主卡组 40–60 张、额外 / 副卡组各至多 15 张、同名卡（含异画）合计至多 3 张。
     空 `.ydk` 因主卡组 0 张而被拒。
   - 只有命令行做这项检查；库 API（`Duel(...)` 不传 `validate=True`、`Arena`、`build_matrix`）照常对任意牌组开局，便于测试与实验。
-- **agent 规格** `name[:arg]`：按名字从登记表构造（`ygorl.agents.registry`），当前有 `random`、`greedy`；`--help` 列出全部。
+- **agent 规格** `name[:arg]`：按名字从登记表构造（`ygorl.agents.registry`），当前有 `random`、`greedy`，以及训练出的 PPO
+  checkpoint：`policy:<路径.pt>`（按策略采样）、`policy-greedy:<路径.pt>`（取 argmax），需要 `train` 可选依赖
+  （[evaluation.md](evaluation.md)「策略检查点 agent」）；`--help` 列出全部。
   `agent_factory(spec)` 返回可 pickle、带名字的 factory（`AgentSpec`），并行 Arena 的子进程按名字重建 agent，
   所以新 agent（如策略检查点）要在导入时 `register_agent`。未知规格报错并列出可用的名字。
 - **环境** `--env PATH|VERSION`：目录，或 `$YGORL_ENVIRONMENTS`（默认 `./environments`）下的版本名（[environments.md](environments.md)）。
