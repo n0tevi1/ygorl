@@ -123,6 +123,7 @@ class SolveRequest:
     seed: int | None = None
     max_written: int | None = None
     max_decisions: int | None = None
+    max_rollouts: int | None = None  # --max-rollouts: rollouts per worker and search phase (wall time still bounds)
     extra_args: tuple[str, ...] = ()
 
     def args(self, workdir: Workdir, outdir: Path) -> list[str]:
@@ -143,7 +144,7 @@ class SolveRequest:
                 out += ["--target", t.to_arg()]
         out += ["--solve-ms", str(self.solve_ms)]
         for flag, value in (("--threads", self.threads), ("--seed", self.seed), ("--max-written", self.max_written),
-                            ("--max-decisions", self.max_decisions)):  # fmt: skip
+                            ("--max-decisions", self.max_decisions), ("--max-rollouts", self.max_rollouts)):  # fmt: skip
             if value is not None:
                 out += [flag, str(value)]
         out += ["--json", *self.extra_args, "--outdir", str(outdir)]

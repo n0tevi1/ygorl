@@ -2,8 +2,10 @@
 
 Usage: uv run --extra train python tools/train_bc.py --train out/demos/bc_train.jsonl [--train ...]
            [--heldout out/demos/bc_heldout.jsonl] [--out out/bc] [--epochs 12] [--batch-size 64] [--lr 3e-4]
-           [--history transformer|lstm|none] [--event-length 128] [--threads 2] [--seed 0] [--baselines]
-           [--checkpoint PATH --no-train] [--report PATH]
+           [--history transformer|lstm|none] [--d-model 128] [--layers 2] [--event-length 128] [--threads 2]
+           [--seed 0] [--baselines]
+           [--checkpoint PATH --no-train] [--report PATH] [--openings all|heldout|none] [--sample-openings]
+           [--extra GREEDY.npz --extra-subset all|battle --extra-max N [--extra-heldout GREEDY.npz]]
 
 Replays every verified line of the --train files, encodes each decision of the deck under study with the
 reference encoders, trains PolicyNet by cross-entropy over the legal candidates and writes
@@ -14,6 +16,10 @@ reports, into <out>/report.json:
 - free-running turn 1 on every training hand (line reproduction, targets reached) and on every held-out
   hand (targets reached, target cards placed; the solver's own result on the same hands for scale);
 - with --baselines, the same free-running numbers for RandomAgent and GreedyAgent.
+
+--extra adds heuristic samples beyond turn 1 (tools/greedy_demos.py, ``ygorl.train.heuristic_demos``) to the
+solver samples: the --extra-subset of them, a uniform random sample of at most --extra-max. --extra-heldout
+reports the teacher-forced step accuracy on the same subset of held-out heuristic games (at most 4,000 samples).
 """
 
 from __future__ import annotations
@@ -53,13 +59,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--label-smoothing", type=float, default=0.0)
     parser.add_argument("--history", default="transformer", choices=("transformer", "lstm", "none"))
     parser.add_argument("--d-model", type=int, default=128)
+    parser.add_argument("--layers", type=int, default=2, help="board and history Transformer layers (default 2)")
     parser.add_argument("--event-length", type=int, default=128, help="event tokens per observation (default 128)")
     parser.add_argument("--threads", type=int, default=2, help="torch threads (default 2)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--baselines", action="store_true", help="also report RandomAgent and GreedyAgent openings")
-    parser.add_argument("--checkpoint", type=Path, default=None, help="checkpoint to evaluate (default <out>/policy.pt)")
+    parser.add_argument("--checkpoint", type=Path, default=None,
+                        help="checkpoint to evaluate (default <out>/policy.pt; with --no-train also a PPO checkpoint)")
     parser.add_argument("--no-train", action="store_true", help="evaluate --checkpoint without training")
     parser.add_argument("--report", type=Path, default=None, help="report file (default <out>/report.json)")
+    parser.add_argument("--openings", default="all", choices=("all", "heldout", "none"),
+                        help="free-running turn-1 reports on the training and held-out hands (default all)")
+    parser.add_argument("--sample-openings", action="store_true",
+                        help="play the free-running openings by sampling at temperature 1 (seed = hand number) instead of argmax")
+    parser.add_argument("--extra", type=Path, action="append", default=[],
+                        help="heuristic samples (.npz of tools/greedy_demos.py) added to the training set")
+    parser.add_argument("--extra-subset", default="all", help="subset of the --extra samples (all, battle)")
+    parser.add_argument("--extra-max", type=int, default=None, help="at most this many --extra samples")
+    parser.add_argument("--extra-heldout", type=Path, default=None, help="held-out heuristic samples (.npz)")
     args = parser.parse_args(argv)
 
     import torch
@@ -68,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
     from ygorl.cards.cdb import CardVocab
     from ygorl.engine.duel import default_cards
     from ygorl.nets import NetConfig, PolicyNet
-    from ygorl.nets.agent import NetPolicy, load_checkpoint, save_checkpoint
+    from ygorl.nets.agent import NetPolicy, save_checkpoint
     from ygorl.train.bc import BCConfig, build_dataset, hand_overlap, opening_report, step_accuracy, train_bc
 
     torch.set_num_threads(args.threads)
@@ -96,8 +113,10 @@ def main(argv: list[str] | None = None) -> int:
     report["data"] = {"train": count(train_demos), "heldout": count(heldout_demos),
                       "heldout_hands_also_in_train": hand_overlap(train_demos, heldout_demos)}  # fmt: skip
     t0 = time.time()
-    if args.no_train:
-        ckpt = load_checkpoint(ckpt_path)
+    if args.no_train:  # a BC policy checkpoint or a PPO training checkpoint
+        from ygorl.train.checkpoint import load_actor
+
+        ckpt = load_actor(ckpt_path)
         net, vocab, event_length = ckpt.net, ckpt.vocab, ckpt.event_length
     else:
         vocab = CardVocab.from_db(cards)
@@ -107,18 +126,35 @@ def main(argv: list[str] | None = None) -> int:
         d.status == "solved" for d in heldout_demos) else None  # fmt: skip
     report["data"]["train"]["samples"] = len(train_data)
     report["data"]["train"]["skipped"] = dict(train_data.skipped)
+    solver_data, extra_heldout = train_data, None
+    if args.extra or args.extra_heldout:
+        from ygorl.train.heuristic_demos import concat, load_data, select
+
+        if args.extra:
+            extra = concat([load_data(p)[0] for p in args.extra])
+            extra = select(extra, args.extra_subset, max_samples=args.extra_max, seed=args.seed)
+            train_data = concat([solver_data, extra])
+            report["data"]["extra"] = {"files": [str(p) for p in args.extra], "subset": args.extra_subset,
+                                       "max": args.extra_max, "samples": len(extra),
+                                       "solver_fraction": len(solver_data) / len(train_data)}  # fmt: skip
+        if args.extra_heldout is not None:
+            extra_heldout = select(load_data(args.extra_heldout)[0], args.extra_subset, max_samples=4000, seed=1)
+            report["data"]["extra_heldout"] = {"file": str(args.extra_heldout), "samples": len(extra_heldout)}
     if heldout_data is not None:
         report["data"]["heldout"]["samples"] = len(heldout_data)
     print(f"dataset: {len(train_data)} training samples, {len(heldout_data) if heldout_data else 0} held-out "
           f"({time.time() - t0:.1f}s)", flush=True)  # fmt: skip
 
     if not args.no_train:
-        cfg = NetConfig(vocab_size=len(vocab), d_model=args.d_model, history=args.history)
+        cfg = NetConfig(vocab_size=len(vocab), d_model=args.d_model, history=args.history, board_layers=args.layers,
+                        history_layers=args.layers)  # fmt: skip
         net = PolicyNet(cfg)
         bc = BCConfig(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay,
                       label_smoothing=args.label_smoothing, seed=args.seed)  # fmt: skip
         torch.manual_seed(args.seed)
         evals = {"heldout": heldout_data} if heldout_data is not None else {}
+        if extra_heldout is not None:
+            evals["extra_heldout"] = extra_heldout
         t1 = time.time()
         history = train_bc(net, train_data, bc, eval_sets=evals,
                            log=lambda e: print(json.dumps(e), flush=True))  # fmt: skip
@@ -130,13 +166,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"checkpoint: {ckpt_path}", flush=True)
 
     report["checkpoint"] = str(ckpt_path)
-    report["step_accuracy"] = {"train": step_accuracy(net, train_data)}
+    report["step_accuracy"] = {"train": step_accuracy(net, solver_data)}
+    if train_data is not solver_data:
+        report["step_accuracy"]["train_all"] = step_accuracy(net, train_data)
     if heldout_data is not None:
         report["step_accuracy"]["heldout"] = step_accuracy(net, heldout_data)
+    if extra_heldout is not None:
+        report["step_accuracy"]["extra_heldout"] = step_accuracy(net, extra_heldout)
     print("step accuracy:", json.dumps(report["step_accuracy"]), flush=True)
 
     def bc_agent(i: int):
-        return PolicyAgent(NetPolicy(net, vocab, event_length=event_length, cards=cards), greedy=True)
+        return PolicyAgent(NetPolicy(net, vocab, event_length=event_length, cards=cards), seed=i,
+                           greedy=not args.sample_openings)  # fmt: skip
 
     agents = {"bc": bc_agent}
     if args.baselines:
@@ -144,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     report["openings"] = {}
     for name, factory in agents.items():
         for split, demos in (("train", train_demos), ("heldout", heldout_demos)):
-            if not demos:
+            if not demos or args.openings == "none" or (args.openings == "heldout" and split == "train"):
                 continue
             t1 = time.time()
             rep = opening_report(demos, factory, env=env, cards=cards)

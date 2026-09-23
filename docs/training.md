@@ -241,7 +241,7 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
 loss = L_policy                                    （可插拔，默认 ppo_clip：−mean min(ρA, clip(ρ, 1±ε)A)）
      − entropy_coef · H(π)                         （合法候选上的熵，设计 I1：0.05–0.2，默认 0.05）
      + kl_ref_coef  · KL(π ‖ π_ref)                （默认 0.05）
-     + kl_prior_coef · KL(π ‖ π_BC)                （给了 --bc-prior 时，默认 0）
+     + kl_prior_coef · KL(π ‖ π_BC)                （给了 --bc-prior 时，默认 0；kl_prior_turns > 0 时只在部分行上，见下）
      + q_coef · L_Q + v_coef · L_V                 （critic.q_loss / v_loss，默认各 0.5）
 ```
 
@@ -250,6 +250,9 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
    给 `π_BC`。两者都接受 PPO 训练的 checkpoint 或 BC 等导出的策略检查点（`ygorl.nets.agent`，[bc.md](bc.md)），按文件的 `format`
    字段区分（`train.checkpoint.load_actor`）。热启动时本次运行沿用检查点的卡片词表，网络配置（`d_model`、层数、历史模块等）必须与
    `--d-model` 等参数一致，否则报错；先验的词表必须与本次运行相同（同一下标要是同一张卡），网络大小可以不同。
+   **只在第 1 回合用先验**：`--kl-prior-turns N`（`PPOConfig.kl_prior_turns`，默认 0 = 所有行）只对「回合玩家自己的决策、回合数 ≤ N」
+   的行（观测 `globals` 的 `is_my_turn` 与 `turn` 两列）计先验 KL，其余行按 0 计入同一个均值（被选中的行权重与不限制时相同）；
+   日志多一个 `kl_prior_rows`（本段被选中的行数）。`N = 1` 即求解器示范覆盖的先攻第 1 回合，理由与对比实验见 [bc.md](bc.md)「补救实验」。
 4. `reference ← (1 − τ) reference + τ θ`，`τ = reference_ema`（默认 0.02 / 次更新）。
 
 **策略目标可插拔**：`PolicyObjective` 有两个钩子——`prepare(rollout, estimate) -> [T, B]` 在整段上算每行权重
@@ -313,7 +316,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 - `tests/test_ppo.py`（玩具博弈，约 15 秒）：Nim 自博弈在 VRPO 与 GAE 下都收敛到最优策略（每个必胜局面取 `n mod 4`），
   对快照池训练同样收敛；收集器布局（交替座位、终局奖励、段间衔接自举状态）、快照局只含学习方的行、截断局标记且无奖励、
   引擎错误事件（开局失败 / 局中错误）记为截断并立即开新局；默认超参数符合设计（熵系数在 0.05–0.2）；EMA 参考；
-  KL 为 0 与梯度方向；学习器状态往返；快照池逐出与 keep-best；策略目标可插拔（注册自定义目标，`prepare` / `loss` 被调用）。
+  KL 为 0 与梯度方向；先验 KL 只在第 1 回合（`kl_prior_turns`）时的行选择、权重与更新结果；学习器状态往返；快照池逐出与 keep-best；策略目标可插拔（注册自定义目标，`prepare` / `loss` 被调用）。
 - `tests/test_advantages.py::test_truncated_rows_bootstrap_from_the_critic`：截断行的目标等于 critic 自身估计、与「切列 + 同座位自举」一致、
   截断行的奖励被忽略。
 - `tests/test_train_loop.py`（真实对局，约 15 秒）：`EncodedVecEnv` 上自博弈布局（双方交替、决策上限截断在第 30 行、特权真值只进

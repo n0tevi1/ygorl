@@ -171,6 +171,59 @@ def test_kl_to_the_reference_is_zero_for_an_identical_policy_and_pulls_towards_i
     assert float(kl.detach()) > 0 and (shifted.grad[choice, 0] > 0).all() and (shifted.grad[~choice] == 0).all()
 
 
+class NimTurnModel(NimModel):
+    """Nim with EncodedVecEnv-style ``globals``: column 2 ``is_my_turn`` = 1, column 3 ``turn`` = 1 for piles
+    above 8, 5 otherwise (so the turn-restricted prior KL sees a known subset of rows)."""
+
+    @staticmethod
+    def collate(observations, device=None):
+        out = NimModel.collate(observations, device)
+        turn = torch.where(out["pile"] > 8, 1, 5)
+        out["globals"] = torch.stack([torch.zeros_like(turn), torch.zeros_like(turn), torch.ones_like(turn), turn], -1)
+        return out
+
+
+def _update_with_prior(cfg: PPOConfig) -> tuple[NimTurnModel, dict]:
+    torch.manual_seed(0)
+    model = NimTurnModel(max_pile=15)
+    torch.manual_seed(1)
+    prior = NimTurnModel(max_pile=15)  # a different policy, so the KL is not zero
+    learner = PPOLearner(model, cfg, prior)
+    ro = RolloutCollector(NimEnv(4, 15), model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0).collect()
+    torch.manual_seed(2)
+    return model, learner.update(ro)
+
+
+def test_prior_kl_can_be_restricted_to_first_turn_rows():
+    g = torch.tensor([[0, 1, 1, 1], [1, 0, 0, 1], [0, 1, 1, 2], [1, 0, 1, 2], [0, 1, 1, 3]])
+    assert PPOLearner.prior_rows({"globals": g}, 0) is None  # default: every row
+    assert PPOLearner.prior_rows({"globals": g}, 1).tolist() == [True, False, False, False, False]
+    assert PPOLearner.prior_rows({"globals": g}, 2).tolist() == [True, False, True, True, False]
+    with pytest.raises(ValueError):
+        PPOLearner.prior_rows({"pile": g}, 1)
+    with pytest.raises(ValueError):
+        PPOConfig(kl_prior_turns=-1)
+    # the restricted KL counts the other rows as 0: a selected row weighs as much as in the unrestricted mean
+    logits, ref = torch.randn(5, 3), torch.randn(5, 3)
+    mask = torch.ones(5, 3, dtype=torch.bool)
+    rows = torch.tensor([True, False, True, False, False])
+    per_row = [float(PPOLearner.kl(logits[i : i + 1], ref[i : i + 1], mask[i : i + 1])) for i in range(5)]
+    assert float(PPOLearner.kl(logits, ref, mask, rows)) == pytest.approx((per_row[0] + per_row[2]) / 5, rel=1e-5)
+    assert float(PPOLearner.kl(logits, ref, mask, torch.zeros(5, dtype=torch.bool))) == 0.0
+    # in an update: rows past the turn limit feel no prior; with every row selected it matches the default
+    base = dict(epochs=1, minibatch_size=1024, kl_ref_coef=0.0)
+    no_prior, _ = _update_with_prior(PPOConfig(**base))
+    turn1, stats1 = _update_with_prior(PPOConfig(**base, kl_prior_coef=1.0, kl_prior_turns=1))
+    every, stats_all = _update_with_prior(PPOConfig(**base, kl_prior_coef=1.0))
+    upto5, stats5 = _update_with_prior(PPOConfig(**base, kl_prior_coef=1.0, kl_prior_turns=5))
+    assert 0 < stats1["kl_prior_rows"] < stats1["rows"] and stats5["kl_prior_rows"] == stats5["rows"]
+    assert "kl_prior_rows" not in stats_all and stats5["kl_prior"] == pytest.approx(stats_all["kl_prior"])
+    for a, b in zip(every.parameters(), upto5.parameters()):
+        torch.testing.assert_close(a, b)
+    assert stats1["kl_prior"] > 0 and any(not torch.equal(a, b) for a, b in zip(turn1.parameters(), no_prior.parameters()))
+    assert any(not torch.equal(a, b) for a, b in zip(turn1.parameters(), every.parameters()))
+
+
 def test_learner_state_round_trip():
     torch.manual_seed(0)
     model = NimModel(max_pile=15)
