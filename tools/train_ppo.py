@@ -65,11 +65,16 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--kl-prior", type=float, default=0.0, help="KL coefficient to the BC prior")
     g.add_argument("--kl-prior-turns", type=int, default=0,
                    help="apply the prior KL only to the turn player's decisions up to this turn (default 0: all)")
+    g.add_argument("--target-kl", type=float, default=None,
+                   help="stop an update's remaining minibatches once one exceeds 1.5x this approx_kl (default: off)")
     g.add_argument("--init-from", default=None, metavar="CKPT",
                    help="initialize the actor from a policy (e.g. BC) or PPO checkpoint with the same network config")
     g = p.add_argument_group("league and evaluation")
     g.add_argument("--selfplay-fraction", type=float, default=0.75)
     g.add_argument("--pool-size", type=int, default=8)
+    g.add_argument("--pin", action="append", default=[], metavar="CKPT",
+                   help="keep this policy / PPO checkpoint in the opponent pool for the whole run (repeatable)")
+    g.add_argument("--pinned-share", type=float, default=0.5, help="share of pool games against pinned opponents")
     g.add_argument("--snapshot-every", type=int, default=10)
     g.add_argument("--checkpoint-every", type=int, default=10)
     g.add_argument("--eval-every", type=int, default=25)
@@ -92,12 +97,13 @@ def config_from_args(args, decks: list[str]):
     ppo = PPOConfig(objective=args.objective, estimator=args.estimator, entropy_coef=args.entropy,
                     kl_ref_coef=args.kl_ref, reference_ema=args.ema, lr=args.lr, epochs=args.epochs,
                     minibatch_size=args.minibatch, kl_prior_coef=args.kl_prior,
-                    kl_prior_turns=args.kl_prior_turns)  # fmt: skip
+                    kl_prior_turns=args.kl_prior_turns, target_kl=args.target_kl)  # fmt: skip
     return TrainConfig(decks=tuple(decks), pairings=args.pairings, env=args.env, max_turns=args.max_turns,
                        max_decisions=args.max_decisions, num_envs=args.envs, env_threads=args.env_threads,
                        steps=args.steps, event_length=args.event_length, skip_forced=not args.keep_forced, net=net,
                        privileged_critic=not args.no_privileged, shared_backbone=not args.separate_critic, ppo=ppo,
                        selfplay_fraction=args.selfplay_fraction, pool_size=args.pool_size,
+                       pin_opponents=tuple(args.pin), pinned_share=args.pinned_share,
                        snapshot_every=args.snapshot_every, checkpoint_every=args.checkpoint_every,
                        eval_every=args.eval_every, eval_pairs=args.eval_pairs,
                        eval_opponents=tuple(s for s in args.eval_opponents.split(",") if s),

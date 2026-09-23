@@ -71,6 +71,10 @@ class TrainConfig:
     ppo: PPOConfig = field(default_factory=PPOConfig)
     selfplay_fraction: float = 0.75  # deals against the current policy; the rest against pool snapshots
     pool_size: int = 8
+    # fixed opponents kept in the pool for the whole run (policy or PPO checkpoints, e.g. the BC warm start) and
+    # their share of the pool games; the run's card vocab and event length must match
+    pin_opponents: tuple[str, ...] = ()
+    pinned_share: float = 0.5
     snapshot_every: int = 10  # updates
     checkpoint_every: int = 10
     eval_every: int = 25
@@ -95,6 +99,7 @@ class TrainConfig:
         d = asdict(self)
         d["ppo"] = self.ppo.to_dict()
         d["decks"], d["eval_opponents"] = list(self.decks), list(self.eval_opponents)
+        d["pin_opponents"] = list(self.pin_opponents)
         return d
 
     @classmethod
@@ -102,7 +107,7 @@ class TrainConfig:
         known = {f.name for f in fields(cls)}
         d = {k: v for k, v in data.items() if k in known}
         d["ppo"] = PPOConfig.from_dict(d.get("ppo", {}))
-        for key in ("decks", "eval_opponents"):
+        for key in ("decks", "eval_opponents", "pin_opponents"):
             if key in d:
                 d[key] = tuple(d[key])
         return cls(**d)
@@ -159,7 +164,15 @@ class Trainer:
                                  "other cards from the same indices")  # fmt: skip
             prior = loaded.net
         self.learner = PPOLearner(self.model, cfg.ppo, prior)
-        self.pool = SnapshotPool(cfg.pool_size)
+        self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share)
+        for path in cfg.pin_opponents:
+            pinned = load_actor(path, cfg.text_dir)
+            if vocab_passwords(pinned.vocab) != vocab_passwords(self.vocab):
+                raise ValueError(f"{path}: its card vocab differs from the run's (pinned opponent)")
+            if pinned.event_length != cfg.event_length:
+                raise ValueError(f"{path}: trained with {pinned.event_length} event tokens, the run uses "
+                                 f"{cfg.event_length} (pinned opponent)")  # fmt: skip
+            self.pool.pin(pinned.net, tag=f"pinned:{Path(path).name}")
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
                                          selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,

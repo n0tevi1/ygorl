@@ -253,6 +253,9 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
    **只在第 1 回合用先验**：`--kl-prior-turns N`（`PPOConfig.kl_prior_turns`，默认 0 = 所有行）只对「回合玩家自己的决策、回合数 ≤ N」
    的行（观测 `globals` 的 `is_my_turn` 与 `turn` 两列）计先验 KL，其余行按 0 计入同一个均值（被选中的行权重与不限制时相同）；
    日志多一个 `kl_prior_rows`（本段被选中的行数）。`N = 1` 即求解器示范覆盖的先攻第 1 回合，理由与对比实验见 [bc.md](bc.md)「补救实验」。
+   **按 KL 提前停**：`--target-kl X`（`PPOConfig.target_kl`，默认关）——某个 minibatch 的 `approx_kl` 超过 1.5 X 时，本次更新余下的
+   minibatch 都跳过（日志 `minibatches` / `early_stop`）。步长按「策略实际移动了多少」封顶，而不是按固定的轮数：同一组学习率与轮数，
+   从零开始（熵约 1.3）每次约 0.006–0.009，从 BC 热启动（熵约 0.7）则到 0.023–0.029、裁剪比例约 0.2（[benchmarks.md](benchmarks.md)）。
 4. `reference ← (1 − τ) reference + τ θ`，`τ = reference_ema`（默认 0.02 / 次更新）。
 
 **策略目标可插拔**：`PolicyObjective` 有两个钩子——`prepare(rollout, estimate) -> [T, B]` 在整段上算每行权重
@@ -262,7 +265,9 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 同一起点多次 rollout 估计成功概率的对数梯度）只需在 `prepare` 里按起点分组算权重、在 `loss` 里用它，收集器、联赛、critic 不变。
 
 日志指标（每次更新）：`loss`、`policy_loss`、`entropy`、`kl_ref`、`kl_prior`、`q_loss`、`v_loss`、`approx_kl`、`clip_frac`、
-`grad_norm`、`q_explained_var`（行为时 Q 对 Q 目标的解释方差）、`adv_mean` / `adv_std`。
+`grad_norm`、`q_explained_var`（行为时 Q 对 Q 目标的解释方差）、`adv_mean` / `adv_std`、`minibatches` / `early_stop`；
+诊断用的按动作类型拆开的优势：`adv/<kind>`（选中动作属于该类型的行的平均优势，类型见 `ACTION_KINDS`）与 `rows/<kind>`（行数）——
+例如检验「搜索 / 抽卡类动作被系统性地判为负优势」（局面靠卡组耗尽决胜时的现象）。
 
 ### 8.3 联赛与牌组池（`selfplay`）
 
@@ -273,6 +278,10 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 - **快照池**（`SnapshotPool`）：每 `snapshot_every` 次更新冻结一份当前模型，超过 `pool_size` 逐出最旧的；
   **keep-best**：每 `eval_every` 次更新评估一次，对 `keep_best_by`（默认 greedy）的胜率创新高就把该 checkpoint 复制为
   `best.pt`，并把这份模型钉在池里（不被逐出，直到更好的替换它）。
+- **固定对手**（`TrainConfig.pin_opponents` / `--pin CKPT`，可重复）：把策略检查点（例如 BC 热启动用的那份）或 PPO checkpoint 整局钉在池里，
+  不被逐出、不进 checkpoint（续训时按配置重新钉上，id 为 −1、−2……）；池局里固定对手合占 `pinned_share`（默认 0.5），其余均分给快照。
+  词表与事件窗口长度必须与本次运行相同。用意：自博弈早期的历史快照都接近随机，固定一个会进战斗、会展开的对手让信号更有用
+  （Gin Rummy 2026「更强对手的课程」、cjiang1209/yugioh-agent 默认对 greedy 训练）。
 
 ### 8.4 评估
 

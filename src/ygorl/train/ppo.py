@@ -52,6 +52,8 @@ class PPOConfig:
     # > 0: the prior KL only on the turn player's own decisions up to this turn (globals is_my_turn / turn), the
     # states the turn-1 solver demonstrations cover (docs/bc.md「补救实验」); other rows count as 0; 0 = every row
     kl_prior_turns: int = 0
+    # stop an update's remaining minibatches once one exceeds 1.5 x target_kl (approx_kl); None = every epoch
+    target_kl: float | None = None
     q_coef: float = 0.5
     v_coef: float = 0.5
     lr: float = 1e-3
@@ -76,6 +78,8 @@ class PPOConfig:
             raise ValueError("epochs and minibatch_size must be at least 1")
         if self.kl_prior_turns < 0:
             raise ValueError("kl_prior_turns must be >= 0 (0 = every row)")
+        if self.target_kl is not None and not self.target_kl > 0:
+            raise ValueError("target_kl must be positive (or None)")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -176,6 +180,26 @@ def _masked_mean_rows(x: Tensor, mask: Tensor) -> Tensor:
     return torch.where(mask, x, torch.zeros((), dtype=x.dtype, device=x.device)).sum(-1)
 
 
+def _advantage_by_kind(obs, actions: Tensor, adv: Tensor) -> dict[str, float]:
+    """Diagnostics: mean advantage (``adv/<kind>``) and row count (``rows/<kind>``) per kind of the chosen action.
+
+    Needs the encoded action table (``obs["actions"]`` column 0 is the kind + 1, docs/encoding.md); {} otherwise.
+    """
+    if not isinstance(obs, dict) or "actions" not in obs:
+        return {}
+    from ygorl.env.encoding import ACTION_KINDS
+
+    rows = torch.arange(actions.shape[0])
+    kind = obs["actions"][rows, actions, 0].long() - 1
+    out: dict[str, float] = {}
+    for k in torch.unique(kind).tolist():
+        if 0 <= k < len(ACTION_KINDS):
+            sel = kind == k
+            out[f"adv/{ACTION_KINDS[k]}"] = float(adv[sel].mean())
+            out[f"rows/{ACTION_KINDS[k]}"] = int(sel.sum())
+    return out
+
+
 class PPOLearner:
     """Owns the model's optimizer, the EMA reference policy and the optional BC prior."""
 
@@ -260,7 +284,10 @@ class PPOLearner:
         model.train()
         sums: dict[str, float] = defaultdict(float)
         steps = 0
+        stopped = False
         for _ in range(cfg.epochs):
+            if stopped:
+                break
             perm = torch.randperm(n)
             for start in range(0, n, cfg.minibatch_size):
                 idx = perm[start : start + cfg.minibatch_size]
@@ -288,6 +315,10 @@ class PPOLearner:
                                  *extra.items()):  # fmt: skip
                     sums[key] += float(val.detach()) if isinstance(val, Tensor) else float(val)
                 steps += 1
+                kl_now = extra.get("approx_kl")
+                if cfg.target_kl is not None and kl_now is not None and float(kl_now) > 1.5 * cfg.target_kl:
+                    stopped = True  # the policy moved enough for this batch of data
+                    break
         self.updates += 1
         self.update_reference()
         stats = {k: v / steps for k, v in sums.items()}
@@ -295,6 +326,8 @@ class PPOLearner:
         stats["q_explained_var"] = _explained_variance(taken_q, q_targets)
         stats["adv_mean"], stats["adv_std"] = float(adv.mean()), float(adv.std(correction=0))
         stats["rows"] = n
+        stats["minibatches"], stats["early_stop"] = steps, int(stopped)
+        stats.update(_advantage_by_kind(obs, actions, adv))
         if prior_rows is not None:
             stats["kl_prior_rows"] = int(prior_rows.sum())
         return stats
