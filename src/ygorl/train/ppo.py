@@ -9,7 +9,9 @@ Per update (docs/training.md §8):
    optional BC prior score every row once, without gradient.
 3. ``epochs`` passes over shuffled minibatches of ``minibatch_size`` rows:
    ``loss = objective + kl_ref_coef KL(π‖π_ref) + kl_prior_coef KL(π‖π_prior) - entropy_coef H(π)
-   + q_coef L_Q + v_coef L_V``, gradients clipped to ``max_grad_norm``.
+   + q_coef L_Q + v_coef L_V``, gradients clipped to ``max_grad_norm``. With ``kl_prior_turns > 0`` the prior
+   KL is kept on the turn player's decisions up to that turn only (the states the BC data covers), the other rows
+   count as 0.
 4. ``reference <- (1 - reference_ema) reference + reference_ema θ``.
 
 The policy objective is pluggable (:func:`register_objective`): ``"ppo_clip"`` (default) is the clipped
@@ -47,6 +49,9 @@ class PPOConfig:
     kl_ref_coef: float = 0.05  # KL(π‖π_ref) to the EMA reference (design I8)
     reference_ema: float = 0.02  # reference <- (1 - τ) reference + τ θ after every update
     kl_prior_coef: float = 0.0  # KL(π‖π_prior) to a BC prior checkpoint, when one is given (design I4)
+    # > 0: the prior KL only on the turn player's own decisions up to this turn (globals is_my_turn / turn), the
+    # states the turn-1 solver demonstrations cover (docs/bc.md「补救实验」); other rows count as 0; 0 = every row
+    kl_prior_turns: int = 0
     q_coef: float = 0.5
     v_coef: float = 0.5
     lr: float = 3e-4
@@ -69,6 +74,8 @@ class PPOConfig:
             raise ValueError("reference_ema must be in [0, 1]")
         if self.epochs < 1 or self.minibatch_size < 1:
             raise ValueError("epochs and minibatch_size must be at least 1")
+        if self.kl_prior_turns < 0:
+            raise ValueError("kl_prior_turns must be >= 0 (0 = every row)")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -190,10 +197,27 @@ class PPOLearner:
 
     # -- KL / entropy on masked logits ------------------------------------------------------------
     @staticmethod
-    def kl(logits: Tensor, ref_logits: Tensor, mask: Tensor) -> Tensor:
-        """Mean over rows of ``KL(π‖π_ref) = Σ_a π (log π - log π_ref)`` over legal candidates."""
+    def kl(logits: Tensor, ref_logits: Tensor, mask: Tensor, rows: Tensor | None = None) -> Tensor:
+        """Mean over rows of ``KL(π‖π_ref) = Σ_a π (log π - log π_ref)`` over legal candidates.
+
+        ``rows`` (bool ``[n]``): the other rows count as 0, so a selected row weighs as much as without ``rows``.
+        """
         logp, ref = torch.log_softmax(logits, -1), torch.log_softmax(ref_logits, -1)
-        return _masked_mean_rows(logp.exp() * (logp - ref), mask).mean()
+        per_row = _masked_mean_rows(logp.exp() * (logp - ref), mask)
+        if rows is not None:
+            per_row = torch.where(rows, per_row, torch.zeros((), dtype=per_row.dtype))
+        return per_row.mean()
+
+    @staticmethod
+    def prior_rows(obs, turns: int) -> Tensor | None:
+        """Rows the prior KL applies to: every row (None) for ``turns == 0``, else the turn player's own decisions
+        up to turn ``turns`` (``globals`` column 2 ``is_my_turn`` and column 3 ``turn``, docs/encoding.md)."""
+        if turns <= 0:
+            return None
+        if not isinstance(obs, dict) or "globals" not in obs:
+            raise ValueError("kl_prior_turns needs observations with globals (is_my_turn, turn)")
+        g = obs["globals"]
+        return (g[:, 2] == 1) & (g[:, 3] <= turns)
 
     @staticmethod
     def entropy(logits: Tensor, mask: Tensor) -> Tensor:
@@ -231,6 +255,7 @@ class PPOLearner:
         n = actions.shape[0]
         ref_logits = self._score(self.reference, obs, n) if cfg.kl_ref_coef > 0 else None
         prior_logits = self._score(self.prior, obs, n) if self.prior is not None and cfg.kl_prior_coef > 0 else None
+        prior_rows = self.prior_rows(obs, cfg.kl_prior_turns) if prior_logits is not None else None
 
         model.train()
         sums: dict[str, float] = defaultdict(float)
@@ -248,7 +273,8 @@ class PPOLearner:
                 ent = self.entropy(logits, m)
                 loss = policy_loss - cfg.entropy_coef * ent
                 kl_ref = self.kl(logits, ref_logits[idx], m) if ref_logits is not None else torch.zeros(())
-                kl_prior = self.kl(logits, prior_logits[idx], m) if prior_logits is not None else torch.zeros(())
+                kl_prior = (self.kl(logits, prior_logits[idx], m, None if prior_rows is None else prior_rows[idx])
+                            if prior_logits is not None else torch.zeros(()))  # fmt: skip
                 loss = loss + cfg.kl_ref_coef * kl_ref + cfg.kl_prior_coef * kl_prior
                 ql = q_loss(out.q.float(), actions[idx], q_targets[idx])
                 vl = v_loss(out.v.float(), v_targets[idx])
@@ -269,6 +295,8 @@ class PPOLearner:
         stats["q_explained_var"] = _explained_variance(taken_q, q_targets)
         stats["adv_mean"], stats["adv_std"] = float(adv.mean()), float(adv.std(correction=0))
         stats["rows"] = n
+        if prior_rows is not None:
+            stats["kl_prior_rows"] = int(prior_rows.sum())
         return stats
 
     @torch.no_grad()

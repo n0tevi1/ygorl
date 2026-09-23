@@ -309,7 +309,7 @@ def cmd_play(args) -> int:
     else:
         with mp.get_context("fork").Pool(args.workers) as pool:
             records = pool.map(_play_one, specs, chunksize=1)
-    out = {"agent": args.agent, "checkpoint": str(args.checkpoint), "temperature": args.temperature,
+    out = {"agent": args.name or args.agent, "checkpoint": str(args.checkpoint), "temperature": args.temperature,
            "games": len(records), "seed": args.seed, "seconds": round(time.time() - t0, 1), "records": records}  # fmt: skip
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out) + "\n", encoding="utf-8")
@@ -626,6 +626,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--agent", required=True, choices=CONFIGS)
     p.add_argument("--checkpoint", type=Path, default=ckpt)
     p.add_argument("--temperature", type=float, default=1.0)
+    p.add_argument("--name", default=None, help="run name in reports (default: the configuration)")
     p.add_argument("--games", type=int, default=200)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--max-turns", type=int, default=None)
