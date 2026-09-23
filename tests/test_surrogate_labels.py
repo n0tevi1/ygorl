@@ -53,6 +53,21 @@ def test_label_config_fingerprint():
     assert a.fingerprint() != LabelConfig.for_pool(pool, pairs=2, seed=0, agent="random").fingerprint()
     assert a.pool == (("kashtira", deck_fingerprint(pool[0])),)
     assert LabelConfig.from_dict(json.loads(json.dumps(a.to_dict()))) == a
+    assert a.pilots == ()
+
+
+def test_label_config_tracks_the_content_of_a_policy_pilot(tmp_path):
+    """A checkpoint retrained at the same path pilots differently: its labels must not come from the cache."""
+    pool = [load_ydk(DECKS / "kashtira.ydk")]
+    ckpt = tmp_path / "run@1" / "best.pt"  # an '@' inside the path is part of the path
+    ckpt.parent.mkdir()
+    ckpt.write_bytes(b"first")
+    spec = f"policy:{ckpt}@greedy"
+    a = LabelConfig.for_pool(pool, agent=spec)
+    assert [s for s, _ in a.pilots] == [spec]
+    assert LabelConfig.from_dict(json.loads(json.dumps(a.to_dict()))) == a
+    ckpt.write_bytes(b"second")
+    assert LabelConfig.for_pool(pool, agent=spec).fingerprint() != a.fingerprint()
 
 
 def test_label_cache_round_trip(tmp_path):

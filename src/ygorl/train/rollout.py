@@ -158,6 +158,15 @@ class RolloutCollector:
     # -- public -------------------------------------------------------------------------------------
     @torch.no_grad()
     def collect(self) -> Rollout:
+        # act with the network as evaluation sees it (dropout off); the learner switches back to train mode
+        training = self.model.training
+        self.model.eval()
+        try:
+            return self._collect()
+        finally:
+            self.model.train(training)
+
+    def _collect(self) -> Rollout:
         t0 = time.perf_counter()
         B, T = self.env.num_envs, self.num_steps
         for env_id, slot in enumerate(self._slots):

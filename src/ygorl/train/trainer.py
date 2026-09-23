@@ -34,7 +34,14 @@ from ygorl.eval.arena import derive_seed
 from ygorl.nets.actor_critic import ActorCritic
 from ygorl.nets.config import NetConfig
 from ygorl.nets.text import TextFeatures
-from ygorl.train.checkpoint import load_checkpoint, load_policy, save_checkpoint, vocab_from_text, vocab_to_text
+from ygorl.train.checkpoint import (
+    load_actor,
+    load_checkpoint,
+    save_checkpoint,
+    vocab_from_text,
+    vocab_passwords,
+    vocab_to_text,
+)
 from ygorl.train.ppo import PPOConfig, PPOLearner
 from ygorl.train.rollout import Rollout, RolloutCollector
 from ygorl.train.selfplay import DeckPool, SelfPlaySchedule, SnapshotPool
@@ -127,18 +134,30 @@ class Trainer:
                             else DuelConfig(**overrides))  # fmt: skip
         self.decks = [load_ydk(p) for p in cfg.decks]
         self.cards = default_cards()
-        self.vocab = vocab_from_text(state["vocab"]) if state is not None else CardVocab.from_db(self.cards)
+        init = load_actor(cfg.init_from, cfg.text_dir) if cfg.init_from and state is None else None
+        if state is not None:
+            self.vocab = vocab_from_text(state["vocab"])
+        else:  # a warm start brings its own vocab: its ID embeddings are indexed by it
+            self.vocab = init.vocab if init is not None else CardVocab.from_db(self.cards)
         self.vocab_text = vocab_to_text(self.vocab, self.run_dir / "vocab.json")
         text = TextFeatures.load(cfg.text_dir, self.vocab) if cfg.text_dir else None
         self.net_config = NetConfig(**{**cfg.net, "vocab_size": len(self.vocab)}).with_text(text)
         self._text = text
         torch.manual_seed(derive_seed(cfg.seed, 0))
         self.model = self._new_model()
-        if cfg.init_from and state is None:
-            init = load_checkpoint(cfg.init_from)["learner"]["model"]
-            missing = self.model.load_state_dict({k: v for k, v in init.items() if k.startswith("actor.")}, strict=False)
-            self.log(f"initialized the actor from {cfg.init_from} ({len(missing.missing_keys)} critic tensors fresh)")
-        prior = load_policy(cfg.bc_prior).net if cfg.bc_prior else None
+        if init is not None:
+            if init.net_config.to_dict() != self.net_config.to_dict():
+                raise ValueError(f"{cfg.init_from}: its network {init.net_config.to_dict()} differs from the configured "
+                                 f"{self.net_config.to_dict()} (set the same net options)")  # fmt: skip
+            self.model.actor.load_state_dict(init.net.state_dict())
+            self.log(f"initialized the actor from {cfg.init_from} (the critic starts fresh)")
+        prior = None
+        if cfg.bc_prior:
+            loaded = load_actor(cfg.bc_prior, cfg.text_dir)
+            if vocab_passwords(loaded.vocab) != vocab_passwords(self.vocab):
+                raise ValueError(f"{cfg.bc_prior}: its card vocab differs from the run's; the prior would read "
+                                 "other cards from the same indices")  # fmt: skip
+            prior = loaded.net
         self.learner = PPOLearner(self.model, cfg.ppo, prior)
         self.pool = SnapshotPool(cfg.pool_size)
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
@@ -166,8 +185,10 @@ class Trainer:
         """Continue a run from ``checkpoint``; ``overrides`` replace config fields (e.g. ``eval_every``)."""
         state = load_checkpoint(checkpoint)
         cfg = replace(TrainConfig.from_dict(state["config"]), **overrides)
-        run_dir = Path(run_dir) if run_dir is not None else Path(checkpoint).resolve().parent.parent
-        return cls(cfg, run_dir, state=state, log=log)
+        if run_dir is None:  # RUN/checkpoints/NAME.pt, or a checkpoint copied elsewhere (its own directory)
+            here = Path(checkpoint).resolve().parent
+            run_dir = here.parent if here.name == "checkpoints" else here
+        return cls(cfg, Path(run_dir), state=state, log=log)
 
     def state_dict(self) -> dict:
         return {"config": self.cfg.to_dict(), "net_config": self.net_config.to_dict(), "vocab": self.vocab_text,

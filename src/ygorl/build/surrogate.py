@@ -520,7 +520,7 @@ class Surrogate:
         counts = self.features.as_counts(items)
         if len(labels) != len(counts) or (weights is not None and len(weights) != len(counts)):
             raise ValueError(f"{len(counts)} items, {len(labels)} labels, {None if weights is None else len(weights)} weights")
-        new = [c for c in counts if c.tobytes() not in self._index]
+        new = {c.tobytes() for c in counts} - self._index.keys()  # a deck repeated in this call is one new row
         if new:
             t = len(self.targets)
             self._sum = np.vstack([self._sum, np.zeros((len(new), t))])

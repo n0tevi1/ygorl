@@ -268,6 +268,13 @@ def test_surrogate_merges_repeated_evaluations(space, genotypes):
     row = sur.observation(g)
     assert row["win_rate"] == pytest.approx(0.5) and row["win_rate_first"] == pytest.approx(0.5)
     assert row["weight"] == 160 and np.isnan(row["win_rate_second"])
+    # the same deck twice in one call is one observation too, and the model still fits
+    h = genotypes[1]
+    sur.add([h, h], [{"win_rate": 0.4}, {"win_rate": 0.8}], weights=[1, 3])
+    x, y, w = sur.dataset()
+    assert sur.n_observations == 2 and len(x) == len(y) == len(w) == 2
+    assert sur.observation(h)["win_rate"] == pytest.approx(0.7) and sur.observation(h)["weight"] == 4
+    sur.fit()
 
 
 def test_surrogate_descriptors_mix_exact_and_predicted(space, genotypes):

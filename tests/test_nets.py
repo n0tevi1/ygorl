@@ -553,3 +553,23 @@ def test_board_attention_matches_the_torch_transformer(real_obs, train):
     assert gr1.keys() == gr0.keys()
     for name in gr0:
         assert torch.allclose(gr1[name], gr0[name], atol=1e-4, rtol=1e-4), name
+
+
+def test_trimming_keeps_masked_copies_inside_the_action_list(real_obs):
+    """Equivalent copies are masked in place (docs/encoding.md), so a batch's valid rows need not be a prefix:
+    trimming cuts only after the last valid row and the valid logits are unchanged."""
+    vocab, seen = real_obs
+    torch.manual_seed(0)
+    net = PolicyNet(NetConfig(vocab_size=len(vocab), d_model=32, n_heads=4, board_layers=1, history_layers=1))
+    batch = collate(seen)
+    mask = batch["action_mask"].clone()
+    wide = mask.sum(1) >= 3
+    assert wide.any()
+    mask[wide, 1] = False  # a masked copy between valid rows
+    batch["action_mask"] = mask
+    outs = []
+    for trim in (False, True):
+        net.trim_padding = trim
+        with torch.no_grad():
+            outs.append(net(batch).logits)
+    assert torch.allclose(outs[1][mask], outs[0][mask], atol=1e-5) and (outs[1][~mask] == MASKED_LOGIT).all()

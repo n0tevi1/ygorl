@@ -246,6 +246,10 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 ```
 
    梯度裁剪到 `max_grad_norm`（0.5），Adam（lr 3e-4）。KL 与熵只在合法候选上求和（掩码 logit 为 −1e9，概率严格为 0）。
+   **热启动与先验**：`--init-from CKPT`（`TrainConfig.init_from`）把 actor 设成某个检查点的网络、critic 从头训；`--bc-prior CKPT`
+   给 `π_BC`。两者都接受 PPO 训练的 checkpoint 或 BC 等导出的策略检查点（`ygorl.nets.agent`，[bc.md](bc.md)），按文件的 `format`
+   字段区分（`train.checkpoint.load_actor`）。热启动时本次运行沿用检查点的卡片词表，网络配置（`d_model`、层数、历史模块等）必须与
+   `--d-model` 等参数一致，否则报错；先验的词表必须与本次运行相同（同一下标要是同一张卡），网络大小可以不同。
 4. `reference ← (1 − τ) reference + τ θ`，`τ = reference_ema`（默认 0.02 / 次更新）。
 
 **策略目标可插拔**：`PolicyObjective` 有两个钩子——`prepare(rollout, estimate) -> [T, B]` 在整段上算每行权重

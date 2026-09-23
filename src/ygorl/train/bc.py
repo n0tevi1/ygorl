@@ -123,8 +123,8 @@ def action_key(point, index: int) -> tuple:
 
     Equivalent copies (docs/encoding.md 「等价动作去重」) are masked to one row, and which copy leaves the hand
     reorders the rest of it, so later action indices of two equivalent lines can differ. The key keeps the
-    decision type, kind, card, effect string, zone (with the sequence only on the field, where it is a column)
-    and the value where it is not a list index.
+    decision type, kind, card, effect string, zone (with the sequence only on the field, where it is a column, and
+    for cards hidden from the decider) and the value where it is not a list index.
     """
     a = point.actions[index]
     code = where = None
@@ -133,9 +133,11 @@ def action_key(point, index: int) -> tuple:
         overlay = bool(loc.location & C.LOCATION_OVERLAY)
         field_zone = loc.location in (C.LOCATION_MZONE, C.LOCATION_SZONE)
         code = a.card.code
-        where = (loc.controller, loc.location, loc.sequence if field_zone or overlay else -1,
-                 -1 if overlay else loc.position)  # fmt: skip
-    value = 0 if a.kind in ("chain", "select", "unselect") else a.value  # list indices there
+        ordered = field_zone or overlay or not code  # a card hidden from the decider is only told apart by its place
+        where = (loc.controller, loc.location, loc.sequence if ordered else -1, -1 if overlay else loc.position)
+    index_value = a.kind == "chain" or (a.kind in ("select", "unselect")
+                                        and point.decision.TYPE == C.MSG_SELECT_UNSELECT_CARD)  # fmt: skip
+    value = 0 if index_value else a.value  # a list index there; tribute / sum selects keep their parameter
     return (point.decision.TYPE, a.kind, code, where, a.description, value)
 
 

@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from ygorl.agents.registry import agent_factory
+from ygorl.agents.registry import agent_factory, policy_checkpoint_of
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
 from ygorl.engine.duel import DuelConfig
@@ -88,6 +88,7 @@ class LabelConfig:
     max_turns: int | None = None
     environment: tuple[tuple[str, str], ...] | None = None  # Environment.stamp() items
     version: int = LABEL_VERSION
+    pilots: tuple[tuple[str, str], ...] = ()  # (spec, sha256 of its checkpoint) for policy:PATH pilots
 
     @classmethod
     def for_pool(cls, pool: Sequence[Deck], *, weights: Sequence[float] | None = None, agent: str = "greedy",
@@ -101,7 +102,7 @@ class LabelConfig:
             raise ValueError(f"{len(pool)} meta decks but {len(w)} weights")
         stamp = tuple(sorted(env.stamp().items())) if env is not None else None
         return cls(tuple((n, deck_fingerprint(d)) for n, d in zip(names, pool)), w, agent, opponent, int(pairs),
-                   int(seed), max_turns, stamp)  # fmt: skip
+                   int(seed), max_turns, stamp, pilots=_pilot_files(agent, opponent))  # fmt: skip
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -113,10 +114,24 @@ class LabelConfig:
             pool=tuple(tuple(p) for p in d["pool"]), weights=tuple(d["weights"]), agent=d["agent"],
             opponent=d["opponent"], pairs=d["pairs"], seed=d["seed"], max_turns=d.get("max_turns"),
             environment=tuple(tuple(e) for e in env) if env is not None else None, version=d.get("version", LABEL_VERSION),
+            pilots=tuple(tuple(p) for p in d.get("pilots", ())),
         )  # fmt: skip
 
     def fingerprint(self) -> str:
-        return hashlib.sha256(json.dumps(self.to_dict(), sort_keys=True).encode()).hexdigest()
+        d = self.to_dict()
+        if not d["pilots"]:  # configs without a checkpoint pilot keep their earlier fingerprints
+            del d["pilots"]
+        return hashlib.sha256(json.dumps(d, sort_keys=True).encode()).hexdigest()
+
+
+def _pilot_files(*specs: str) -> tuple[tuple[str, str], ...]:
+    """A retrained checkpoint at the same path is another pilot: fingerprint the file's content."""
+    out = []
+    for spec in dict.fromkeys(specs):
+        path = policy_checkpoint_of(spec)
+        if path is not None:
+            out.append((spec, hashlib.sha256(Path(path).read_bytes()).hexdigest()))
+    return tuple(out)
 
 
 class LabelCache:

@@ -147,6 +147,7 @@ def test_checkpoint_round_trip_and_resume(run, db):
     trainer, out = run
     ckpt = out / "checkpoints" / "latest.pt"
     resumed = Trainer.resume(ckpt, log=None)
+    assert resumed.run_dir == out.resolve()  # RUN/checkpoints/latest.pt -> RUN
     for a, b in zip(trainer.model.state_dict().values(), resumed.model.state_dict().values()):
         assert torch.equal(a, b)
     for a, b in zip(trainer.learner.reference.state_dict().values(), resumed.learner.reference.state_dict().values()):
@@ -242,6 +243,11 @@ def test_policy_agent_needs_duel_run_and_a_checkpoint(run):
     # one spec syntax for PPO and BC checkpoints (the format field picks the loader)
     from ygorl.agents.checkpoint import CheckpointAgent
 
+    copied = out / "with@sign" / "best.pt"  # a checkpoint outside checkpoints/, with '@' in its path
+    copied.parent.mkdir(exist_ok=True)
+    copied.write_bytes((out / "best.pt").read_bytes())
+    assert make_agent(f"policy:{copied}@greedy", seed=0).greedy
+    assert Trainer.resume(copied, log=None, eval_every=0).run_dir == copied.parent.resolve()
     warm = make_agent(f"policy:{out / 'best.pt'}@t=0.5", seed=0)
     cold = make_agent(f"policy:{out / 'best.pt'}@greedy", seed=0)
     short = make_agent(f"policy-greedy:{out / 'best.pt'}", seed=0)
@@ -252,7 +258,7 @@ def test_policy_agent_needs_duel_run_and_a_checkpoint(run):
             make_agent(f"policy:{out / 'best.pt'}{bad}")
     junk = out / "junk.pt"
     torch.save({"format": "something-else"}, junk)
-    with pytest.raises(ValueError, match="not a ygorl checkpoint"):
+    with pytest.raises(ValueError, match="not a ygorl policy checkpoint"):
         make_agent(f"policy:{junk}")
 
 
@@ -330,3 +336,55 @@ def test_actor_critic_heads_on_the_trimmed_batch_match_the_padded_one(db, vocab,
     assert (trimmed.logits[~mask] == MASKED_LOGIT).all() and (trimmed.q[~mask] == 0).all()
     assert torch.allclose(trimmed.q[mask], padded.q[mask], atol=1e-5)
     assert torch.allclose(trimmed.v, padded.v, atol=1e-5)
+
+
+def _small_cfg(**kw):
+    return TrainConfig(decks=PAIR, num_envs=2, env_threads=1, steps=8, event_length=16, net=TINY, privileged_dim=8,
+                       critic_hidden=16, max_decisions=40, ppo=PPOConfig(epochs=1, minibatch_size=16),
+                       eval_every=0, checkpoint_every=0, snapshot_every=0, torch_threads=1, collect_threads=1,
+                       seed=4, **kw)  # fmt: skip
+
+
+def test_init_from_and_bc_prior_accept_ppo_and_bc_checkpoints(run, vocab, tmp_path):
+    """--init-from / --bc-prior take a PPO training checkpoint or a BC policy checkpoint (by its format field);
+    the actor's weights are copied exactly and the prior is the checkpoint's network."""
+    from ygorl.nets import PolicyNet
+    from ygorl.nets.agent import save_checkpoint as save_policy
+
+    trainer, out = run
+    ppo_ckpt = out / "checkpoints" / "latest.pt"
+    torch.manual_seed(7)
+    bc_net = PolicyNet(trainer.net_config)
+    bc_ckpt = save_policy(tmp_path / "bc.pt", bc_net, trainer.vocab, event_length=16)
+    from ygorl.train.checkpoint import load_policy
+
+    sources = {ppo_ckpt: load_policy(ppo_ckpt).net.state_dict(), bc_ckpt: bc_net.state_dict()}
+    for path, expect in sources.items():
+        t = Trainer(_small_cfg(init_from=str(path), bc_prior=str(path)), tmp_path / f"run-{path.stem}", log=None)
+        got = t.model.actor.state_dict()
+        assert got.keys() == expect.keys()
+        for name in expect:
+            assert torch.equal(got[name], expect[name]), name
+        assert t.learner.prior is not None
+        for name, p in t.learner.prior.state_dict().items():
+            assert torch.equal(p, expect[name]), name
+        assert all(p.requires_grad for p in t.model.actor.parameters())  # the copy trains
+
+
+def test_init_from_rejects_a_different_network_or_vocab(run, vocab, tmp_path):
+    from dataclasses import replace as dc_replace
+
+    from ygorl.cards.cdb import CardVocab
+    from ygorl.nets import PolicyNet
+    from ygorl.nets.agent import save_checkpoint as save_policy
+
+    trainer, _ = run
+    wide = PolicyNet(dc_replace(trainer.net_config, d_model=32))
+    save_policy(tmp_path / "wide.pt", wide, trainer.vocab, event_length=16)
+    with pytest.raises(ValueError, match="network"):
+        Trainer(_small_cfg(init_from=str(tmp_path / "wide.pt")), tmp_path / "a", log=None)
+    passwords = [trainer.vocab.password(i) for i in range(CardVocab.FIRST_INDEX, len(trainer.vocab))]
+    shuffled = CardVocab(passwords[1:] + passwords[:1])  # same size, other card order
+    save_policy(tmp_path / "other.pt", PolicyNet(trainer.net_config), shuffled, event_length=16)
+    with pytest.raises(ValueError, match="vocab"):
+        Trainer(_small_cfg(bc_prior=str(tmp_path / "other.pt")), tmp_path / "b", log=None)

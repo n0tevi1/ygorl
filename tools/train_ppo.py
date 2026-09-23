@@ -60,9 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--lr", type=float, default=3e-4)
     g.add_argument("--epochs", type=int, default=2)
     g.add_argument("--minibatch", type=int, default=512)
-    g.add_argument("--bc-prior", default=None, metavar="CKPT", help="BC checkpoint used as a KL prior")
+    g.add_argument("--bc-prior", default=None, metavar="CKPT",
+                   help="policy (e.g. BC) or PPO checkpoint used as a KL prior; same card vocab")
     g.add_argument("--kl-prior", type=float, default=0.0, help="KL coefficient to the BC prior")
-    g.add_argument("--init-from", default=None, metavar="CKPT", help="initialize the actor from a checkpoint")
+    g.add_argument("--init-from", default=None, metavar="CKPT",
+                   help="initialize the actor from a policy (e.g. BC) or PPO checkpoint with the same network config")
     g = p.add_argument_group("league and evaluation")
     g.add_argument("--selfplay-fraction", type=float, default=0.75)
     g.add_argument("--pool-size", type=int, default=8)
