@@ -1,7 +1,7 @@
 """The `uv run ygorl ...` examples in README 快速开始 run (T3.4 acceptance).
 
 Each example line of the section's ```bash blocks is run in order through ``ygorl.cli.main`` in a
-scratch directory where ``tests/decks`` points at the test decks, so examples may use the files earlier
+scratch directory where ``tests/decks`` and ``environments`` point at the repository's, so examples may use the files earlier
 ones wrote. Game counts are capped to keep the suite fast; everything else runs as written.
 """
 
@@ -38,6 +38,7 @@ def test_every_command_has_a_readme_example():
 def test_readme_examples_run(tmp_path, monkeypatch, capsys):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "decks").symlink_to(ROOT / "tests" / "decks")
+    (tmp_path / "environments").symlink_to(ROOT / "environments")  # committed snapshots, e.g. md-2026-09
     monkeypatch.chdir(tmp_path)
     for line in quickstart_examples():
         argv = capped(shlex.split(line, comments=True)[3:])

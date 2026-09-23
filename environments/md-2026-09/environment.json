@@ -1,0 +1,106 @@
+{
+ "version": "md-2026-09",
+ "format": "md",
+ "description": "Master Duel: YGOPRODECK card pool and masterduelmeta banlist retrieved 2026-09-23, meta deck lists 2026-09-04 to 2026-09-23",
+ "rules": {
+  "mode": "MR5",
+  "extra_flags": []
+ },
+ "player": {
+  "starting_lp": 8000,
+  "starting_hand": 5,
+  "draw_per_turn": 1
+ },
+ "deck": {
+  "main_min": 40,
+  "main_max": 60,
+  "extra_max": 15,
+  "side_max": 15,
+  "max_copies": 3
+ },
+ "banlist_name": "2026.09 MD",
+ "sources": {
+  "raw": {
+   "ygoprodeck/cardinfo.json": {
+    "retrieved": "2026-09-23T00:45:13Z",
+    "sha256": "37400b4ba69371eaecea897aa5270ff3cd9cb35876845061d82f77ce68658bd6",
+    "url": "https://db.ygoprodeck.com/api/v7/cardinfo.php?format=master%20duel",
+    "requests": 1
+   },
+   "masterduelmeta/cards.json": {
+    "retrieved": "2026-09-23T00:45:18Z",
+    "sha256": "dcc7c0d65f30c2c4e774af7c8b7a284c8c183a32137672b3f80618ce19f1797e",
+    "url": "https://www.masterduelmeta.com/api/v1/cards?fields=_id%2Cname%2CkonamiID%2CbanStatus%2CalternateArt&limit=3000&page=1&sort=_id",
+    "requests": 6
+   },
+   "masterduelmeta/banlist.json": {
+    "retrieved": "2026-09-23T00:45:18Z",
+    "sha256": "d8fa7905e9c1262a0a92d2ef4ea32b6c7385ed94d51d376bd5b8dd544b9c78e0",
+    "note": "cards with a banStatus, taken from cards.json",
+    "url": "https://www.masterduelmeta.com/api/v1/cards?fields=_id%2Cname%2CkonamiID%2CbanStatus%2CalternateArt&limit=3000&page=1&sort=_id",
+    "requests": 6
+   },
+   "masterduelmeta/articles.json": {
+    "retrieved": "2026-09-23T00:45:18Z",
+    "sha256": "7517dbe00dd3f04257322f70eb9b59e363af4c47adeda33bf3b7aa0fa98e222b",
+    "url": "https://www.masterduelmeta.com/api/v1/articles?limit=400&sort=-date&fields=title%2Cdate%2Curl%2Ccategory",
+    "requests": 1
+   },
+   "masterduelmeta/top-decks.json": {
+    "retrieved": "2026-09-23T00:45:21Z",
+    "sha256": "567f87b3c408e04d27403952760b633ac5ae917a6b90a2ac2fa9b98fed4f4a69",
+    "since": "2026-08-31",
+    "url": "https://www.masterduelmeta.com/api/v1/top-decks?sort=-created&limit=500&page=1",
+    "requests": 2
+   },
+   "yugipedia/archetype-support.json": {
+    "retrieved": "2026-09-23T00:45:46Z",
+    "sha256": "3e3ef0a06db4abbbae29ecde6305dace94e11dda261ada29ff4593db8c895412",
+    "property": "Archetype support",
+    "url": "https://yugipedia.com/api.php?action=ask&query=%5B%5BArchetype%20support%3A%3A%2B%5D%5D%5B%5BPassword%3A%3A%2B%5D%5D%5B%5BCard%20type%3A%3ASpell%20Card%5D%5D%7C%3FPassword%7C%3FArchetype%20support%7Climit%3D1000%7Coffset%3D0&format=json",
+    "requests": 11
+   },
+   "yugipedia/anti-support.json": {
+    "retrieved": "2026-09-23T00:46:02Z",
+    "sha256": "3a345bb417b889718e1bc4976392ad63cf04e90bab4eededb9611ef8cb17a0c2",
+    "property": "Anti-support",
+    "url": "https://yugipedia.com/api.php?action=ask&query=%5B%5BAnti-support%3A%3A%2B%5D%5D%5B%5BPassword%3A%3A%2B%5D%5D%5B%5BCard%20type%3A%3ASpell%20Card%5D%5D%7C%3FPassword%7C%3FAnti-support%7Climit%3D1000%7Coffset%3D0&format=json",
+    "requests": 9
+   },
+   "yugipedia/archseries-related.json": {
+    "retrieved": "2026-09-23T00:46:19Z",
+    "sha256": "5de87131463971b04de515480573daf29570d3305465faab89ecd50f30568aff",
+    "property": "Archseries related",
+    "url": "https://yugipedia.com/api.php?action=ask&query=%5B%5BArchseries%20related%3A%3A%2B%5D%5D%5B%5BPassword%3A%3A%2B%5D%5D%5B%5BCard%20type%3A%3ASpell%20Card%5D%5D%7C%3FPassword%7C%3FArchseries%20related%7Climit%3D1000%7Coffset%3D0&format=json",
+    "requests": 9
+   },
+   "yugipedia/archseries.json": {
+    "retrieved": "2026-09-23T00:46:53Z",
+    "sha256": "6a9131a040f7a9764981571393909dfccee3c5f16b40bbe5f68bb699fab83fc2",
+    "property": "Archseries",
+    "url": "https://yugipedia.com/api.php?action=ask&query=%5B%5BArchseries%3A%3A%2B%5D%5D%5B%5BPassword%3A%3A%2B%5D%5D%5B%5BCard%20type%3A%3ASpell%20Card%5D%5D%7C%3FPassword%7C%3FArchseries%7Climit%3D1000%7Coffset%3D0&format=json",
+    "requests": 14
+   }
+  },
+  "banlist_update": {
+   "date": "2026-08-31",
+   "title": "Master Duel: Forbidden / Limited List Update",
+   "url": "https://www.masterduelmeta.com/news/august-30-2026/master-duel-forbidden-list-update/"
+  },
+  "meta_window": {
+   "since": "2026-09-04",
+   "until": "2026-09-23"
+  },
+  "build": {
+   "command": "ygorl env build (docs/data.md)",
+   "since": "2026-09-04",
+   "min_share": 0.01,
+   "max_decks": 20
+  }
+ },
+ "review": {
+  "banlist": {
+   "status": "pending"
+  }
+ }
+}
