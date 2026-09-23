@@ -20,7 +20,7 @@ from ygorl.cli import main
 from ygorl.data import load_environment
 from ygorl.data import masterduelmeta as mdm
 from ygorl.data import yugipedia, ygoprodeck
-from ygorl.data.build import OVERRIDES, REVIEW_DIR, BuildError, BuildOptions, build
+from ygorl.data.build import CROSSCHECK, OVERRIDES, REVIEW_DIR, BuildError, BuildOptions, build
 from ygorl.data.cardmap import CardMapper, normalize_name
 from ygorl.data.fetch import FetchError, Http, provenance, read_raw, write_raw
 
@@ -328,11 +328,15 @@ def test_rebuild_applies_overrides_and_keeps_review_and_options(tmp_path, raw, d
     assert load_environment(again.path).manifest["sources"]["build"]["since"] == "2026-09-10"
     # a correction lifts Kashtira Fenrir: the banlist changes, so it needs a new review
     (first.path / REVIEW_DIR / OVERRIDES).write_text(f"{FENRIR} 3 --not limited in game\n{ALUBER} 2\n", encoding="utf-8")
+    assert CROSSCHECK not in (first.path / REVIEW_DIR / "report.md").read_text(encoding="utf-8")
+    (first.path / REVIEW_DIR / CROSSCHECK).write_text("# cross-check\n", encoding="utf-8")  # linked, never overwritten
     third = _build(tmp_path, raw, db)
     env = load_environment(third.path, cards=db)
     assert dict(env.banlist.limits) == {DROLL: 2, ALUBER: 2}
     assert third.stats["review"] == "pending" and third.stats["banlist_overrides"] == 2
-    assert "人工修正" in (third.path / REVIEW_DIR / "report.md").read_text(encoding="utf-8")
+    report = (third.path / REVIEW_DIR / "report.md").read_text(encoding="utf-8")
+    assert "人工修正" in report and f"]({CROSSCHECK})" in report
+    assert (third.path / REVIEW_DIR / CROSSCHECK).read_text(encoding="utf-8") == "# cross-check\n"
 
 
 def test_offline_build_needs_raw_files(tmp_path, raw, db):

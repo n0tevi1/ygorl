@@ -175,9 +175,9 @@ ygorl env check PATH|VERSION
 ```
 $ uv run ygorl env check md-2026-09
 environment md-2026-09 (md) at /path/to/ygorl/environments/md-2026-09
-fingerprint e621b4774bf2b6d1
+fingerprint 65ca28f79233e73d
 pool        13858 cards
-banlist     2026.09 MD: 108 forbidden, 73 limited, 26 semi-limited (review pending)
+banlist     2026.09 MD: 108 forbidden, 73 limited, 26 semi-limited (review reviewed)
 meta        20 decks, share 71.7%, all legal
     8.9%  Dracotail
     ...
