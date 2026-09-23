@@ -39,7 +39,7 @@
 - [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
 - [课程与开局配平](docs/curriculum.md)：单人展开 / 仅手坑 / 完整三种课程模式、先后攻配平、增广开局标志位。
 - [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
-- [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局等实测数字。
+- [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局、吞吐、PPO 自博弈 1 小时等实测数字。
 - [策略训练](docs/training.md)：rollout 数据布局与两人零和的符号约定、截断对局的 critic 自举、GAE(λ) 对照、Expected-SARSA(λ) 回报与 Q-boosted 优势（VRPO）、候选动作 Q 头 + V 头；PPO 自博弈训练循环（可插拔策略目标、熵、KL 到慢速参考 / BC 先验、快照池 + keep-best、牌组池、checkpoint 与日志）。
 - [观测编码](docs/encoding.md)：卡片表、全局向量、候选动作表的每一列；事件 token 流与响应窗口 / 放弃 token。
 - [策略网络](docs/nets.md)：卡片 / 效果编码器、局面 Transformer、事件历史模块（GTrXL / LSTM）、动作打分头、冻结文本向量接口、给 critic / 信念头的接口。
