@@ -9,9 +9,9 @@
 - **M0 骨架**：完成。
 - **M1 引擎绑定**：完成；待办是两项人工核对（T1.2 卡片字段与效果串的人工抽检、T1.8 `.yrpX` 在 EDOPro 客户端中回看）。
 - **M2 向量化环境**：完成（C++ 线程池、C++ 步进与观测编码、多选可行集核对、事件 token 流、训练态真值、课程模式、arena 快照、分支探索）；待办是 16 核吞吐数字，以及 C++ 步进路径上的课程模式。
-- **M3 基线与评估**：完成（Greedy、配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念校准指标、命令行 `ygorl duel / replay / branch / arena / matrix`）。
+- **M3 基线与评估**：完成（Greedy、配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念校准指标、命令行 `ygorl duel / replay / branch / arena / matrix / env`）。
 - **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）。
-- **M5 数据与组牌**：协同图（T5.3，代理召回检验）、引擎包枚举（T5.4）、基因型与算子（T5.5）已落地；T5.1 数据抓取与 T5.2 文本嵌入受当前网络环境限制（YGOPRODECK、masterduelmeta、Yugipedia、HuggingFace 不可达）尚未开始。
+- **M5 数据与组牌**：数据抓取与环境快照（T5.1，`ygorl env build`，快照 `environments/md-2026-09`，禁限表待人工校对）、协同图（T5.3，代理召回检验）、引擎包枚举（T5.4）、基因型与算子（T5.5）已落地；T5.2 文本嵌入尚未开始。
 - **M6**：未开始。
 
 技术栈与方向见下。
@@ -35,7 +35,7 @@
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出与 `.yrp` / `.yrpX` 读取。
 - [调研：ygo-combo-solver](docs/spikes/combo-solver.md)：与本仓库核心的兼容性、封装方案、arena 快照移植评估（T1.7）。
 - [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank。
-- [命令行](docs/cli.md)：`ygorl duel`、`ygorl replay`、`ygorl branch`、`ygorl arena`、`ygorl matrix` 的参数、输出与退出码。
+- [命令行](docs/cli.md)：`ygorl duel`、`ygorl replay`、`ygorl branch`、`ygorl arena`、`ygorl matrix`、`ygorl env` 的参数、输出与退出码。
 - [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
 - [课程与开局配平](docs/curriculum.md)：单人展开 / 仅手坑 / 完整三种课程模式、先后攻配平、增广开局标志位。
 - [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
@@ -44,6 +44,7 @@
 - [观测编码](docs/encoding.md)：卡片表、全局向量、候选动作表的每一列；事件 token 流与响应窗口 / 放弃 token。
 - [策略网络](docs/nets.md)：卡片 / 效果编码器、局面 Transformer、事件历史模块（GTrXL / LSTM）、动作打分头、冻结文本向量接口、给 critic / 信念头的接口。
 - [环境规范](docs/environments.md)：`environments/<version>/` 的文件格式、来源与版本约定。
+- [数据抓取与环境快照](docs/data.md)：YGOPRODECK / masterduelmeta / Yugipedia 抓取器与解析器、卡片对应、MD 禁限表生成与人工校对流程、meta 份额与代表卡表、`ygorl env build / check`、md-2026-09 快照统计。
 - [语义协同图](docs/synergy.md)：CardScripts 脚本挖掘、边语义、解析覆盖率、代理召回检验、引擎包枚举。
 - [求解器示范集](docs/solver.md)：封装 ygo-combo-solver 求解起手展开线（含 `--fire` 手坑变体），在我们的核心里新鲜重放验证并转成动作下标，示范集 JSONL 格式、批量驱动与成本。
 - [组牌基因型](docs/genotype.md)：引擎包份数 + 泛用槽 + 额外卡组的表示、禁限 / 同名 3 张 / 40–60 / ≤ 15 硬约束与修复、变异 / 交叉算子、计数向量编码、10k 合法性验收。
@@ -85,11 +86,15 @@ uv run ygorl branch out/game.json.gz --at 12 --try 0,1,2 --rollouts 20
 uv run ygorl arena tests/decks/snake_eye.ydk --vs tests/decks/kashtira.ydk --games 20 --workers 2
 # 对局矩阵：3 套牌两两各 10 局（greedy 驾驶双方），输出胜率矩阵、Nash 混合与 alpha-rank
 uv run ygorl matrix tests/decks/snake_eye.ydk tests/decks/kashtira.ydk tests/decks/yubel.ydk --games 10 --workers 2 --out out/matrix.json
+# 环境：校验仓库里的 Master Duel 快照（卡池、禁限表、meta 卡组合法性），打印卡池大小、禁限张数与 meta 份额
+uv run ygorl env check md-2026-09
 ```
 
 加 `--env <版本或目录>` 即按该环境的规则对局，产物绑定环境版本；`ygorl matrix --env <版本>` 不给牌组时用环境的 meta 卡组，
 结果写到 `environments/<版本>/artifacts/matrix/`（见 [docs/cli.md](docs/cli.md)）。Python API 见 [docs/engine.md](docs/engine.md)、
 [docs/replays.md](docs/replays.md)、[docs/evaluation.md](docs/evaluation.md)。
+
+重新抓取并生成 MD 环境：`uv run ygorl env build md-YYYY-MM`（需能访问 YGOPRODECK、masterduelmeta、Yugipedia；`--offline` 只用已下载的原始文件），流程与禁限表人工校对见 [docs/data.md](docs/data.md)。
 
 修改 `csrc/`、`patches/`、`CMakeLists.txt` 或 `pyproject.toml` 后，`uv sync` / `uv run` 会自动重新编译扩展；
 需要强制重编时用 `uv sync --reinstall-package ygorl`。
@@ -180,16 +185,16 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── cmake/                   # CMake 片段（ocgcore.cmake：复制核心、打补丁、编成静态库）
 ├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序、Lua 字符串哈希种子、Lua 分配器钩子），构建时应用
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
-├── environments/            # （尚未创建）环境版本目录，由 T5.1 生成，规范见 docs/environments.md
+├── environments/            # 环境版本目录（规范见 docs/environments.md）：md-2026-09 快照由 ygorl env build 生成；*/raw/ 原始抓取文件不进 git
 ├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、privileged（训练态对手真值）、event_encoder + event_binding（事件 token 流）、host_pool + worker_pool（C++ 步进环境）、arena（每局内存 arena 与快照）、binding（pybind11）；exports.map 为链接导出表
 ├── src/ygorl/               # Python 包
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
 │   ├── paths.py             # 子模块数据路径（cards.cdb、脚本目录、禁限表）与环境根目录
-│   ├── commands/            # 各子命令一个模块：duel / replay / branch / arena / matrix；__init__.py 放共用选项（牌组、环境、agent）
+│   ├── commands/            # 各子命令一个模块：duel / replay / branch / arena / matrix / env；__init__.py 放共用选项（牌组、环境、agent）
 │   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；registry.py（按规格构造 agent 与可 pickle 的 factory，供 CLI）
 │   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、引擎包枚举（packages）、基因型与算子（genotype）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
-│   ├── data/                # Environment 加载与校验
+│   ├── data/                # Environment 加载与校验；数据抓取与环境构建（fetch、cardmap、ygoprodeck、masterduelmeta、yugipedia、build）
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、卡片查询解析（query.py）、回放（含 .yrp / .yrpX 读取）、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv
 │   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）
@@ -208,6 +213,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── training.md          # 优势估计与特权 critic：公式、符号约定、rollout 数据布局
 │   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）
 │   ├── environments.md      # environments/<version>/ 目录规范
+│   ├── data.md              # 数据抓取、禁限表校对流程、环境快照统计
 │   ├── replays.md           # 回放格式、.yrpX 导出与 .yrp / .yrpX 读取
 │   ├── solver.md            # combo 求解器构建、线的验证与转换、示范集格式、批量驱动
 │   ├── cli.md               # 命令行 ygorl 各子命令
