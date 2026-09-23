@@ -280,3 +280,56 @@ def test_action_key_is_the_same_for_equivalent_copies(db):
     point = next(p for p in seen if p.player == 1 and sum(a.kind == "chain" for a in p.actions) == 5)
     keys = [action_key(point, i) for i in range(len(point.actions))]
     assert len(set(keys[:5])) == 1 and keys[5] != keys[0] and point.actions[5].kind == "pass"
+
+
+# ------------------------------------------------------------------ heuristic demonstrations beyond turn 1
+
+
+def test_greedy_demonstrations_record_later_turns(db, vocab, data, tmp_path):
+    """DemoRecorder: Greedy's non-forced decisions from turn 2 on, as the observations NetPolicy would see."""
+    from ygorl.agents import GreedyAgent
+    from ygorl.train.heuristic_demos import (
+        DemoRecorder,
+        concat,
+        is_battle_decision,
+        load_data,
+        record_games,
+        save_data,
+        select,
+    )
+
+    cfg = DuelConfig(max_turns=5)
+    arena = Arena(AgentSpec("greedy"), AgentSpec("random"), config=cfg)
+    specs = arena.game_specs(DECKS["snake_eye"], DECKS["kashtira"], pairs=1, seed=3)  # both seats
+    got, games = record_games(specs, GreedyAgent, vocab, event_length=32)
+    assert len(games) == 2 and not any("error" in g for g in games) and {g["first"] for g in games} == {0, 1}
+    assert len(got) > 20 and got.skipped["early_turn"] > 0 and got.skipped["forced"] > 0
+    assert all(m["turn"] >= 2 and m["n_choices"] >= 2 for m in got.meta)
+    assert all(got.obs["action_mask"][i, a] for i, a in enumerate(got.actions))  # labels are choosable rows
+    assert (got.obs["globals"][:, 3] >= 2).all() and got.obs["events"].shape[1:] == (32, 20)
+    assert any(m["kind"] == "attack" for m in got.meta) and any(m["kind"] == "battle_phase" for m in got.meta)
+
+    # the recorder plays exactly like the wrapped agent
+    spec = specs[0]
+    plain = spec.duel().run(GreedyAgent(spec.agent_seeds[0]), spec.agent_b(spec.agent_seeds[1]))
+    rec = DemoRecorder(GreedyAgent(spec.agent_seeds[0]), db, vocab, event_length=32)
+    recorded = spec.duel().run(rec, spec.agent_b(spec.agent_seeds[1]))
+    assert (recorded.winner, recorded.turns, recorded.decisions) == (plain.winner, plain.turns, plain.decisions)
+    assert len(rec.actions) == games[0]["samples"]
+
+    battle = select(got, "battle")
+    assert 0 < len(battle) < len(got) and all(is_battle_decision(m) for m in battle.meta)
+    assert all(m["own_turn"] for m in battle.meta)
+    assert len(select(got, "all", max_samples=5, seed=1)) == 5
+    with pytest.raises(ValueError):
+        select(got, "chains")
+
+    both = concat([data, got])  # solver turn-1 samples (event length 32) + heuristic samples
+    assert len(both) == len(data) + len(got) and both.meta[len(data)]["source"] == "heuristic"
+    back, info = load_data(save_data(tmp_path / "g.npz", got, note="x"))
+    assert info == {"note": "x"} and back.meta == got.meta and np.array_equal(back.actions, got.actions)
+    for k, v in got.obs.items():
+        np.testing.assert_array_equal(back.obs[k], v)
+    longer, _ = record_games(specs[:1], GreedyAgent, vocab, event_length=48)
+    with pytest.raises(ValueError, match="event length"):
+        concat([got, longer])
