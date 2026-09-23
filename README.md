@@ -10,7 +10,7 @@
 - **M1 引擎绑定**：完成；待办是两项人工核对（T1.2 卡片字段与效果串的人工抽检、T1.8 `.yrpX` 在 EDOPro 客户端中回看）。
 - **M2 向量化环境**：完成（C++ 线程池、C++ 步进与观测编码、多选可行集核对、事件 token 流、训练态真值、课程模式、arena 快照、分支探索）；待办是 16 核吞吐数字，以及 C++ 步进路径上的课程模式。
 - **M3 基线与评估**：完成（Greedy、配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念校准指标、命令行 `ygorl duel / replay / branch / arena / matrix / env`）。
-- **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）。T4c.1 信念头已落地：五个头以 HDT 后验为残差初始化，随机自博弈 1500 局上各头均优于 HDT 过滤基线（牌组类型 top-1 0.547 → 0.863、ECE 0.31 → 0.01），见 [docs/belief-heads.md](docs/belief-heads.md)。
+- **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）。T4c.1 信念头已落地：五个头以 HDT 后验为残差初始化，随机自博弈 1500 局上各头均优于 HDT 过滤基线（牌组类型 top-1 0.547 → 0.863、ECE 0.31 → 0.01），见 [docs/belief-heads.md](docs/belief-heads.md)。T4a.2 BC 预热已实现：训练起手线复现 86.7%（bc60）、未见起手目标场面 41/100（求解器 62）；对 Random 0.285，未达验收（示范只覆盖先攻第 1 回合，见 [docs/bc.md](docs/bc.md)）。
 - **M5 数据与组牌**：数据抓取与环境快照（T5.1，`ygorl env build`，快照 `environments/md-2026-09`，禁限表已与 YGOPRODECK、Yugipedia 交叉核对）、协同图（T5.3，真实 meta 召回 0.935）、引擎包枚举（T5.4）、基因型与算子（T5.5）、漏斗第一层求解器起手分析（T5.6：120 手配对检验与真实首回合无显著差异，p = 0.63；每套牌平均 71 求解器进程秒）已落地；T5.2 文本嵌入尚未开始。
 - **M6**：未开始。
 
@@ -48,6 +48,7 @@
 - [数据抓取与环境快照](docs/data.md)：YGOPRODECK / masterduelmeta / Yugipedia 抓取器与解析器、卡片对应、MD 禁限表生成与人工校对流程、meta 份额与代表卡表、`ygorl env build / check`、md-2026-09 快照统计。
 - [语义协同图](docs/synergy.md)：CardScripts 脚本挖掘、边语义、解析覆盖率、真实 meta 引擎包召回检验（md-2026-09）与代理召回（历史）、可选 Yugipedia 关系边、引擎包枚举。
 - [求解器示范集](docs/solver.md)：封装 ygo-combo-solver 求解起手展开线（含 `--fire` 手坑变体），在我们的核心里新鲜重放验证并转成动作下标，示范集 JSONL 格式、批量驱动与成本。
+- [行为克隆预热](docs/bc.md)：求解器示范 → 策略网络的 BC（T4a.2）：样本构造、检查点格式与 PolicyAgent 加载（policy:PATH）、线复现率 / 未见起手场面质量 / 对 Random 的实测。
 - [组牌基因型](docs/genotype.md)：引擎包份数 + 泛用槽 + 额外卡组的表示、禁限 / 同名 3 张 / 40–60 / ≤ 15 硬约束与修复、变异 / 交叉算子、计数向量编码、10k 合法性验收。
 - [漏斗第一层：求解器起手分析](docs/funnel.md)：候选牌组固定种子抽起手，用求解器判定最佳线存在率、卡手率、抗手坑率（`--fire`）与 combo 长度，作为廉价过滤与 QD 描述符；与真实首回合的配对检验（McNemar）和每套牌耗时 vs 预算（T5.6）。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
@@ -198,12 +199,12 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验；数据抓取与环境构建（fetch、cardmap、ygoprodeck、masterduelmeta、yugipedia、build）
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、卡片查询解析（query.py）、回放（含 .yrp / .yrpX 读取）、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）；constants.py 为生成文件
-│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；belief_prior.py 公开证据、meta 卡表与 HDT 式过滤（信念头的先验、输入特征与基线）；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv
-│   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）、belief（信念头、掩码损失、BeliefPolicy）
+│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；belief_prior.py 公开证据、meta 卡表与 HDT 式过滤（信念头的先验、输入特征与基线）；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv；observer.py 为 DecisionPoint 的观测（参考编码器 + 事件流，与 EncodedVecEnv 一致）
+│   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）、belief（信念头、掩码损失、BeliefPolicy）、agent（检查点读写、PolicyAgent 用的 NetPolicy）
 │   ├── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
 │   ├── solver/              # combo 求解器封装（combo_solver.py）、目标场面（targets.py）、线的重放验证与示范集格式（demo.py）、起手批量求解（batch.py）
-│   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）
-├── tools/                   # 开发脚本：combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、漏斗第一层评估与验收实验（funnel_eval.py、validate_funnel.py）、压力测试、确定性扫描、YGOPRODECK 核对、MD 禁限表交叉核对（crosscheck_banlist.py）、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
+│   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）、bc.py（求解器示范的行为克隆预热与评估）
+├── tools/                   # 开发脚本：combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、漏斗第一层评估与验收实验（funnel_eval.py、validate_funnel.py）、压力测试、确定性扫描、YGOPRODECK 核对、MD 禁限表交叉核对（crosscheck_banlist.py）、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、行为克隆训练与评估（train_bc.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组及其求解目标（solver_targets.json），data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
@@ -219,6 +220,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── data.md              # 数据抓取、禁限表校对流程、环境快照统计
 │   ├── replays.md           # 回放格式、.yrpX 导出与 .yrp / .yrpX 读取
 │   ├── solver.md            # combo 求解器构建、线的验证与转换、示范集格式、批量驱动
+│   ├── bc.md                # 行为克隆预热：样本、训练、检查点、评估与实测
 │   ├── cli.md               # 命令行 ygorl 各子命令
 │   ├── branching.md         # 分支探索：fork(replay, t)、ygorl branch、限制
 │   ├── curriculum.md        # 课程模式、先后攻配平、增广开局标志位
