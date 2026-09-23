@@ -11,7 +11,7 @@
 - **M2 向量化环境**：完成（C++ 线程池、C++ 步进与观测编码、多选可行集核对、事件 token 流、训练态真值、课程模式、arena 快照、分支探索）；待办是 16 核吞吐数字，以及 C++ 步进路径上的课程模式。
 - **M3 基线与评估**：完成（Greedy、配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念校准指标、命令行 `ygorl duel / replay / branch / arena / matrix / env`）。
 - **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）。T4c.1 信念头已落地：五个头以 HDT 后验为残差初始化，随机自博弈 1500 局上各头均优于 HDT 过滤基线（牌组类型 top-1 0.547 → 0.863、ECE 0.31 → 0.01），见 [docs/belief-heads.md](docs/belief-heads.md)。
-- **M5 数据与组牌**：数据抓取与环境快照（T5.1，`ygorl env build`，快照 `environments/md-2026-09`，禁限表待人工校对）、协同图（T5.3，真实 meta 召回 0.935）、引擎包枚举（T5.4）、基因型与算子（T5.5）、漏斗第一层求解器起手分析（T5.6：120 手配对检验与真实首回合无显著差异，p = 0.63；每套牌平均 71 求解器进程秒）已落地；T5.2 文本嵌入尚未开始。
+- **M5 数据与组牌**：数据抓取与环境快照（T5.1，`ygorl env build`，快照 `environments/md-2026-09`，禁限表已与 YGOPRODECK、Yugipedia 交叉核对）、协同图（T5.3，真实 meta 召回 0.935）、引擎包枚举（T5.4）、基因型与算子（T5.5）、漏斗第一层求解器起手分析（T5.6：120 手配对检验与真实首回合无显著差异，p = 0.63；每套牌平均 71 求解器进程秒）已落地；T5.2 文本嵌入尚未开始。
 - **M6**：未开始。
 
 技术栈与方向见下。
@@ -62,7 +62,7 @@ Python 运行时依赖写在 `pyproject.toml`、锁定在 `uv.lock`，`uv sync` 
 （从 PyPI 安装 Linux 版 torch，自带 CUDA 运行库，安装后约 5 GB；只跑引擎、评估与组牌不需要它，相关测试在未安装时自动跳过）。
 开发工具在 `dev` 依赖组（`uv sync` 默认安装）：pytest（单测）、ruff（lint，`uv run ruff check src tests tools`）。
 个别工具另有系统依赖：`tools/tsan/check.sh` 需要 ninja、GCC 的 libtsan 与 `setarch`（util-linux）；`tools/check_ygoprodeck.py` 需要能访问
-YGOPRODECK API 的网络。CI 与云端会话 hook 另装 ccache 以加速重编。
+YGOPRODECK API 的网络；`tools/crosscheck_banlist.py` 需要能访问 YGOPRODECK 与 Yugipedia 的网络（`--from` 离线重跑）。CI 与云端会话 hook 另装 ccache 以加速重编。
 新增依赖用 `uv add <包名>`（可选组用 `uv add --optional <组> <包名>`）。
 
 ```bash
@@ -203,7 +203,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
 │   ├── solver/              # combo 求解器封装（combo_solver.py）、目标场面（targets.py）、线的重放验证与示范集格式（demo.py）、起手批量求解（batch.py）
 │   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）
-├── tools/                   # 开发脚本：combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、漏斗第一层评估与验收实验（funnel_eval.py、validate_funnel.py）、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
+├── tools/                   # 开发脚本：combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、漏斗第一层评估与验收实验（funnel_eval.py、validate_funnel.py）、压力测试、确定性扫描、YGOPRODECK 核对、MD 禁限表交叉核对（crosscheck_banlist.py）、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组及其求解目标（solver_targets.json），data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
