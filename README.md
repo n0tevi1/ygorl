@@ -10,7 +10,7 @@
 - **M1 引擎绑定**：完成；待办是两项人工核对（T1.2 卡片字段与效果串的人工抽检、T1.8 `.yrpX` 在 EDOPro 客户端中回看）。
 - **M2 向量化环境**：完成（C++ 线程池、C++ 步进与观测编码、多选可行集核对、事件 token 流、训练态真值、课程模式、arena 快照、分支探索）；待办是 16 核吞吐数字，以及 C++ 步进路径上的课程模式。
 - **M3 基线与评估**：完成（Greedy、配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念校准指标、命令行 `ygorl duel / replay / branch / arena / matrix / env`）。
-- **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）。
+- **M4 策略训练**：进行中（PyTorch 作为可选依赖组 `train` 已接入）。T4c.1 信念头已落地：五个头以 HDT 后验为残差初始化，随机自博弈 1500 局上各头均优于 HDT 过滤基线（牌组类型 top-1 0.547 → 0.863、ECE 0.31 → 0.01），见 [docs/belief-heads.md](docs/belief-heads.md)。
 - **M5 数据与组牌**：数据抓取与环境快照（T5.1，`ygorl env build`，快照 `environments/md-2026-09`，禁限表待人工校对）、协同图（T5.3，真实 meta 召回 0.935）、引擎包枚举（T5.4）、基因型与算子（T5.5）已落地；T5.2 文本嵌入尚未开始。
 - **M6**：未开始。
 
@@ -39,6 +39,7 @@
 - [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
 - [课程与开局配平](docs/curriculum.md)：单人展开 / 仅手坑 / 完整三种课程模式、先后攻配平、增广开局标志位。
 - [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
+- [信念头](docs/belief-heads.md)：五个头（牌组类型 / 剩余份数 / 手牌 + 角色位 / 盖卡 / 被响应）、损失掩码、meta 先验初始化与 HDT 式过滤特征、随机自博弈上的实验数字。
 - [基准结果](docs/benchmarks.md)：Greedy vs Random 2,000 局等实测数字。
 - [优势估计与特权 critic](docs/training.md)：rollout 数据布局与两人零和的符号约定、GAE(λ) 对照、Expected-SARSA(λ) 回报与 Q-boosted 优势（VRPO）、候选动作 Q 头 + V 头。
 - [观测编码](docs/encoding.md)：卡片表、全局向量、候选动作表的每一列；事件 token 流与响应窗口 / 放弃 token。
@@ -196,12 +197,12 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验；数据抓取与环境构建（fetch、cardmap、ygoprodeck、masterduelmeta、yugipedia、build）
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、卡片查询解析（query.py）、回放（含 .yrp / .yrpX 读取）、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）；constants.py 为生成文件
-│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv
-│   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）
+│   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；belief_prior.py 公开证据、meta 卡表与 HDT 式过滤（信念头的先验、输入特征与基线）；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv
+│   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）、belief（信念头、掩码损失、BeliefPolicy）
 │   ├── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
 │   ├── solver/              # combo 求解器封装（combo_solver.py）、目标场面（targets.py）、线的重放验证与示范集格式（demo.py）、起手批量求解（batch.py）
 │   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）
-├── tools/                   # 开发脚本：combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
+├── tools/                   # 开发脚本：combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、压力测试、确定性扫描、YGOPRODECK 核对、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组及其求解目标（solver_targets.json），data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
@@ -210,6 +211,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── nets.md              # 策略网络：编码器、局面 Transformer、历史模块（GTrXL / LSTM）、动作打分头、文本向量接口
 │   ├── evaluation.md        # 基线 agent 与评估
 │   ├── belief-eval.md       # 信念校准评估：指标定义与基线数字
+│   ├── belief-heads.md      # 信念头：五个头、损失掩码、meta 先验与实验数字
 │   ├── training.md          # 优势估计与特权 critic：公式、符号约定、rollout 数据布局
 │   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）
 │   ├── environments.md      # environments/<version>/ 目录规范
