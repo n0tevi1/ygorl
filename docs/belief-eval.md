@@ -160,3 +160,9 @@ softmax；每个样本在这些先验的 logit 上叠加尺度为 `signal`（默
   训练出的手牌头应以 `auc_macro` 与先验 / HDT 基线比较。
 - oracle 的 ECE 不为 0 只是有限样本噪声（`responded` 每箱约千余样本，ECE ≈ 0.01），可作为同样样本量下「校准良好」的参考量级。
 - 合成数据只用于验证评估管线与给出参照量级；真实的 M4c 数字来自自博弈数据上的信念头（T4c.1），并绑定环境版本记录。
+
+## 真实数据上的数字（T4c.1）
+
+合成数据之外，训练出的信念头与 HDT 式过滤基线在随机自博弈数据上的对比（同一套指标）见
+[belief-heads.md](belief-heads.md)「实验」。那里的 `prior` 列就是本页的 `prior_predictor`（在训练局上拟合），
+`hdt` 列是 `ygorl.env.belief_prior.hdt_prior`。

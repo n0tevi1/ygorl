@@ -102,7 +102,8 @@ summary, state, tokens = net.history(events, event_mask, state=None)
 - **T4b.4 PPO**：`out = net(batch)`，`out.log_probs()`、`out.entropy()`、`out.sample()`、`net.act(batch)`；
   批处理 `collate(list_of_obs)` / `to_tensors(batched_arrays)`（int32 → int64，掩码 → bool；没有 `events` 键时历史为空）。
 - **T4c.1 信念头**：接在 `f` 上（辅助损失通道），输出 `[B, belief_dim]` 以 `net.logits(f, belief)` / `net(obs, belief=...)`
-  传入；网络内部 `detach`（设计 04：防止策略把信念头当旁路），`NetConfig.belief_dim = 0` 时不接收。
+  传入；网络内部 `detach`（设计 04：防止策略把信念头当旁路），`NetConfig.belief_dim = 0` 时不接收。已实现为
+  `ygorl.nets.belief`（`BeliefHeads` + `BeliefPolicy`，`belief_dim = BeliefConfig.policy_dim`），见 [belief-heads.md](belief-heads.md)。
 - **NTP / 胜负辅助头（I6）**：接 `f.history_tokens`（因果，可直接做下一 token 预测）与 `f.context`。
 - **重建**：`NetConfig.to_dict()` / `from_dict()`；参数量 `count_parameters(net)`、`net.parameter_report()`。
 
