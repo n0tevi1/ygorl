@@ -49,11 +49,11 @@ class PPOConfig:
     kl_prior_coef: float = 0.0  # KL(π‖π_prior) to a BC prior checkpoint, when one is given (design I4)
     q_coef: float = 0.5
     v_coef: float = 0.5
-    lr: float = 3e-4
+    lr: float = 1e-3
     adam_eps: float = 1e-5
     max_grad_norm: float = 0.5
-    epochs: int = 2
-    minibatch_size: int = 512
+    epochs: int = 4  # 4 x 256-row minibatches of 2,048 rows: approx_kl ~5e-3 per update (docs/benchmarks.md)
+    minibatch_size: int = 256
     adv_norm: str = "standard"  # normalize_advantages mode, over the whole rollout
 
     def __post_init__(self) -> None:

@@ -57,9 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--entropy", type=float, default=0.05, help="entropy coefficient (design: 0.05-0.2)")
     g.add_argument("--kl-ref", type=float, default=0.05, help="KL coefficient to the EMA reference")
     g.add_argument("--ema", type=float, default=0.02, help="reference EMA rate per update")
-    g.add_argument("--lr", type=float, default=3e-4)
-    g.add_argument("--epochs", type=int, default=2)
-    g.add_argument("--minibatch", type=int, default=512)
+    g.add_argument("--lr", type=float, default=1e-3)
+    g.add_argument("--epochs", type=int, default=4)
+    g.add_argument("--minibatch", type=int, default=256)
     g.add_argument("--bc-prior", default=None, metavar="CKPT",
                    help="policy (e.g. BC) or PPO checkpoint used as a KL prior; same card vocab")
     g.add_argument("--kl-prior", type=float, default=0.0, help="KL coefficient to the BC prior")

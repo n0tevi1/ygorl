@@ -245,7 +245,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
      + q_coef · L_Q + v_coef · L_V                 （critic.q_loss / v_loss，默认各 0.5）
 ```
 
-   梯度裁剪到 `max_grad_norm`（0.5），Adam（lr 3e-4）。KL 与熵只在合法候选上求和（掩码 logit 为 −1e9，概率严格为 0）。
+   梯度裁剪到 `max_grad_norm`（0.5），Adam（lr 1e-3；默认 4 轮 × 256 行的批，每次更新 32 步，见下「步长」）。KL 与熵只在合法候选上求和（掩码 logit 为 −1e9，概率严格为 0）。
    **热启动与先验**：`--init-from CKPT`（`TrainConfig.init_from`）把 actor 设成某个检查点的网络、critic 从头训；`--bc-prior CKPT`
    给 `π_BC`。两者都接受 PPO 训练的 checkpoint 或 BC 等导出的策略检查点（`ygorl.nets.agent`，[bc.md](bc.md)），按文件的 `format`
    字段区分（`train.checkpoint.load_actor`）。热启动时本次运行沿用检查点的卡片词表，网络配置（`d_model`、层数、历史模块等）必须与
@@ -324,8 +324,11 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 
 ### 8.8 限制与后续
 
-- 1 小时实验里每次更新只有 4 次 Adam 步（2 轮 × 2 个 1,024 行的批），`approx_kl` 约 1e-5、裁剪比例约 0：策略几乎不动。
-  T4b.5 应先把每次更新的策略变化调到 1e-3–1e-2 量级（更小的批 / 更多轮 / 更大的学习率），再做 BC 预热与消融。
+- **步长**（T4b.5 起）：T4b.4 的 1 小时实验每次更新只有 4 次 Adam 步（2 轮 × 2 个 1,024 行的批），`approx_kl` 约 1e-5、
+  裁剪比例约 0，策略几乎不动。Adam 每步把每个参数挪动约一个学习率，与梯度大小无关，所以步数与学习率决定每次更新走多远。
+  扫描后默认改为 lr 1e-3、4 轮 × 256 行（每次更新 32 步）：`approx_kl` 约 5e-3–9e-3、裁剪比例约 0.08，落在 PPO 常见的
+  1e-3–1e-2 区间（[benchmarks.md](benchmarks.md)「PPO 步长」）。同样 1 小时，更新次数翻倍（281 次），对 greedy 从 0.05 升到
+  0.188（区间 0.117–0.287，与未训练不重叠），但几乎全部来自驾驶 kashtira；驾驶 snake_eye（长 combo）基本没学到。
 - 更新是瓶颈：CPU 上 2,048 行 × 2 轮约 20–25 秒，收集只占约 10%。GPU、更大的批、稀疏 / 行级的 ID 嵌入更新是后续的提速方向；
   收集与更新目前串行（同步 PPO），actor / learner 分离留给有 GPU 的机器。
 - 进行中的对局不进 checkpoint；续训时槽位重新开局（少量半局数据丢弃）。
