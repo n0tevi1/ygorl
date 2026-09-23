@@ -15,10 +15,11 @@ rep.save("game.json.gz")                                   # .json 或 .json.gz
 
 rep = Replay.load("game.json.gz")
 again = rep.play(env=env)                                   # 按应答日志重放
-rep.to_yrpx("game.yrpX", names=("A", "B"), env=env)         # 导出 EDOPro 回放
+rep.to_yrpx("game.yrpX", names=("A", "B"), env=env)         # 导出 EDOPro 回放（LZMA 压缩；compress=False 不压缩）
 ```
 
-命令行：`ygorl duel ... --save-replay game.json.gz --yrpx game.yrpX` 录制并导出，`ygorl replay game.json.gz --verify --export-yrpx out.yrpX` 显示元数据、重新模拟核对终局并导出（见 [cli.md](cli.md)）。
+命令行：`ygorl duel ... --save-replay game.json.gz --yrpx game.yrpX` 录制并导出，`ygorl replay game.json.gz --verify --export-yrpx out.yrpX` 显示元数据、重新模拟核对终局并导出，
+两者加 `--yrpx-uncompressed` 写不压缩的 `.yrpX`（见 [cli.md](cli.md)）。
 
 ## 文件格式（`format_version = 1`）
 
@@ -58,9 +59,14 @@ gzip 截断或损坏、不是合法 JSON / 不是 JSON 对象、缺少必需键�
 
 布局抄自 edo9300/edopro 的 `gframe/replay.cpp`、`gframe/generic_duel.cpp` 与 `gframe/core_utils.cpp`：
 
-- 扩展头（72 字节）：`id='yrpX'`、客户端版本（EDOPro 41.0 + 核心 11.0）、flag = `LUA64 | NEWREPLAY | 64BIT_DUELFLAG | EXTENDED_HEADER`（不压缩）、
-  时间戳 = `recorded_at`（没有时写 0，EDOPro 列表里显示为 1970/01/01；不用当前时间，保证同一回放文件每次导出逐字节相同）、`datasize`、4 个 u64 核心种子。
-  内嵌 `yrp1` 的头用同一时间戳。
+- 扩展头（72 字节）：`id='yrpX'`、客户端版本（EDOPro 41.0 + 核心 11.0）、flag = `COMPRESSED | LUA64 | NEWREPLAY | 64BIT_DUELFLAG | EXTENDED_HEADER`
+  （`compress=False` 时不带 `COMPRESSED`）、时间戳 = `recorded_at`（没有时写 0，EDOPro 列表里显示为 1970/01/01；不用当前时间，保证同一回放文件每次导出逐字节相同）、
+  `datasize`（正文解压后的长度）、5 字节 LZMA 属性（头里的 `props`，不压缩时全 0）、4 个 u64 核心种子。内嵌 `yrp1` 的头用同一时间戳。
+- 压缩照 EDOPro 的 `Replay::EndRecord`：头后面直接是裸 LZMA 流（没有 `.lzma` 的 13 字节文件头），属性单独存进头里；编码参数与 EDOPro 的
+  `LzmaCompress(..., level 5, dictSize 1 << 24, lc 3, lp 0, pb 2, fb 32, 1 线程)` 一致，属性字节同为 `5d 00 00 00 01`（我们用标准库 `lzma`，preset 5）。
+  外层 `yrpX` 与内嵌 `yrp1` 各自压缩（主机对两者都调用 `EndRecord`）。与 EDOPro 的两处不同：标准库的编码器在流末尾写结束标记（EDOPro 不写；
+  EDOPro 的 `LzmaUncompress` 解到 `datasize` 字节即停，读不到这几个字节），同样参数下我们的输出比 SDK 的大约 1%；EDOPro 把压缩输出上限设为
+  `0x20000`（yrpX）/ `0x1000`（yrp1）字节、超出即截断，我们不设上限（实际对局远小于上限：64 回合约 20 KB，内嵌 yrp1 约 1 KB）。
 - 正文：双方名字（按座位：先攻方在前）、u64 规则 flag、数据包流 `[u8 消息][u32 长度][负载]`，内容与 EDOPro 主机（`GenericDuel`）录进回放的逐字节相同：
   - `MSG_START` 之后：双方卡组（`PseudoRefreshDeck`，flag `0x1181fff`，核心查询原样拷贝）、双方额外卡组（`RefreshExtra`）的 `MSG_UPDATE_DATA`；
   - 每条核心消息照 `GenericDuel::Analyze`：去掉决策消息和仅发给单方的提示（1/2/3/5）；`BeforeParsing` 在待机/战斗指令前刷新双方怪兽区、魔陷区、手牌，
@@ -73,9 +79,19 @@ gzip 截断或损坏、不是合法 JSON / 不是 JSON 对象、缺少必需键�
   胜者取回放记录的 `result.winner`（换算成座位，平局 = 2），原因 `0x3`，EDOPro 显示为「[败者] Time limit up」，平局显示 Draw Game。没有记录终局的回放（如 `from_yrp` 读入的）不追加。
 - 最后一个包（消息号 231，`OLD_REPLAY_MODE`）内嵌完整的 `yrp1`：同一种子、LP/起手/抽卡、规则 flag、按加载顺序（洗牌后）的双方卡组、应答日志。EDOPro 勾选「yrp 模式」时用自己的核心按它重新模拟。
 
-刷新包让文件变大（每次刷新卡组都带 40 张卡的查询）：64 回合的一局约 3.3 MB，11 回合约 1 MB（EDOPro 自己的回放用 LZMA 压缩，我们不压缩）。
+刷新包让正文变大（每次刷新卡组都带 40 张卡的查询），但重复度极高，LZMA 压缩后只剩百分之一左右：
 
-测试：`test_yrpx_export_structure` 用与 EDOPro 相同的解析逻辑读回文件并核对各字段；`test_embedded_yrp1_resimulates_like_edopro_old_mode` 只凭文件内容按 EDOPro 旧模式的步骤重跑核心，
+| 对局 | 不压缩 | LZMA |
+|------|-------:|-----:|
+| snake_eye vs kashtira，seed 1（random vs random，27 回合） | 1,988,021 B | 14,955 B |
+| snake_eye vs kashtira，seed 1，`--agent-a greedy`（11 回合） | 994,137 B | 10,877 B |
+| purrely vs yubel，seed 3（64 回合） | 3,329,595 B | 20,446 B |
+
+压缩一局约多花 0.25 秒。
+
+测试：`test_yrpx_export_structure` 用与 EDOPro 相同的解析逻辑（压缩时照 `LzmaUncompress`：头里的属性 + 裸流，解到 `datasize` 为止）读回文件并核对各字段，
+压缩与不压缩两种都测，压缩时外层与内嵌 `yrp1` 都带 `COMPRESSED`、属性为 EDOPro 的 `5d 00 00 00 01`；
+`test_compression_changes_only_the_encoding_and_shrinks_the_file` 核对两种文件除 flag / 属性 / `datasize` 外头相同、数据包逐字节相同、整局压缩后不到二十分之一；`test_embedded_yrp1_resimulates_like_edopro_old_mode` 只凭文件内容按 EDOPro 旧模式的步骤重跑核心，
 得到与原局逐字节相同的消息流；`test_stream_carries_the_host_refresh_packets` 核对刷新包的位置与形状（开局卡组/额外卡组与直接查询核心一致、新回合前的四个场地刷新、抽卡后的手牌刷新、
 移动后的单卡刷新、决策前的六个刷新、负载 flag 升序）；`test_recorded_at_is_the_header_date_of_both_replays`、`test_limit_games_end_with_a_host_msg_win` 覆盖日期与限时终局。
 
@@ -96,6 +112,11 @@ gzip 截断或损坏、不是合法 JSON / 不是 JSON 对象、缺少必需键�
 | tearlaments vs branded_despia，seed 11，`--max-turns 4` | 限回合平局 | 886 + 1 | 相同，另加 `MSG_WIN [2, 3]` |
 | purrely vs fiendsmith_ryzeal，seed 5，`--first b --max-turns 6` | 限回合按 LP 判胜 | 1509 + 1 | 相同，另加 `MSG_WIN [1, 3]` |
 
+以上对照在加入压缩之前完成，比较的是解压后的数据包流；压缩不改变解压后的内容（`test_compression_changes_only_the_encoding_and_shrinks_the_file`）。
+压缩部分另用 EDOPro 源码树里的 LZMA SDK（`gframe/lzma`，编译 `LzmaCompress` / `LzmaUncompress`）核对（2026-09）：对同一正文，EDOPro 参数下 SDK 输出的属性字节与我们相同；
+SDK 的 `LzmaUncompress` 解开我们的外层与内嵌 `yrp1` 均返回 `SZ_OK`，得到与不压缩导出相同的正文；反过来，用 SDK 压缩的文件（无结束标记）我们的读取器也能读回。
+压缩后的文件尚未在 EDOPro 客户端里打开过。
+
 ## 读取 `.yrp` / `.yrpX`（T4a.1）
 
 ```python
@@ -108,7 +129,7 @@ result = rep.play()                        # 按文件里的种子、规则、�
 ```
 
 - 解析照 `gframe/replay.cpp`：普通头 32 字节，带 `EXTENDED_HEADER` 时 72 字节（含 4 个 u64 种子）；`COMPRESSED` 标志时正文是 LZMA（头里存 5 字节属性、`datasize` 为解压后长度），
-  用标准库 `lzma` 以 `.lzma` 格式重组后解压；`yrpX` 的数据包流中 `OLD_REPLAY_MODE` 包即内嵌的 `yrp1`；应答以长度 0 结尾或读到数据末尾为止（求解器写结尾 0，我们的导出不写）。
+  用标准库 `lzma` 以 `.lzma` 格式重组后解压（带不带结束标记都能读，即 EDOPro 写的与我们写的）；`yrpX` 的数据包流中 `OLD_REPLAY_MODE` 包即内嵌的 `yrp1`；应答以长度 0 结尾或读到数据末尾为止（求解器写结尾 0，我们的导出不写）。
 - 截断、标识不对、解压失败、声明长度超过实际数据都抛 `YrpError`（`ValueError` 子类），不会返回半截结果。
 - `Replay.from_yrp` 只接受 1 对 1、带扩展头的回放：`seed_words` 取文件的种子字（不再由 `seed` 经 `expand_seed` 得到），`shuffle_decks=False`、卡组按文件的加载顺序，
   `first=0`（文件的第一套卡组是引擎玩家 0，记为 a）；规则 flag 与 LP / 起手 / 抽卡数取自文件，不带环境；头里的时间戳作为 `recorded_at`（为 0 时记 `None`），`seed` 记 0
