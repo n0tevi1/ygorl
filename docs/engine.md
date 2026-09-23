@@ -131,7 +131,7 @@ result = Duel(seed=1, env=None, deck_a=a, deck_b=b).run(RandomAgent(1), RandomAg
 print(result.summary())
 ```
 
-- AEC 语义：谁被问谁决策；`DecisionPoint` 含决策消息、合法动作、回合、阶段、LP 和上次决策以来的事件。决策消息里对决策方隐藏的卡已去掉卡密（`messages.hide_private`，见 [encoding.md](encoding.md)「决策中的隐藏信息」）；**事件是核心的全知视角**；按 viewer 可见性过滤后的事件流见 [encoding.md](encoding.md)「事件 token 流」（`ygorl.env.events.EventHistory`）。
+- AEC 语义：谁被问谁决策；`DecisionPoint` 含决策消息、合法动作、回合、阶段、LP 和上次决策以来的事件；`undo` 是只撤销上一步的动作下标（退出刚开始的命令、立即反悔的选 / 取消选），编码时被遮住，见 [encoding.md](encoding.md)「撤销类空操作」。决策消息里对决策方隐藏的卡已去掉卡密（`messages.hide_private`，见 [encoding.md](encoding.md)「决策中的隐藏信息」）；**事件是核心的全知视角**；按 viewer 可见性过滤后的事件流见 [encoding.md](encoding.md)「事件 token 流」（`ygorl.env.events.EventHistory`）。
 - 引擎玩家 0 先攻；`first=1` 让 b 先攻。结果按 (a, b) 顺序报告。
 - 核心在 `MSG_WIN` 之后仍会继续处理，主机（EDOPro 与我们）在第一个 `MSG_WIN` 处结束对局。胜负原因：1 = LP，2 = 卡组耗尽，0x10 以上为卡片特殊胜利。
 - 回合上限 / 决策数上限（`DuelConfig.max_turns / max_decisions`）触发时 LP 高者胜，相等为平局。

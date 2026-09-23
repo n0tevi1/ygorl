@@ -162,6 +162,9 @@ public:
     int win_reason() const { return win_reason_; }
     uint32_t retries() const { return retries_; }
     uint32_t unknown_messages() const { return unknown_; }
+    // Indices of the current actions that only undo the previous step (docs/encoding.md 「撤销类空操作」;
+    // mirror of DuelTracker._undo); never all of them.
+    std::vector<size_t> undo() const;
 
 private:
     TrackerConfig cfg_;
@@ -178,6 +181,16 @@ private:
     std::optional<Decision> last_decision_;
     std::unique_ptr<DecisionState> state_;
     std::vector<std::string> responses_;
+    // no-op undo tracking: the player inside a command just started from a menu (-1: none), and the last
+    // select / unselect of a SELECT_UNSELECT_CARD; any game event clears both
+    int inside_ = -1;
+    struct Toggle {
+        int player = -1;
+        Kind kind = SELECT;
+        uint32_t code = 0;
+        Loc loc;
+    };
+    std::optional<Toggle> toggle_;
 };
 
 // Observation encoder (mirror of env.encoding.ObservationEncoder, docs/encoding.md).

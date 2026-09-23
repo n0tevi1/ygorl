@@ -197,7 +197,8 @@ def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=Non
     """Every verified line of every solved record (plain and ``--fire``) as training samples.
 
     Kept: the decisions of ``player`` with at least two legal actions whose demonstrated row is encoded
-    (< 128), minus select/unselect toggles (:func:`undone_steps`); ``skipped`` counts the rest.
+    (< 128), minus select/unselect toggles (:func:`undone_steps`) and steps the mask hides as no-op undos;
+    ``skipped`` counts the rest.
     """
     columns: dict[str, list[np.ndarray]] = {}
     actions: list[int] = []
@@ -219,6 +220,8 @@ def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=Non
                     skipped["forced"] += 1  # one legal action, or only equivalent copies of one
                 elif st.action >= MAX_OPTIONS:
                     skipped["beyond_128"] += 1
+                elif not st.obs["action_mask"][canonical_action(st.obs, st.action)]:
+                    skipped["undo"] += 1  # undoes the previous step (docs/encoding.md 「撤销类空操作」)
                 else:
                     for k in OBS_KEYS:
                         if k in st.obs:

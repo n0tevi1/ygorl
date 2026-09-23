@@ -94,6 +94,13 @@ def mask_duplicates(cards: np.ndarray, actions: np.ndarray, mask: np.ndarray, de
     mask[:n] = rep == np.arange(n)
 
 
+def mask_undo(mask: np.ndarray, undo) -> None:
+    """Hide the rows that only undo the previous step (docs/encoding.md 「撤销类空操作」), keeping at least one row."""
+    rows = [i for i in undo if i < len(mask) and mask[i]]
+    if rows and int(np.count_nonzero(mask)) > len(rows):
+        mask[rows] = 0
+
+
 def canonical_action(obs: Mapping[str, np.ndarray], index: int) -> int:
     """The row the policy can choose for action ``index`` of an encoded observation (its class representative)."""
     n = min(int(obs["globals"][20]), MAX_OPTIONS)
@@ -148,6 +155,7 @@ class ObservationEncoder:
             table[:n] = np.asarray(rows[:n], dtype=np.int64).astype(np.int32)
         actions, mask = self._actions(point, viewer, keys, deck_rows, n)
         mask_duplicates(table, actions, mask, point.decision.TYPE)
+        mask_undo(mask, point.undo)
         return {"cards": table, "globals": self._globals(point, core, viewer), "actions": actions, "action_mask": mask}
 
     def encode_privileged(self, point: DecisionPoint, core) -> dict[str, np.ndarray]:

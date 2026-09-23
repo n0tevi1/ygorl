@@ -72,6 +72,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `viewer` | 视角玩家 | 观测按其可见性编码 |
 | public / hidden | 公开 / 隐藏 | `messages.is_hidden_from` 定义对决策方隐藏的卡 |
 | equivalent action / `canonical_action` | 等价动作 / 代表行 | 同一张卡的多张副本在同一决策里各占一行时只保留第一行（`action_mask`），见 encoding.md「等价动作去重」 |
+| no-op undo / `DecisionPoint.undo` | 撤销类空操作 | 退出刚开始的命令、立即反悔的选 / 取消选；局面回到完全相同的决策，`action_mask` 遮住，见 encoding.md |
 | `abstain` | 放弃响应 token | 有响应窗口而未连锁（事件流） |
 | `snapshot` / `restore` | 快照 / 恢复 | 每局 arena 的内存拷贝（T2.8） |
 | `fork` / `branch` / `rollout` | 分叉 / 分支 / 推演 | 从某个决策点尝试候选并下完（T2.9） |
