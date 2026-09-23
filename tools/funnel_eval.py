@@ -1,7 +1,7 @@
 """Funnel stage 1 on candidate decks: solver opening analysis, filter verdict and QD descriptors (T5.6).
 
 Usage: uv run python tools/funnel_eval.py DECK.ydk|DIR ... [--targets tests/decks/solver_targets.json]
-           [--hands 12] [--seed 0] [--solve-ms 5000] [--fire 14558127 ...] [--no-fire] [--fire-ms 3000]
+           [--hands 12] [--seed 0] [--solve-ms 10000] [--fire 14558127 ...] [--no-fire] [--fire-ms 3000]
            [--workers 1] [--max-rollouts N] [--max-brick-rate 0.5] [--min-survival 0] [--no-filter] [--keep-demos]
            [--env VERSION] [--out out/funnel/results.jsonl]
 

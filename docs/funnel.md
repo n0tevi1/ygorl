@@ -22,7 +22,7 @@ tools/funnel_budget.py   预算研究：手数 × 每手求解时间 × fire_ms 
 from ygorl.build.funnel import FunnelConfig, FunnelFilter, evaluate_deck, evaluate_genotype
 from ygorl.cards.ydk import load_ydk
 
-cfg = FunnelConfig(hands=12, solve_ms=5000, fire=(14558127,), fire_ms=3000, workers=2)
+cfg = FunnelConfig(hands=12, solve_ms=10000, fire=(14558127,), fire_ms=3000, workers=2)
 res = evaluate_deck(load_ydk("tests/decks/labrynth.ydk"), ["1225009", "5380979@szone:fd"], cfg, filter=FunnelFilter(max_brick_rate=0.5))
 res.passed, res.reasons            # 过滤结论（淘汰时给出原因）
 res.brick_rate, res.brick_interval(), res.hand_trap_survival, res.combo_length()
@@ -70,9 +70,10 @@ uv run python tools/validate_funnel.py out/funnel/validate.jsonl --rollouts 1000
 
 设计文档与工程计划没有给出第一层的数字预算，这里按用途定为 **每套牌 120 求解器进程秒**（`DEFAULT_BUDGET_S`）：
 第一层要在代理模型（T5.7）和真实对局（第三层：每候选微调 B 局 + 数百局评估，按进程小时计）之前把大部分候选筛掉，
-目标是 16 核机器一天能筛约 1 万个候选（16 × 86,400 / 10,000 ≈ 138 秒 / 套）。默认参数（12 手、`solve_ms` 5 秒、Ash Blossom 一张、`fire_ms` 3 秒）
-的最坏情况是 12 × 5 秒卡手 = 60 秒 plain，再加有线手的 `--fire`。**这个数字是工程取值，需要设计方确认**（见文末「待定」）。
-实测评估见下文「预算研究」：120 秒 / 套合理；但每手 5 秒会系统性高估长 combo 牌组的卡手率，建议改为每手 10 秒（仍在 120 秒均值内）。
+目标是 16 核机器一天能筛约 1 万个候选（16 × 86,400 / 10,000 ≈ 138 秒 / 套）。默认参数（12 手、`solve_ms` 10 秒、Ash Blossom 一张、`fire_ms` 3 秒）
+的最坏情况是 12 × 10 秒卡手 = 120 秒 plain，再加有线手的 `--fire`；实测均值约 101 秒 / 套（最大 137 秒）。
+120 秒 / 套与每手 10 秒已经设计方确认（2026-09-23），依据见下文「预算研究」：每手 5 秒会系统性高估长 combo 牌组的卡手率。
+下文验收实验是在旧默认值（每手 5 秒）下做的。
 
 ## 验收实验：卡手率与真实首回合一致（配对检验）
 
@@ -317,7 +318,7 @@ combo 长度在 12 手时已经很稳定（平均差不到半个动作）；抗�
 3. **手数保持 12。** 12 手的抽样 SD（约 13 pp）是剩余误差的主项，但加手数的成本是线性的；对过滤器（门槛 0.5）12 手足以区分 p ≤ 0.3 与 p ≥ 0.8，
    对 QD 只撑得起卡手率约 3 箱。更细的分辨率交给 T5.8 的**逐级加预算**（设计文档 5.1：Optuna successive-halving）：所有候选先 12 手，
    进入档案、落在门槛或箱界附近的候选再补到 24–48 手。第 `i` 手的种子与计划手数无关，补测只需再跑第 12–47 个种子（`evaluate_deck` 目前总从第 0 手开始，需要加一个起始序号参数）。
-4. **默认值暂未修改**：120 秒保留无需改动；`solve_ms` 5 → 10 秒是一个吞吐与偏差的取舍（等成本的 5 秒 × 18 手总 RMSE 相同，只是误差构成不同），留给设计方确认后再改 `FunnelConfig.solve_ms`（一行，`DEFAULT_BUDGET_S` 不变）。
+4. **默认值已改**：经设计方确认，`FunnelConfig.solve_ms` 由 5 秒改为 10 秒（`DEFAULT_BUDGET_S` 120 秒不变）。这是吞吐与偏差的取舍：等成本的 5 秒 × 18 手总 RMSE 相同，但误差里有与 combo 长度相关、不会平均掉的一块。
 5. **可复现**：`FunnelConfig.max_rollouts` / `funnel_eval.py --max-rollouts` 已接到求解器的 `--max-rollouts`（每个搜索阶段、每个进程的 rollout 数上限）；
    墙钟 `solve_ms` 仍限制每个阶段，所以要把 `solve_ms` 设得足够大让计数先到。实测 snake_eye 4 手 `--max-rollouts 2000 --solve-ms 60000` 两次运行的线逐手相同（每套约 64 秒）。
    计数预算与秒数的换算因牌组而异，本研究仍用墙钟预算（且 5 秒两次运行在不同负载下 0 / 120 不一致，墙钟预算在当前负载范围内已足够稳定）。
@@ -357,5 +358,5 @@ combo 长度在 12 手时已经很稳定（平均差不到半个动作）；抗�
 
 ## 待定
 
-- 第一层预算的正式数字（本文按 120 求解器进程秒 / 套取值，「预算研究」认为合理）、每手求解时间（研究建议 5 → 10 秒）与默认过滤门槛（卡手率 ≤ 0.5、不设抗手坑门槛）需要设计方确认。
+- 默认过滤门槛（卡手率 ≤ 0.5、不设抗手坑门槛）需要设计方确认；预算（120 秒 / 套）与每手 10 秒已确认。
 - 基因型的目标场面如何自动生成（见「局限」），决定后 T5.8 才能把本层接到 MAP-Elites 上。
