@@ -9,7 +9,8 @@ deck-pool sampling with paired first / second games.
 - :class:`SelfPlaySchedule`: ``next_game() -> Assignment`` for the rollout collector. Games are dealt in
   pairs: one seed, one deck pairing, one opponent, played once with deck a first and once with deck b first
   (先后攻配平). A deal is self-play with probability ``selfplay_fraction``, else against a pool snapshot with
-  the learner on a random side.
+  the learner on a random side. The snapshot is resolved when the pair is dealt and held until the next deal
+  (``opponent(sid)``), so an eviction between the pair's two games cannot lose it.
 """
 
 from __future__ import annotations
@@ -155,19 +156,30 @@ class SelfPlaySchedule:
         self.rng = np.random.default_rng(derive_seed(seed, 1))
         self.deals = 0
         self._queue: deque[Assignment] = deque()
+        self._held: dict[int, nn.Module] = {}  # snapshots of the current deal, resolved when it was dealt
 
     def __call__(self) -> Assignment:
         if not self._queue:
             self._deal()
         return self._queue.popleft()
 
+    def opponent(self, sid: int) -> nn.Module:
+        """The snapshot module of a dealt pool game (the collector's ``opponents``), even if since evicted."""
+        held = self._held.get(sid)
+        return held if held is not None else self.pool.get(sid)
+
     def _deal(self) -> None:
         deck_a, deck_b = self.decks.sample(self.rng)
         seed = derive_seed(self.seed, 2, self.deals)
         self.deals += 1
+        # Only called with an empty queue, and the collector resolves each game's opponent as it starts it,
+        # so nothing still needs the previous deal's snapshot.
+        self._held.clear()
         opponent = None
         if self.rng.random() >= self.selfplay_fraction:
             opponent = self.pool.sample(self.rng)
+            if opponent is not None:
+                self._held[opponent] = self.pool.get(opponent)
         side = int(self.rng.integers(2))  # the learner's deck in a pool game: 0 = deck_a, 1 = deck_b
         for first in (0, 1):
             spec = GameSpec(seed=seed, deck_a=deck_a, deck_b=deck_b, first=first, config=self.config)
@@ -184,6 +196,7 @@ class SelfPlaySchedule:
         self.deals = int(state["deals"])
         self.rng.bit_generator.state = state["rng"]
         self._queue.clear()
+        self._held.clear()
 
 
 __all__ = ["DeckPool", "PAIRINGS", "SelfPlaySchedule", "Snapshot", "SnapshotPool"]

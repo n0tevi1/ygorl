@@ -49,7 +49,7 @@ class FunnelConfig:
 
     hands: int = 12
     seed: int = 0  # base seed of the hand shuffles
-    solve_ms: int = 5_000  # solver search budget per hand (and per target alternative)
+    solve_ms: int = 10_000  # solver search budget per hand (and per target alternative); 5 s over-calls long combos
     fire: tuple[int, ...] = (ASH_BLOSSOM,)  # hand traps of the --fire variant; () skips it
     fire_ms: int = 3_000  # solver budget per --fire window
     workers: int = 1  # parallel solver processes for one deck (1: in this process)
