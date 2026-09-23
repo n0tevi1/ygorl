@@ -34,6 +34,30 @@ def log_scale(x: Tensor) -> Tensor:
     return torch.log1p(x.clamp(min=0).float()) / LOG_CLAMP
 
 
+SMALL_TABLE = 1024  # tables up to this many rows take the multi-hot matmul backward of _SummedRows
+
+
+class _SummedRows(torch.autograd.Function):
+    """``weight[idx].sum(1)`` for ``idx`` ``[M, C]`` over a small table.
+
+    Forward: ``F.embedding_bag`` (no ``[M, C, d]`` intermediate). Backward: ``counts.T @ grad`` with the multi-hot
+    count matrix ``[M, rows]``; the default embedding backward expands the gradient to ``[M, C, d]`` and sorts
+    ``M * C`` indices, several times slower on CPU. Same values up to float summation order.
+    """
+
+    @staticmethod
+    def forward(ctx, idx: Tensor, weight: Tensor) -> Tensor:
+        ctx.save_for_backward(idx)
+        ctx.rows = weight.shape[0]
+        return nn.functional.embedding_bag(idx, weight, mode="sum")
+
+    @staticmethod
+    def backward(ctx, grad: Tensor):
+        (idx,) = ctx.saved_tensors
+        counts = grad.new_zeros(idx.shape[0], ctx.rows).scatter_add_(1, idx, grad.new_ones(idx.shape))
+        return None, counts.t() @ grad
+
+
 class CategoricalEmbedding(nn.Module):
     """Sum of one embedding per column; column ``i`` is clamped to ``[0, sizes[i])``."""
 
@@ -46,7 +70,13 @@ class CategoricalEmbedding(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         idx = torch.minimum(x.clamp(min=0), self.limits) + self.offsets
-        return self.table(idx).sum(-2)
+        flat = idx.reshape(-1, idx.shape[-1])
+        weight = self.table.weight
+        if weight.shape[0] <= SMALL_TABLE:
+            out = _SummedRows.apply(flat, weight)
+        else:  # e.g. the action encoder's system-string buckets: a count matrix would be too large
+            out = nn.functional.embedding_bag(flat, weight, mode="sum")
+        return out.view(*idx.shape[:-1], weight.shape[1])
 
 
 class CardIdentity(nn.Module):
@@ -250,5 +280,26 @@ class BoardEncoder(nn.Module):
         n_special = len(tokens)
         x = torch.cat([*tokens, self.cards(cards)], 1)
         keep = torch.cat([card_mask.new_ones(card_mask.shape[0], n_special), card_mask], 1)
-        x = self.norm(self.transformer(x, src_key_padding_mask=~keep))
+        pad = torch.zeros(keep.shape, dtype=x.dtype, device=x.device).masked_fill_(~keep, float("-inf"))[:, None, None]
+        for layer in self.transformer.layers:  # pre-norm layers, same math as nn.TransformerEncoderLayer
+            x = x + _self_attention(layer, layer.norm1(x), pad)
+            x = x + layer.dropout2(layer.linear2(layer.dropout(layer.activation(layer.linear1(layer.norm2(x))))))
+        x = self.norm(x)
         return x[:, 0], x[:, n_special:], card_mask
+
+
+def _self_attention(layer: nn.TransformerEncoderLayer, x: Tensor, pad: Tensor) -> Tensor:
+    """``layer.self_attn(x, x, x, key_padding_mask)`` (batch first) as one packed projection + SDPA.
+
+    Same operations as the training path of ``F.multi_head_attention_forward``, without its packed-projection
+    copies (their backward zero-fills a ``[3, N, B, d]`` buffer per projection); forward outputs are bitwise equal
+    to it and eval mode no longer switches to the fused inference kernel.
+    """
+    attn = layer.self_attn
+    b, n, d = x.shape
+    heads = attn.num_heads
+    qkv = nn.functional.linear(x, attn.in_proj_weight, attn.in_proj_bias).view(b, n, 3, heads, d // heads)
+    q, k, v = qkv.permute(2, 0, 3, 1, 4).unbind(0)
+    y = nn.functional.scaled_dot_product_attention(q, k, v, pad, attn.dropout if attn.training else 0.0)
+    y = nn.functional.linear(y.transpose(1, 2).reshape(b, n, d), attn.out_proj.weight, attn.out_proj.bias)
+    return layer.dropout1(y)

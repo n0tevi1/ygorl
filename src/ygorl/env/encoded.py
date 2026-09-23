@@ -48,11 +48,14 @@ class EncodedVecEnv:
 
     def __init__(self, num_envs: int, num_threads: int | None = None, cards=None, scripts=None,
                  vocab: CardVocab | None = None, privileged: bool = False,
-                 event_length: int = DEFAULT_EVENT_LENGTH) -> None:  # fmt: skip
+                 event_length: int = DEFAULT_EVENT_LENGTH, skip_forced: bool = False) -> None:  # fmt: skip
         """``privileged=True`` is training mode: events also carry ``privileged`` (opponent ground truth).
 
         The default (inference mode) never computes it. Evaluation and play must use the default.
         ``event_length`` is the number of event tokens per observation (docs/encoding.md; 0 = none).
+        ``skip_forced=True`` plays every decision with exactly one choosable row (one legal action, or only
+        equivalent copies of one; docs/encoding.md) inside the C++ loop, so
+        only decisions with a real choice come back (the games are identical; ``step`` counts differ).
         """
         self.cards = cards if cards is not None else default_cards()
         self.vocab = vocab if vocab is not None else CardVocab.from_db(self.cards)
@@ -60,11 +63,12 @@ class EncodedVecEnv:
         threads = num_threads or max(1, min(num_envs, os.cpu_count() or 1))
         self._pool = _core.HostPool(num_envs, threads, self.cards.to_core(),
                                     scripts if scripts is not None else default_scripts(), passwords,
-                                    privileged, event_length)  # fmt: skip
+                                    privileged, event_length, skip_forced)  # fmt: skip
         self.num_envs = num_envs
         self.num_threads = threads
         self.privileged = privileged
         self.event_length = event_length
+        self.skip_forced = skip_forced
 
     def reset(self, env_id: int, spec: GameSpec) -> None:
         if spec.config.curriculum != "full" or spec.config.augmented_start:
@@ -90,7 +94,8 @@ class EncodedVecEnv:
         return self._pool.pending()
 
     def play(self, specs: Sequence[GameSpec], choose: Callable[[int, int, int], int]) -> list[dict]:
-        """Play every spec with ``choose(seed, step, n_legal) -> index``; results in spec order."""
+        """Play every spec with ``choose(seed, step, n) -> k``, which picks the ``k``-th of the ``n`` rows the mask
+        leaves (equivalent copies are masked, docs/encoding.md); results in spec order."""
         results: list[dict | None] = [None] * len(specs)
         queue = iter(enumerate(specs))
         running: dict[int, list] = {}  # env -> [spec index, step]
@@ -112,7 +117,7 @@ class EncodedVecEnv:
                     if not launch(ev.env_id):
                         active -= 1
                     continue
-                n = int(ev.obs["action_mask"].sum())
+                legal = np.flatnonzero(ev.obs["action_mask"])
                 running[ev.env_id][1] = step + 1
-                self.step(ev.env_id, choose(specs[i].seed, step, n))
+                self.step(ev.env_id, int(legal[choose(specs[i].seed, step, len(legal))]))
         return results  # type: ignore[return-value]

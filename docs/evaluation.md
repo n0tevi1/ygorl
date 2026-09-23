@@ -21,6 +21,9 @@ AgentFactory = Callable[[int], Agent]                 # 种子 -> 新 agent
 - 可选方法 `observe(point, core)`：`Duel.run` 在对局的**每个**决策点（双方的都算）按顺序、在行动方 `act` 之前调用，`core` 是活的核心句柄（只做查询）。编码观测的 agent 需要它：事件流跨越对手的决策，卡片表要查询核心（`NetPolicy`，[bc.md](bc.md)）。同一实例坐两个座位时每个点只调用一次。
 - 并行 `Arena` 需要把 factory 发到子进程，所以 factory 必须可 pickle：类本身（`GreedyAgent`）、模块级函数或 `functools.partial`。
 - `agent_name(x)` 给类、实例、函数或 partial 取可读名字（优先类属性 `name`）。
+- 可选钩子（T4b.4）：`Duel.run` 开局时对每个 agent 调一次 `on_duel_start(duel)`（拿到种子、规则、装载顺序的牌组），
+  每个决策答完后对**两个座位**的 agent 都调 `on_decision(point, index)`（同一实例坐两个座位时只调一次）。
+  需要跟踪整局的 agent（如下面的策略检查点 agent）用它们；只走 `Duel.run` 路径，`VecDuelEnv` / 回放 / 分叉不调用。
 
 ## 基线 agent
 
@@ -29,6 +32,26 @@ AgentFactory = Callable[[int], Agent]                 # 种子 -> 新 agent
 | `RandomAgent(seed)` | 均匀随机合法动作 |
 | `GreedyAgent(seed, cards=None)` | 确定性启发式，见下 |
 | `PolicyAgent(policy, seed=None, greedy=False, temperature=1.0)` | `policy(point)` 对每个动作打分（logit），按 `softmax(score / T)` 采样或取 argmax；暴露 `last_probs`。M4 的网络策略从这里接入：`PolicyAgent(NetPolicy.from_checkpoint(path))`，或规格 `policy:PATH`（[bc.md](bc.md)） |
+| `CheckpointAgent(path, seed, greedy=False, temperature=1.0)` | 训练出的 PPO checkpoint（T4b.4），见下「策略检查点 agent」；登记名 `policy:PATH[@greedy][@t=T]`（与 BC 检查点共用一个名字，按文件的 `format` 字段选加载方式）；`policy-greedy:PATH` 是 `@greedy` 的简写 |
+
+### 策略检查点 agent（`ygorl/agents/checkpoint.py`）
+
+策略网络吃的是 C++ 编码器的观测（[encoding.md](encoding.md)：卡片表、全局向量、候选表、事件 token 流），要引擎状态和整局的事件流；
+Agent 协议只给一个 `DecisionPoint`。适配方式是**锁步 C++ 主机**：
+
+1. `on_duel_start(duel)`：用这局的核心种子（`duel.core_seed`）、规则、起始 LP / 手牌与装载顺序的牌组（`duel.loaded_decks()`）
+   启动一个 `_core.HostDuel`（事件窗口长度取 checkpoint 的配置、词表取 checkpoint 里保存的 `CardVocab`）——同一局棋。
+2. `on_decision(point, index)`：两个座位的每个决策都在自己的主机里重放一遍，主机的事件历史与对局一致。
+3. `act(point)`：先核对主机问的座位与候选数和 Python 追踪器一致（不一致即抛错，说明两套主机分叉），`host.observe()` 就是
+   `EncodedVecEnv` 在同一决策上给出的观测；网络采样（或 argmax）一个候选行号。`last_probs` 为各动作概率（第 128 个之后为 0）。
+
+于是 `ygorl duel` / `ygorl arena` / `ygorl matrix` 直接可用：`--agent-a policy:out/train/run1/best.pt`。单测
+`tests/test_train_loop.py::test_policy_agent_plays_legal_moves_in_lockstep` 把一局按同样的动作序列在 `EncodedVecEnv` 里重放，
+逐个决策比对观测完全相同。限制：只能选前 128 个候选（编码截断）；不支持课程模式与增广开局（C++ 步进路径尚无课程过滤）；
+checkpoint 每个进程按路径只读一次；并行 Arena 的子进程里 PyTorch 限 1 线程。需要 `train` 可选依赖（未安装时构造报错）。
+
+另一条路是批量评估器：直接在 `EncodedVecEnv` 上让检查点对另一个检查点 / 随机对局（训练里的快照对手就是这样打的）。
+Greedy 依赖 `DecisionPoint`，不能走那条路，所以对基线的评估统一用上面的 Arena 路径。
 
 ### GreedyAgent 规则
 
@@ -73,6 +96,8 @@ Arena 自己用 `shuffle_deck(main, s_p, 0/1)` 洗好双方主卡组，再以 `D
 
 **确定性**：每局由 `GameSpec`（种子、先攻、洗好的牌组、agent 种子、环境、配置）完全决定；
 `workers > 1` 时用 `multiprocessing` 进程池 `map`，结果按局序排列，与进程数无关（`test_results_do_not_depend_on_worker_count`）。
+进程启动方式默认随平台（Linux 为 fork）；父进程已加载 PyTorch 时（例如校验过 `policy:` 规格）改用 `spawn`——fork 一个初始化过
+PyTorch 线程池的进程会让子进程死锁；`Arena(mp_context=...)` 可显式指定。
 factory 必须可 pickle。某局抛异常时记为 `reason="exception"`（胜者为空）并计入 `errors`，不中断整个评估。
 
 **报告** `ArenaReport`（均为 agent a 视角）：

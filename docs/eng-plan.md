@@ -88,6 +88,10 @@ M2 遗留事项（验收之外发现、需要在后续任务前解决）：
 | T4d.1 | 多牌组池：10 套 MD meta + off-meta 噪声采样；课程三阶段调度；中局开局（带标志位） | T4b.5, T2.6, T2.8, T2.9 | 每套牌胜率不塌陷（对 Greedy ≥ 基线） | [#36](https://github.com/n0tevi1/ygorl/issues/36) |
 | T4d.2 | 利用者训练 `train/exploiter.py`：平台期自动启动；对主 agent 的可利用性曲线 | T4d.1 | 可利用性随训练下降的曲线 | [#37](https://github.com/n0tevi1/ygorl/issues/37) |
 
+M4 待议的消融（不改变主线设计，结果先入 `docs/experiments/`）：
+
+- **MaxRL 对照**：主训练循环按设计用 PPO + VRPO（T4b.4）。在单人展开课程阶段（先攻回合是否到达目标场面，二元奖励），对比 MaxRL 式目标（最大化成功概率的对数，同一起点多次 rollout 估计梯度；起点用 T2.8 快照复制，求解器示范线可作成功样本）与 PPO/VRPO 的样本效率。T4b.4 的损失函数应可插拔以便接入。
+
 ### M5 数据与组牌
 
 | ID | 任务 | 依赖 | 验收标准 | Issue |

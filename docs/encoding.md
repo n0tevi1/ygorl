@@ -7,7 +7,7 @@
 | `cards` | `[N_CARDS=160, F=23]` | 卡片 token 表，按下文顺序排列，未用行全 0 |
 | `globals` | `[G=22]` | 全局向量 |
 | `actions` | `[MAX_OPTIONS=128, A=10]` | 当前 step 的合法动作（多选已拆步，见 [engine.md](engine.md)） |
-| `action_mask` | `[MAX_OPTIONS]` | 1 = 该行是合法动作 |
+| `action_mask` | `[MAX_OPTIONS]` | 1 = 该行是合法动作，且是其等价类的第一行（见下「等价动作去重」） |
 
 卡片身份用 `CardVocab` 下标（`0` 填充，`1` 未知/背面，真实卡从 `2` 起；见 `ygorl.cards.cdb.CardVocab`）。`CardVocab.from_db(db)` 按卡密排序新建，卡库增卡后下标会整体移动；训练产物必须与所用词表一起保存（`CardVocab.save`），卡库更新时用 `CardVocab.from_db(db, base=旧词表)` 只追加新卡，旧下标不变（T6.3 热启动依赖这一点）。
 
@@ -94,13 +94,23 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 **决策中的隐藏信息**：核心在 SELECT_CARD / SELECT_TRIBUTE / SELECT_UNSELECT_CARD 里写的是真实卡密，包括对手里侧、手牌、卡组中的卡（例如选择破坏对手盖放的卡）；EDOPro 服务端把这三种消息里对手卡的卡密清零后才发给玩家（`generic_duel.cpp` `Sending`）。主机在解码决策时做同样的事（`messages.hide_private`，C++ `host::hide_private`）：对手的卡若不在墓地 / 超量素材中，且在卡组 / 手牌中或里侧表示（SELECT_TRIBUTE 不带表示形式，未知一律按隐藏处理），卡密置 0。表侧的对手卡保留卡密（它在场上本就可见）。因此 `DecisionPoint.actions`、动作表第 2 列、以及所有 agent（含 GreedyAgent）都看不到这些卡的身份；原始消息日志（回放、`.yrpX` 导出）不受影响。这是审计发现的泄露（修复前动作表第 2 列会带出对手里侧卡的身份），`tests/test_visibility.py` 覆盖 Python 与 C++ 两条路径。
 
+**等价动作去重**：同一张卡的多张副本常各占一行（手里 3 张灰流丽 → 3 行「连锁灰流丽」），它们对决策方没有区别，却让均匀初始策略偏向发动（3/4 而不是 1/2），熵奖励也被摊到等价行上。因此 `action_mask` 只保留每个等价类的**第一行**，其余行照常编码、mask 置 0。第 i、j 行（i < j，都在前 128 行内）等价，当且仅当：
+
+1. 两行都指向卡片表中的一行（第 1 列 > 0），卡的身份对决策方可见（动作行第 2 列 > 0，且卡片表那一行 `visible` = 1）；
+2. 动作行除 `card_row`（1）与 `index`（9）外各列相同；SELECT_UNSELECT_CARD（`globals[18]`）中 `value`（8）是列表下标，也不比较；
+3. 两张卡在卡片表中的行除 `overlay_index`（3）外各列相同；卡组、手牌、额外卡组里的卡另外不比较 `sequence`（2）。怪兽区、魔陷区的序号决定纵列与连接方向，不同序号不等价；墓地、除外区的序号是先后（新来的在后），核心按卡记着「本回合送去墓地」「到结束阶段为止除外」一类状态，只能从先后看出来，所以也不合并；超量素材行的 `sequence` 是所属怪兽的序号，也必须相同。
+
+于是公开标志不同（一张已经给对手看过）、表示形式不同（表侧 / 里侧除外）、数值被效果改过、效果串不同的都不算等价；身份对决策方隐藏的卡（对手手牌、里侧卡）也不合并。同一张卡在一个决策里占多行时也按同样规则合并：特殊召唤列表里一张卡按每个召唤手续各列一次（核心按卡处理，之后再问用哪个手续），连锁列表里同一个诱发效果因不同事件各列一次（观测看不出是哪个事件）。多选拆步不受影响：选了代表行之后，下一步列出剩余的副本，任何多重集仍然可达。主机的 `skip_forced`（[training.md](training.md)）按 mask 判定：去重后只剩一行的决策也视为强制。`globals[20]` 仍是去重前的合法动作总数。`ygorl.env.encoding.canonical_action(obs, i)` 把任意一行映射到它的代表行（行为克隆、回放标签用）。10 套测试牌组 40 局随机对局里，5.3% 的非强制决策有被合并的行（SELECT_CARD 20%，多为从卡组检索多张同名卡之一；SELECT_IDLECMD 9%；SELECT_CHAIN 2%），其中 87 个因此变成强制决策。
+
+已知简化：手牌序号在对手看来可能带信息（例如对手见过被检索公开的那张卡加到了手牌末位），合并后总是用序号最小的副本；需要隐藏时仍可选洗切手牌（`shuffle`）。SELECT_SUM 的 `value` 只存求和参数的低 16 位，高 16 位（另一种等级）不同的同名卡会被合并；同名卡的这一半只有被效果改过才会不同，实际极少。
+
 **截断（未解决）**：合法动作超过 128 个时（主要是 ANNOUNCE_CARD 宣言卡名，可达上千个）只编码前 128 个，`globals[20]` 记录真实数量，`action_mask` 只标前 128 行，**第 128 行之后的动作 agent 选不到**。T2.3 只处理了多选拆步，没有处理这一点；可能的方案是把宣言拆成「先选类别 / 种族 / 属性再选卡」的多步，或按信念头排序只列前 128 个。待网络（T4b.1）落地后决定，见 [eng-plan.md](eng-plan.md) T2.3 备注。
 
 ## 实现与交叉校验
 
 - Python 参考：`ygorl.env.encoding.ObservationEncoder`（`tests/test_encoding.py`）。
 - C++：`csrc/host.{h,cpp}`（决策解码、动作状态机、主机侧 tracker）与 `csrc/obs_encoder.cpp`（编码），通过 `ygorl._core.HostDuel` / `ygorl._core.DecisionState` 暴露。
-- 校验：`tests/test_cpp_host.py` 对 19 种决策消息做随机报文 + 随机选择路径的差分测试（动作列表与应答字节必须与 `ygorl.engine.actions` 一致），并在 5 局真实对局中逐步比对动作、四个观测数组与终局；`uv run python tools/check_cpp_encoder.py --points 10000` 做验收。2026-09-22 的一次运行：8 局、10,530 个决策点、0 处不一致，覆盖 16 种决策类型（其余类型由差分测试覆盖）。
+- 校验：`tests/test_cpp_host.py` 对 19 种决策消息做随机报文 + 随机选择路径的差分测试（动作列表与应答字节必须与 `ygorl.engine.actions` 一致），并在 5 局真实对局中逐步比对动作、四个观测数组与终局；`uv run python tools/check_cpp_encoder.py --points 10000` 做验收。2026-09-22 的一次运行：8 局、10,530 个决策点、0 处不一致，覆盖 16 种决策类型（其余类型由差分测试覆盖）；2026-09-23 加入等价动作去重后重跑，同样 10,530 个决策点、0 处不一致。
 
 ## 训练态真值（privileged，T2.5）
 
@@ -265,14 +275,14 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 |----|------|------|
 | 1 | `search` | 该连锁处理时有卡从卡组加入手牌（`MSG_MOVE` 卡组 → 手牌） |
 | 2 | `spsummon_deck` | 该连锁处理时有卡从卡组特殊召唤（`MSG_MOVE` 卡组 → 怪兽区） |
-| 4 | `send_deck_gy` | 该连锁处理时有卡从卡组送去墓地（堆墓） |
+| 4 | `send_deck_grave` | 该连锁处理时有卡从卡组送去墓地（堆墓） |
 | 8 | `fifth_summon` | 回合玩家本回合第 5 次召唤 / 特殊召唤（尼比鲁的条件） |
 | 16 | `attack` | 攻击宣言 |
 | 32 | `other` | 该连锁处理时以上三种都没有发生（包括被无效） |
 
 两类窗口：
 
-1. **发动窗口**（灰流丽、效果遮蒙者、无限泡影类）：连锁第 `n` 环由玩家 A 发动。它处理完毕（`MSG_CHAIN_SOLVED n`）时，若对手 B 在第 `n` 环之后没有加入任何一环（B 在第 n 环之上没有连锁），就生成一个 `abstain` token：`player` = B，`card` / from = 第 `n` 环发动的卡，触发类型取第 `n` 环处理期间（`MSG_CHAIN_SOLVING n` 到 `MSG_CHAIN_SOLVED n`）观察到的卡组移动（`search` / `spsummon_deck` / `send_deck_gy` 的并集，都没有则 `other`）。处理期间才归类，是因为「这个效果含检索」只在处理后才由公开事件确认；被 B 连锁（包括被灰流丽无效）的环不生成 token——连锁本身已经是可见的 `chaining` token。双方对称：B 发动、A 不连锁同样生成 `player` = A 的 token。
+1. **发动窗口**（灰流丽、效果遮蒙者、无限泡影类）：连锁第 `n` 环由玩家 A 发动。它处理完毕（`MSG_CHAIN_SOLVED n`）时，若对手 B 在第 `n` 环之后没有加入任何一环（B 在第 n 环之上没有连锁），就生成一个 `abstain` token：`player` = B，`card` / from = 第 `n` 环发动的卡，触发类型取第 `n` 环处理期间（`MSG_CHAIN_SOLVING n` 到 `MSG_CHAIN_SOLVED n`）观察到的卡组移动（`search` / `spsummon_deck` / `send_deck_grave` 的并集，都没有则 `other`）。处理期间才归类，是因为「这个效果含检索」只在处理后才由公开事件确认；被 B 连锁（包括被灰流丽无效）的环不生成 token——连锁本身已经是可见的 `chaining` token。双方对称：B 发动、A 不连锁同样生成 `player` = A 的 token。
 2. **事件窗口**（尼比鲁、攻击反应类）：`MSG_ATTACK`（放弃者 = 攻击怪兽控制者的对手）与回合玩家本回合第 5 次 `summoning` / `spsummoning`（按召唤位置的控制者计，`MSG_NEW_TURN` 清零；放弃者 = 非回合玩家）各打开一个窗口；放弃者在窗口内发动任何效果（`MSG_CHAINING` 的发动者是他）即视为已响应；窗口在下一次回到开放局面时关闭——即下一个 `MSG_SELECT_IDLECMD` / `MSG_SELECT_BATTLECMD`（任何一方）、`MSG_NEW_PHASE` 或 `MSG_NEW_TURN`，此时对每个未响应的窗口生成 `abstain` token（先于该消息自身的 token）。`card` 为攻击怪兽 / 第 5 次召唤的怪兽（按 `*summoning` 的可见性），from 为其位置。
 
 `abstain` token 的 `value2` / `value3` 是放弃者当时的场上卡数（怪兽区 + 魔陷区）与手牌张数，`my_lp` / `op_lp` / `turn` 列给出 LP 与回合——即设计中的「对手场面、LP、回合」。
@@ -283,4 +293,4 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 - Python 参考：`ygorl.env.events.EventHistory`；C++：`csrc/event_encoder.{h,cpp}`，经 `_core.HostDuel(..., event_length=L)`、`_core.HostPool(..., event_length=L)`（`EncodedVecEnv(event_length=L)`）输出 `events` / `event_mask`，另以 `_core.EventHistory` 单独暴露供差分测试。
 - `tests/test_events.py`：手工构造的灰流丽场景（A 发动增援检索，B 手里 5 张灰流丽、被问到连锁且选择不连锁 → 双方流里出现 `player` = B、触发 `search`、B 场上 0 张 / 手牌 5 张的 `abstain` token；B 连锁灰流丽时该环不产生 token）、信息集检验（B 手里是灰流丽还是无法响应的通常怪兽，A 在每个决策点的 token 流逐行相同）、对手抽卡 / 盖放 / 检索的隐藏、卡组序号置 0、手牌与场上张数逐决策点与核心查询一致、`L` 可配（0 / 1 / 8 / 300 与完整历史的末尾一致）、合成的第 5 次召唤与攻击宣言窗口、全部 46 种事件类型的随机报文（含截断与尾随字节）C++ 与 Python 逐元素一致、3 局真实对局 `HostDuel` 逐决策点一致、`EncodedVecEnv` 的形状与开关。
-- 验收：`uv run python tools/check_cpp_events.py --points 100000 --length 512`。2026-09-22 的一次运行：81 局、100,842 个决策点、0 处不一致（viewer 0 共 85,057 个 token；`abstain` 触发位：other 4,308、attack 476、search 443、spsummon_deck 213、send_deck_gy 61、fifth_summon 42）；`--length 8` 另跑 16 局 20,268 个决策点，0 处不一致。随机对局平均每回合约 20 个 token（每决策点 0.8 个）；真实 combo 回合会多得多，训练时按需调大 `L`。
+- 验收：`uv run python tools/check_cpp_events.py --points 100000 --length 512`。2026-09-22 的一次运行：81 局、100,842 个决策点、0 处不一致（viewer 0 共 85,057 个 token；`abstain` 触发位：other 4,308、attack 476、search 443、spsummon_deck 213、send_deck_grave 61、fifth_summon 42）；`--length 8` 另跑 16 局 20,268 个决策点，0 处不一致。随机对局平均每回合约 20 个 token（每决策点 0.8 个）；真实 combo 回合会多得多，训练时按需调大 `L`。

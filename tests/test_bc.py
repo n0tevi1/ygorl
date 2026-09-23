@@ -15,7 +15,7 @@ torch = pytest.importorskip("torch")
 from ygorl.agents import PolicyAgent, RandomAgent, make_agent  # noqa: E402
 from ygorl.agents.registry import AgentSpec  # noqa: E402
 from ygorl.cards.cdb import CardDB, CardVocab  # noqa: E402
-from ygorl.cards.ydk import load_ydk  # noqa: E402
+from ygorl.cards.ydk import Deck, load_ydk  # noqa: E402
 from ygorl.engine.duel import Duel, DuelConfig  # noqa: E402
 from ygorl.env import GameSpec  # noqa: E402
 from ygorl.env.encoded import EncodedVecEnv, chooser  # noqa: E402
@@ -25,10 +25,13 @@ from ygorl.nets import NetConfig, PolicyNet  # noqa: E402
 from ygorl.nets.agent import NetPolicy, load_checkpoint, save_checkpoint  # noqa: E402
 from ygorl.nets.batch import to_tensors  # noqa: E402
 from ygorl.solver import read_jsonl  # noqa: E402
+from ygorl.env.encoding import canonical_action  # noqa: E402
 from ygorl.train.bc import (  # noqa: E402
+    action_key,
     BCConfig,
     build_dataset,
     demo_player_actions,
+    demo_player_keys,
     hand_overlap,
     opening_report,
     play_opening,
@@ -148,9 +151,12 @@ def test_dataset_holds_the_decisions_of_the_deck_under_study(demo, data):
     ours = [(s, a) for s, (a, p) in enumerate(zip(line.actions, line.players)) if p == 0]
     assert len(data) + data.skipped["forced"] == len(ours)
     kept = {m["step"] for m in data.meta}
-    assert [int(a) for a in data.actions] == [a for s, a in ours if s in kept]
+    raw = [a for s, a in ours if s in kept]
+    # a demonstrated copy other than the first maps to the row the policy can choose (docs/encoding.md)
+    labels = [canonical_action({k: v[i] for k, v in data.obs.items()}, a) for i, a in enumerate(raw)]
+    assert [int(a) for a in data.actions] == labels and labels != raw  # this line does pick later copies
     assert all(data.obs["action_mask"][i, a] for i, a in enumerate(data.actions))
-    assert all(m["n_legal"] > 1 for m in data.meta)
+    assert all(m["n_choices"] > 1 and m["n_legal"] >= m["n_choices"] for m in data.meta)
     assert data.obs["events"].shape[1:] == (32, 20) and data.obs["cards"].shape[1:] == (160, 23)
 
 
@@ -180,6 +186,7 @@ def test_play_opening_scores_the_demonstrated_line(demo, db):
     (line,) = demo_player_actions(demo)
     res = play_opening(start_replay(demo), Replayer(line), demo.targets, cards=db)
     assert res.actions == line and res.reached and res.placed == res.targets == 1 and not res.capped
+    assert res.keys == demo_player_keys(demo)[0]
     assert res.board == demo.lines[0].board
     capped = play_opening(start_replay(demo), RandomAgent(0), demo.targets, cards=db, max_steps=2)
     assert len(capped.actions) == 2 and capped.capped and capped.board["turn"] == 2
@@ -221,7 +228,7 @@ def test_bc_fits_a_line_and_the_checkpoint_replays_it(demo, data, vocab, db, tmp
     # greedy free-running play reproduces the demonstrated line and reaches the target
     agent = PolicyAgent(NetPolicy(net, vocab, event_length=32, cards=db), greedy=True)
     res = play_opening(start_replay(demo), agent, demo.targets, cards=db)
-    assert res.actions == demo_player_actions(demo)[0] and res.reached
+    assert res.keys == demo_player_keys(demo)[0] and res.reached  # the same choices (copies may differ by index)
 
     # the checkpoint round-trips and plays through the agent registry and the arena
     path = save_checkpoint(tmp_path / "policy.pt", net, vocab, event_length=32, meta={"trainer": "bc"})
@@ -233,7 +240,7 @@ def test_bc_fits_a_line_and_the_checkpoint_replays_it(demo, data, vocab, db, tmp
         torch.testing.assert_close(ckpt.net(obs).logits, net.eval()(obs).logits)
     agent = make_agent(f"policy:{path}@greedy", seed=0)
     res = play_opening(start_replay(demo), agent, demo.targets, cards=db)
-    assert res.actions == demo_player_actions(demo)[0]
+    assert res.keys == demo_player_keys(demo)[0]
     cfg = DuelConfig(max_turns=4)
     result = Duel(3, None, DECKS["branded_despia"], DECKS["yubel"], config=cfg).run(make_agent(f"policy:{path}", 1),
                                                                                    RandomAgent(2))  # fmt: skip
@@ -254,3 +261,22 @@ def test_policy_specs_are_checked(tmp_path):
     torch.save({"format": "other"}, tmp_path / "other.pt")
     with pytest.raises(ValueError, match="not a ygorl policy checkpoint"):
         load_checkpoint(tmp_path / "other.pt")
+
+
+def test_action_key_is_the_same_for_equivalent_copies(db):
+    """Five Maxx "C" in the hand: their chain rows share a key (one choice), passing has another."""
+    maxx, celtic = 23434538, 91152256
+    seen = []
+
+    class Passive:
+        def act(self, point):
+            seen.append(point)
+            kinds = [a.kind for a in point.actions]
+            return next((kinds.index(k) for k in ("pass", "end_phase", "no") if k in kinds), 0)
+
+    duel = Duel(1, None, Deck(main=(celtic,) * 40), Deck(main=(maxx,) * 40), cards=db,
+                config=DuelConfig(max_turns=1, shuffle_decks=False))  # fmt: skip
+    duel.run(Passive(), Passive())
+    point = next(p for p in seen if p.player == 1 and sum(a.kind == "chain" for a in p.actions) == 5)
+    keys = [action_key(point, i) for i in range(len(point.actions))]
+    assert len(set(keys[:5])) == 1 and keys[5] != keys[0] and point.actions[5].kind == "pass"

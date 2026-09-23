@@ -32,10 +32,11 @@ import torch
 from ygorl.cards.cdb import CardVocab
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
+from ygorl.engine import constants as C
 from ygorl.engine.constants import DUEL_PSEUDO_SHUFFLE
 from ygorl.engine.duel import DuelConfig, DuelSession, default_cards, expand_seed
 from ygorl.engine.replay import Replay
-from ygorl.env.encoding import MAX_OPTIONS
+from ygorl.env.encoding import MAX_OPTIONS, canonical_action
 from ygorl.env.events import DEFAULT_EVENT_LENGTH
 from ygorl.env.observer import PointObserver
 from ygorl.nets.batch import OBS_KEYS, to_tensors
@@ -114,6 +115,30 @@ class DemoStep:
     kind: str  # Action.kind of the demonstrated action
     card: tuple | None  # (password, location) of the action's card, None without one
     obs: dict[str, np.ndarray] | None = field(default=None, repr=False)  # encoded for the decisions asked for
+    key: tuple | None = None  # action_key of the demonstrated action (compares choices across equivalent copies)
+
+
+def action_key(point, index: int) -> tuple:
+    """What choice ``point.actions[index]`` is, independent of where equivalent copies sit in the list.
+
+    Equivalent copies (docs/encoding.md 「等价动作去重」) are masked to one row, and which copy leaves the hand
+    reorders the rest of it, so later action indices of two equivalent lines can differ. The key keeps the
+    decision type, kind, card, effect string, zone (with the sequence only on the field, where it is a column, and
+    for cards hidden from the decider) and the value where it is not a list index.
+    """
+    a = point.actions[index]
+    code = where = None
+    if a.card is not None:
+        loc = a.card.loc
+        overlay = bool(loc.location & C.LOCATION_OVERLAY)
+        field_zone = loc.location in (C.LOCATION_MZONE, C.LOCATION_SZONE)
+        code = a.card.code
+        ordered = field_zone or overlay or not code  # a card hidden from the decider is only told apart by its place
+        where = (loc.controller, loc.location, loc.sequence if ordered else -1, -1 if overlay else loc.position)
+    index_value = a.kind == "chain" or (a.kind in ("select", "unselect")
+                                        and point.decision.TYPE == C.MSG_SELECT_UNSELECT_CARD)  # fmt: skip
+    value = 0 if index_value else a.value  # a list index there; tribute / sum selects keep their parameter
+    return (point.decision.TYPE, a.kind, code, where, a.description, value)
 
 
 def line_steps(demo: Demonstration, line: int, vocab: CardVocab | None = None, *, cards=None, scripts=None,
@@ -142,7 +167,8 @@ def line_steps(demo: Demonstration, line: int, vocab: CardVocab | None = None, *
                 observer.observe(point)
                 if point.player == player and len(point.actions) > 1:
                     obs = observer.encode(point, session.core)
-            out.append(DemoStep(step, point.player, idx, len(point.actions), act.kind, card, obs))
+            out.append(DemoStep(step, point.player, idx, len(point.actions), act.kind, card, obs,
+                                action_key(point, idx)))  # fmt: skip
             session.act(idx)
     finally:
         session.close()
@@ -189,17 +215,18 @@ def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=Non
                     continue
                 if st.step in undone:
                     skipped["toggle"] += 1
-                elif st.obs is None:
-                    skipped["forced"] += 1
+                elif st.obs is None or int(np.count_nonzero(st.obs["action_mask"])) < 2:
+                    skipped["forced"] += 1  # one legal action, or only equivalent copies of one
                 elif st.action >= MAX_OPTIONS:
                     skipped["beyond_128"] += 1
                 else:
                     for k in OBS_KEYS:
                         if k in st.obs:
                             columns.setdefault(k, []).append(st.obs[k])
-                    actions.append(st.action)
+                    actions.append(canonical_action(st.obs, st.action))  # the copy the policy can choose
                     meta.append({"deck": demo.deck["name"], "hand_index": demo.hand_index, "variant": demo.variant,
                                  "fire": demo.fire, "line": li, "step": st.step, "n_legal": st.n_legal,
+                                 "n_choices": int(np.count_nonzero(st.obs["action_mask"])),
                                  "solver": st.step < ln.solver_steps})  # fmt: skip
     if not actions:
         raise ValueError("no training samples: no solved demonstration with a decision of the deck under study")
@@ -297,7 +324,7 @@ def step_accuracy(net: PolicyNet, data: BCData, batch_size: int = 256) -> dict:
         nll -= logp.gather(1, target.unsqueeze(1)).sum().item()
     net.train(was_training)
     n = max(1, len(data))
-    uniform = float(np.mean([1.0 / min(m["n_legal"], MAX_OPTIONS) for m in data.meta])) if data.meta else 0.0
+    uniform = float(np.mean([1.0 / m["n_choices"] for m in data.meta])) if data.meta else 0.0
     return {"samples": len(data), "accuracy": correct / n, "nll": nll / n, "uniform_accuracy": uniform}
 
 
@@ -336,6 +363,7 @@ class OpeningResult:
     targets: int
     capped: bool  # the agent hit the step cap and the host closed the turn
     board: dict = field(repr=False, default_factory=dict)
+    keys: list[tuple] = field(default_factory=list)  # action_key of each of the agent's actions
 
 
 def passive_action(point) -> int:
@@ -358,6 +386,7 @@ def play_opening(replay: Replay, agent, targets: Sequence[str], *, env: Environm
     tracker = session.tracker
     observe = getattr(agent, "observe", None)
     actions: list[int] = []
+    keys: list[tuple] = []
     capped = False
     try:
         while not session.done and tracker.turn < 2:
@@ -369,6 +398,7 @@ def play_opening(replay: Replay, agent, targets: Sequence[str], *, env: Environm
             if point.player == player and len(actions) < max_steps:
                 idx = agent.act(point)
                 actions.append(idx)
+                keys.append(action_key(point, idx))
             else:
                 capped = capped or point.player == player
                 idx = passive_action(point)
@@ -378,7 +408,7 @@ def play_opening(replay: Replay, agent, targets: Sequence[str], *, env: Environm
         session.close()
     parsed = parse_targets(targets)
     missing = board_summary_missing(board, parsed, cards, player)
-    return OpeningResult(actions, not missing, len(parsed) - len(missing), len(parsed), capped, board)
+    return OpeningResult(actions, not missing, len(parsed) - len(missing), len(parsed), capped, board, keys)
 
 
 def demo_player_actions(demo: Demonstration, player: int = DEMO_PLAYER, *, cards=None, scripts=None,
@@ -392,13 +422,25 @@ def demo_player_actions(demo: Demonstration, player: int = DEMO_PLAYER, *, cards
     return out
 
 
+def demo_player_keys(demo: Demonstration, player: int = DEMO_PLAYER, *, cards=None, scripts=None,
+                     env: Environment | None = None) -> list[list[tuple]]:  # fmt: skip
+    """:func:`demo_player_actions` as :func:`action_key` s: a line played with other equivalent copies matches."""
+    out = []
+    for li in range(len(demo.lines)):
+        steps = line_steps(demo, li, None, cards=cards, scripts=scripts, env=env, player=player)
+        undone = undone_steps(steps)
+        out.append([st.key for st in steps if st.player == player and st.step not in undone])
+    return out
+
+
 def opening_report(demos: Sequence[Demonstration], agent_factory: Callable[[int], object], *,
                    env: Environment | None = None, cards=None, scripts=None,
                    max_steps: int = MAX_OPENING_STEPS) -> dict:  # fmt: skip
     """Free-running turn 1 on the start position of every plain record (solved or not).
 
     Returns totals and per-deck rows: ``reached`` (targets on the final board), ``placed`` (target cards
-    placed / target cards), ``reproduced`` (the agent's actions equal one of the record's lines) and the
+    placed / target cards), ``reproduced`` (the agent's choices equal one of the record's lines, compared by
+    :func:`action_key` so equivalent copies match) and the
     solver's own result on the same hands (``solver_solved``).
     """
     config = DuelConfig.from_environment(env) if env is not None else DuelConfig()
@@ -407,9 +449,9 @@ def opening_report(demos: Sequence[Demonstration], agent_factory: Callable[[int]
     for i, demo in enumerate(d for d in demos if d.variant == "plain" and d.status in ("solved", "unsolved")):
         res = play_opening(start_replay(demo, config), agent_factory(i), demo.targets, env=env, cards=cards,
                            scripts=scripts, max_steps=max_steps)  # fmt: skip
-        lines = demo_player_actions(demo, cards=cards, scripts=scripts, env=env)
-        reproduced = any(res.actions == ln for ln in lines)
-        prefix = max((_common_prefix(res.actions, ln) / len(ln) for ln in lines if ln), default=0.0)
+        lines = demo_player_keys(demo, cards=cards, scripts=scripts, env=env)
+        reproduced = any(res.keys == ln for ln in lines)
+        prefix = max((_common_prefix(res.keys, ln) / len(ln) for ln in lines if ln), default=0.0)
         solved = demo.status == "solved"
         for key in (demo.deck["name"], "total"):
             row = rows.setdefault(key, Counter())
@@ -431,7 +473,7 @@ def opening_report(demos: Sequence[Demonstration], agent_factory: Callable[[int]
     return {"totals": {k: _rates(v) for k, v in rows.items()}, "hands": per_hand}
 
 
-def _common_prefix(a: Sequence[int], b: Sequence[int]) -> int:
+def _common_prefix(a: Sequence, b: Sequence) -> int:
     n = 0
     for x, y in zip(a, b):
         if x != y:
@@ -459,5 +501,6 @@ def hand_overlap(train: Iterable[Demonstration], heldout: Iterable[Demonstration
 
 
 __all__ = ["BCConfig", "BCData", "DEMO_PLAYER", "MAX_OPENING_STEPS", "OpeningResult", "bc_loss", "build_dataset",
-           "DemoStep", "demo_player_actions", "hand_overlap", "line_steps", "opening_report", "passive_action", "play_opening",
+           "DemoStep", "action_key", "demo_player_actions", "demo_player_keys", "hand_overlap", "line_steps",
+           "opening_report", "passive_action", "play_opening",
            "start_replay", "step_accuracy", "train_bc", "trim_padding", "undone_steps"]  # fmt: skip

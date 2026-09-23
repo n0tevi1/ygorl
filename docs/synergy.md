@@ -106,7 +106,7 @@ Yugipedia 关系边，并分别打印不含 / 含关系边的召回（见[召回
 |------|------|------|------|
 | `search` | A 从卡组把 B 加入手牌，或盖放 / 放置 / 装备（`to_hand / set / place / equip` + `LOCATION_DECK`） | 主卡组卡 | 25,603 |
 | `special_summon` | A 从手牌 / 卡组 / 墓地 / 除外 / 额外卡组特召 B（含融合、仪式手续） | 手牌、卡组 → 主卡组怪兽；墓地、除外 → 所有怪兽；额外卡组 → 额外卡组怪兽与灵摆怪兽 | 41,409 |
-| `send_to_gy` | A 把卡组 / 手牌 / 额外卡组的 B 送去墓地 | 同上按位置 | 8,913 |
+| `send_to_grave` | A 把卡组 / 手牌 / 额外卡组的 B 送去墓地 | 同上按位置 | 8,913 |
 | `recover` | A 把墓地 / 除外的 B 加入手牌 | 主卡组卡 | 10,512 |
 | `material` | A 可作为 B 的连接 / 超量 / 同调 / 融合素材（**方向：素材 → 额外卡组怪兽**） | 所有怪兽 | 17,366 |
 
@@ -273,7 +273,7 @@ pkgs[0].members, pkgs[0].starters, pkgs[0].score, pkgs[0].cross_archetype
 
 命令行：`uv run python tools/list_packages.py [--top 50] [--cross-only] [--json out.json]`。
 
-**生长（连通子图）。** 边按特异性加权：`w = 类型权重 / sqrt(fanout)`（`search`、`special_summon` 为 1，`send_to_gy` 0.7，
+**生长（连通子图）。** 边按特异性加权：`w = 类型权重 / sqrt(fanout)`（`search`、`special_summon` 为 1，`send_to_grave` 0.7，
 `recover`、`material` 0.5；点名检索权重 1，匹配 16 张的系列检索 0.25），两个方向相加得到无向亲和度。
 从每个有出边的卡出发，反复加入使 `aff(v,P)² / deg(v)` 最大的候选 `v`：既与包联系紧密，自身权重又大部分落在包内。
 要求 `aff(v,P) ≥ 0.25` 且 `aff(v,P)/deg(v) ≥ 0.15`，上限 15 张。泛用卡（被大量宽过滤指向）过不了占比门槛。

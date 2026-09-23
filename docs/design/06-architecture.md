@@ -50,7 +50,7 @@ ygorl/
 │   ├── solver/    combo_solver.py demos.py                  # ygo-combo-solver 封装、示范数据集（T4a.1）
 │   ├── agents/    base.py random_agent.py greedy.py policy.py registry.py
 │   ├── nets/      encoders.py history.py heads.py actor_critic.py belief.py      # （T4b / T4c）
-│   ├── train/     bc.py ppo.py selfplay.py exploiter.py advantages.py critic.py # BC 预热、PPO(VRPO/KL)、快照池（T4）
+│   ├── train/     bc.py ppo.py selfplay.py rollout.py trainer.py checkpoint.py exploiter.py advantages.py critic.py # BC 预热、PPO(VRPO/KL)、快照池、训练循环（T4）
 │   ├── eval/      arena.py matchup.py calibration.py beliefs.py
 │   ├── build/     lua.py filters.py scripts.py synergy_graph.py packages.py genotype.py
 │   │             funnel.py surrogate.py qd.py report.py   # 后四个规划中（T5.6–T5.8、T6.4）

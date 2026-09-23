@@ -392,12 +392,12 @@ void DecisionState::set_cards_response() {
 bool DecisionState::tribute_can_reach(const std::vector<int>& chosen) const {
     int64_t sum = 0;
     for (int i : chosen) sum += d_.params[i];
-    int slots = static_cast<int>(d_.max) - static_cast<int>(chosen.size());
+    const int64_t slots = static_cast<int64_t>(d_.max) - static_cast<int64_t>(chosen.size());
     std::vector<uint32_t> rest;
     for (size_t i = 0; i < d_.params.size(); ++i)
         if (std::find(chosen.begin(), chosen.end(), static_cast<int>(i)) == chosen.end()) rest.push_back(d_.params[i]);
     std::sort(rest.begin(), rest.end(), std::greater<uint32_t>());
-    for (int k = 0; k < std::max(slots, 0) && k < static_cast<int>(rest.size()); ++k) sum += rest[k];
+    for (int64_t k = 0; k < slots && k < static_cast<int64_t>(rest.size()); ++k) sum += rest[k];
     return sum >= static_cast<int64_t>(d_.min);
 }
 
@@ -429,8 +429,9 @@ bool DecisionState::sum_exact_feasible(const std::vector<int>& chosen) const {
     std::vector<uint32_t> base_params = d_.must_params;
     for (int i : chosen) base_params.push_back(d_.params[i]);
     const int64_t target = d_.target;
-    const int max_count = static_cast<int>(std::max(d_.max, d_.min));
-    if (static_cast<int>(chosen.size()) > max_count) return false;
+    // Never more picks than offered cards (a huge ``max`` must not size the table).
+    const size_t max_count = std::min<size_t>(std::max(d_.max, d_.min), d_.params.size());
+    if (chosen.size() > max_count) return false;
     std::vector<std::set<int64_t>> dp(1 + max_count - chosen.size());
     dp[0] = sums_of(base_params, target);
     for (size_t i = 0; i < d_.params.size(); ++i) {
@@ -958,6 +959,8 @@ void HostDuel::start(const std::array<uint64_t, 4>& seed, uint64_t flags, const 
                      const PlayerOptions& team2,
                      const std::vector<std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>& decks,
                      uint32_t max_turns, uint32_t max_decisions) {
+    tracker_.reset();  // started() stays false unless this start() completes
+    events_.reset();
     core_ = std::make_unique<Duel>(seed, flags, team1, team2, cards_, scripts_);
     for (const char* base : {"constant.lua", "utility.lua"})
         if (!core_->load_script(base)) throw std::runtime_error(std::string("failed to load base script ") + base);
@@ -983,8 +986,12 @@ void HostDuel::advance() {
     }
 }
 
+void HostDuel::require_started() const {
+    if (!tracker_) throw std::runtime_error("HostDuel.start() has not completed");
+}
+
 const std::vector<Action>& HostDuel::actions() {
-    if (!tracker_) return empty_;
+    require_started();
     const auto* acts = tracker_->actions();
     return acts ? *acts : empty_;
 }
@@ -995,6 +1002,7 @@ int HostDuel::player() const {
 }
 
 void HostDuel::act(size_t index) {
+    require_started();
     const std::string* response = tracker_->act(index);
     if (response) {
         core_->set_response(*response);
@@ -1003,6 +1011,7 @@ void HostDuel::act(size_t index) {
 }
 
 void HostDuel::observe(Observation& out) {
+    require_started();
     encode(*core_, *tracker_, actions(), *cards_, *vocab_, out);
     out.has_events = events_ != nullptr;
     if (events_) events_->encode(std::max(0, player()), out.events, out.event_mask);

@@ -131,7 +131,7 @@ void* reallocate(void* ptr, size_t osize, size_t nsize) {
     if (!fresh) return nullptr;
     if (ptr) {  // a host-heap block grown inside an arena: its old contents were outside every snapshot
         active->note_escape();
-        std::memcpy(fresh, ptr, osize);
+        std::memcpy(fresh, ptr, std::min(osize, nsize));
         std::free(ptr);
     }
     return fresh;
@@ -244,10 +244,10 @@ void Arena::restore(const Image& image) {
 }
 
 Scope::Scope(Arena* arena) : prev_active_(t_active), prev_suspended_(t_suspended) {
-    if (arena) {
-        t_active = arena;
-        t_suspended = nullptr;
-    }
+    // Also for arena == nullptr: a plain duel called from another duel's callback must neither
+    // allocate in, nor later Resume, the caller's (suspended) arena.
+    t_active = arena;
+    t_suspended = nullptr;
 }
 Scope::~Scope() {
     t_active = prev_active_;

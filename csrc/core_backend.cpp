@@ -1,5 +1,7 @@
 #include "core_backend.h"
 
+#include "ocgapi_constants.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -112,7 +114,7 @@ Duel::Duel(const std::array<uint64_t, 4>& seed, uint64_t flags, const PlayerOpti
     opts.enableUnsafeLibraries = 0;
     int status;
     {
-        arena::Scope in_core(arena_.get());
+        CoreCall in_core(*this);
         status = OCG_CreateDuel(&handle_, &opts);
     }
     if (status != OCG_DUEL_CREATION_SUCCESS) {
@@ -121,7 +123,7 @@ Duel::Duel(const std::array<uint64_t, 4>& seed, uint64_t flags, const PlayerOpti
     }
     if (pending_) {  // a card/script callback failed while the core was being set up
         {
-            arena::Scope in_core(arena_.get());
+            CoreCall in_core(*this);
             OCG_DestroyDuel(handle_);
         }
         handle_ = nullptr;
@@ -133,9 +135,10 @@ Duel::~Duel() { close(); }
 
 void Duel::close() {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (in_core_) throw std::runtime_error("re-entrant call into a duel from one of its own callbacks (close)");
     if (handle_) {
         {
-            arena::Scope in_core(arena_.get());
+            CoreCall in_core(*this);
             OCG_DestroyDuel(handle_);
         }
         handle_ = nullptr;
@@ -144,8 +147,45 @@ void Duel::close() {
 }
 
 void Duel::ensure_open() const {
+    if (in_core_) throw std::runtime_error("re-entrant call into a duel from one of its own callbacks");
     if (!handle_) throw std::runtime_error("duel is closed");
 }
+
+bool Duel::closed() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return handle_ == nullptr;
+}
+
+bool Duel::snapshots_enabled() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return arena_ != nullptr;
+}
+
+uint64_t Duel::arena_escapes() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return arena_ ? arena_->escapes() : 0;
+}
+
+size_t Duel::arena_bytes() const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    return arena_ ? arena_->used() : 0;
+}
+
+namespace {
+// The core indexes fixed arrays with these without checking them.
+void check_player(uint32_t player, const char* what) {
+    if (player > 1) throw std::invalid_argument(std::string(what) + " must be 0 or 1, not " + std::to_string(player));
+}
+void check_location(uint32_t location, uint32_t sequence, bool allow_overlay) {
+    const uint32_t known = LOCATION_DECK | LOCATION_HAND | LOCATION_MZONE | LOCATION_SZONE | LOCATION_GRAVE |
+                           LOCATION_REMOVED | LOCATION_EXTRA | (allow_overlay ? LOCATION_OVERLAY : 0);
+    if (location == 0 || (location & (location - 1)) != 0 || (location & ~known) != 0)
+        throw std::invalid_argument("location must be exactly one LOCATION_* value, not " + std::to_string(location));
+    if ((location == LOCATION_MZONE && sequence >= 7) || (location == LOCATION_SZONE && sequence >= 8))
+        throw std::invalid_argument("sequence " + std::to_string(sequence) + " is out of range for location " +
+                                    std::to_string(location));
+}
+}  // namespace
 
 void Duel::capture_error(std::exception_ptr e) {
     if (!pending_) pending_ = std::move(e);
@@ -215,7 +255,7 @@ bool Duel::load_script(const std::string& name) {
     ensure_open();
     bool ok;
     {
-        arena::Scope in_core(arena_.get());
+        CoreCall in_core(*this);
         ok = script_reader(this, handle_, name.c_str()) != 0;
     }
     rethrow_pending();
@@ -226,9 +266,12 @@ void Duel::new_card(uint8_t team, uint8_t duelist, uint32_t code, uint8_t contro
                     uint32_t location, uint32_t sequence, uint32_t position) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     ensure_open();
+    check_player(team, "team");
+    check_player(controller, "controller");
+    check_location(location, sequence, true);
     OCG_NewCardInfo info{team, duelist, code, controller, location, sequence, position};
     {
-        arena::Scope in_core(arena_.get());
+        CoreCall in_core(*this);
         OCG_DuelNewCard(handle_, &info);
     }
     rethrow_pending();
@@ -238,7 +281,7 @@ void Duel::start() {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     ensure_open();
     {
-        arena::Scope in_core(arena_.get());
+        CoreCall in_core(*this);
         OCG_StartDuel(handle_);
     }
     rethrow_pending();
@@ -249,7 +292,7 @@ int Duel::process() {
     ensure_open();
     int status;
     {
-        arena::Scope in_core(arena_.get());
+        CoreCall in_core(*this);
         status = OCG_DuelProcess(handle_);
     }
     rethrow_pending();
@@ -262,7 +305,7 @@ std::string Duel::get_message() {
     uint32_t length = 0;
     const char* buf;
     {
-        arena::Scope in_core(arena_.get());
+        CoreCall in_core(*this);
         buf = static_cast<const char*>(OCG_DuelGetMessage(handle_, &length));
     }
     return std::string(buf, buf + length);
@@ -271,14 +314,15 @@ std::string Duel::get_message() {
 void Duel::set_response(const std::string& response) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     ensure_open();
-    arena::Scope in_core(arena_.get());
+    CoreCall in_core(*this);
     OCG_DuelSetResponse(handle_, response.data(), static_cast<uint32_t>(response.size()));
 }
 
 uint32_t Duel::query_count(uint8_t team, uint32_t location) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     ensure_open();
-    arena::Scope in_core(arena_.get());
+    check_player(team, "team");
+    CoreCall in_core(*this);
     return OCG_DuelQueryCount(handle_, team, location);
 }
 
@@ -286,11 +330,13 @@ std::string Duel::query(uint32_t flags, uint8_t controller, uint32_t location, u
                         uint32_t overlay_sequence) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     ensure_open();
+    check_player(controller, "controller");
+    check_location(location, sequence, false);
     OCG_QueryInfo info{flags, controller, location, sequence, overlay_sequence};
     uint32_t length = 0;
     const char* buf;
     {
-        arena::Scope in_core(arena_.get());
+        CoreCall in_core(*this);
         buf = static_cast<const char*>(OCG_DuelQuery(handle_, &length, &info));
     }
     rethrow_pending();
@@ -300,11 +346,13 @@ std::string Duel::query(uint32_t flags, uint8_t controller, uint32_t location, u
 std::string Duel::query_location(uint32_t flags, uint8_t controller, uint32_t location) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     ensure_open();
+    check_player(controller, "controller");
+    check_location(location, 0, true);
     OCG_QueryInfo info{flags, controller, location, 0, 0};
     uint32_t length = 0;
     const char* buf;
     {
-        arena::Scope in_core(arena_.get());
+        CoreCall in_core(*this);
         buf = static_cast<const char*>(OCG_DuelQueryLocation(handle_, &length, &info));
     }
     rethrow_pending();
@@ -317,7 +365,7 @@ std::string Duel::query_field() {
     uint32_t length = 0;
     const char* buf;
     {
-        arena::Scope in_core(arena_.get());
+        CoreCall in_core(*this);
         buf = static_cast<const char*>(OCG_DuelQueryField(handle_, &length));
     }
     return std::string(buf, buf + length);

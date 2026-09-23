@@ -63,11 +63,15 @@ uv run ygorl arena tests/decks --agent-a policy:out/bc12/policy.pt --agent-b ran
 
 ## 评估的定义
 
-- **步准确率**（teacher forcing，`step_accuracy`）：在示范线的每个样本上，网络 argmax 是否等于示范动作；同时给出均匀随机猜中的期望（`uniform_accuracy`）作参照。
+- **等价副本**：观测的 `action_mask` 只保留同一张卡等价副本中的第一行（[encoding.md](encoding.md)「等价动作去重」）。示范若选了另一张副本，
+  训练标签换成它的代表行（`canonical_action`）；去重后只剩一行的决策按强制决策跳过（`skipped["forced"]`）。
+- **步准确率**（teacher forcing，`step_accuracy`）：在示范线的每个样本上，网络 argmax 是否等于示范动作（代表行）；同时给出均匀随机猜中的期望（`uniform_accuracy`，按去重后的可选行数）作参照。
 - **自由对局**（`play_opening`）：从记录的起始对局（与求解器完全相同的种子字、卡组顺序、`DUEL_PSEUDO_SHUFFLE` 与白板对手；求解器没解出的起手用 `start_replay` 按
   `hand_seed` 重建，单测核对重建结果与求解器记录的起始对局一致）让 agent 下第 1 回合，对手以被动选项应答（与示范补完回合相同），
   到第 2 回合第一个决策为止；agent 超过 300 步时由主机用被动选项收尾（`capped`）。终局场面按求解器判定线的标准评分：目标卡是否全部在场（`board_summary_missing`）。
   - **线复现率**：agent 的动作序列（玩家 0）与该起手某条示范线（去掉来回切换后）**逐步相同**的比例；另报「与示范线的最长公共前缀 / 线长」的平均。
+    逐步比较用 `action_key`（决策类型、动作类型、卡、效果串、区域；场上的卡带序号），不用动作下标：选了另一张等价副本后手牌顺序不同，之后的下标会错开。
+    下文 2026-09-23 的数字是等价动作去重之前测的（当时按下标比较）。
   - **场面质量**：目标场面达成率（`reach_rate`）、目标卡在场比例（`placed_fraction`）；同一批起手上求解器自己的解出率作上限参照（求解器在 20 秒预算内解出 = 存在一条到达目标的线）。
 - 基线：`RandomAgent`、`GreedyAgent` 在同样的起手上自由对局。
 

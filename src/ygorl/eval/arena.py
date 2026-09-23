@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import statistics
+import sys
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass, field, replace
@@ -258,7 +259,10 @@ class Arena:
             return [spec.play() for spec in specs]
         workers = min(self.workers, len(specs))
         chunk = max(1, len(specs) // (workers * 8))
-        with mp.get_context(self.mp_context).Pool(workers) as pool:
+        # Forking a process that has initialized PyTorch (e.g. a policy:<checkpoint> agent validated in the
+        # parent) can deadlock the children's thread pools: start fresh interpreters instead.
+        context = self.mp_context or ("spawn" if "torch" in sys.modules else None)
+        with mp.get_context(context).Pool(workers) as pool:
             return pool.map(_play, specs, chunksize=chunk)
 
     def run(self, deck_a: Deck, deck_b: Deck, pairs: int, seed: int = 0) -> ArenaReport:
