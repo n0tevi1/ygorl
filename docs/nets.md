@@ -124,7 +124,9 @@ LSTM 历史合计 3,164,288；关 ID 嵌入且不用历史 915,072；加 384 维
 
 ## 已知局限
 
-- `PolicyAgent`（`ygorl.agents.policy`，Python `DecisionPoint` 路径）的适配器没有做：`ObservationEncoder.encode(point, core)`
-  需要核心句柄，而 Agent 协议只拿到 `point`。网络在 `EncodedVecEnv` 路径上直接用（`net.act`）。
+- `PolicyAgent`（Python `DecisionPoint` 路径）的适配器是 `ygorl.nets.agent.NetPolicy`（T4a.2，见 [bc.md](bc.md)）：
+  Agent 协议加了可选的 `observe(point, core)`（`Duel.run` 在每个决策点、双方的点都调用），适配器用 `ygorl.env.observer.PointObserver`
+  （参考编码器 + 事件流）编码，与 `EncodedVecEnv` 逐元素一致（`tests/test_bc.py`）。每个决策点单独编码、前向一次，
+  只适合评估；训练仍走 `EncodedVecEnv`（`net.act`）。
 - 合法动作超过 128 个（宣言卡名）时只能在前 128 行中选（同编码规范的截断）。
 - 窗口模式只看最近 `L` 个 token；真实 combo 回合 token 多时按需调大 `L` 或用流式模式。
