@@ -44,7 +44,7 @@ from dataclasses import asdict, dataclass
 
 from ygorl.build.synergy_graph import EDGE_TYPES, REACH_TYPES, SynergyGraph
 
-TYPE_WEIGHT = {"search": 1.0, "special_summon": 1.0, "send_to_gy": 0.7, "recover": 0.5, "material": 0.5}
+TYPE_WEIGHT = {"search": 1.0, "special_summon": 1.0, "send_to_grave": 0.7, "recover": 0.5, "material": 0.5}
 DEFAULTS = {"max_size": 15, "min_size": 3, "min_affinity": 0.25, "min_share": 0.15, "k": 2, "max_overlap": 0.6}
 
 

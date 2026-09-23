@@ -68,7 +68,46 @@ class PolicyOutput:
         return self.logits.argmax(-1)
 
 
+def _prefix_length(mask: Tensor) -> int:
+    """Length of the longest valid prefix over the batch (valid rows come first in every observation)."""
+    if mask.shape[-1] == 0:
+        return 0
+    pos = torch.arange(1, mask.shape[-1] + 1, device=mask.device)
+    return max(1, int((mask.to(pos.dtype) * pos).max()))
+
+
+def _pad_to(x: Tensor | None, length: int, dim: int = 1, value=0) -> Tensor | None:
+    if x is None or x.shape[dim] == length:
+        return x
+    shape = list(x.shape)
+    shape[dim] = length - x.shape[dim]
+    return torch.cat([x, x.new_full(shape, value)], dim)
+
+
+def trim_padding(obs: Batch) -> Batch:
+    """Cut the trailing padding rows of cards, actions and events to the batch's longest valid row.
+
+    Observations list their valid rows first (docs/encoding.md), padding rows are masked everywhere and action
+    rows only reference existing card rows, so every valid output is unchanged by the cut. Batches without card
+    and action rows (other models' observations, e.g. the Nim test env) pass through untouched.
+    """
+    if "cards" not in obs or "actions" not in obs:
+        return obs
+    out = dict(obs)
+    n_cards = _prefix_length(obs["cards"][..., 0] > 0)
+    out["cards"] = obs["cards"][:, :n_cards]
+    n_actions = _prefix_length(obs["action_mask"])
+    out["actions"], out["action_mask"] = obs["actions"][:, :n_actions], obs["action_mask"][:, :n_actions]
+    if obs.get("events") is not None and "event_mask" in obs:
+        n_events = _prefix_length(obs["event_mask"])
+        out["events"], out["event_mask"] = obs["events"][:, :n_events], obs["event_mask"][:, :n_events]
+    return out
+
+
 class PolicyNet(nn.Module):
+    # Cut padding before the heavy work (same results, see trim_padding); a switch for tests and debugging.
+    trim_padding: bool = True
+
     def __init__(self, cfg: NetConfig, text: TextFeatures | None = None) -> None:
         super().__init__()
         self.cfg = cfg
@@ -83,6 +122,17 @@ class PolicyNet(nn.Module):
 
     # -- trunk -------------------------------------------------------------------
     def features(self, obs: Batch, state: HistoryState | None = None) -> Features:
+        if not self.trim_padding:
+            return self._features(obs, state)
+        f = self._features(trim_padding(obs), state)
+        events = obs.get("events")
+        return Features(f.context, f.globals, _pad_to(f.cards, obs["cards"].shape[1]),
+                        _pad_to(f.card_mask, obs["cards"].shape[1], value=False),
+                        _pad_to(f.actions, obs["actions"].shape[1]), obs["action_mask"], f.history,
+                        _pad_to(f.history_tokens, events.shape[1]) if events is not None else f.history_tokens,
+                        f.history_state)  # fmt: skip
+
+    def _features(self, obs: Batch, state: HistoryState | None = None) -> Features:
         cards, glob = obs["cards"], obs["globals"]
         b = cards.shape[0]
         tokens = history_state = None

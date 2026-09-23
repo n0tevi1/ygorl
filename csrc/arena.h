@@ -71,7 +71,7 @@ private:
 // True if `ptr` points into the arena reservation (any slot).
 bool owns(const void* ptr);
 
-// RAII: make `arena` (may be null: no-op) the active arena of this thread.
+// RAII: make `arena` the active arena of this thread (null: the host heap), with nothing suspended.
 class Scope {
 public:
     explicit Scope(Arena* arena);

@@ -39,6 +39,8 @@ third_party/ygopro-core + patches/ygopro-core/*.patch   规则核心（构建时
 
 **GIL 与线程**：绑定的每个方法都先释放 GIL 再获取该局的互斥锁；Python 回调在内部重新获取 GIL。这个顺序避免「一个线程持 GIL 等锁、另一个持锁等 GIL」的死锁。测试 `test_gil_released_while_core_runs` 验证核心执行 Lua 时其他线程仍可运行 Python。
 
+**重入与参数检查**（C++ 审计）：核心回调（读卡、读脚本、日志）里再调用**同一局**的任何方法（`close`、`process`、`load_script`、`snapshot` 等）会抛 `RuntimeError`（「re-entrant call」），而不是在核心仍在栈上时释放它的内存；调用**另一局**是允许的，且不会落进调用方的 arena。`new_card` / `query` / `query_location` / `query_count` 在进入核心前检查玩家（0 或 1）、区域（恰好一个 `LOCATION_*`）与怪兽区 / 魔陷区序号（< 7 / < 8），越界抛 `ValueError`——核心本身不检查，越界会写坏内存。`HostDuel` 在 `start()` 完成前调用其他方法抛 `RuntimeError`；`HostPool` 里 `start()` 失败（种子非法、基础脚本缺失等）作为 `reason="error"` 的终局事件返回，不再使进程崩溃。
+
 **回调异常**：Lua 以 C++ 方式编译，会把任何穿过它的 C++ 异常当作 Lua 错误吞掉，所以回调在 C 边界捕获异常、暂存，由发起调用的方法（包括构造函数）在核心返回后重新抛出。
 
 ### 换核心时需要重写的部分
@@ -187,7 +189,7 @@ core.restore(snap)        # 回到快照时刻，之后的消息流与从头重�
 
 所有调用在等待与核心运行期间释放 GIL。Python 侧 `VecDuelEnv` 为每个槽位持有一个 `DuelTracker`（与 `Duel.run` 共用同一份主机逻辑），多选的中间步骤在本地完成，只有完整应答才回到核心；`DuelEnv` 是单局的 `reset/step` 包装；`run_games(specs, agent_factory, num_envs, num_threads)` 按规格顺序返回结果。
 
-验收：`tests/test_pool.py` 检查池化结果与逐局 `Duel.run` 完全一致、线程数不影响结果、上限在池中同样生效；`uv run python tools/check_pool.py --games 1000 --threads 4` 做 1,000 局比对。这条路径每个决策的消息解码与动作生成在 Python 中完成、受 GIL 限制；训练用下文的 C++ 步进环境 `EncodedVecEnv`，两者的吞吐对比见 [benchmarks.md](benchmarks.md)。
+验收：`tests/test_pool.py` 检查池化结果与逐局 `Duel.run` 完全一致、线程数不影响结果、上限在池中同样生效；`uv run python tools/check_pool.py --games 1000 --threads 4` 做 1,000 局比对：2026-09-22 在 commit `c16ef0d` 上运行，1,000 局、1,211,869 个决策，池化结果与逐局 `Duel.run` 0 处不一致。这条路径每个决策的消息解码与动作生成在 Python 中完成、受 GIL 限制；训练用下文的 C++ 步进环境 `EncodedVecEnv`，两者的吞吐对比见 [benchmarks.md](benchmarks.md)。
 
 线程安全：`tools/tsan/check.sh` 用 `-fsanitize=thread` 另行编译 `_core`，在预加载 `libtsan` 的 Python 中以 4 线程跑池化对局并与逐局结果比对。2026-09-22 的一次运行：12 局、4 线程、结果与单线程一致，ThreadSanitizer 零报告（同一方式对一个故意制造数据竞争的库能正确报警，作为阳性对照）。
 

@@ -40,7 +40,7 @@ class HostPool {
 public:
     HostPool(size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
              std::shared_ptr<ScriptSource> scripts, std::shared_ptr<const Vocab> vocab, bool privileged = false,
-             size_t event_length = 0);
+             size_t event_length = 0, bool skip_forced = false);
     ~HostPool();
     void reset(int env, PoolJob job);
     void step(int env, size_t action);
@@ -55,6 +55,7 @@ private:
     std::shared_ptr<const Vocab> vocab_;
     bool privileged_ = false;  // training mode: also emit opponent ground truth
     size_t event_length_ = 0;  // event tokens per observation (T2.4); 0 = none
+    bool skip_forced_ = false;  // auto-play decisions with one choosable row (they never reach Python)
     std::vector<std::unique_ptr<HostDuel>> slots_;
     std::unique_ptr<WorkerPool<std::pair<int, PoolJob>, PoolEvent>> pool_;
 };

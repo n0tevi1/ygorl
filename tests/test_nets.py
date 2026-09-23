@@ -452,3 +452,124 @@ def test_forward_on_real_observations(real_obs):
         loss = -out.log_probs().gather(1, out.greedy()[:, None]).mean()
         loss.backward()
     assert batch["events"].shape[1] == 32 and batch["event_mask"].any()
+
+
+@pytest.mark.parametrize("history", ["transformer", "lstm", "none"])
+def test_trimming_padding_changes_nothing(real_obs, history):
+    """PolicyNet cuts trailing padding (card rows, actions, events) to the batch's longest row before the
+    heavy work and pads the outputs back: logits, features and gradients equal the untrimmed computation."""
+    vocab, seen = real_obs
+    torch.manual_seed(0)
+    net = PolicyNet(NetConfig(vocab_size=len(vocab), d_model=32, n_heads=4, board_layers=1, history_layers=1,
+                              history=history))  # fmt: skip
+    batch = collate(seen)
+    assert int(batch["action_mask"].sum(1).max()) < MAX_OPTIONS  # there is padding to cut
+    results, seen_lengths = [], []
+    hook = net.action_encoder.register_forward_pre_hook(lambda m, args: seen_lengths.append(args[0].shape[1]))
+    for trim in (False, True):
+        net.trim_padding = trim
+        net.zero_grad()
+        out = net(batch)
+        f = out.features
+        loss = -(out.log_probs().gather(1, out.greedy()[:, None])).mean() + f.context.square().mean()
+        loss.backward()
+        grads = {n: p.grad.clone() for n, p in net.named_parameters() if p.grad is not None}
+        results.append((out.logits, f.actions, f.cards, f.context, grads))
+    hook.remove()
+    assert seen_lengths == [MAX_OPTIONS, int(batch["action_mask"].sum(1).max())]  # trimming really happened
+    (l0, a0, c0, x0, g0), (l1, a1, c1, x1, g1) = results
+    assert l1.shape == l0.shape and a1.shape == a0.shape and c1.shape == c0.shape
+    mask = batch["action_mask"]
+    assert torch.allclose(l1[mask], l0[mask], atol=1e-5) and (l1[~mask] == MASKED_LOGIT).all()
+    assert torch.allclose(x1, x0, atol=1e-5)
+    assert torch.allclose(a1[mask], a0[mask], atol=1e-5)
+    rows = batch["cards"][..., 0] > 0
+    assert torch.allclose(c1[rows], c0[rows], atol=1e-5)
+    assert g0.keys() == g1.keys()
+    for name in g0:
+        assert torch.allclose(g1[name], g0[name], atol=1e-5, rtol=1e-4), name
+
+
+def test_summed_rows_gradient_is_exact():
+    """The multi-hot backward of the small-table embedding sum is the exact gradient (repeated rows included)."""
+    from ygorl.nets.encoders import _SummedRows
+
+    torch.manual_seed(0)
+    weight = torch.randn(40, 6, dtype=torch.float64, requires_grad=True)
+    idx = torch.randint(0, 40, (25, 5))
+    idx[0] = idx[0, 0]  # one bag that sums the same row five times
+    assert torch.autograd.gradcheck(lambda w: _SummedRows.apply(idx, w), (weight,))
+
+
+@pytest.mark.parametrize("small_table", [True, False])
+def test_categorical_embedding_equals_gather_and_sum(monkeypatch, small_table):
+    """Both code paths (multi-hot backward for small tables, embedding_bag for large ones) give the values and
+    gradients of the plain ``table(idx).sum(-2)``."""
+    from ygorl.nets import encoders
+
+    if not small_table:
+        monkeypatch.setattr(encoders, "SMALL_TABLE", 0)
+    torch.manual_seed(0)
+    emb = encoders.CategoricalEmbedding([5, 300, 7, 2], 16)
+    x = torch.randint(-3, 320, (4, 9, 4))  # includes values the module clamps
+    out = emb(x)
+    ref = emb.table(torch.minimum(x.clamp(min=0), emb.limits) + emb.offsets).sum(-2)
+    grad = torch.randn_like(out)
+    (g_out,) = torch.autograd.grad(out, emb.table.weight, grad)
+    (g_ref,) = torch.autograd.grad(ref, emb.table.weight, grad)
+    assert out.shape == ref.shape and torch.allclose(out, ref, atol=1e-6)
+    assert torch.allclose(g_out, g_ref, atol=1e-5)
+
+
+@pytest.mark.parametrize("train", [True, False])
+def test_board_attention_matches_the_torch_transformer(real_obs, train):
+    """BoardEncoder runs its pre-norm layers by hand (packed projection + SDPA): same outputs and gradients as
+    ``nn.TransformerEncoder`` with a key padding mask, in train and eval mode."""
+    vocab, seen = real_obs
+    torch.manual_seed(0)
+    net = PolicyNet(NetConfig(vocab_size=len(vocab), d_model=32, n_heads=4, board_layers=2, history_layers=1))
+    board = net.board.train(train)
+    batch = collate(seen)
+    history = torch.randn(batch["cards"].shape[0], 32)
+
+    def reference():  # the previous BoardEncoder.forward
+        card_mask = batch["cards"][..., 0] > 0
+        tokens = [board.globals(batch["globals"]).unsqueeze(1), board.history_proj(history).unsqueeze(1)]
+        x = torch.cat([*tokens, board.cards(batch["cards"])], 1)
+        keep = torch.cat([card_mask.new_ones(card_mask.shape[0], 2), card_mask], 1)
+        x = board.norm(board.transformer(x, src_key_padding_mask=~keep))
+        return x[:, 0], x[:, 2:]
+
+    rows = batch["cards"][..., 0] > 0
+    outputs = []
+    for fn in (lambda: board(batch["cards"], batch["globals"], history)[:2], reference):
+        board.zero_grad()
+        g, cards = fn()
+        (g.square().sum() + cards[rows].square().sum()).backward()
+        grads = {n: p.grad.clone() for n, p in board.named_parameters() if p.grad is not None}
+        outputs.append((g.detach(), cards.detach()[rows], grads))
+    (g1, c1, gr1), (g0, c0, gr0) = outputs
+    assert torch.allclose(g1, g0, atol=1e-5) and torch.allclose(c1, c0, atol=1e-5)
+    assert gr1.keys() == gr0.keys()
+    for name in gr0:
+        assert torch.allclose(gr1[name], gr0[name], atol=1e-4, rtol=1e-4), name
+
+
+def test_trimming_keeps_masked_copies_inside_the_action_list(real_obs):
+    """Equivalent copies are masked in place (docs/encoding.md), so a batch's valid rows need not be a prefix:
+    trimming cuts only after the last valid row and the valid logits are unchanged."""
+    vocab, seen = real_obs
+    torch.manual_seed(0)
+    net = PolicyNet(NetConfig(vocab_size=len(vocab), d_model=32, n_heads=4, board_layers=1, history_layers=1))
+    batch = collate(seen)
+    mask = batch["action_mask"].clone()
+    wide = mask.sum(1) >= 3
+    assert wide.any()
+    mask[wide, 1] = False  # a masked copy between valid rows
+    batch["action_mask"] = mask
+    outs = []
+    for trim in (False, True):
+        net.trim_padding = trim
+        with torch.no_grad():
+            outs.append(net(batch).logits)
+    assert torch.allclose(outs[1][mask], outs[0][mask], atol=1e-5) and (outs[1][~mask] == MASKED_LOGIT).all()

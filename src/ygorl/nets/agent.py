@@ -157,18 +157,9 @@ class NetPolicy:
 def policy_agent_factory(arg: str | None, seed: int):
     """Registry factory for ``policy:PATH[@greedy][@t=T]`` (sampling at temperature 1 by default)."""
     from ygorl.agents.policy import PolicyAgent
+    from ygorl.agents.registry import parse_policy_arg
 
-    if not arg:
-        raise ValueError("policy needs a checkpoint: policy:PATH[@greedy][@t=T]")
-    path, *opts = arg.split("@")
-    greedy, temperature = False, 1.0
-    for opt in opts:
-        if opt == "greedy":
-            greedy = True
-        elif opt.startswith("t="):
-            temperature = float(opt[2:])
-        else:
-            raise ValueError(f"unknown policy option {opt!r} (use @greedy or @t=T)")
+    path, greedy, temperature = parse_policy_arg(arg)
     return PolicyAgent(NetPolicy.from_checkpoint(path), seed=seed, greedy=greedy, temperature=temperature)
 
 

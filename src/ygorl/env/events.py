@@ -42,7 +42,7 @@ EVENT_TYPES = [
 ]  # fmt: skip
 EV = {name: i + 1 for i, name in enumerate(EVENT_TYPES)}
 
-TRIGGERS = {"search": 1, "spsummon_deck": 2, "send_deck_gy": 4, "fifth_summon": 8, "attack": 16, "other": 32}
+TRIGGERS = {"search": 1, "spsummon_deck": 2, "send_deck_grave": 4, "fifth_summon": 8, "attack": 16, "other": 32}
 
 # columns
 (TYPE, PLAYER, CARD, CARD2, FROM_CONTROLLER, FROM_LOCATION, FROM_SEQUENCE, FROM_POSITION, TO_CONTROLLER, TO_LOCATION,
@@ -258,7 +258,7 @@ class EventHistory:
             self._hand_delta(prev, -1)
             self._hand_delta(cur, +1)
             if self.solving and self.solving in self.links and prev.location == C.LOCATION_DECK:
-                trig = {C.LOCATION_HAND: "search", C.LOCATION_MZONE: "spsummon_deck", C.LOCATION_GRAVE: "send_deck_gy"}
+                trig = {C.LOCATION_HAND: "search", C.LOCATION_MZONE: "spsummon_deck", C.LOCATION_GRAVE: "send_deck_grave"}
                 if cur.location in trig:
                     self.links[self.solving].triggers |= TRIGGERS[trig[cur.location]]
         elif t == C.MSG_POS_CHANGE:

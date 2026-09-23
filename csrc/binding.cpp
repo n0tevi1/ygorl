@@ -274,10 +274,13 @@ PYBIND11_MODULE(_core, m) {
             py::gil_scoped_release release;
             d.restore(snap);
         }, py::arg("snapshot"), "Return to a snapshot taken from this duel (ValueError for another duel's).")
-        .def_property_readonly("snapshots_enabled", &Duel::snapshots_enabled)
-        .def("arena_escapes", &Duel::arena_escapes,
+        .def_property_readonly("snapshots_enabled", [](const Duel& d) {
+            py::gil_scoped_release release;  // takes the duel's mutex (GIL before mutex would deadlock)
+            return d.snapshots_enabled();
+        })
+        .def("arena_escapes", &Duel::arena_escapes, py::call_guard<py::gil_scoped_release>(),
              "Allocations that escaped the arena while the core ran (must be 0 for exact snapshots).")
-        .def("arena_bytes", &Duel::arena_bytes, "Bytes of the duel's arena in use.")
+        .def("arena_bytes", &Duel::arena_bytes, py::call_guard<py::gil_scoped_release>(), "Bytes of the duel's arena in use.")
         .def("load_script", &Duel::load_script, py::arg("name"),
              py::call_guard<py::gil_scoped_release>())
         .def("new_card", &Duel::new_card, py::arg("team"), py::arg("duelist"), py::arg("code"),
@@ -313,7 +316,10 @@ PYBIND11_MODULE(_core, m) {
             return out;
         }, "Return and clear [(OCG_LOG_TYPE_*, bytes)] emitted by the core.")
         .def("close", &Duel::close, py::call_guard<py::gil_scoped_release>())
-        .def_property_readonly("closed", &Duel::closed);
+        .def_property_readonly("closed", [](const Duel& d) {
+            py::gil_scoped_release release;
+            return d.closed();
+        });
 
     py::class_<DuelPool>(m, "DuelPool",
         "Advances many duels on a pool of worker threads (env i runs on thread i % num_threads).")
@@ -419,13 +425,13 @@ PYBIND11_MODULE(_core, m) {
         "Vectorized env with the step loop, action states and encoder in C++ (env i on thread i % threads).")
         .def(py::init([](size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
                          std::shared_ptr<ScriptDirectory> scripts, const std::vector<uint32_t>& vocab, bool privileged,
-                         size_t event_length) {
+                         size_t event_length, bool skip_forced) {
                  return std::make_unique<host::HostPool>(num_envs, num_threads, cards, scripts,
                                                          std::make_shared<host::Vocab>(vocab), privileged,
-                                                         event_length);
+                                                         event_length, skip_forced);
              }),
              py::arg("num_envs"), py::arg("num_threads"), py::arg("cards"), py::arg("scripts"), py::arg("vocab"),
-             py::arg("privileged") = false, py::arg("event_length") = 0)
+             py::arg("privileged") = false, py::arg("event_length") = 0, py::arg("skip_forced") = false)
         .def("reset", [](host::HostPool& p, int env, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1,
                          py::tuple t2, DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
             host::PoolJob job;

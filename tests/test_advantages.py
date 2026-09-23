@@ -592,3 +592,53 @@ def test_critic_learns_q_pi_from_expected_sarsa_targets(one_thread):
     for s, a in legal:
         assert float(out.q[s, a]) == pytest.approx(q_true[s, a], abs=2e-2)
     np.testing.assert_allclose(out.v.numpy(), v_true, atol=2e-2)
+
+
+def test_truncated_rows_bootstrap_from_the_critic():
+    """A game cut by a limit (turn_limit / decision_limit) ends the column's episode but is not a terminal
+    outcome: its last row's target is the critic's own estimate (zero TD error there), earlier rows bootstrap
+    through it, and whatever reward the row carries is ignored. Same as cutting the column there and
+    bootstrapping with the critic (Q(s_k, a_k) for the Q targets, V(s_k) for GAE) from the same seat."""
+    g = torch.Generator().manual_seed(3)
+    T, A, k = 7, 4, 3  # rows 0..k: a truncated game; rows k+1..T-1: the next game, bootstrapped at the end
+    players = torch.tensor([0, 1, 1, 0, 1, 0, 0]).unsqueeze(1)
+    mask = torch.rand(T, 1, A, generator=g) < 0.8
+    mask[..., 0] = True
+    probs = torch.rand(T, 1, A, generator=g, dtype=DT)
+    q = torch.rand(T, 1, A, generator=g, dtype=DT) * 2 - 1
+    values = torch.rand(T, 1, generator=g, dtype=DT) * 2 - 1
+    actions = torch.zeros(T, 1, dtype=torch.long)
+    dones = torch.zeros(T, 1, dtype=torch.bool)
+    dones[k] = True
+    truncated = torch.zeros_like(dones)
+    truncated[k] = True
+    rewards = torch.zeros(T, 1, dtype=DT)
+    rewards[k] = 1.0  # e.g. a limit "won" on LP: must not leak into the targets
+    boot = dict(bootstrap_player=torch.tensor([1]), bootstrap_value=torch.tensor([0.3], dtype=DT),
+                bootstrap_q=torch.rand(1, A, generator=g, dtype=DT), bootstrap_probs=torch.rand(1, A, generator=g, dtype=DT),
+                bootstrap_mask=torch.ones(1, A, dtype=torch.bool))  # fmt: skip
+    kw = dict(dones=dones, players=players, actions=actions, action_mask=mask, probs=probs, q=q, values=values,
+              gamma=1.0, lam=0.9)  # fmt: skip
+    for estimator in ("vrpo", "gae"):
+        est = adv.estimate(estimator, rewards=rewards, truncated=truncated, **kw, **boot)
+        taken_q = q[k, 0, 0]
+        assert float(est.q_targets[k, 0]) == pytest.approx(float(taken_q))  # zero TD error on the cut row
+        # the first game alone, cut at row k and bootstrapped from the critic at the same seat
+        head = {n: x[: k + 1] for n, x in kw.items() if isinstance(x, torch.Tensor)}
+        head["dones"] = torch.zeros(k + 1, 1, dtype=torch.bool)
+        cut = adv.estimate(estimator, rewards=torch.zeros(k + 1, 1, dtype=DT), gamma=1.0, lam=0.9,
+                           bootstrap_player=players[k], bootstrap_value=values[k],
+                           bootstrap_q=torch.full((1, A), float(taken_q), dtype=DT), bootstrap_probs=probs[k],
+                           bootstrap_mask=mask[k], **head)  # fmt: skip
+        torch.testing.assert_close(est.q_targets[: k + 1], cut.q_targets)
+        torch.testing.assert_close(est.v_targets[: k + 1], cut.v_targets)
+        torch.testing.assert_close(est.advantages[: k + 1], cut.advantages)
+        # the rows after the cut are a fresh episode, unaffected by the truncated game
+        tail = {n: x[k + 1 :] for n, x in kw.items() if isinstance(x, torch.Tensor)}
+        rest = adv.estimate(estimator, rewards=rewards[k + 1 :], gamma=1.0, lam=0.9, **tail, **boot)
+        torch.testing.assert_close(est.advantages[k + 1 :], rest.advantages)
+    gae = adv.estimate("gae", rewards=rewards, truncated=truncated, **kw, **boot)
+    assert float(gae.v_targets[k, 0]) == pytest.approx(float(values[k, 0]))
+    assert float(gae.advantages[k, 0]) == pytest.approx(0.0)
+    with pytest.raises(ValueError, match="truncated"):
+        adv.estimate("vrpo", rewards=rewards, truncated=truncated & False | ~dones, **kw, **boot)

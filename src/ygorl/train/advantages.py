@@ -198,7 +198,7 @@ def estimate(estimator: str, *, rewards: Tensor, dones: Tensor, players: Tensor,
              values: Tensor | None = None, valid: Tensor | None = None, gamma: float = 1.0, lam: float = 0.95,
              bootstrap_player: Tensor | None = None, bootstrap_value: Tensor | None = None,
              bootstrap_q: Tensor | None = None, bootstrap_probs: Tensor | None = None,
-             bootstrap_mask: Tensor | None = None, vrpo_mode: str = "return",
+             bootstrap_mask: Tensor | None = None, truncated: Tensor | None = None, vrpo_mode: str = "return",
              normalize: str = "none") -> Estimate:  # fmt: skip
     """The GAE / VRPO switch (docs/training.md).
 
@@ -207,14 +207,26 @@ def estimate(estimator: str, *, rewards: Tensor, dones: Tensor, players: Tensor,
     Expected-SARSA(λ) returns when a Q head is given, so the ablation trains the same critic.
     Bootstrap: ``bootstrap_value`` is the V head at the state after the last row (GAE); ``bootstrap_q`` /
     ``bootstrap_probs`` / ``bootstrap_mask`` (``[B, A]``) give ``V̄`` there for the Expected-SARSA returns.
+
+    ``truncated`` (``[T, B]`` bool, only where ``dones``): the game was cut by a limit (turn / decision
+    limit, engine error) instead of being decided. The row still ends the episode in its column, but its
+    reward is replaced by the critic's own estimate -- ``Q(s_t, a_t)`` for the Expected-SARSA returns,
+    ``V(s_t)`` for GAE -- so the cut row has zero TD error and earlier rows bootstrap through the critic
+    (docs/training.md). Whatever reward the row carried (e.g. an LP-decided limit) is ignored.
     """
     if estimator not in ESTIMATORS:
         raise ValueError(f"estimator must be one of {ESTIMATORS}, got {estimator!r}")
     common = {"gamma": gamma, "lam": lam, "bootstrap_player": bootstrap_player, "valid": valid}
     has_q = q is not None
+    if truncated is not None and (truncated & ~dones).any():
+        raise ValueError("truncated rows must also be done (the episode ends there in its column)")
+    v_rewards = rewards
+    if truncated is not None and values is not None:
+        v_rewards = torch.where(truncated, values, rewards.to(values))
     if has_q:
         es_boot = None if bootstrap_q is None else expected_values(bootstrap_q, bootstrap_probs, bootstrap_mask)
-        es_args = (rewards, q, probs, action_mask, actions, dones, players)
+        q_rewards = rewards if truncated is None else torch.where(truncated, _taken(q, actions), rewards.to(q))
+        es_args = (q_rewards, q, probs, action_mask, actions, dones, players)
     if estimator == "vrpo":
         if not has_q:
             raise ValueError("the vrpo estimator needs q, probs, action_mask and actions")
@@ -223,6 +235,6 @@ def estimate(estimator: str, *, rewards: Tensor, dones: Tensor, players: Tensor,
     else:
         if values is None:
             raise ValueError("the gae estimator needs values (the V head)")
-        advantages, v_targets = gae(rewards, values, dones, players, bootstrap_value=bootstrap_value, **common)
+        advantages, v_targets = gae(v_rewards, values, dones, players, bootstrap_value=bootstrap_value, **common)
         q_targets = expected_sarsa_returns(*es_args, bootstrap_value=es_boot, **common) if has_q else None
     return Estimate(normalize_advantages(advantages, valid, normalize), v_targets, q_targets)

@@ -101,6 +101,9 @@ summary, state, tokens = net.history(events, event_mask, state=None)
   critic 看「历史 + 特权信息」）打分；V 头接同一上下文。特权张量（`EncodedEvent.privileged`）绝不进入 `features`。
 - **T4b.4 PPO**：`out = net(batch)`，`out.log_probs()`、`out.entropy()`、`out.sample()`、`net.act(batch)`；
   批处理 `collate(list_of_obs)` / `to_tensors(batched_arrays)`（int32 → int64，掩码 → bool；没有 `events` 键时历史为空）。
+  训练用的组合模型是 `ygorl.nets.actor_critic.ActorCritic`：actor = `PolicyNet`，critic = T4b.3 的 `Critic` 接
+  `f.context` ⊕ `PrivilegedEncoder(对手真值)`、对 `f.actions` 打 Q 分；默认与 actor 共享主干（`shared_backbone=False` 时
+  critic 另有一个 `PolicyNet` 主干）。特权真值只进 critic（[training.md](training.md) §8）。
 - **T4c.1 信念头**：接在 `f` 上（辅助损失通道），输出 `[B, belief_dim]` 以 `net.logits(f, belief)` / `net(obs, belief=...)`
   传入；网络内部 `detach`（设计 04：防止策略把信念头当旁路），`NetConfig.belief_dim = 0` 时不接收。已实现为
   `ygorl.nets.belief`（`BeliefHeads` + `BeliefPolicy`，`belief_dim = BeliefConfig.policy_dim`），见 [belief-heads.md](belief-heads.md)。
@@ -122,11 +125,28 @@ summary, state, tokens = net.history(events, event_mask, state=None)
 
 LSTM 历史合计 3,164,288；关 ID 嵌入且不用历史 915,072；加 384 维卡文本与效果文本（三个投影：卡文本、效果均值、效果串）+147,456。
 
+## 实现上的性能处理（结果不变）
+
+CPU 训练时的热点做了等价改写，都有与原写法逐项比对的单测（`tests/test_nets.py`、`tests/test_train_loop.py`）：
+
+- **裁掉填充**：`PolicyNet.features` 与 `ActorCritic.forward` 先把一批观测裁到最长的有效前缀（`nets.policy.trim_padding`），
+  输出再补回原宽度（logits 补 `MASKED_LOGIT`、Q 补 0）；critic 的 Q 头因此不再给 128 行全打分。
+- **类别嵌入求和**（`CategoricalEmbedding`）：原写法 `table(idx).sum(-2)` 会生成 `[B, N, 列数, d]` 的中间张量，反向还要对
+  上百万个下标排序。现在前向用 `F.embedding_bag(mode="sum")`；不超过 1,024 行的表（卡片 288、事件 453、全局 331 行）反向用
+  多热计数矩阵乘梯度（`_SummedRows`，`gradcheck` 精确），更大的表（动作 2,454 行）用 `embedding_bag` 自带的反向。
+- **局面自注意力**：`BoardEncoder` 逐层手写 pre-norm 层（打包投影 + `scaled_dot_product_attention`），参数与
+  `nn.TransformerEncoderLayer` 完全相同（state dict 不变），省掉 `multi_head_attention_forward` 的投影拷贝；
+  eval 模式也不再切到融合推理核，训练 / 评估两种模式输出一致。
+
+合计每次 PPO 更新约快 1.6 倍，端到端约 1.46 倍（[benchmarks.md](benchmarks.md)「PPO 训练吞吐」）。
+
 ## 已知局限
 
-- `PolicyAgent`（Python `DecisionPoint` 路径）的适配器是 `ygorl.nets.agent.NetPolicy`（T4a.2，见 [bc.md](bc.md)）：
+- Python `DecisionPoint` 路径（`Duel.run` / Arena）上有两个适配器，登记名都是 `policy:PATH`，按检查点格式选择：
+  PPO 训练的 checkpoint 走 `ygorl.agents.checkpoint`（T4b.4）：用锁步的 C++ `HostDuel` 生成与 `EncodedVecEnv` 相同的观测，
+  见 [evaluation.md](evaluation.md)「策略检查点 agent」；策略检查点（BC 等，`ygorl.nets.agent`）走 `NetPolicy`（T4a.2，见 [bc.md](bc.md)）：
   Agent 协议加了可选的 `observe(point, core)`（`Duel.run` 在每个决策点、双方的点都调用），适配器用 `ygorl.env.observer.PointObserver`
-  （参考编码器 + 事件流）编码，与 `EncodedVecEnv` 逐元素一致（`tests/test_bc.py`）。每个决策点单独编码、前向一次，
-  只适合评估；训练仍走 `EncodedVecEnv`（`net.act`）。
+  （参考编码器 + 事件流）编码，与 `EncodedVecEnv` 逐元素一致（`tests/test_bc.py`）。两者都每个决策点前向一次，只适合评估；
+  训练直接在 `EncodedVecEnv` 上用网络。
 - 合法动作超过 128 个（宣言卡名）时只能在前 128 行中选（同编码规范的截断）。
 - 窗口模式只看最近 `L` 个 token；真实 combo 回合 token 多时按需调大 `L` 或用流式模式。

@@ -78,7 +78,9 @@ def test_shapes_and_dtypes(db, encoder):
     assert obs["cards"].shape == (N_CARDS, 23) and obs["cards"].dtype == np.int32
     assert obs["globals"].shape == (22,) and obs["actions"].shape == (MAX_OPTIONS, 10)
     assert obs["action_mask"].shape == (MAX_OPTIONS,)
-    assert obs["action_mask"].sum() == min(len(point.actions), MAX_OPTIONS)
+    assert 0 < obs["action_mask"].sum() <= min(len(point.actions), MAX_OPTIONS)  # equivalent copies are masked
+    assert obs["action_mask"][0] and not obs["action_mask"][len(point.actions):].any()
+    assert obs["globals"][20] == len(point.actions)
 
 
 def test_first_decision_content(db, encoder):
