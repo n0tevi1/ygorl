@@ -20,7 +20,7 @@ environments/<version>/
 ```
 
 MD 环境由 `ygorl env build md-YYYY-MM` 一键生成（抓取、解析、校验，见 [data.md](data.md)）；`ygorl env check <版本>` 做下面全部校验并打印摘要。
-仓库里的快照：`environments/md-2026-09`（2026-09-23 抓取，禁限表待人工校对）。可选文件不参与加载与 `fingerprint`。
+仓库里的快照：`environments/md-2026-09`（2026-09-23 抓取，禁限表已与 YGOPRODECK、Yugipedia 交叉核对，见 [data.md](data.md)）。可选文件不参与加载与 `fingerprint`。
 
 前四个文件缺任何一个，加载时抛 `EnvironmentFileMissing`（同时是 `FileNotFoundError`），错误信息列出缺失文件名。
 内容不合法抛 `EnvironmentConfigError`（`ValueError` 子类），信息包含文件路径与出错的键或行号。

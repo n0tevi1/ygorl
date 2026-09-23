@@ -1,6 +1,6 @@
 {
  "description": "Engine packages derived from the environment's meta decks by tools/make_meta_packages.py (rule in its docstring and docs/synergy.md); an evaluation set for the synergy graph, never used to build it.",
- "environment": {"environment": "md-2026-09", "fingerprint": "e621b4774bf2b6d160c38ead55a0b252f3fa3592b5f76327da739b5b2379865d"},
+ "environment": {"environment": "md-2026-09", "fingerprint": "65ca28f79233e73d540a23c2046718ef42749ae883baa920216b94365b3e42d9"},
  "rule": {"min_size": 3, "split_by_declared_relation": true, "generic_lists": ["tests/data/generic_pool.json", "tools/make_proxy_packages.py:GENERIC"]},
  "packages": {
   "azamina": {"decks": ["Orcust"], "members": [

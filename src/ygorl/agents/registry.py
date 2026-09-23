@@ -83,7 +83,16 @@ def _greedy(arg: str | None, seed: int) -> Agent:
     return GreedyAgent(seed)
 
 
+def _policy(arg: str | None, seed: int) -> Agent:
+    try:
+        from ygorl.nets.agent import policy_agent_factory
+    except ImportError as exc:  # PyTorch is the optional ``train`` extra
+        raise ValueError(f"policy needs PyTorch (uv sync --extra train): {exc}") from None
+    return policy_agent_factory(arg, seed)
+
+
 register_agent("random", _random, "uniformly random legal actions (seeded)")
 register_agent("greedy", _greedy, "one-ply heuristic baseline (docs/evaluation.md)")
+register_agent("policy", _policy, "policy network checkpoint: policy:PATH[@greedy][@t=T] (docs/bc.md)")
 
 __all__ = ["AgentFactory", "AgentSpec", "agent_factory", "available_agents", "make_agent", "register_agent"]

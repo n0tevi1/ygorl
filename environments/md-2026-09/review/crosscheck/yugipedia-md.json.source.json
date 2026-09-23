@@ -1,0 +1,8 @@
+{
+ "urls": [
+  "https://yugipedia.com/api.php?action=parse&page=September%202026%20Lists%20%28Master%20Duel%29&prop=wikitext&format=json&formatversion=2"
+ ],
+ "retrieved": "2026-09-23T03:03:20Z",
+ "sha256": "a46d382d63c7d9551e812d14022bbe57e189725013f78b9412f7fa9206cccebf",
+ "user_agent": "ygorl-data/0.1 (Yu-Gi-Oh! RL research; +https://github.com/n0tevi1/ygorl)"
+}
