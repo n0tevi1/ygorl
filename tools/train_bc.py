@@ -4,7 +4,7 @@ Usage: uv run --extra train python tools/train_bc.py --train out/demos/bc_train.
            [--heldout out/demos/bc_heldout.jsonl] [--out out/bc] [--epochs 12] [--batch-size 64] [--lr 3e-4]
            [--history transformer|lstm|none] [--d-model 128] [--layers 2] [--event-length 128] [--threads 2]
            [--seed 0] [--baselines]
-           [--checkpoint PATH --no-train] [--report PATH] [--openings all|heldout|none]
+           [--checkpoint PATH --no-train] [--report PATH] [--openings all|heldout|none] [--sample-openings]
            [--extra GREEDY.npz --extra-subset all|battle --extra-max N [--extra-heldout GREEDY.npz]]
 
 Replays every verified line of the --train files, encodes each decision of the deck under study with the
@@ -70,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", type=Path, default=None, help="report file (default <out>/report.json)")
     parser.add_argument("--openings", default="all", choices=("all", "heldout", "none"),
                         help="free-running turn-1 reports on the training and held-out hands (default all)")
+    parser.add_argument("--sample-openings", action="store_true",
+                        help="play the free-running openings by sampling at temperature 1 (seed = hand number) instead of argmax")
     parser.add_argument("--extra", type=Path, action="append", default=[],
                         help="heuristic samples (.npz of tools/greedy_demos.py) added to the training set")
     parser.add_argument("--extra-subset", default="all", help="subset of the --extra samples (all, battle)")
@@ -174,7 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     print("step accuracy:", json.dumps(report["step_accuracy"]), flush=True)
 
     def bc_agent(i: int):
-        return PolicyAgent(NetPolicy(net, vocab, event_length=event_length, cards=cards), greedy=True)
+        return PolicyAgent(NetPolicy(net, vocab, event_length=event_length, cards=cards), seed=i,
+                           greedy=not args.sample_openings)  # fmt: skip
 
     agents = {"bc": bc_agent}
     if args.baselines:
