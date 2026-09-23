@@ -4,9 +4,11 @@
 
 ## 禁限表校对
 
-状态：**待校对**。对照游戏内「禁止・限制卡一览」逐条核对下表；不一致的卡写进 `review/banlist-overrides.lflist.conf`（`<password> <张数> --原因`，张数 3 表示解除），然后 `ygorl env build md-2026-09 --offline --reviewed-by <名字>` 重新生成。
+状态：**已校对**。对照游戏内「禁止・限制卡一览」逐条核对下表；不一致的卡写进 `review/banlist-overrides.lflist.conf`（`<password> <张数> --原因`，张数 3 表示解除），然后 `ygorl env build md-2026-09 --offline --reviewed-by <名字>` 重新生成。
 
 最近一次 MD 禁限更新：2026-08-31，[Master Duel: Forbidden / Limited List Update](https://www.masterduelmeta.com/news/august-30-2026/master-duel-forbidden-list-update/)。
+
+与独立来源（tools/crosscheck_banlist.py）的交叉核对记录：[banlist-crosscheck.md](banlist-crosscheck.md)。
 
 共 207 张：禁止 108、限制 73、准限制 26；人工修正 0 条。
 

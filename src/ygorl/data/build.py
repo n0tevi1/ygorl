@@ -34,6 +34,7 @@ RAW_DIR = "raw"
 REVIEW_DIR = "review"
 REPORT = "report.md"
 OVERRIDES = "banlist-overrides.lflist.conf"
+CROSSCHECK = "banlist-crosscheck.md"  # hand-written record of a cross-check against other sources
 RELATIONS = "relations.json"
 MD_VERSION_RE = re.compile(r"^md-(\d{4})-(\d{2})(?:-[a-z0-9.]+)?$")
 LIMIT_LABELS = {0: "禁止", 1: "限制", 2: "准限制", 3: "无限制"}
@@ -484,6 +485,8 @@ def _report(opts, stats, summaries, chosen, banlist: Banlist, ban_res, overrides
           f"`ygorl env build {opts.version} --offline --reviewed-by <名字>` 重新生成。", ""]  # fmt: skip
     if update:
         L += [f"最近一次 MD 禁限更新：{update['date']}，[{update['title']}]({update['url']})。", ""]
+    if (opts.out / REVIEW_DIR / CROSSCHECK).is_file():
+        L += [f"与独立来源（tools/crosscheck_banlist.py）的交叉核对记录：[{CROSSCHECK}]({CROSSCHECK})。", ""]
     counts = stats["banlist"]
     L += [f"共 {sum(counts.values())} 张：" + "、".join(f"{LIMIT_LABELS[k]} {counts[n]}" for k, n in LIMIT_KEYS.items()) +
           f"；人工修正 {len(overrides)} 条。", ""]  # fmt: skip

@@ -1,0 +1,8 @@
+{
+ "urls": [
+  "https://ygoprodeck.com/api/banlist/getBanListDates.php"
+ ],
+ "retrieved": "2026-09-23T03:03:20Z",
+ "sha256": "698a62f17ce4443f4bc2ee79ec5596fdafe5a5bd8fdacbff35947a38d336a716",
+ "user_agent": "ygorl-data/0.1 (Yu-Gi-Oh! RL research; +https://github.com/n0tevi1/ygorl)"
+}
