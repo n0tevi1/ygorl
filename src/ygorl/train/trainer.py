@@ -165,7 +165,7 @@ class Trainer:
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced)  # fmt: skip
-        self.collector = RolloutCollector(self.env, self.model, self.schedule, cfg.steps, opponents=self.pool.get,
+        self.collector = RolloutCollector(self.env, self.model, self.schedule, cfg.steps, opponents=self.schedule.opponent,
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch)  # fmt: skip
         self.counters = {"updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0}  # fmt: skip

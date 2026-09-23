@@ -65,6 +65,24 @@ def collector(db, vocab, *, max_decisions, steps, selfplay=1.0, snapshot=False, 
     return RolloutCollector(env, model, schedule, steps, opponents=pool.get, seed=5)
 
 
+def test_a_dealt_pair_keeps_its_snapshot_after_eviction(vocab):
+    # The second game of a pool pair starts later; the snapshot may have left the pool by then.
+    pool = SnapshotPool(1)
+    model = tiny_model(vocab)
+    sid = pool.add(model, update=0)
+    schedule = SelfPlaySchedule(DeckPool([load_ydk(p) for p in PAIR], "cross"), pool, selfplay_fraction=0.0, seed=5)
+    first = schedule()
+    assert first.opponent == sid
+    held = schedule.opponent(sid)
+    pool.add(model, update=1)  # evicts sid
+    assert sid not in pool.ids()
+    second = schedule()
+    assert second.opponent == sid and schedule.opponent(sid) is held
+    schedule()  # the next deal releases it
+    with pytest.raises(KeyError):
+        schedule.opponent(sid)
+
+
 def test_self_play_layout_on_real_duels(db, vocab):
     """Both seats are rows in time order; a decision-limit ending is a truncation (done, no reward)."""
     col = collector(db, vocab, max_decisions=30, steps=45)
