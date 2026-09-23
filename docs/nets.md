@@ -101,6 +101,9 @@ summary, state, tokens = net.history(events, event_mask, state=None)
   critic 看「历史 + 特权信息」）打分；V 头接同一上下文。特权张量（`EncodedEvent.privileged`）绝不进入 `features`。
 - **T4b.4 PPO**：`out = net(batch)`，`out.log_probs()`、`out.entropy()`、`out.sample()`、`net.act(batch)`；
   批处理 `collate(list_of_obs)` / `to_tensors(batched_arrays)`（int32 → int64，掩码 → bool；没有 `events` 键时历史为空）。
+  训练用的组合模型是 `ygorl.nets.actor_critic.ActorCritic`：actor = `PolicyNet`，critic = T4b.3 的 `Critic` 接
+  `f.context` ⊕ `PrivilegedEncoder(对手真值)`、对 `f.actions` 打 Q 分；默认与 actor 共享主干（`shared_backbone=False` 时
+  critic 另有一个 `PolicyNet` 主干）。特权真值只进 critic（[training.md](training.md) §8）。
 - **T4c.1 信念头**：接在 `f` 上（辅助损失通道），输出 `[B, belief_dim]` 以 `net.logits(f, belief)` / `net(obs, belief=...)`
   传入；网络内部 `detach`（设计 04：防止策略把信念头当旁路），`NetConfig.belief_dim = 0` 时不接收。
 - **NTP / 胜负辅助头（I6）**：接 `f.history_tokens`（因果，可直接做下一 token 预测）与 `f.context`。
@@ -123,7 +126,8 @@ LSTM 历史合计 3,164,288；关 ID 嵌入且不用历史 915,072；加 384 维
 
 ## 已知局限
 
-- `PolicyAgent`（`ygorl.agents.policy`，Python `DecisionPoint` 路径）的适配器没有做：`ObservationEncoder.encode(point, core)`
-  需要核心句柄，而 Agent 协议只拿到 `point`。网络在 `EncodedVecEnv` 路径上直接用（`net.act`）。
+- Python `DecisionPoint` 路径（`Duel.run` / Arena）上的适配器是 `policy:<checkpoint>`（`ygorl.agents.checkpoint`，T4b.4）：
+  用锁步的 C++ `HostDuel` 生成与 `EncodedVecEnv` 相同的观测，而不是 Python 参考编码器（后者需要核心句柄，Agent 协议只拿到
+  `point`），见 [evaluation.md](evaluation.md)「策略检查点 agent」。训练路径直接在 `EncodedVecEnv` 上用网络。
 - 合法动作超过 128 个（宣言卡名）时只能在前 128 行中选（同编码规范的截断）。
 - 窗口模式只看最近 `L` 个 token；真实 combo 回合 token 多时按需调大 `L` 或用流式模式。

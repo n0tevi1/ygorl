@@ -275,3 +275,31 @@ def test_policy_agent_rejects_wrong_length_scores():
     agent = PolicyAgent(lambda p: [0.0])
     with pytest.raises(ValueError, match="scores"):
         agent.act(point(M.SelectOption(ME, (1, 2))))
+
+
+class Following(RandomAgent):
+    """Records the optional Duel.run hooks."""
+
+    def __init__(self, seed):
+        super().__init__(seed)
+        self.started, self.seen = [], []
+
+    def on_duel_start(self, duel):
+        self.started.append(duel)
+
+    def on_decision(self, point, index):
+        self.seen.append((point.player, index))
+
+
+def test_duel_run_reports_every_decision_to_agents_with_hooks():
+    from ygorl.engine.duel import DuelConfig
+
+    a, b = Following(1), Following(2)
+    duel = Duel(4, None, DECKS["snake_eye"], DECKS["kashtira"], config=DuelConfig(max_turns=3), first=1)
+    result = duel.run(a, b)
+    assert a.started == [duel] and b.started == [duel]
+    assert a.seen == b.seen and [i for _, i in a.seen] == result.actions  # both seats, in order
+    assert {p for p, _ in a.seen} == {0, 1}
+    same = Following(3)  # one object on both seats is called once per decision
+    result = Duel(4, None, DECKS["snake_eye"], DECKS["kashtira"], config=DuelConfig(max_turns=3)).run(same, same)
+    assert len(same.started) == 1 and [i for _, i in same.seen] == result.actions
