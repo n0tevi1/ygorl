@@ -248,7 +248,11 @@ class Duel:
 
     # -- main loop -------------------------------------------------------
     def run(self, agent_a, agent_b) -> DuelResult:
-        """Play the duel, asking ``agent_a`` / ``agent_b`` for every decision."""
+        """Play the duel, asking ``agent_a`` / ``agent_b`` for every decision.
+
+        An agent with an ``observe(point, core)`` method is shown every decision point of the duel,
+        both seats', before the deciding agent's ``act`` (see :mod:`ygorl.agents.base`).
+        """
         agents = (agent_a, agent_b)
         return self._loop(seat=(agents[self.deck_of(0)], agents[self.deck_of(1)]))
 
@@ -274,6 +278,7 @@ class Duel:
         tracker = self.tracker(reference_log=reference_log)
         core = self._core = self._setup()
         hooks = []  # optional agent hooks (docs/evaluation.md): on_duel_start(duel), on_decision(point, index)
+        watchers = list({id(a): a.observe for a in seat or () if callable(getattr(a, "observe", None))}.values())
         try:
             for agent in {id(a): a for a in seat or ()}.values():
                 if hasattr(agent, "on_duel_start"):
@@ -304,6 +309,8 @@ class Duel:
                         point = tracker.point()
                         if point is None:
                             break
+                        for observe in watchers:
+                            observe(point, core)
                         agent = seat[point.player]
                         index = agent.act(point)
                         response = tracker.act(index, getattr(agent, "last_probs", None))

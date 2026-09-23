@@ -52,11 +52,15 @@ def load_cached(path: str | Path):
 class CheckpointAgent:
     name = "policy"
 
-    def __init__(self, path: str | Path, seed: int | None = None, *, greedy: bool = False) -> None:
+    def __init__(self, path: str | Path, seed: int | None = None, *, greedy: bool = False,
+                 temperature: float = 1.0) -> None:  # fmt: skip
         import torch
 
+        if not temperature > 0:
+            raise ValueError(f"temperature must be positive, got {temperature}")
         self.policy = load_cached(path)
         self.greedy = greedy
+        self.temperature = temperature
         self.generator = torch.Generator().manual_seed(int(seed or 0) & ((1 << 63) - 1))
         self.host = None
         self.last_probs: list[float] | None = None
@@ -96,7 +100,7 @@ class CheckpointAgent:
                                f"{point.player} with {n}")  # fmt: skip
         obs = self.host.observe()
         with torch.no_grad():
-            probs = torch.softmax(self.policy.net(collate([obs])).logits[0].float(), -1)
+            probs = torch.softmax(self.policy.net(collate([obs])).logits[0].float() / self.temperature, -1)
         if self.greedy:
             index = int(probs.argmax())
         else:
@@ -108,10 +112,10 @@ class CheckpointAgent:
         return index
 
 
-def make_policy_agent(arg: str | None, seed: int, *, greedy: bool = False) -> CheckpointAgent:
+def make_policy_agent(arg: str | None, seed: int, *, greedy: bool = False, temperature: float = 1.0) -> CheckpointAgent:
     if not arg:
         raise ValueError("policy needs a checkpoint path: policy:<path/to/checkpoint.pt>")
-    return CheckpointAgent(arg, seed, greedy=greedy)
+    return CheckpointAgent(arg, seed, greedy=greedy, temperature=temperature)
 
 
 __all__ = ["CheckpointAgent", "load_cached", "make_policy_agent"]

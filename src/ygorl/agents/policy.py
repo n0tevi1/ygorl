@@ -5,6 +5,10 @@ The policy is any callable ``point -> scores`` returning one real-valued score
 with its own seeded RNG, or the argmax with ``greedy=True``. The learned
 policies of M4 plug in here; ``last_probs`` is recorded by
 ``Duel(record_steps=True)``.
+
+A policy that needs the whole duel (a network over encoded observations,
+``ygorl.nets.agent.NetPolicy``) also has ``observe(point, core)``; the agent
+forwards ``Duel.run``'s calls to it (see :mod:`ygorl.agents.base`).
 """
 
 from __future__ import annotations
@@ -40,6 +44,11 @@ class PolicyAgent:
         self.greedy = greedy
         self.temperature = temperature
         self.last_probs: list[float] | None = None
+
+    def observe(self, point: DecisionPoint, core) -> None:
+        hook = getattr(self.policy, "observe", None)
+        if hook is not None:
+            hook(point, core)
 
     def act(self, point: DecisionPoint) -> int:
         scores = [float(s) for s in self.policy(point)]

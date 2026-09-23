@@ -142,8 +142,11 @@ CPU 训练时的热点做了等价改写，都有与原写法逐项比对的单�
 
 ## 已知局限
 
-- Python `DecisionPoint` 路径（`Duel.run` / Arena）上的适配器是 `policy:<checkpoint>`（`ygorl.agents.checkpoint`，T4b.4）：
-  用锁步的 C++ `HostDuel` 生成与 `EncodedVecEnv` 相同的观测，而不是 Python 参考编码器（后者需要核心句柄，Agent 协议只拿到
-  `point`），见 [evaluation.md](evaluation.md)「策略检查点 agent」。训练路径直接在 `EncodedVecEnv` 上用网络。
+- Python `DecisionPoint` 路径（`Duel.run` / Arena）上有两个适配器，登记名都是 `policy:PATH`，按检查点格式选择：
+  PPO 训练的 checkpoint 走 `ygorl.agents.checkpoint`（T4b.4）：用锁步的 C++ `HostDuel` 生成与 `EncodedVecEnv` 相同的观测，
+  见 [evaluation.md](evaluation.md)「策略检查点 agent」；策略检查点（BC 等，`ygorl.nets.agent`）走 `NetPolicy`（T4a.2，见 [bc.md](bc.md)）：
+  Agent 协议加了可选的 `observe(point, core)`（`Duel.run` 在每个决策点、双方的点都调用），适配器用 `ygorl.env.observer.PointObserver`
+  （参考编码器 + 事件流）编码，与 `EncodedVecEnv` 逐元素一致（`tests/test_bc.py`）。两者都每个决策点前向一次，只适合评估；
+  训练直接在 `EncodedVecEnv` 上用网络。
 - 合法动作超过 128 个（宣言卡名）时只能在前 128 行中选（同编码规范的截断）。
 - 窗口模式只看最近 `L` 个 token；真实 combo 回合 token 多时按需调大 `L` 或用流式模式。

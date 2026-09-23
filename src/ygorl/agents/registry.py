@@ -8,8 +8,10 @@ checkpoints) with :func:`register_agent`.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from ygorl.agents.base import Agent
 from ygorl.agents.greedy import GreedyAgent
@@ -84,20 +86,60 @@ def _greedy(arg: str | None, seed: int) -> Agent:
 
 
 def _policy(arg: str | None, seed: int) -> Agent:
-    from ygorl.agents.checkpoint import make_policy_agent  # needs PyTorch (the train extra)
+    """``policy:PATH[@greedy][@t=T]``: a PPO training checkpoint (``ygorl.train.checkpoint``, followed through a
+    lockstep C++ host) or a policy checkpoint (``ygorl.nets.agent``, e.g. from BC), told apart by the file's
+    ``format`` field. Sampling at temperature 1 by default."""
+    if not arg:
+        raise ValueError("policy needs a checkpoint: policy:PATH[@greedy][@t=T]")
+    path, *opts = arg.split("@")
+    greedy, temperature = False, 1.0
+    for opt in opts:
+        if opt == "greedy":
+            greedy = True
+        elif opt.startswith("t="):
+            temperature = float(opt[2:])
+            if not temperature > 0:
+                raise ValueError(f"policy temperature must be positive, got {opt!r}")
+        else:
+            raise ValueError(f"unknown policy option {opt!r} (use @greedy or @t=T)")
+    try:
+        from ygorl.nets.agent import CHECKPOINT_FORMAT, policy_agent_factory
+        from ygorl.train.checkpoint import FORMAT as PPO_FORMAT
+    except ImportError as exc:  # PyTorch is the optional ``train`` extra
+        raise ValueError(f"policy needs PyTorch (uv sync --extra train): {exc}") from None
+    fmt = _checkpoint_format(path)
+    if fmt == PPO_FORMAT:
+        from ygorl.agents.checkpoint import make_policy_agent
 
-    return make_policy_agent(arg, seed)
+        return make_policy_agent(path, seed, greedy=greedy, temperature=temperature)
+    if fmt == CHECKPOINT_FORMAT:
+        return policy_agent_factory(arg, seed)
+    raise ValueError(f"{path}: not a ygorl checkpoint (format {fmt!r})")
+
+
+def _checkpoint_format(path: str) -> str | None:
+    p = Path(path)
+    if not p.is_file():
+        raise ValueError(f"no policy checkpoint at {path}")
+    return _format_of(str(p.resolve()), p.stat().st_mtime_ns)
+
+
+@functools.lru_cache(maxsize=16)
+def _format_of(path: str, mtime_ns: int) -> str | None:
+    import torch
+
+    data = torch.load(path, map_location="cpu", weights_only=True, mmap=True)  # mmap: tensors are not read
+    return data.get("format") if isinstance(data, dict) else None
 
 
 def _policy_greedy(arg: str | None, seed: int) -> Agent:
-    from ygorl.agents.checkpoint import make_policy_agent
-
-    return make_policy_agent(arg, seed, greedy=True)
+    return _policy(f"{arg}@greedy" if arg else arg, seed)
 
 
 register_agent("random", _random, "uniformly random legal actions (seeded)")
 register_agent("greedy", _greedy, "one-ply heuristic baseline (docs/evaluation.md)")
-register_agent("policy", _policy, "a trained PPO checkpoint, sampling (policy:PATH.pt; needs the train extra)")
-register_agent("policy-greedy", _policy_greedy, "a trained PPO checkpoint, argmax (policy-greedy:PATH.pt)")
+register_agent("policy", _policy,
+               "a policy checkpoint (PPO training or BC): policy:PATH[@greedy][@t=T] (docs/evaluation.md, docs/bc.md)")
+register_agent("policy-greedy", _policy_greedy, "shorthand for policy:PATH@greedy")
 
 __all__ = ["AgentFactory", "AgentSpec", "agent_factory", "available_agents", "make_agent", "register_agent"]

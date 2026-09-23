@@ -18,6 +18,7 @@ AgentFactory = Callable[[int], Agent]                 # 种子 -> 新 agent
 - `point.player` 是**引擎玩家**（0 先攻），不是牌组侧 a/b。
 - agent 有状态（RNG、回合内记忆），每局每个座位一个实例；由 `AgentFactory(seed)` 构造，**同种子同对局必须做出同样的选择**。这是回放、配对种子和「结果与进程数无关」的前提。
 - 可选属性 `last_probs`：上一次调用时对各动作给出的概率，`Duel(record_steps=True)` 会记进回放。
+- 可选方法 `observe(point, core)`：`Duel.run` 在对局的**每个**决策点（双方的都算）按顺序、在行动方 `act` 之前调用，`core` 是活的核心句柄（只做查询）。编码观测的 agent 需要它：事件流跨越对手的决策，卡片表要查询核心（`NetPolicy`，[bc.md](bc.md)）。同一实例坐两个座位时每个点只调用一次。
 - 并行 `Arena` 需要把 factory 发到子进程，所以 factory 必须可 pickle：类本身（`GreedyAgent`）、模块级函数或 `functools.partial`。
 - `agent_name(x)` 给类、实例、函数或 partial 取可读名字（优先类属性 `name`）。
 - 可选钩子（T4b.4）：`Duel.run` 开局时对每个 agent 调一次 `on_duel_start(duel)`（拿到种子、规则、装载顺序的牌组），
@@ -30,8 +31,8 @@ AgentFactory = Callable[[int], Agent]                 # 种子 -> 新 agent
 |-------|------|
 | `RandomAgent(seed)` | 均匀随机合法动作 |
 | `GreedyAgent(seed, cards=None)` | 确定性启发式，见下 |
-| `PolicyAgent(policy, seed=None, greedy=False, temperature=1.0)` | `policy(point)` 对每个动作打分（logit），按 `softmax(score / T)` 采样或取 argmax；暴露 `last_probs`。只看 `DecisionPoint` 的打分函数从这里接入 |
-| `CheckpointAgent(path, seed, greedy=False)` | 训练出的 PPO checkpoint（T4b.4），见下「策略检查点 agent」；登记名 `policy:<路径>`（采样）、`policy-greedy:<路径>`（argmax） |
+| `PolicyAgent(policy, seed=None, greedy=False, temperature=1.0)` | `policy(point)` 对每个动作打分（logit），按 `softmax(score / T)` 采样或取 argmax；暴露 `last_probs`。M4 的网络策略从这里接入：`PolicyAgent(NetPolicy.from_checkpoint(path))`，或规格 `policy:PATH`（[bc.md](bc.md)） |
+| `CheckpointAgent(path, seed, greedy=False, temperature=1.0)` | 训练出的 PPO checkpoint（T4b.4），见下「策略检查点 agent」；登记名 `policy:PATH[@greedy][@t=T]`（与 BC 检查点共用一个名字，按文件的 `format` 字段选加载方式）；`policy-greedy:PATH` 是 `@greedy` 的简写 |
 
 ### 策略检查点 agent（`ygorl/agents/checkpoint.py`）
 

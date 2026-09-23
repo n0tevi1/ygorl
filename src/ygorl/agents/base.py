@@ -19,6 +19,11 @@ rely on):
   before the first decision, and ``on_decision(point, index)`` after every
   answered decision of *both* seats (once per agent object). Agents that must
   follow the whole game (``policy:<checkpoint>``) use them.
+* Optionally an agent has ``observe(point, core)``: ``Duel.run`` calls it at every
+  decision point of the duel, both seats', in order and before the deciding
+  agent's ``act``, with the live core (read-only queries). Agents that encode
+  observations need it: the event stream spans the opponent's decisions too, and
+  the board encoder queries the core. An agent seated twice is called once.
 """
 
 from __future__ import annotations

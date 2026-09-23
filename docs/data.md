@@ -60,13 +60,21 @@ Yugipedia 的 SMW 查询在偏移超过 5000 时会**静默地从 0 重新开始
 
 MD 禁限表没有上游（`third_party/LFLists` 里只有 TCG、OCG、World、GOAT、Speed、Rush 等表，没有 MD 表），由 masterduelmeta 的 `banStatus`
 生成 `banlist.lflist.conf`（EDOPro 格式，表名 `YYYY.MM MD`，每行 `--卡名` 注释，异画折回原卡；同一张卡状态冲突时取更严的并在报告里列出）。
-YGOPRODECK 的 `banlist_info` 没有 MD 字段，不能作第二来源。
+YGOPRODECK `cardinfo.php` 的 `banlist_info` 没有 MD 字段（只有 TCG / OCG / GOAT），ProjectIgnis/LFLists 的全部历史里也从来没有
+MD 表；但 YGOPRODECK 网站禁限页背后的 `https://ygoprodeck.com/api/banlist/getBanList.php?list=Master%20Duel`（卡密 + 状态，
+`getBanListDates.php` 给各版生效日期）和 Yugipedia 的「<月> <年> Lists (Master Duel)」页面（卡名 + 状态，信息框写生效日期与下一版）
+都与 masterduelmeta 无关，用作交叉核对来源（见下文第 2 步）。
 
 生成的禁限表默认是**待校对**（`environment.json` 的 `review.banlist.status = "pending"`，`ygorl env check` 与 `build` 都会显示）。校对流程：
 
 1. 打开 `review/report.md` 的「禁限表校对」一节：全部禁限卡（卡密、卡名、MD / TCG / OCG 状态、备注：异画合并、按卡名匹配、人工修正、不在卡池），
    与同根目录下上一个 `md-*` 版本相比的变化，以及 masterduelmeta 的更新公告链接（公告写明生效日期）。
-2. 在游戏内「卡组 → 禁止・限制卡一览」逐条核对。报告里的「按日期统计的卡表」也是一项旁证：禁限表生效后仍有卡表违反它，说明禁限表可能有误。
+2. 与独立来源交叉核对：`uv run python tools/crosscheck_banlist.py <版本> --date <生效日> --save <环境>/review/crosscheck`
+   按卡密（异画折回原卡，卡名经 `CardMapper`）把 `banlist.lflist.conf` 与 YGOPRODECK、Yugipedia 两份 MD 表逐卡比较，打印差异表；
+   有差异、无法对应的条目或比 `--date` 更新的表时退出码 1。`--yugipedia-page` 指定 Yugipedia 页面，`--from <目录>` 用保存的响应离线重跑。
+   结论写进手写的 `review/banlist-crosscheck.md`（来源 URL、抓取时间、差异表与处理；`build` 不覆盖它，生成的报告会链接它）。
+   来源之间有分歧、或怀疑三方都没跟上时，再到游戏内「卡组 → 禁止・限制卡一览」核对。报告里的「按日期统计的卡表」也是一项旁证：
+   禁限表生效后仍有卡表违反它，说明禁限表可能有误。
 3. 不一致的卡写进 `review/banlist-overrides.lflist.conf`（进 git），每行 `<password> <张数> --原因`，张数 3 表示解除限制：
 
    ```
@@ -76,6 +84,11 @@ YGOPRODECK 的 `banlist_info` 没有 MD 字段，不能作第二来源。
 
 4. `uv run ygorl env build <版本> --offline --reviewed-by <名字>` 重新生成：修正叠加在生成结果上，`review.banlist` 记为
    `{"status": "reviewed", "by", "date"}`。之后不带 `--reviewed-by` 重建时，禁限表内容不变则保留「已校对」，一旦变化就回到「待校对」。
+   注意 `environment.json` 计入 `fingerprint`，改校对状态会换环境戳，已有产物（如 `artifacts/meta_packages.json`）要重新生成。
+
+`md-2026-09` 的禁限表于 2026-09-23 与 YGOPRODECK、Yugipedia（均为 2026-09-03 生效的表，当日仍是现行表）交叉核对：207 张
+（禁止 108、限制 73、准限制 26）三方完全一致，无修正，记为已校对。记录见
+[environments/md-2026-09/review/banlist-crosscheck.md](../environments/md-2026-09/review/banlist-crosscheck.md)。
 
 ## Meta 卡组
 
@@ -121,7 +134,7 @@ YGOPRODECK 的 `banlist_info` 没有 MD 字段，不能作第二来源。
 | 项 | 数值 |
 |----|------|
 | 卡池 | 13 858 个卡密：YGOPRODECK 列出 13 865 张，去掉 7 张衍生物；2 张按卡名对应（Barrel Dragon 81480461 → 81480460；Mercurium the Living Quicksilver 的 YGOPRODECK 临时 id 101303084 → 22984000）；无法对应 0 张 |
-| 禁限表 | 207 张：禁止 108、限制 73、准限制 26。masterduelmeta 的 231 条记录中含重复与 7 张异画（Apollousa、Droll & Lock Bird、Foolish Burial、Harpie's Feather Duster、Monster Reborn、Number 41: Bagooska、Ultimate Offering），折回原卡；无法对应 0 张；1 张不在卡池（Maliss \<Q\> Red Ransom：masterduelmeta 列为禁止，YGOPRODECK 未列入 MD 卡池）。**待人工校对** |
+| 禁限表 | 207 张：禁止 108、限制 73、准限制 26。masterduelmeta 的 231 条记录中含重复与 7 张异画（Apollousa、Droll & Lock Bird、Foolish Burial、Harpie's Feather Duster、Monster Reborn、Number 41: Bagooska、Ultimate Offering），折回原卡；无法对应 0 张；1 张不在卡池（Maliss \<Q\> Red Ransom：masterduelmeta 列为禁止，YGOPRODECK 未列入 MD 卡池）。**已校对**：2026-09-23 与 YGOPRODECK、Yugipedia 逐卡一致（见上文） |
 | Meta 窗口 | 2026-09-04 至 2026-09-23：848 份卡表，计入份额的 560 份，145 个卡组类型 |
 | Meta 卡组 | 20 套，份额合计 71.7%：Dracotail 8.9%、Clown Crew 8.2%、Sky Striker 7.9%、Branded 6.1%、Resonators 5.4%、Kewl Tune 4.5%、Elfnote Kewl Tune 3.8%、Magistus Fairy Tail 3.4%、Yummy 2.9%、Lunalight 2.7%、Elfnote、Vanquish Soul K9、Radiant Typhoon Zoodiac、Ryzeal Mitsurugi、Maliss、Tearlaments、Blue-Eyes、HEROs、Odion、Orcust |
 | 卡表合法性 | 窗口内 848 份卡表在生成的禁限表下全部合法；无法对应的卡 0 张。20 套代表卡表全部合法；卡池里的效果卡全部在 CardScripts 中有脚本；20 套各与 Dracotail 打一局（greedy 对 random，6 回合）无脚本错误、无未知消息 |
