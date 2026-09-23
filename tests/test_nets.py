@@ -452,3 +452,39 @@ def test_forward_on_real_observations(real_obs):
         loss = -out.log_probs().gather(1, out.greedy()[:, None]).mean()
         loss.backward()
     assert batch["events"].shape[1] == 32 and batch["event_mask"].any()
+
+
+@pytest.mark.parametrize("history", ["transformer", "lstm", "none"])
+def test_trimming_padding_changes_nothing(real_obs, history):
+    """PolicyNet cuts trailing padding (card rows, actions, events) to the batch's longest row before the
+    heavy work and pads the outputs back: logits, features and gradients equal the untrimmed computation."""
+    vocab, seen = real_obs
+    torch.manual_seed(0)
+    net = PolicyNet(NetConfig(vocab_size=len(vocab), d_model=32, n_heads=4, board_layers=1, history_layers=1,
+                              history=history))  # fmt: skip
+    batch = collate(seen)
+    assert int(batch["action_mask"].sum(1).max()) < MAX_OPTIONS  # there is padding to cut
+    results, seen_lengths = [], []
+    hook = net.action_encoder.register_forward_pre_hook(lambda m, args: seen_lengths.append(args[0].shape[1]))
+    for trim in (False, True):
+        net.trim_padding = trim
+        net.zero_grad()
+        out = net(batch)
+        f = out.features
+        loss = -(out.log_probs().gather(1, out.greedy()[:, None])).mean() + f.context.square().mean()
+        loss.backward()
+        grads = {n: p.grad.clone() for n, p in net.named_parameters() if p.grad is not None}
+        results.append((out.logits, f.actions, f.cards, f.context, grads))
+    hook.remove()
+    assert seen_lengths == [MAX_OPTIONS, int(batch["action_mask"].sum(1).max())]  # trimming really happened
+    (l0, a0, c0, x0, g0), (l1, a1, c1, x1, g1) = results
+    assert l1.shape == l0.shape and a1.shape == a0.shape and c1.shape == c0.shape
+    mask = batch["action_mask"]
+    assert torch.allclose(l1[mask], l0[mask], atol=1e-5) and (l1[~mask] == MASKED_LOGIT).all()
+    assert torch.allclose(x1, x0, atol=1e-5)
+    assert torch.allclose(a1[mask], a0[mask], atol=1e-5)
+    rows = batch["cards"][..., 0] > 0
+    assert torch.allclose(c1[rows], c0[rows], atol=1e-5)
+    assert g0.keys() == g1.keys()
+    for name in g0:
+        assert torch.allclose(g1[name], g0[name], atol=1e-5, rtol=1e-4), name

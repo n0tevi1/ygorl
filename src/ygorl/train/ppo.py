@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass, fields
 import torch
 from torch import Tensor, nn
 
+from ygorl.nets.policy import trim_padding
 from ygorl.train.advantages import ESTIMATORS, NORMALIZE_MODES, VRPO_MODES, Estimate, estimate
 from ygorl.train.critic import q_loss, v_loss
 from ygorl.train.rollout import Rollout, _logits_of
@@ -223,10 +224,13 @@ class PPOLearner:
         v_targets = est.v_targets.reshape(-1).float()
         actions = ro.actions.reshape(-1)
         old_logp = ro.log_probs.reshape(-1)
-        mask = ro.action_mask.reshape(actions.shape[0], -1)
+        # Cut the rollout's padding once (nets.policy.trim_padding): every minibatch then gathers from the smaller
+        # tensors, and logits / masks only span the rollout's longest action list (same values, see tests).
+        obs = trim_padding(ro.obs)
+        mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]]
         n = actions.shape[0]
-        ref_logits = self._score(self.reference, ro.obs, n) if cfg.kl_ref_coef > 0 else None
-        prior_logits = self._score(self.prior, ro.obs, n) if self.prior is not None and cfg.kl_prior_coef > 0 else None
+        ref_logits = self._score(self.reference, obs, n) if cfg.kl_ref_coef > 0 else None
+        prior_logits = self._score(self.prior, obs, n) if self.prior is not None and cfg.kl_prior_coef > 0 else None
 
         model.train()
         sums: dict[str, float] = defaultdict(float)
@@ -235,7 +239,7 @@ class PPOLearner:
             perm = torch.randperm(n)
             for start in range(0, n, cfg.minibatch_size):
                 idx = perm[start : start + cfg.minibatch_size]
-                out = model(_index(ro.obs, idx), _index(ro.privileged, idx))
+                out = model(_index(obs, idx), _index(ro.privileged, idx))
                 logits = out.logits.float()
                 m = mask[idx]
                 logp = torch.log_softmax(logits, -1)

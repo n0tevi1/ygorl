@@ -263,3 +263,30 @@ def test_train_tool_runs_resumes_and_summarizes(tmp_path, capsys):
     assert tool.main(["--summary", str(out / "metrics.jsonl")]) == 0
     assert json.loads(capsys.readouterr().out)["updates"] == 2
     assert tool.main([str(tmp_path / "missing.ydk"), "--updates", "1"]) == 2  # decks are checked like the CLI
+
+
+def test_padding_trimming_leaves_the_ppo_update_unchanged(db, vocab, monkeypatch):
+    """The learner cuts the rollout's padding once and the net cuts each batch's: the same update either way."""
+    import copy
+
+    from ygorl.nets.policy import PolicyNet
+    from ygorl.train import ppo as ppo_mod
+    from ygorl.train.ppo import PPOLearner
+
+    col = collector(db, vocab, max_decisions=120, steps=24)
+    ro = col.collect()
+    base = col.model
+    results = []
+    for trim in (False, True):
+        model = copy.deepcopy(base)
+        monkeypatch.setattr(PolicyNet, "trim_padding", trim)
+        monkeypatch.setattr(ppo_mod, "trim_padding", ppo_mod.trim_padding if trim else (lambda obs: obs))
+        learner = PPOLearner(model, PPOConfig(minibatch_size=16, epochs=2))
+        torch.manual_seed(3)
+        stats = learner.update(ro)
+        results.append((stats, {k: v.detach().clone() for k, v in model.state_dict().items()}))
+    (s0, p0), (s1, p1) = results
+    for key in ("loss", "policy_loss", "entropy", "kl_ref", "q_loss", "v_loss", "approx_kl"):
+        assert abs(s0[key] - s1[key]) < 1e-4 * max(1.0, abs(s0[key])), key
+    for name in p0:
+        assert torch.allclose(p0[name].float(), p1[name].float(), atol=1e-5, rtol=1e-4), name
