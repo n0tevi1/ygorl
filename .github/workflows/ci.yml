@@ -10,14 +10,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Static check only: installs just the dev group (ruff, pytest), so it needs no submodules and
+  # no C++ build and reports lint errors in well under a minute, independently of the test jobs.
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-suffix: lint
+          python-version: "3.11"
+
+      - name: Install dev tools
+        run: uv sync --locked --only-group dev
+
+      - name: Ruff
+        run: uv run --no-sync ruff check src tests tools
+
+  # core: the full suite without torch (the torch-dependent test files skip themselves).
+  # train: the same build plus the `train` extra (PyPI torch, ~5 GB installed), running only the
+  # test files that importorskip torch, so the rest of the suite is not run twice.
   build-and-test:
+    name: build-and-test (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: core
+            sync-flags: ""
+          - name: train
+            sync-flags: "--extra train"
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 500M
     steps:
       - uses: actions/checkout@v4
+
+      - name: Free disk space
+        if: matrix.name == 'train'
+        run: |
+          df -h /
+          # Preinstalled toolchains we never use; torch with its bundled CUDA libraries needs ~5 GB.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
 
       - name: Submodule cache key
         id: submodules
@@ -37,6 +77,7 @@ jobs:
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ccache ninja-build
 
+      # Both matrix jobs compile identical objects, so they share one ccache entry.
       - name: Restore ccache
         uses: actions/cache@v4
         with:
@@ -46,19 +87,33 @@ jobs:
             ccache-${{ runner.os }}-${{ steps.submodules.outputs.key }}-
             ccache-${{ runner.os }}-
 
+      # setup-uv prunes the cache with `uv cache prune --ci` before saving, which drops wheels downloaded
+      # from PyPI; torch is therefore re-downloaded each run rather than kept in the repository's cache quota.
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+          cache-suffix: ${{ matrix.name }}
           python-version: "3.11"
 
       - name: Build extension
-        run: uv sync --locked --verbose
+        run: uv sync --locked ${{ matrix.sync-flags }} --verbose
 
       - name: Import smoke test
         run: uv run --no-sync python -c "import ygorl._core as c; print(c.ocg_version())"
 
       - name: Test
+        if: matrix.name == 'core'
         run: uv run --no-sync pytest -v
+
+      - name: Test (torch-dependent files)
+        if: matrix.name == 'train'
+        run: |
+          # importorskip would silently skip everything if torch failed to install; fail loudly instead.
+          uv run --no-sync python -c "import torch; print(torch.__version__)"
+          files=$(grep -l 'importorskip("torch")' tests/test_*.py)
+          test -n "$files"
+          echo "$files"
+          uv run --no-sync pytest -v $files
 
       - name: ccache stats
         if: always()

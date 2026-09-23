@@ -103,6 +103,14 @@ M2 遗留事项（验收之外发现、需要在后续任务前解决）：
 | T5.9 | LLM emitter：以卡池与协同图为输入提出候选引擎包（不做成对协同判定） | T5.5 | 提案经约束校验的通过率；与协同图包的重叠率 | [#46](https://github.com/n0tevi1/ygorl/issues/46) |
 | T5.10 | 小格式端到端：3–4 个系列约 300 张卡；精英牌组真实胜率 > 随机合法牌组；人工检查 | T5.8, T4d.1 | 报告入 `docs/experiments/` | [#47](https://github.com/n0tevi1/ygorl/issues/47) |
 
+验收记录（M4 / M5，已达标的任务；细节与数字见各自文档）：
+
+- **T4c.1**（[belief-heads.md](belief-heads.md)）：`ygorl.nets.belief` + `ygorl.env.belief_prior`；随机自博弈 1,500 局上五个头均优于 HDT 过滤基线（牌组类型 top-1 0.547 → 0.863、ECE 0.31 → 0.01；手牌 auc_macro 0.879 → 0.892；盖卡 top-3 0.528 → 0.621），ECE 全表见文档。`responded` 标签为「任何发动是否被连锁」（被无效的发动常不结算，无法仅限检索 / 特召）；延伸角色位暂用粗规则，待 meta 卡表提供。
+- **T5.1**（[data.md](data.md)）：`ygorl env build md-<v>` 一键生成并通过 T0.4 校验；快照 `environments/md-2026-09`（卡池 13,858、20 套 meta 占 71.7%、未对应卡 0）。待办：禁限表对照游戏内列表的人工校对（`review.banlist.status = pending`）；TCG / OCG 环境导出未做。
+- **T5.3**（[synergy.md](synergy.md)）：真实 meta 召回（md-2026-09，31 个引擎包，`tools/make_meta_packages.py`）：纯脚本图 0.935（全部边）/ 0.871（仅检索 + 特召），达到 ≥ 80%；并联 Yugipedia `archetype_support`（`ygorl.build.relations`，可选）后 1.000 / 0.968。按卡组不拆引擎的严格变体 0.750。文本相似度（T5.2）尚未并联。
+- **T5.6**（[funnel.md](funnel.md)）：10 套 × 12 手，漏斗卡手率 0.425 vs 真实首回合 0.408，McNemar p = 0.625；相对大预算求解器有约 4 个百分点的单向假卡手（5/120）；每套牌 45.6–115.9 求解器进程秒，全部在 120 秒预算内（预算与过滤默认值待确认）。
+- **`.yrpX` 导出**（T1.8 补充）：现按 EDOPro 方式 LZMA 压缩（1–3 MB → 10–20 KB）；T1.8 的人工回看需确认压缩文件在客户端里能打开（`--yrpx-uncompressed` 可对照）。
+
 ### M6 元游戏闭环与 off-meta 报告
 
 | ID | 任务 | 依赖 | 验收标准 | Issue |

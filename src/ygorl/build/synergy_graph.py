@@ -22,9 +22,9 @@ Deck monsters are searched from the Deck). A query matching more than
 dropped; every edge records the *fanout* of the most specific query that
 produced it, so consumers can weight edges by specificity.
 
-Extension point: other relation sources (Yugipedia SMW relations, text
-similarity, T5.1/T5.2) can be merged as extra edge types via
-:meth:`SynergyGraph.add_edges`; they are not available offline yet.
+Extension point: other relation sources can be merged as extra edge types via
+:meth:`SynergyGraph.add_edges`: Yugipedia SMW relations of an environment with
+:mod:`ygorl.build.relations` (opt-in), text similarity later (T5.2).
 
 The graph itself is environment-independent (mined from the pinned
 CardScripts / BabelCDB revisions recorded in ``meta``); bind it to an

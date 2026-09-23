@@ -15,8 +15,9 @@ version whose files changed (fingerprint), raises
 host records: MSG_START, every engine message a spectator would see and the
 MSG_UPDATE_DATA / MSG_UPDATE_CARD refreshes it queries from the core around
 them) and an embedded ``yrp1`` replay (seed, decks in load order, responses)
-that EDOPro's "yrp" mode re-simulates with its own core. Layout transcribed
-from edo9300/edopro gframe/replay.cpp, generic_duel.cpp and core_utils.cpp.
+that EDOPro's "yrp" mode re-simulates with its own core, both LZMA-compressed as
+EDOPro saves them. Layout transcribed from edo9300/edopro gframe/replay.cpp,
+generic_duel.cpp and core_utils.cpp.
 """
 
 from __future__ import annotations
@@ -44,12 +45,18 @@ FORMAT_VERSION = 1
 # EDOPro replay constants (gframe/replay.h, gframe/common.h)
 REPLAY_YRP1 = 0x31707279
 REPLAY_YRPX = 0x58707279
+REPLAY_COMPRESSED = 0x1
 REPLAY_LUA64 = 0x10
 REPLAY_NEWREPLAY = 0x20
 REPLAY_64BIT_DUELFLAG = 0x100
 REPLAY_EXTENDED_HEADER = 0x200
 OLD_REPLAY_MODE = 231
 EDOPRO_VERSION = (41, 0)  # client version written in the header (EDOPro 41.0)
+# EDOPro's encoder settings (gframe/replay.cpp, Replay::EndRecord): LzmaCompress(..., level 5, dictSize 1 << 24,
+# lc 3, lp 0, pb 2, fb 32, 1 thread). liblzma's preset 5 is the same match finder (bt4, depth 16 + fb / 2).
+_LZMA_FILTERS = [
+    {"id": lzma.FILTER_LZMA1, "preset": 5, "dict_size": 1 << 24, "lc": 3, "lp": 0, "pb": 2, "nice_len": 32}
+]
 
 # Hint types the EDOPro host sends only to one player and leaves out of replays.
 _PRIVATE_HINTS = {1, 2, 3, 5}
@@ -229,7 +236,7 @@ class Replay:
 
     # -- EDOPro export ----------------------------------------------------
     def to_yrpx(self, path: str | Path, names: tuple[str, str] = ("Player A", "Player B"), env: Environment | None = None,
-                **kwargs) -> None:  # fmt: skip
+                compress: bool = True, **kwargs) -> None:  # fmt: skip
         """Write an EDOPro ``.yrpX`` (streamed packets + embedded ``yrp1``).
 
         ``names`` are given in (a, b) order. The duel is re-run to collect the
@@ -239,6 +246,8 @@ class Replay:
         stopped by the turn or decision limit ends with a MSG_WIN packet
         (winner from ``result``, reason :data:`WIN_REASON_LIMIT`). The header
         date is ``recorded_at`` (0 when unknown), so exports are reproducible.
+        Both replays are LZMA-compressed as EDOPro writes them (``REPLAY_COMPRESSED``);
+        ``compress=False`` stores them uncompressed, which EDOPro reads as well.
         """
         duel = self.duel(env, **kwargs)
         seat_names = (names[duel.deck_of(0)], names[duel.deck_of(1)])
@@ -256,10 +265,10 @@ class Replay:
         body = bytearray(_names_block(seat_names))
         body += struct.pack("<Q", self.rule_flags)
         body += host.packets
-        body += _packet(OLD_REPLAY_MODE, self._yrp1(seat_names, loaded, timestamp))
-        Path(path).write_bytes(_header(REPLAY_YRPX, self.core_seed, len(body), timestamp) + bytes(body))
+        body += _packet(OLD_REPLAY_MODE, self._yrp1(seat_names, loaded, timestamp, compress))
+        Path(path).write_bytes(_replay_file(REPLAY_YRPX, self.core_seed, bytes(body), timestamp, compress))
 
-    def _yrp1(self, seat_names: tuple[str, str], loaded, timestamp: int) -> bytes:
+    def _yrp1(self, seat_names: tuple[str, str], loaded, timestamp: int, compress: bool) -> bytes:
         p = self.player
         body = bytearray(_names_block(seat_names))
         body += struct.pack("<IIIQ", p["starting_lp"], p["starting_hand"], p["draw_per_turn"], self.rule_flags)
@@ -271,7 +280,7 @@ class Replay:
             if not 0 < len(r) < 256:
                 raise ValueError(f"response of {len(r)} bytes cannot be stored in a yrp1 replay")
             body += bytes([len(r)]) + r
-        return _header(REPLAY_YRP1, self.core_seed, len(body), timestamp) + bytes(body)
+        return _replay_file(REPLAY_YRP1, self.core_seed, bytes(body), timestamp, compress)
 
 
 # ---------------------------------------------------------------- EDOPro host packet stream
@@ -581,17 +590,28 @@ def _packet(msg_type: int, payload: bytes) -> bytes:
     return struct.pack("<BI", msg_type, len(payload)) + payload
 
 
-def _header(ident: int, seed_words: list[int], datasize: int, timestamp: int) -> bytes:
+def _replay_file(ident: int, seed_words: list[int], body: bytes, timestamp: int, compress: bool) -> bytes:
+    """Extended header + body, LZMA-compressed like EDOPro's Replay::EndRecord when ``compress``.
+
+    A compressed body keeps its uncompressed length in ``datasize`` and its 5 LZMA property bytes in the
+    header's ``props``; what follows the header is the bare LZMA stream (no ``.lzma`` header).
+    """
     major, minor = _core.ocg_version()
     version = EDOPRO_VERSION[0] | (EDOPRO_VERSION[1] << 8) | (major << 16) | (minor << 24)
     flag = REPLAY_LUA64 | REPLAY_NEWREPLAY | REPLAY_64BIT_DUELFLAG | REPLAY_EXTENDED_HEADER
-    base = struct.pack("<6I8s", ident, version, flag, timestamp & 0xFFFFFFFF, datasize, 0, b"\0" * 8)
-    return base + struct.pack("<Q4Q", 1, *seed_words)
+    props, data = b"", body
+    if compress:
+        flag |= REPLAY_COMPRESSED
+        # The .lzma container is 5 property bytes, a u64 size (unknown here) and the stream. liblzma ends the stream
+        # with an end marker, which EDOPro's LzmaUncompress (LZMA_FINISH_ANY, stops at datasize) never reaches.
+        alone = lzma.compress(body, format=lzma.FORMAT_ALONE, filters=_LZMA_FILTERS)
+        props, data = alone[:5], alone[13:]
+    base = struct.pack("<6I8s", ident, version, flag, timestamp & 0xFFFFFFFF, len(body), 0, props)
+    return base + struct.pack("<Q4Q", 1, *seed_words) + data
 
 
 # ------------------------------------------------------------------ reading .yrp / .yrpX
 
-REPLAY_COMPRESSED = 0x1
 REPLAY_TAG = 0x2
 REPLAY_SINGLE_MODE = 0x8
 REPLAY_HAND_TEST = 0x40
@@ -753,5 +773,5 @@ def parse_yrp(data: bytes) -> YrpFile:
     return YrpFile(**fields, decks=tuple(decks), rule_cards=rule_cards, responses=tuple(responses))
 
 
-__all__ = ["REPLAY_YRP1", "REPLAY_YRPX", "Replay", "ReplayEnvironmentMismatch", "YrpError", "YrpFile", "load_yrp",
-           "parse_yrp"]  # fmt: skip
+__all__ = ["REPLAY_COMPRESSED", "REPLAY_YRP1", "REPLAY_YRPX", "Replay", "ReplayEnvironmentMismatch", "YrpError",
+           "YrpFile", "load_yrp", "parse_yrp"]  # fmt: skip

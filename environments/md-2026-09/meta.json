@@ -1,0 +1,174 @@
+{
+ "source": "masterduelmeta.com https://www.masterduelmeta.com/api/v1/top-decks",
+ "retrieved": "2026-09-23",
+ "window": {
+  "since": "2026-09-04",
+  "until": "2026-09-23"
+ },
+ "method": "share = statsWeight-weighted fraction of the window's deck lists of this deck type; list = the type's medoid among its lists that are legal here (docs/data.md)",
+ "lists": 848,
+ "types": 145,
+ "min_share": 0.01,
+ "decks": [
+  {
+   "name": "Dracotail",
+   "file": "meta/dracotail.ydk",
+   "share": 0.0892,
+   "lists": 53,
+   "legal_lists": 53,
+   "representative": "https://www.masterduelmeta.com/community-tournaments/m鯖cs/36/dracotail/suro/GdqhV/"
+  },
+  {
+   "name": "Clown Crew",
+   "file": "meta/clown-crew.ydk",
+   "share": 0.0821,
+   "lists": 68,
+   "legal_lists": 68,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/clown-crew/sopheon/hbFhs/"
+  },
+  {
+   "name": "Sky Striker",
+   "file": "meta/sky-striker.ydk",
+   "share": 0.0785,
+   "lists": 44,
+   "legal_lists": 44,
+   "representative": "https://www.masterduelmeta.com/master-v/september-2026/sky-striker/ilrain/aW4_b/"
+  },
+  {
+   "name": "Branded",
+   "file": "meta/branded.ydk",
+   "share": 0.0607,
+   "lists": 38,
+   "legal_lists": 38,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/branded/usg/TAkIa/"
+  },
+  {
+   "name": "Resonators",
+   "file": "meta/resonators.ydk",
+   "share": 0.0535,
+   "lists": 44,
+   "legal_lists": 44,
+   "representative": "https://www.masterduelmeta.com/dice-rally/september-2026/resonators/ilrain/b_Vpt/"
+  },
+  {
+   "name": "Kewl Tune",
+   "file": "meta/kewl-tune.ydk",
+   "share": 0.0446,
+   "lists": 28,
+   "legal_lists": 28,
+   "representative": "https://www.masterduelmeta.com/community-tournaments/elite-cs-september-2026/3/kewl-tune/옐리/nh3EE/"
+  },
+  {
+   "name": "Elfnote Kewl Tune",
+   "file": "meta/elfnote-kewl-tune.ydk",
+   "share": 0.0375,
+   "lists": 23,
+   "legal_lists": 23,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/elfnote-kewl-tune/sleepy_eyes/eMbWq/"
+  },
+  {
+   "name": "Magistus Fairy Tail",
+   "file": "meta/magistus-fairy-tail.ydk",
+   "share": 0.0339,
+   "lists": 25,
+   "legal_lists": 25,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/magistus-fairy-tail/roguebubble/XJyBj/"
+  },
+  {
+   "name": "Yummy",
+   "file": "meta/yummy.ydk",
+   "share": 0.0285,
+   "lists": 18,
+   "legal_lists": 18,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/yummy/thomasgraduated2020/0UiKm/"
+  },
+  {
+   "name": "Lunalight",
+   "file": "meta/lunalight.ydk",
+   "share": 0.0267,
+   "lists": 19,
+   "legal_lists": 19,
+   "representative": "https://www.masterduelmeta.com/master-v/september-2026/lunalight/ciccio95/rjss3/"
+  },
+  {
+   "name": "Elfnote",
+   "file": "meta/elfnote.ydk",
+   "share": 0.0214,
+   "lists": 25,
+   "legal_lists": 25,
+   "representative": "https://www.masterduelmeta.com/dice-rally/september-2026/elfnote/runicksygo/lqJfF/"
+  },
+  {
+   "name": "Vanquish Soul K9",
+   "file": "meta/vanquish-soul-k9.ydk",
+   "share": 0.0214,
+   "lists": 13,
+   "legal_lists": 13,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/vanquish-soul-k9/flamez/uUPc5/"
+  },
+  {
+   "name": "Radiant Typhoon Zoodiac",
+   "file": "meta/radiant-typhoon-zoodiac.ydk",
+   "share": 0.0196,
+   "lists": 15,
+   "legal_lists": 15,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/radiant-typhoon-zoodiac/si_clay/Ojbb9/"
+  },
+  {
+   "name": "Ryzeal Mitsurugi",
+   "file": "meta/ryzeal-mitsurugi.ydk",
+   "share": 0.0196,
+   "lists": 11,
+   "legal_lists": 11,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/ryzeal-mitsurugi/bòxàohànhtây/csAtu/"
+  },
+  {
+   "name": "Maliss",
+   "file": "meta/maliss.ydk",
+   "share": 0.0178,
+   "lists": 10,
+   "legal_lists": 10,
+   "representative": "https://www.masterduelmeta.com/meta-weekly/245/maliss/absolutesp9/Ty6PG/"
+  },
+  {
+   "name": "Tearlaments",
+   "file": "meta/tearlaments.ydk",
+   "share": 0.0178,
+   "lists": 14,
+   "legal_lists": 14,
+   "representative": "https://www.masterduelmeta.com/rating-duels/september-2026/tearlaments/xxxdankstormxl/Jfyim/"
+  },
+  {
+   "name": "Blue-Eyes",
+   "file": "meta/blue-eyes.ydk",
+   "share": 0.016,
+   "lists": 15,
+   "legal_lists": 15,
+   "representative": "https://www.masterduelmeta.com/rating-duels/september-2026/blue-eyes/chaossound/CG2Mu/"
+  },
+  {
+   "name": "HEROs",
+   "file": "meta/heros.ydk",
+   "share": 0.016,
+   "lists": 10,
+   "legal_lists": 10,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/heros/omnireborn/HIFrR/"
+  },
+  {
+   "name": "Odion",
+   "file": "meta/odion.ydk",
+   "share": 0.016,
+   "lists": 9,
+   "legal_lists": 9,
+   "representative": "https://www.masterduelmeta.com/master-i/september-2026/odion/void-spirit/TXidS/"
+  },
+  {
+   "name": "Orcust",
+   "file": "meta/orcust.ydk",
+   "share": 0.016,
+   "lists": 12,
+   "legal_lists": 12,
+   "representative": "https://www.masterduelmeta.com/win-streaks/september-2026/orcust/hardcarrymachine/suxXi/"
+  }
+ ]
+}

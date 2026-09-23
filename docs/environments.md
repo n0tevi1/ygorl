@@ -13,8 +13,14 @@ environments/<version>/
 ├── banlist.lflist.conf     # 禁限表（EDOPro 格式）
 ├── meta.json               # meta 牌组清单与占比
 ├── meta/*.ydk              # meta 牌组
+├── relations.json          # 可选：Yugipedia 系列关系（ygorl env build 生成，见 data.md）
+├── review/                 # 可选：构建与校对报告 report.md、禁限表人工修正 banlist-overrides.lflist.conf
+├── raw/                    # 可选：抓取的原始文件，git 忽略（ygorl env build）
 └── artifacts/              # 本版本下的产物（对局矩阵、模型、档案……），按需创建
 ```
+
+MD 环境由 `ygorl env build md-YYYY-MM` 一键生成（抓取、解析、校验，见 [data.md](data.md)）；`ygorl env check <版本>` 做下面全部校验并打印摘要。
+仓库里的快照：`environments/md-2026-09`（2026-09-23 抓取，禁限表待人工校对）。可选文件不参与加载与 `fingerprint`。
 
 前四个文件缺任何一个，加载时抛 `EnvironmentFileMissing`（同时是 `FileNotFoundError`），错误信息列出缺失文件名。
 内容不合法抛 `EnvironmentConfigError`（`ValueError` 子类），信息包含文件路径与出错的键或行号。
@@ -43,7 +49,8 @@ environments/<version>/
   "player": { "starting_lp": 8000, "starting_hand": 5, "draw_per_turn": 1 },
   "deck": { "main_min": 40, "main_max": 60, "extra_max": 15, "side_max": 15, "max_copies": 3 },
   "banlist_name": "2026.10 MD",
-  "sources": { "pool": "YGOPRODECK API, retrieved 2026-10-01" }
+  "sources": { "pool": "YGOPRODECK API, retrieved 2026-10-01" },
+  "review": { "banlist": { "status": "pending" } }
 }
 ```
 
@@ -56,7 +63,8 @@ environments/<version>/
 | `player` | 否 | 起始 LP、起手张数、每回合抽卡数；默认 8000 / 5 / 1 |
 | `deck` | 否 | 构筑规则：主卡组 40–60、额外 ≤ 15、副卡组 ≤ 15、同名 ≤ 3 |
 | `banlist_name` | 否 | 禁限表文件含多张表时选择哪一张（`!name`）；缺省取第一张 |
-| `description`、`sources` | 否 | 说明与数据来源，原样保留在 `Environment.manifest` |
+| `description`、`sources` | 否 | 说明与数据来源，原样保留在 `Environment.manifest`；`ygorl env build` 在 `sources` 里记原始文件出处（`raw`）、禁限更新公告、meta 窗口与构建参数（`build`） |
+| `review` | 否 | 人工校对状态，如 `{"banlist": {"status": "pending" \| "reviewed", "by", "date"}}`（[data.md](data.md)） |
 
 `rule_flags` 由 `rules.mode` 与 `extra_flags` 按位或得到，直接传给 `OCG_DuelOptions.flags`。
 flag 数值来自 `ygorl.engine.constants`，该模块由 `tools/gen_constants.py` 从核心的 `ocgapi_constants.h`
@@ -83,7 +91,8 @@ flag 数值来自 `ygorl.engine.constants`，该模块由 `tools/gen_constants.p
 - `cards`：卡片密码（8 位官方 `password`，1 到 99999999 的整数）列表；元素可以是整数，也可以是带 `password` 键的对象
   （其余字段作为说明，加载时忽略）。文件本身必须是 JSON 对象。
 - 不允许重复，不允许为空。卡池是「本格式存在的卡」，禁限状态由禁限表决定。
-- 来源：MD 卡池由 YGOPRODECK API（`format=master duel`）抓取生成；TCG / OCG 可由 BabelCDB 按 `ot` 字段导出（T5.1）。
+- 来源：MD 卡池由 YGOPRODECK API（`format=master duel`）抓取生成，写原卡密（异画折回原卡）并去掉衍生物（[data.md](data.md)）；
+  TCG / OCG 可由 BabelCDB 按 `ot` 字段导出（尚未实现）。
 
 ## `banlist.lflist.conf`
 
@@ -99,7 +108,7 @@ $whitelist              可选：未列出的卡一律禁止
 
 张数：0 禁止、1 限制、2 准限制、3 不限（白名单用）。未列出的卡默认 3 张（白名单下为 0）。
 环境内的禁限表按严格模式解析：同一张卡出现两次且张数不同、张数不在 0–3 都报错并给出行号。
-TCG / OCG / GOAT 等表直接取自 `third_party/LFLists`；**MD 表没有上游**，由 masterduelmeta 数据生成后人工校对（T5.1）。
+TCG / OCG / GOAT 等表直接取自 `third_party/LFLists`；**MD 表没有上游**，由 masterduelmeta 数据生成后人工校对（流程见 [data.md](data.md)）。
 
 ## `meta.json` 与 `meta/*.ydk`
 
@@ -133,3 +142,5 @@ TCG / OCG / GOAT 等表直接取自 `third_party/LFLists`；**MD 表没有上游
 | 路径 | 产生者 | 内容 |
 |------|--------|------|
 | `artifacts/matrix/<name>.json` | `ygorl.eval.matchup.MetaGame.save(env=env, name=...)` | 对局胜率矩阵、Nash 混合、alpha-rank（格式见 [evaluation.md](evaluation.md)） |
+| `artifacts/meta_packages.json` | `tools/make_meta_packages.py <版本>` | 由 meta 卡组推导的引擎包（协同图召回检验用，规则见 [synergy.md](synergy.md#真实-meta-引擎包md-2026-09)），进 git |
+| `artifacts/synergy_graph.json.gz` | `tools/build_synergy_graph.py --environment <版本>` | 限制到本卡池的协同图（可加 `--relations`），约 0.7 MB，按需生成 |

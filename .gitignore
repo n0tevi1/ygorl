@@ -44,3 +44,6 @@ venv/
 
 # Claude Code 本地设置（个人，不入库）
 .claude/settings.local.json
+
+# 环境构建的原始数据缓存（ygorl env build，可重新抓取）
+environments/*/raw/
