@@ -8,7 +8,9 @@ I8「对慢速参考策略加 KL 项」；[02-challenges.md](design/02-challenge
 ygorl.env.observer   PointObserver：DecisionPoint → 与 EncodedVecEnv 逐元素一致的观测（参考编码器 + 事件流）
 ygorl.train.bc       示范 → 样本（line_steps / build_dataset）、训练（train_bc）、评估（step_accuracy / play_opening / opening_report）
 ygorl.nets.agent     检查点（save_checkpoint / load_checkpoint）、NetPolicy（PolicyAgent 的网络策略）、agent 规格 policy:PATH
-tools/train_bc.py    训练 + 评估报告（report.json）
+tools/train_bc.py    训练 + 评估报告（report.json）；--extra 混入启发式示范
+ygorl.train.heuristic_demos  启发式 agent（GreedyAgent）第 2 回合起的决策 → 同格式样本（DemoRecorder / record_games / 子集 all、battle）
+tools/greedy_demos.py        录制 Greedy 示范（.npz），见「补救实验」
 ```
 
 ## 流程
@@ -164,6 +166,7 @@ bc12 很少逐步复现（展开顺序有很多等价排列，它学到的是「
 
 这正是设计 I4 的定位：BC 只是 RL 的起点与 KL 先验，打赢对局要靠 T4b 的 PPO 自博弈。要在 BC 阶段就过这条验收，需要**第 1 回合之外**的示范来源，这超出了「求解器示范集」的设计，
 需要先改设计文档（见下「待决定」）。
+**补救**（下文「补救实验」）：补上 Greedy 在第 2 回合起的战斗阶段决策做示范（b2）后对 Random 0.795（0.734–0.845），过了这条验收，第 1 回合的展开能力不变。
 
 ## 对 Random 失败的根因分析
 
@@ -272,12 +275,228 @@ OMP_NUM_THREADS=1 uv run --frozen python tools/diagnose_bc.py play --agent bc_ar
     --workers 2 --out out/diag/bc_argmax_d4000.json   # argmax（约 20 分钟）
 ```
 
+## 补救实验：(a) (b) (c)
+
+2026-09-23，接上节「对三个方向的含义」，issue #28。结论先行：
+
+- **(b) 补第 1 回合之后的 Greedy 示范**是唯一在 BC 阶段就过验收的方向：对 Random **0.845（0.788–0.889）**（b1，全部 Greedy 决策）/ **0.795（0.734–0.845）**（b2，只补战斗相关决策），
+  对 Greedy 0.405 / 0.415（基线 0.115）。b2 不损失第 1 回合展开能力（held-out 目标场面 41/100，与基线相同）；b1 少 6 手（35/100，差异在统计上不显著）。
+- **(a) PPO 从 BC 起步**：在每个 arm 200 次更新（约 41 万行）的预算内，从 bc12 型 BC 起步与从零开始没有差别（对 Random 都是 0.515，第 1 回合展开几乎全丢）；
+  从 (b) 的 BC 起步则到 **0.925**（= Greedy）、对 Greedy **0.635**（唯一显著超过 Greedy 的 arm），代价是第 1 回合展开从 37 降到 18。
+- **(c) 先验 KL 只在第 1 回合**（新增 `--kl-prior-turns`）：不再像全状态先验那样把策略钉在「不攻击」上（全状态 0.305 vs 只在第 1 回合 0.525）；
+  配合 (b) 与系数 2.0（P6）保住大部分第 1 回合展开（31 / 100），对 Random 0.855、对 Greedy 0.485。系数 0.2 太弱。
+- **建议**：#28 用 b2 收尾（T4a.2 达标），T4b.5 从 b 型 BC 起步做 PPO，先验 KL 只加在第 1 回合；I4 需要改写（见文末「结论与建议」）。
+
+### 0. 共同设置与重训的基线
+
+等价动作去重（[encoding.md](encoding.md)「等价动作去重」）改变了标签与观测，旧 bc12 作废，先在当前 main 上用同一数据、同一配置重训（`out/bc12`）。
+所有对局评估都是 `ygorl arena tests/decks` 的同一批 200 局（10 套测试牌组的 100 个有序配对 × 1 对配对种子，评估种子 0；对 Random 用
+`tools/diagnose_bc.py play --agent bc`，与 `ygorl arena --agent-b random` 逐局相同，另带战斗统计），策略**按温度 1 采样**（argmax 会陷入选中 / 取消循环，见上节「采样 vs argmax」）；
+区间是 95% Wilson，「配对差」是同一批对局上逐局得分差的均值与 95% 正态区间。第 1 回合场面质量是 held-out 100 手的目标场面达成率（`opening_report`，argmax，与上文相同的评分）。
+
+| 检查点 | 训练集 / held-out 步准确率（NLL） | 对 Random | 对 Greedy | held-out 目标场面 |
+|------|------|------|------|------|
+| 旧 bc12（去重之前，上文） | 0.723 / 0.595（1.09） | 0.285（0.227–0.351） | — | 41 / 100 |
+| **bc12（当前 main 重训）** | 0.721 / 0.585（1.02） | **0.305（0.245–0.372）** | **0.115（0.078–0.167）** | **41 / 100**（解出的 62 手中 40） |
+| 参照：Greedy | — | 0.910（同一批 200 局，上节） | 0.500（0.431–0.569） | 13 / 100 |
+
+重训后的 bc12 与旧的在误差内一致：样本 8,656（去重后多了 45 个强制步），可进战斗阶段的回合只进 29%（旧 18%），场上有斩杀仍不打 111 / 159，负局 116 / 139 是卡组耗尽。根因分析的结论不变。
+
+### (b) 第 1 回合之后的示范：Greedy
+
+**数据**（`tools/greedy_demos.py` → `ygorl.train.heuristic_demos`）：GreedyAgent 坐 a 方（先后攻各一局），对 Random 与对 Greedy 各打 100 个有序配对 × 1 对种子 = 400 局
+（种子 7001，与评估种子 0 不重叠；Greedy 在其中对 Random 胜 0.925、对 Greedy 0.545），记录 a 方**第 2 回合起**所有非强制决策：观测用 `PointObserver`（与 `NetPolicy` / `EncodedVecEnv` 同一编码），
+标签映射到等价副本的代表行。共 **49,262** 个样本（跳过：强制 78,441、第 1 回合 7,153），墓地与事件窗口比第 1 回合满，单个样本的训练开销约是求解器样本的 3 倍。
+另用种子 9001 再录 400 局作 held-out（50,039 个样本）。决策分布（训练集）：选区域 18%、选卡 13%、选中 / 取消 9%、连锁 8%、进战斗阶段 7%、战斗中转主要阶段 2 7%、发动 7%、攻击 6%……
+
+两个子集（`--extra-subset`）：
+
+- **b1 = all**：全部 Greedy 决策（包括对手回合的连锁、选区域、表示形式等）；
+- **b2 = battle**：诊断指出的最小集合——自己回合战斗阶段内的全部决策（`SELECT_BATTLECMD`、攻击对象、伤害步的连锁 / 效果）+ 主要阶段 1 里 Greedy 选「进战斗阶段」的那一步
+  （12,541 个）。Greedy 在可进战斗阶段时从不选结束阶段，所以这就是「收尾时进战斗而不是结束」的示范；Greedy 在主要阶段 1 的其余选择（发动、召唤）不进 b2。
+
+**配比**：两个子集都随机抽 **8,656** 个（= 求解器样本数），与求解器样本 1 : 1 混合（共 17,312），其余设置与 bc12 相同（12 个 epoch、同一种子）；因此 b1、b2 的样本数与梯度步数相同，
+都是 bc12 的 2 倍。第 1 回合样本占一半，不会被第 2 回合起的大量决策淹没（全部 4.9 万个都用会让求解器样本只占 15%）。
+
+| 检查点 | 求解器训练集 / held-out 步准确率 | Greedy held-out 步准确率（同子集，4,000 个；均匀猜中期望） | 对 Random | 对 Greedy | held-out 目标场面 argmax / 采样 |
+|------|------|------|------|------|------|
+| bc12（基线） | 0.721 / 0.585 | all 0.382（0.356）；battle **0.165**（0.423） | 0.305（0.245–0.372） | 0.115（0.078–0.167） | 41 / 28 |
+| **b1**（+ 全部 Greedy 决策） | 0.719 / 0.592 | all **0.695** | **0.845（0.788–0.889）** | **0.405（0.339–0.474）** | 35 / 35 |
+| **b2**（+ 战斗相关决策） | 0.741 / 0.588 | battle **0.857** | **0.795（0.734–0.845）** | **0.415（0.349–0.484）** | **41** / 37 |
+| bc12s（bc12 的小网络版，PPO 用） | 0.680 / 0.594 | — | 0.270（0.213–0.335） | 0.120（0.082–0.172） | 36 / 23 |
+| b2s（b2 的小网络版，PPO 用） | 0.699 / 0.597 | — | 0.775（0.712–0.827） | 0.380（0.316–0.449） | 37 / 25 |
+| 参照：Greedy | — | — | 0.910 | 0.500 | 13 / — |
+
+「采样」一列是按温度 1 采样下第 1 回合（每手一次，种子 = 手号；`train_bc.py --sample-openings`），单次采样噪声大（±9 手量级），只作 argmax 的补充：
+BC 策略在 argmax 下更稳，PPO 之后的策略 argmax 会打转（下文「封顶」= 300 步上限内没结束回合）。
+
+配对差（同一批 200 局）：对 Random，b1 − bc12 **+0.540（+0.460, +0.620）**、b2 − bc12 **+0.490（+0.410, +0.570）**、b1 − b2 +0.050（−0.023, +0.123）；
+对 Greedy，b1 − b2 −0.010（−0.101, +0.081）、bc12 − b2 −0.300（−0.380, −0.220）。held-out 目标场面逐手比较：b1 相对 bc12 丢 9 手、多 3 手（符号检验 p ≈ 0.15）；b2 丢 6、多 6。
+
+战斗统计（对 Random，`diagnose_bc.py report`）：
+
+| 检查点 | 可进战斗阶段时进入 | 攻击 / 局 | 造成伤害 / 局 | 有斩杀仍不打 | 平均回合 | 负局：卡组耗尽 / LP |
+|------|------|------|------|------|------|------|
+| bc12 | 1,338 / 4,677 = 29% | 2.0 | 2,480 | 111 / 159 | 48.8 | 116 / 23 |
+| b1 | 2,268 / 2,271 = 100% | 7.4 | 5,981 | 0 / 135 | 23.4 | 9 / 22 |
+| b2 | 2,724 / 2,724 = 100% | 7.4 | 5,714 | 0 / 108 | 28.1 | 21 / 20 |
+
+读法：
+
+- 两种补法都把「进战斗阶段、攻击」学会了（100% 进入、0 次放过斩杀），对局从约 49 回合缩到 23–28 回合，卡组耗尽的负局从 116 降到 9–21：与根因分析的 bc_bp 一致。
+- 对 Random 还差 Greedy 约 0.07–0.12：剩下的负局一半是被 Random 打穿 LP（b1 22、b2 20 局）。b1 略好于 b2（+0.05，区间含 0）。
+- 对 Greedy 两者都约 0.41，远高于 bc12 的 0.115，但仍低于 0.5（Greedy 自我对局 0.500）。
+- **第 1 回合的展开能力**：b2 完全保留（41 / 100，同 bc12，逐手 6 丢 6 得）；b1 降到 35（丢 9 得 3，不显著）。一个可能的原因：b1 含第 2 回合起的全部主要阶段决策（Greedy 的「能发动就发动、能召唤就召唤」），与求解器的第 1 回合线在同一类决策上给出不同的标签（未验证）。
+  求解器 held-out 步准确率三者相同（0.585–0.592）。
+- 代价：训练样本与时间翻倍（本机 4 核共享：bc12 519 s，b2 3,015 s，b1 3,896 s，后两者与其他任务同时跑）；示范的上限是 Greedy 的水平。
+
+### (a) PPO 从 BC 起步，(c) 先验 KL 只在第 1 回合
+
+**(c) 的实现**：`PPOConfig.kl_prior_turns`（`tools/train_ppo.py --kl-prior-turns N`，默认 0 = 原行为）只对「回合玩家自己的决策、回合数 ≤ N」的行（观测 `globals` 第 2 列
+`is_my_turn`、第 3 列 `turn`）计先验 KL，其余行按 0 计入同一个均值，所以被选中的行与不限制时权重相同（[training.md](training.md) §8.2；`tests/test_ppo.py::test_prior_kl_can_be_restricted_to_first_turn_rows`）。
+`N = 1` 即求解器示范覆盖的先攻第 1 回合。自博弈里这样的行只在每局开头出现，占训练行的 2.5%（P3）–5%（P5、P6：局短、开局多）。
+
+**设置**（全部 arm 相同）：`tools/train_ppo.py` 的训练器（经一个每 50 次更新另存一份 checkpoint 的脚本调用；训练与 `tools/train_ppo.py tests/decks --updates 200 ...` 相同），
+**10 套测试牌组、`--pairings all`**（100 个有序配对含镜像，与 arena 评估同分布；没有用 benchmarks.md 1 小时实验的单牌组对，因为 T4a.2 的验收是 10 套牌上的 arena），
+默认 PPO 超参数（VRPO、`ppo_clip` 0.2、熵 0.05、KL 到 EMA 参考 0.05、lr 3e-4、32 局 × 64 步 = 2,048 行 / 次、2 轮 × 512 行、种子 0），**默认的小网络**
+（`d_model 64`、局面 / 历史各 1 层、事件窗口 64）。bc12 的网络（`d_model 128`、2 层、窗口 128）试跑时一次更新约 5 分钟（与其他任务同时跑；同样条件下小网络 20–50 秒），
+预算内只够几十次更新，所以用**同样的数据与训练配置**另训了小网络版 bc12s 与 b2s（`--d-model 64 --layers 1 --event-length 64`，b2s 用 64 个事件 token 重录的同一批 Greedy 对局）
+作热启动与先验；两者的对局胜率与大网络版在误差内，held-out 第 1 回合场面略低（36、37 vs 41，见汇总表）。先验系数 `--kl-prior 0.2`（熵系数的 4 倍），P6 另试 2.0；没有扫更多取值。
+
+**预算：每个 arm 200 次更新 = 409,600 个训练行**，即相同的数据量，而不是相同的墙钟：机器同时在跑评估，P0–P3 四个 arm 并行（各 1 个 PyTorch 线程），
+会攻击的策略局短、观测小，同样 200 次更新快一倍。
+
+| arm | 初始化 | BC 先验 KL | 墙钟（收集 + 更新） | 自博弈局数 | 熵：首次 → 末 10 次 |
+|------|------|------|------|------|------|
+| P0 | 随机 | — | 99 min | 887 | 1.32 → 1.28 |
+| P1 = (a) | bc12s | — | 102 min | 862 | 0.78 → 1.22 |
+| P2 | bc12s | bc12s，所有行，0.2 | 109 min | 781 | 0.78 → 0.87 |
+| P3 = (a)+(c) | bc12s | bc12s，只在第 1 回合，0.2 | 108 min | 936 | 0.78 → 1.25 |
+| P4 = (b)+(a) | b2s | — | 47 min | 1,777 | 0.66 → 0.65 |
+| P5 = (b)+(a)+(c) | b2s | b2s，只在第 1 回合，0.2 | 50 min | 1,597 | 0.66 → **0.08**（第 180 次更新起崩塌，见下） |
+| P6 = 同 P5，系数 2.0 | b2s | b2s，只在第 1 回合，2.0 | 47 min | 1,712 | 0.66 → 0.64 |
+
+P5 在第 131 次更新的收集阶段崩溃（训练器的既有 bug，与本改动无关：`SelfPlaySchedule` 成对发局，第二局沿用第一局抽到的快照 id，两局之间该快照被逐出池时
+`SnapshotPool.get` 抛 `KeyError`；会攻击的策略局短、发局频繁才碰上），从第 130 次更新的 `latest.pt` 续训到 200（进行中的对局按续训规则重开；续训时加的「id 已逐出就用最新快照」兜底一次也没触发）。
+
+训练曲线（`metrics.jsonl`，每 50 次更新的均值：策略熵 / 自博弈局的平均回合 / 结束的局数）。训练中没有做对基线的评估（`--eval-every 0`：10 套牌的一次评估就要 400 局），
+对 Random 的中间点只有 P5 第 150 次更新一个（汇总表）。
+
+| arm | 更新 1–50 | 51–100 | 101–150 | 151–200 |
+|------|------|------|------|------|
+| P0 | 1.29 / 53 / 206 | 1.31 / 54 / 227 | 1.27 / 50 / 220 | 1.28 / 50 / 234 |
+| P1 | 1.01 / 50 / 195 | 1.14 / 49 / 212 | 1.23 / 49 / 222 | 1.26 / 49 / 233 |
+| P2 | 0.84 / 50 / 194 | 0.87 / 51 / 200 | 0.87 / 51 / 186 | 0.89 / 51 / 201 |
+| P3 | 1.00 / 51 / 200 | 1.17 / 52 / 218 | 1.18 / 49 / 229 | 1.22 / 43 / 289 |
+| P4 | 0.71 / 20 / 377 | 0.77 / 18 / 430 | 0.78 / 16 / 500 | 0.65 / 12 / 470 |
+| P5 | 0.75 / 20 / 384 | 0.73 / 17 / 474 | 0.67 / 13 / 475 | 0.41 / 13 / 264 |
+| P6 | 0.67 / 18 / 392 | 0.68 / 16 / 447 | 0.67 / 15 / 437 | 0.64 / 14 / 436 |
+
+P1、P3 的熵单调上升（向均匀策略漂移），P2 被先验拉住；从 b2s 起步的 P4–P6 自博弈局从 20 回合缩到 12–14 回合（双方都更早打穿对方），P5 最后 50 次更新熵掉到 0.41、结束的局减半（崩塌）。
+
+### 汇总：所有 arm（同一批 200 局；温度 1 采样）
+
+| arm | 对 Random | 与起点的配对差 | 可进战斗阶段时进入 | 对 Greedy | 与起点的配对差 | held-out 目标场面 argmax / 采样（100 手） | 求解器步准确率 训练 / held-out |
+|------|------|------|------|------|------|------|------|
+| bc12（基线） | 0.305（0.245–0.372） |  | 29% | 0.115（0.078–0.167） |  | 41 / 28 | 0.721 / 0.585 |
+| **b1** = (b) 全部 | 0.845（0.788–0.889） | +0.540（+0.460, +0.620） | 100% | 0.405（0.339–0.474） | +0.290（+0.216, +0.364） | 35 / 35 | 0.719 / 0.592 |
+| **b2** = (b) 战斗 | 0.795（0.734–0.845） | +0.490（+0.410, +0.570） | 100% | 0.415（0.349–0.484） | +0.300（+0.220, +0.380） | 41 / 37 | 0.741 / 0.588 |
+| bc12s（小网络） | 0.270（0.213–0.335） |  | 12% | 0.120（0.082–0.172） |  | 36 / 23 | 0.680 / 0.594 |
+| b2s（小网络 b2） | 0.775（0.712–0.827） | +0.505（+0.420, +0.590） | 100% | 0.380（0.316–0.449） | +0.260（+0.185, +0.335） | 37 / 25 | 0.699 / 0.597 |
+| P0 从零 | 0.515（0.446–0.583） | +0.245（+0.161, +0.329） | 52% | 0.095（0.062–0.144） | −0.025（−0.081, +0.031） | 0 / 3 | 0.302 / 0.288 |
+| P1 = (a) | 0.515（0.446–0.583） | +0.245（+0.168, +0.322） | 51% | 0.095（0.062–0.144） | −0.025（−0.083, +0.033） | 6（封顶 35） / 1 | 0.393 / 0.414 |
+| P2 全状态先验 | 0.305（0.245–0.372） | +0.035（−0.035, +0.105） | 15% | 0.100（0.066–0.149） | −0.020（−0.066, +0.026） | 26 / 15 | 0.636 / 0.572 |
+| P3 = (a)+(c) | 0.525（0.456–0.593） | +0.255（+0.173, +0.337） | 57% | 0.105（0.070–0.155） | −0.015（−0.075, +0.045） | 21 / 9 | 0.591 / 0.548 |
+| **P4** = (b)+(a) | 0.925（0.880–0.954） | +0.150（+0.088, +0.212） | 99% | 0.635（0.566–0.699） | +0.255（+0.167, +0.343） | 18（封顶 12） / 9 | 0.530 / 0.506 |
+| P5 = (b)+(a)+(c) 0.2，第 200 次（已崩塌） | 0.757（0.694–0.812）* | −0.018（−0.088, +0.053） | 98% | 未测（见下） |  | 26（封顶 3） / 21 | 0.602 / 0.557 |
+| P5 第 150 次更新（崩塌前） | 0.905（0.856–0.938） | +0.130（+0.067, +0.193） | 99% | 0.550（0.481–0.617） | +0.170（+0.088, +0.252） | 27（封顶 2） / 14 | 0.595 / 0.547 |
+| **P6** = (b)+(a)+(c) 2.0 | 0.855（0.800–0.897） | +0.080（+0.010, +0.150） | 98% | 0.485（0.417–0.554） | +0.105（+0.018, +0.192） | 31（封顶 1） / 20 | 0.652 / 0.580 |
+
+「起点」：b1、b2 对 bc12；P0–P3 对 bc12s；P4–P6 对 b2s。参照：Greedy 对 Random 0.910、对 Greedy 0.500，held-out 目标场面 13（argmax）；Random 对 Random 0.495。
+
+读法：
+
+- **(a) 单独不够**：P1（bc12s 热启动、无先验）200 次更新后对 Random 0.515、对 Greedy 0.095，与从零开始的 P0 **完全一样**（两者都约等于 Random）。
+  熵从 0.78 涨到 1.22（P0 1.28）：熵奖励（0.05）加上稀疏的终局奖励，在这个预算里把 BC 的偏好稀释成接近均匀的策略——进战斗阶段的比例从 12% 回到 Random 的 51%，
+  而第 1 回合的展开能力几乎全丢（held-out 目标场面 36 → 6 / 1）。「从 bc12 起步的 PPO 自己学会进战斗阶段」在 41 万行内没有发生。
+- **所有状态上的 BC 先验把策略钉在 BC 上**（P2）：对 Random 0.305、进战斗阶段 15%，与 bc12s 没有差别（+0.035，区间含 0）；它保住了一部分第 1 回合能力（26 / 15），但也保住了「不进战斗阶段」——
+  正是根因分析预言的副作用。
+- **(c) 只在第 1 回合加先验**（P3）不再阻止攻击（0.525、进入 57%，同 P1），第 1 回合的步准确率比 P1 高（held-out 0.548 vs 0.414），但系数 0.2 保不住展开：目标场面 21 / 9。
+  第 1 回合的行只占约 2.5%，而共享网络的其余部分在漂移。
+- **(b) 之后再 PPO 最好**（P4）：从 b2s 起步，200 次更新后对 Random **0.925（0.880–0.954）**（= Greedy），对 Greedy **0.635（0.566–0.699）**——**唯一显著超过 Greedy 的 arm**；
+  但第 1 回合的展开同样被侵蚀（37 → 18 / 25 → 9，argmax 下 12 手在 300 步内打转）。
+- **(b) + (c)**：P6（系数 2.0）保住了大部分第 1 回合能力（目标场面 31 / 20，相对 b2s 逐手丢 11 得 5，不显著；求解器步准确率 0.652 / 0.580），同时对 Random +0.080（+0.010, +0.150）、
+  对 Greedy +0.105（+0.018, +0.192），但提升小于 P4。P5（系数 0.2）在第 150 次更新时对 Random 0.905、对 Greedy 0.550，第 1 回合 27 / 14；之后在第 180 次更新附近**熵崩塌**
+  （0.53 → 0.04，自博弈局陷入循环不再结束，第 195 次起每段结束的局为 0），第 200 次的策略对局时大量打转：对 Random 用 `--max-decisions 4000` 才跑完（107 / 200 局撞上 4,000 个决策的上限、按终局 LP 判或平局，胜 / 负 / 平 133 / 30 / 37，表中打 *），对 Greedy 的 arena（无决策上限）没有在合理时间内跑完，未测。
+
+### 结论与建议（#28）
+
+- **T4a.2 的「Arena 对 Random 明显 > 50%」只有 (b) 在 BC 阶段达到**：b2 0.795（0.734–0.845）、b1 0.845（0.788–0.889），区间下限都远高于 0.5；
+  b2 的代价为零（held-out 第 1 回合目标场面 41 / 100 不变），b1 少 6 手（不显著）。只靠 PPO（(a)、(a)+(c)）在 200 次更新内都没有明显超过 0.5（P1 0.515、P3 0.525，区间含 0.5）。
+- **建议 #28 采用 b2**：求解器第 1 回合示范 + Greedy 的战斗阶段示范（进战斗阶段、战斗阶段内的决策）1 : 1 混合做 BC，作为 T4a.2 的交付检查点，也作为 T4b.5 的 PPO 热启动。
+  b1 对 Random 略好（+0.05，不显著）但更大、稀释第 1 回合，不推荐为默认。
+- **PPO 阶段**：从 b 型 BC 起步（P4：对 Random 0.925 = Greedy，对 Greedy 0.635，唯一显著超过 Greedy 的 arm），**先验 KL 只加在第 1 回合**（(c)）。
+  不加先验时 PPO 用第 1 回合的展开换胜率（P4 held-out 37 → 18，逐手丢 22 得 3）；系数 2.0 的第 1 回合先验（P6）保住了大部分（31，丢 11 得 5，不显著），
+  代价是对局提升变小（P6 − P4：对 Random −0.070（−0.125, −0.015），对 Greedy −0.150（−0.228, −0.072））。**不要**在只含第 1 回合的 BC 上对所有状态加先验（P2：钉死「不进战斗阶段」）。
+  系数 0.2（P3、P5）太弱，保不住展开；两者之间的取值、以及胜率与展开的取舍，留给 T4b.5 在更长的训练上决定。
+- **没有结论的部分**（预算所限，如实）：每个 arm 只有一个种子、200 次更新（约 41 万行、800–1,800 局自博弈），PPO 的曲线还远没有收敛；先验系数只试了 0.2 与 2.0；
+  P5 在第 180 次更新附近熵崩塌到 0.04（自博弈局陷入循环、不再结束），是否与 P5 的续训有关、是否会在其他 arm 的更长训练中出现，都没有查；
+  (a)「BC 热启动对 PPO 有没有用」只能说在这个预算下 bc12 热启动（P1）与从零开始（P0）没有差别，b2 热启动（P4）则明显有用。
+- **设计文档**：需要改 [03-play-policy.md](design/03-play-policy.md) I4（本文不改设计文档）。建议措辞：「**先攻展开求解器 → 示范**：用 ygo-combo-solver 离线求解各牌组起手的展开线作第 1 回合示范，
+  第 2 回合起的战斗决策（进战斗阶段、战斗阶段内的选择）用启发式 agent 的示范补足，两者混合做 BC 预热；KL 先验只加在求解器示范覆盖的状态（先攻第 1 回合、回合玩家自己的决策），再 RL（ExIt 思路）」。
+- **训练器的既有 bug**（P5 碰到）：`SelfPlaySchedule` 成对发局时第二局沿用第一局抽到的快照 id，两局之间快照被逐出就在 `SnapshotPool.get` 抛 `KeyError`，训练中断。
+  修法之一：发局时就解析快照模型（或让池子保留被待发局引用的快照）。未在本分支修复（不属于本任务、文件由 T4b.4 维护）。
+
+### 复现
+
+`out/` 不入库；以下命令重建本节的全部产物（4 核共享机器上合计约 5 小时，大头是 PPO 与 arena 评估）。
+
+```bash
+D="--train out/demos/bc_train.jsonl --heldout out/demos/bc_heldout.jsonl"
+# (b) Greedy 示范：400 局，2 进程约 2 分钟；小网络用 64 个事件 token 的同一批对局另录一份
+uv run --frozen python tools/greedy_demos.py --out out/greedy_demos/train.npz --seed 7001
+uv run --frozen python tools/greedy_demos.py --out out/greedy_demos/heldout.npz --seed 9001
+uv run --frozen python tools/greedy_demos.py --out out/greedy_demos/train_e64.npz --seed 7001 --event-length 64
+# 基线重训与 b1 / b2（bc12 的网络）
+uv run --frozen python tools/train_bc.py $D --out out/bc12 --epochs 12 --threads 2 --baselines
+uv run --frozen python tools/train_bc.py $D --out out/bc_b1 --epochs 12 --threads 2 --openings heldout \
+    --extra out/greedy_demos/train.npz --extra-subset all --extra-max 8656 --extra-heldout out/greedy_demos/heldout.npz
+uv run --frozen python tools/train_bc.py $D --out out/bc_b2 --epochs 12 --threads 2 --openings heldout \
+    --extra out/greedy_demos/train.npz --extra-subset battle --extra-max 8656 --extra-heldout out/greedy_demos/heldout.npz
+# PPO 用的小网络版
+S="--d-model 64 --layers 1 --event-length 64 --epochs 12 --threads 2 --openings heldout"
+uv run --frozen python tools/train_bc.py $D --out out/bc12s $S
+uv run --frozen python tools/train_bc.py $D --out out/bc_b2s $S --extra out/greedy_demos/train_e64.npz --extra-subset battle --extra-max 8656
+# PPO：每个 arm 200 次更新（P0–P3 当时并行跑）
+P="tests/decks --pairings all --d-model 64 --layers 1 --event-length 64 --eval-every 0 --seed 0 --updates 200 \
+   --torch-threads 1 --collect-threads 1 --env-threads 1"
+uv run --frozen python tools/train_ppo.py $P --out out/ppo/P0
+uv run --frozen python tools/train_ppo.py $P --out out/ppo/P1 --init-from out/bc12s/policy.pt
+uv run --frozen python tools/train_ppo.py $P --out out/ppo/P2 --init-from out/bc12s/policy.pt --bc-prior out/bc12s/policy.pt --kl-prior 0.2
+uv run --frozen python tools/train_ppo.py $P --out out/ppo/P3 --init-from out/bc12s/policy.pt --bc-prior out/bc12s/policy.pt --kl-prior 0.2 --kl-prior-turns 1
+uv run --frozen python tools/train_ppo.py $P --out out/ppo/P4 --init-from out/bc_b2s/policy.pt
+uv run --frozen python tools/train_ppo.py $P --out out/ppo/P5 --init-from out/bc_b2s/policy.pt --bc-prior out/bc_b2s/policy.pt --kl-prior 0.2 --kl-prior-turns 1
+uv run --frozen python tools/train_ppo.py $P --out out/ppo/P6 --init-from out/bc_b2s/policy.pt --bc-prior out/bc_b2s/policy.pt --kl-prior 2.0 --kl-prior-turns 1
+# 评估。CKPT = BC 的 policy.pt，或 PPO 的 actor 导出成的策略检查点（下一行），这样 PPO 与 BC 都走同一条 NetPolicy 路径
+# （diagnose_bc.py 也直接接受 PPO 的 checkpoint，结果逐局相同；ygorl arena 的 policy:<PPO checkpoint> 走 C++ 锁步路径，同分布但采样序列不同）
+uv run --frozen python -c "import sys; from ygorl.nets.agent import save_checkpoint; from ygorl.train.checkpoint import load_actor; \
+    p = load_actor(sys.argv[1]); save_checkpoint(sys.argv[2], p.net, p.vocab, event_length=p.event_length)" out/ppo/P4/checkpoints/latest.pt out/ppo/P4/policy.pt
+OMP_NUM_THREADS=1 uv run --frozen python tools/diagnose_bc.py play --agent bc --name NAME --checkpoint CKPT --games 200 --workers 2 \
+    --out out/eval/NAME_random.json            # 对 Random（P5 另加 --max-decisions 4000，见上）
+OMP_NUM_THREADS=1 uv run --frozen ygorl arena tests/decks --agent-a policy:CKPT --agent-b greedy --games 200 --workers 2 --out out/eval/NAME_greedy.json
+uv run --frozen python tools/train_bc.py $D --out out/eval/NAME --no-train --checkpoint CKPT --openings heldout [--sample-openings]
+uv run --frozen python tools/train_bc.py $D --out out/eval/bc12_battle --no-train --checkpoint out/bc12/policy.pt --openings none \
+    --extra-heldout out/greedy_demos/heldout.npz --extra-subset battle      # 基线在 Greedy held-out 上的步准确率
+uv run --frozen python tools/diagnose_bc.py report out/eval/*_random.json --baseline bc12
+```
+
+本节用的 PPO checkpoint 是训练脚本在第 200 次更新时另存的副本（`update_000200.pt`），与 `--updates 200` 结束时的 `latest.pt` 相同。
+
 ## 局限与待决定
 
-- **Arena 验收未达成**（上节）。可选方向，需要决定后先改 [03-play-policy.md](design/03-play-policy.md) I4 再实现：
-  (a) 把这条验收移到 T4b（PPO 从 bc12 初始化后对 Random 的胜率），T4a.2 只验收第 1 回合的两项；
-  (b) 为第 1 回合之后补一个示范来源（例如 Greedy 在第 2 回合起的决策做「启发式示范」，或求解器的「后攻 / 手坑」变体），与求解器示范混合做 BC；
-  (c) 把 BC 先验只用在第 1 回合（KL 项只在示范覆盖的状态上加），对局其余部分交给 PPO。
+- **Arena 验收**：只用求解器示范的 bc12 未达成（上节）；三个方向的实验见「补救实验」：(b) 的 b2 达成且不损失第 1 回合，推荐采用。
+  采用前需要先改 [03-play-policy.md](design/03-play-policy.md) I4（示范来源加上启发式 agent 的战斗决策；KL 先验只加在示范覆盖的状态上）。
+- **启发式示范的上限是 Greedy**：b1 / b2 对 Random 0.80–0.85、对 Greedy 约 0.41，超过 Greedy 要靠 PPO（P4 对 Greedy 0.635）。PPO 预算内的结论只有一个种子、200 次更新，见「补救实验」的「没有结论的部分」。
 - **过拟合**：只有 316 个不同的 plain 起手（+124 条 `--fire` 线），held-out NLL 从第 6 个 epoch 起上升。更多示范（T4a.1 的全量 10 × 1,000 起手）是最直接的改进；
   作 KL 参考时推荐 bc12 这样早停的检查点（bc60 在未见状态上过度自信，KL 项会过强）。
 - **只学先攻**：`--fire` 线提供了「被手坑后恢复」的决策，但没有后攻、没有对手的真实互动（对手是白板）。

@@ -11,7 +11,7 @@ Usage: uv run --frozen python tools/diagnose_bc.py SUBCOMMAND [options]
   report       tables from ``play`` outputs: win rates with Wilson intervals, paired differences, deck-out
                and battle statistics, per-turn curves, the policy's entropy by decision type
 
-Agent configurations (``play --agent NAME``); "BC" is ``PolicyAgent(NetPolicy)`` of ``--checkpoint``:
+Agent configurations (``play --agent NAME``); "BC" is ``PolicyAgent(NetPolicy)`` of ``--checkpoint`` (a BC policy checkpoint or a PPO training checkpoint):
 
   bc              BC everywhere, sampled at temperature 1 (what ``policy:PATH`` plays)
   bc_argmax       BC everywhere, argmax (``policy:PATH@greedy``)
@@ -32,6 +32,7 @@ agent seeds are the arena's, so ``play --agent bc`` reproduces ``out/bc12/arena_
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import math
 import multiprocessing as mp
@@ -56,6 +57,25 @@ def _entropy(probs) -> float:
     return -sum(p * math.log(p) for p in probs if p > 0)
 
 
+@functools.lru_cache(maxsize=2)
+def _ppo_actor(path: str):
+    from ygorl.train.checkpoint import load_actor
+
+    return load_actor(path)
+
+
+def _net_policy(checkpoint: str):
+    """``NetPolicy`` of a BC policy checkpoint, or of the actor of a PPO training checkpoint (loaded once per process)."""
+    from ygorl.nets.agent import NetPolicy
+    from ygorl.train.checkpoint import FORMAT as PPO_FORMAT
+    from ygorl.train.checkpoint import checkpoint_format
+
+    if checkpoint_format(checkpoint) == PPO_FORMAT:
+        actor = _ppo_actor(str(checkpoint))
+        return NetPolicy(actor.net, actor.vocab, event_length=actor.event_length)
+    return NetPolicy.from_checkpoint(checkpoint)
+
+
 class Mixed:
     """One arena seat: picks the sub-agent for each decision by the configuration's rule and records statistics.
 
@@ -73,9 +93,7 @@ class Mixed:
         self.config = config
         self.bc = None
         if config.startswith("bc") or config.endswith("bclate"):
-            from ygorl.nets.agent import NetPolicy
-
-            self.bc = PolicyAgent(NetPolicy.from_checkpoint(checkpoint), seed=seed, greedy=config == "bc_argmax",
+            self.bc = PolicyAgent(_net_policy(checkpoint), seed=seed, greedy=config == "bc_argmax",
                                   temperature=temperature)  # fmt: skip
         self.greedy = GreedyAgent(seed)
         self.random = RandomAgent(seed)
@@ -309,7 +327,7 @@ def cmd_play(args) -> int:
     else:
         with mp.get_context("fork").Pool(args.workers) as pool:
             records = pool.map(_play_one, specs, chunksize=1)
-    out = {"agent": args.agent, "checkpoint": str(args.checkpoint), "temperature": args.temperature,
+    out = {"agent": args.name or args.agent, "checkpoint": str(args.checkpoint), "temperature": args.temperature,
            "games": len(records), "seed": args.seed, "seconds": round(time.time() - t0, 1), "records": records}  # fmt: skip
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(out) + "\n", encoding="utf-8")
@@ -626,6 +644,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--agent", required=True, choices=CONFIGS)
     p.add_argument("--checkpoint", type=Path, default=ckpt)
     p.add_argument("--temperature", type=float, default=1.0)
+    p.add_argument("--name", default=None, help="run name in reports (default: the configuration)")
     p.add_argument("--games", type=int, default=200)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--max-turns", type=int, default=None)
