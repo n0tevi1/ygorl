@@ -40,6 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--env-threads", type=int, default=2, help="C++ worker threads (default 2)")
     g.add_argument("--steps", type=int, default=64, help="rows per column per rollout, T (default 64)")
     g.add_argument("--event-length", type=int, default=64, help="event tokens per observation (default 64)")
+    g.add_argument("--keep-forced", action="store_true",
+                   help="also make rows of decisions with a single legal action (default: played in C++, no rows)")
     g.add_argument("--max-turns", type=int, default=None)
     g.add_argument("--max-decisions", type=int, default=None)
     g = p.add_argument_group("network")
@@ -88,7 +90,7 @@ def config_from_args(args, decks: list[str]):
                     minibatch_size=args.minibatch, kl_prior_coef=args.kl_prior)  # fmt: skip
     return TrainConfig(decks=tuple(decks), pairings=args.pairings, env=args.env, max_turns=args.max_turns,
                        max_decisions=args.max_decisions, num_envs=args.envs, env_threads=args.env_threads,
-                       steps=args.steps, event_length=args.event_length, net=net,
+                       steps=args.steps, event_length=args.event_length, skip_forced=not args.keep_forced, net=net,
                        privileged_critic=not args.no_privileged, shared_backbone=not args.separate_critic, ppo=ppo,
                        selfplay_fraction=args.selfplay_fraction, pool_size=args.pool_size,
                        snapshot_every=args.snapshot_every, checkpoint_every=args.checkpoint_every,

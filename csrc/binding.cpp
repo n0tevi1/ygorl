@@ -425,13 +425,13 @@ PYBIND11_MODULE(_core, m) {
         "Vectorized env with the step loop, action states and encoder in C++ (env i on thread i % threads).")
         .def(py::init([](size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
                          std::shared_ptr<ScriptDirectory> scripts, const std::vector<uint32_t>& vocab, bool privileged,
-                         size_t event_length) {
+                         size_t event_length, bool skip_forced) {
                  return std::make_unique<host::HostPool>(num_envs, num_threads, cards, scripts,
                                                          std::make_shared<host::Vocab>(vocab), privileged,
-                                                         event_length);
+                                                         event_length, skip_forced);
              }),
              py::arg("num_envs"), py::arg("num_threads"), py::arg("cards"), py::arg("scripts"), py::arg("vocab"),
-             py::arg("privileged") = false, py::arg("event_length") = 0)
+             py::arg("privileged") = false, py::arg("event_length") = 0, py::arg("skip_forced") = false)
         .def("reset", [](host::HostPool& p, int env, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1,
                          py::tuple t2, DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
             host::PoolJob job;

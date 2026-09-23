@@ -54,6 +54,7 @@ class TrainConfig:
     steps: int = 64  # rows per environment slot per rollout (T)
     min_batch: int | None = None  # ready decisions per forward pass (default num_envs // 2)
     event_length: int = 64  # event tokens per observation (window mode)
+    skip_forced: bool = True  # decisions with one legal action are played in C++ and produce no rows
     net: dict = field(default_factory=lambda: dict(SMALL_NET))  # NetConfig overrides (vocab_size is set)
     text_dir: str | None = None  # frozen text tables (T5.2); None = off
     privileged_critic: bool = True  # design I9: the critic sees the opponent ground truth
@@ -143,7 +144,8 @@ class Trainer:
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
                                          selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
-                                 privileged=cfg.privileged_critic, event_length=cfg.event_length)  # fmt: skip
+                                 privileged=cfg.privileged_critic, event_length=cfg.event_length,
+                                 skip_forced=cfg.skip_forced)  # fmt: skip
         self.collector = RolloutCollector(self.env, self.model, self.schedule, cfg.steps, opponents=self.pool.get,
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch)  # fmt: skip
         self.counters = {"updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,

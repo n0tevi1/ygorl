@@ -103,3 +103,41 @@ def test_unsupported_curriculum_settings_are_rejected(db, vocab, config):
     with pytest.raises(NotImplementedError, match="curriculum|augmented_start"):
         env.reset(0, specs(1, config)[0])
     assert env.pending() == 0
+
+
+def test_skip_forced_plays_the_same_games_without_single_action_points(db, vocab):
+    """skip_forced auto-plays decisions with exactly one legal action inside the C++ loop: the games are
+    unchanged (the only choice is taken either way), but no such point reaches Python (performance)."""
+
+    def by_state(obs):  # depends on the observation only, so both runs choose alike at every real decision
+        n = int(obs["action_mask"].sum())
+        return int(obs["globals"].sum() + obs["actions"][:n].sum()) % n
+
+    def run(skip):
+        env = EncodedVecEnv(4, 2, cards=db, vocab=vocab, skip_forced=skip)
+        games, results, seen, forced = specs(5), {}, 0, 0
+        pending = iter(enumerate(games))
+        for e in range(4):
+            i, spec = next(pending)
+            env.reset(e, spec)
+            results[e] = [i]
+        done = {}
+        while len(done) < len(games):
+            for ev in env.recv(1):
+                if ev.result is not None:
+                    done[results[ev.env_id][0]] = ev.result
+                    nxt = next(pending, None)
+                    if nxt is not None:
+                        results[ev.env_id] = [nxt[0]]
+                        env.reset(ev.env_id, nxt[1])
+                    continue
+                seen += 1
+                forced += int(ev.obs["action_mask"].sum()) == 1
+                env.step(ev.env_id, by_state(ev.obs))
+        return [done[i] for i in range(len(games))], seen, forced
+
+    plain, seen_plain, forced_plain = run(False)
+    skipped, seen_skip, forced_skip = run(True)
+    assert [key(r) for r in skipped] == [key(r) for r in plain]
+    assert forced_plain > 0 and forced_skip == 0
+    assert seen_skip == seen_plain - forced_plain
