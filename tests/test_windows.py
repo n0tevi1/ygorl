@@ -55,7 +55,7 @@ def play(db, chain_maxx):
 
 
 def offers(points, player, code):
-    """Decision points where ``player`` could activate ``code``, as (turn, phase, decision type, previous event)."""
+    """Decision points where ``player`` could activate ``code``, as (turn, phase, decision type)."""
     out = []
     for p in points:
         if p.player == player and any(a.card and a.card.code == code and a.kind in ("chain", "activate")

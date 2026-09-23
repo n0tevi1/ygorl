@@ -68,9 +68,13 @@ def test_host_pool_reset_failure_is_reported_not_fatal(mode):
         print("error:", result["error"])
         pool.reset(0, expand_seed(1), DuelConfig().rule_flags, P, P, loaded(), 100, 1000)  # the slot is reusable
         ((env, done, player, obs, result, priv),) = pool.recv(1, -1)
-        print("ok" if "{mode}" == "no_scripts" or not done else "unexpected")
+        if "{mode}" == "zero_seed":
+            assert not done and obs is not None, result  # a good seed starts a game in the same slot
+        else:
+            assert done and result["reason"] == "error", result  # still no scripts: reported again, not fatal
+        print("reusable")
     """)
-    assert "error:" in out
+    assert "error:" in out and "reusable" in out
 
 
 def test_a_plain_duel_called_from_a_snapshot_duels_callback_stays_out_of_its_arena():

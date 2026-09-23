@@ -194,8 +194,9 @@ Row material_row(uint32_t code, uint32_t seq, uint32_t k, int side, const CardDa
 // Python: ygorl.env.encoding.mask_duplicates). Rows without a card-table row or with a hidden card are never merged.
 void mask_duplicates(const std::vector<int32_t>& cards, const std::vector<int32_t>& actions,
                      std::vector<int32_t>& mask, uint32_t decision) {
-    // deck, hand, GY, banished, Extra Deck: the sequence carries nothing a choice between copies could use
-    auto unordered = [](int32_t loc) { return loc == 1 || loc == 2 || loc == 5 || loc == 6 || loc == 7; };
+    // deck, hand, Extra Deck: the sequence carries nothing a choice between copies could use (GY / banished
+    // order is age, which tells apart per-card state such as "sent to the GY this turn")
+    auto unordered = [](int32_t loc) { return loc == 1 || loc == 2 || loc == 7; };
     std::map<std::vector<int32_t>, size_t> first;
     const size_t n = static_cast<size_t>(std::count(mask.begin(), mask.end(), 1));  // legal rows are a prefix here
     for (size_t i = 0; i < n; ++i) {
@@ -206,6 +207,7 @@ void mask_duplicates(const std::vector<int32_t>& cards, const std::vector<int32_
         key[1] = key[9] = 0;
         if (decision == MSG_SELECT_UNSELECT_CARD) key[8] = 0;  // the list index there
         const int32_t* c = cards.data() + static_cast<size_t>(card_row - 1) * F_CARD;
+        if (!c[col::VISIBLE]) continue;  // never let the mask say that two hidden cards are the same
         key.insert(key.end(), c, c + F_CARD);
         int32_t* kc = key.data() + A_ACTION;
         kc[col::OVERLAY_INDEX] = 0;

@@ -53,8 +53,9 @@ def _clamp(value: int, lo: int = 0, hi: int = CLAMP) -> int:
 
 
 # Zones where the sequence of a card says nothing a choice between copies could use (LOCATION_ENUM values: deck,
-# hand, GY, banished, Extra Deck); monster / spell-trap zone sequences are columns and link arrows.
-_UNORDERED = (1, 2, 5, 6, 7)
+# hand, Extra Deck). Monster / spell-trap zone sequences are columns and link arrows; GY / banished order is age
+# (newest last), which tells apart per-card state such as "sent to the GY this turn".
+_UNORDERED = (1, 2, 7)
 
 
 def _equivalence_key(cards: np.ndarray, action: np.ndarray, decision: int) -> bytes | None:
@@ -67,6 +68,8 @@ def _equivalence_key(cards: np.ndarray, action: np.ndarray, decision: int) -> by
     if decision == C.MSG_SELECT_UNSELECT_CARD:
         a[8] = 0  # the list index there
     c = cards[card_row - 1].copy()
+    if not c[VISIBLE]:  # never let the mask say that two hidden cards are the same
+        return None
     c[OVERLAY_INDEX] = 0
     if c[LOCATION] in _UNORDERED:
         c[SEQUENCE] = 0

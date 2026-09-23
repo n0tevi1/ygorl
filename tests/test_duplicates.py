@@ -21,13 +21,13 @@ from ygorl.env.encoding import (
 )
 
 MAXX, CELTIC = 23434538, 91152256
-HAND, MZONE, GRAVE = 2, 3, 5  # card-table location enum
+DECK, HAND, MZONE, GRAVE, REMOVED = 1, 2, 3, 5, 6  # card-table location enum
 CHAIN, SELECT, PASS = (ACTION_KINDS.index(k) + 1 for k in ("chain", "select", "pass"))
 
 
-def card(index, location, sequence, public=0, position=0):
+def card(index, location, sequence, public=0, position=0, visible=1):
     row = np.zeros(F_CARD, dtype=np.int32)
-    row[[0, 1, 2, 6, 7, 8]] = index, location, sequence, position, 1, public
+    row[[0, 1, 2, 6, 7, 8]] = index, location, sequence, position, visible, public
     return row
 
 
@@ -75,8 +75,25 @@ def test_rows_that_differ_to_the_decider_are_kept(second, row_change):
     assert masked(cards, acts) == [1, 1]
 
 
-def test_graveyard_copies_merge_but_values_that_matter_do_not():
-    cards = [card(7, GRAVE, 0), card(7, GRAVE, 1), card(7, GRAVE, 2)]
+@pytest.mark.parametrize("zone", [GRAVE, REMOVED])
+def test_graveyard_and_banished_copies_stay_apart(zone):
+    """GY / banished order tells cards apart (newest last; the core keeps per-card state such as "sent to the GY
+    this turn" that only the order reveals), so copies there are not merged."""
+    cards = [card(7, zone, 0), card(7, zone, 1)]
+    acts = [action(SELECT, 1, 7, 0), action(SELECT, 2, 7, 1)]
+    assert masked(cards, acts, C.MSG_SELECT_CARD) == [1, 1]
+
+
+def test_a_row_the_card_table_hides_is_never_merged():
+    """Defence in depth: even with an identity in the action row, a card-table row not visible to the decider
+    keeps its own action row (the mask must not reveal that two hidden cards are the same)."""
+    cards = [card(7, HAND, 0, visible=0), card(7, HAND, 1, visible=0)]
+    acts = [action(SELECT, 1, 7, 0), action(SELECT, 2, 7, 1)]
+    assert masked(cards, acts, C.MSG_SELECT_CARD) == [1, 1]
+
+
+def test_hand_copies_merge_but_values_that_matter_do_not():
+    cards = [card(7, HAND, 0), card(7, HAND, 1), card(7, HAND, 2)]
     # SELECT_UNSELECT_CARD: value is the list index and is ignored
     acts = [action(SELECT, 1, 7, 0, value=0), action(SELECT, 2, 7, 1, value=1), action(SELECT, 3, 7, 2, value=2)]
     assert masked(cards, acts, C.MSG_SELECT_UNSELECT_CARD) == [1, 0, 0]
