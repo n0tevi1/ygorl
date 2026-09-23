@@ -147,4 +147,13 @@ register_agent("policy", _policy,
                "a policy checkpoint (PPO training or BC): policy:PATH[@greedy][@t=T] (docs/evaluation.md, docs/bc.md)")
 register_agent("policy-greedy", _policy_greedy, "shorthand for policy:PATH@greedy")
 
+
+def _lethal(arg: str | None, seed: int) -> Agent:
+    from ygorl.agents.lethal import make_lethal_agent
+
+    return make_lethal_agent(arg, seed)
+
+
+register_agent("lethal", _lethal, "any agent plus a lethal search this turn: lethal:<agent spec> (#62, prototype)")
+
 __all__ = ["AgentFactory", "AgentSpec", "agent_factory", "available_agents", "make_agent", "register_agent"]

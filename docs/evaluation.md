@@ -33,6 +33,7 @@ AgentFactory = Callable[[int], Agent]                 # 种子 -> 新 agent
 | `GreedyAgent(seed, cards=None)` | 确定性启发式，见下 |
 | `PolicyAgent(policy, seed=None, greedy=False, temperature=1.0)` | `policy(point)` 对每个动作打分（logit），按 `softmax(score / T)` 采样或取 argmax；暴露 `last_probs`。M4 的网络策略从这里接入：`PolicyAgent(NetPolicy.from_checkpoint(path))`，或规格 `policy:PATH`（[bc.md](bc.md)） |
 | `CheckpointAgent(path, seed, greedy=False, temperature=1.0)` | 训练出的 PPO checkpoint（T4b.4），见下「策略检查点 agent」；登记名 `policy:PATH[@greedy][@t=T]`（与 BC 检查点共用一个名字，按文件的 `format` 字段选加载方式）；`policy-greedy:PATH` 是 `@greedy` 的简写 |
+| `LethalAgent(agent, seed, rollouts=12, ...)` | 任意 agent 外加本回合的致死搜索（T4e.1 原型，[#62](https://github.com/n0tevi1/ygorl/issues/62)）：跟随整局的影子对局（带引擎快照），在本方主要 / 战斗阶段做若干次本回合推演（己方 Greedy / 随机、对手只放弃），找到赢下来的线就照走，真实对局一偏离就交回原 agent；严格模式不用己方抽卡、投币 / 骰子、对手连锁的线（不利用隐藏信息）。登记名 `lethal:<agent 规格>`；`YGORL_LETHAL_LOG` 记录每局的搜索统计 |
 
 ### 策略检查点 agent（`ygorl/agents/checkpoint.py`）
 
