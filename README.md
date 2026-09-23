@@ -171,7 +171,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── README.md
 ├── CLAUDE.md                # 给 AI 协作工具的项目约定
 ├── .claude/                 # Claude Code 配置：settings.json + hooks/session-start.sh（每个云端会话的初始化）+ cloud-setup.sh（云环境 setup script）
-├── .github/workflows/       # CI：构建扩展 + pytest
+├── .github/workflows/       # CI：ruff lint；构建扩展 + pytest（另一 job 装 `train` 可选依赖跑依赖 torch 的测试）
 ├── pyproject.toml           # uv 项目 + scikit-build-core 构建配置
 ├── uv.lock
 ├── .python-version         # uv 使用的 Python 版本（3.11）
