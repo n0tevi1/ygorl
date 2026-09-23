@@ -122,6 +122,9 @@ def test_solve_request_arguments(tmp_path):
     fire = SolveRequest(template=Path("line.yrpX"), fire=ASH_BLOSSOM, fire_ms=4000, solve_ms=1000)
     fargs = fire.args(wd, tmp_path / "o")
     assert "--fire 14558127 --fire-bake --fire-ms 4000" in " ".join(fargs) and "--no-ref" not in fargs and "--deck" not in fargs
+    assert "--max-rollouts" not in fargs
+    counted = SolveRequest(template=Path("line.yrpX"), fire=ASH_BLOSSOM, max_rollouts=500).args(wd, tmp_path / "o")
+    assert "--max-rollouts 500" in " ".join(counted)
     with pytest.raises(ValueError, match="target"):
         SolveRequest(template=Path("t"), deck=Path("d.ydk"), hand=(ASH,)).args(wd, tmp_path)
 
