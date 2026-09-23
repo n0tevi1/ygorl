@@ -237,8 +237,23 @@ def test_policy_agent_needs_duel_run_and_a_checkpoint(run):
         agent.act(object())
     with pytest.raises(ValueError, match="checkpoint"):
         make_agent("policy:no/such/file.pt")
-    with pytest.raises(ValueError, match="checkpoint path"):
+    with pytest.raises(ValueError, match="needs a checkpoint"):
         make_agent("policy")
+    # one spec syntax for PPO and BC checkpoints (the format field picks the loader)
+    from ygorl.agents.checkpoint import CheckpointAgent
+
+    warm = make_agent(f"policy:{out / 'best.pt'}@t=0.5", seed=0)
+    cold = make_agent(f"policy:{out / 'best.pt'}@greedy", seed=0)
+    short = make_agent(f"policy-greedy:{out / 'best.pt'}", seed=0)
+    assert isinstance(warm, CheckpointAgent) and warm.temperature == 0.5 and not warm.greedy
+    assert cold.greedy and short.greedy
+    for bad in ("@t=0", "@hot"):
+        with pytest.raises(ValueError, match="temperature|option"):
+            make_agent(f"policy:{out / 'best.pt'}{bad}")
+    junk = out / "junk.pt"
+    torch.save({"format": "something-else"}, junk)
+    with pytest.raises(ValueError, match="not a ygorl checkpoint"):
+        make_agent(f"policy:{junk}")
 
 
 def test_duel_command_plays_a_checkpoint(run, capsys):
