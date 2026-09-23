@@ -53,6 +53,7 @@
 - [代理模型](docs/surrogate.md)：牌组特征（计数向量、引擎包、卡片结构、可插拔的卡文本嵌入均值）、自助 ridge 集成与不确定性、DSA-ME 在线更新与采集规则、真实对局标签缓存、留出集误差实测。
 - [漏斗第一层：求解器起手分析](docs/funnel.md)：候选牌组固定种子抽起手，用求解器判定最佳线存在率、卡手率、抗手坑率（`--fire`）与 combo 长度，作为廉价过滤与 QD 描述符；与真实首回合的配对检验（McNemar）和每套牌耗时 vs 预算（T5.6）。
 - [术语表](docs/glossary.md)：代码标识符与中文术语对照（卡片、区域、对局流程、引擎、组牌）。
+- [训练规模与训练信号](docs/scaling.md)：为什么从零训练进展小、先前项目（ygo-agent、DouZero、Suphx 等）的做法、扩规模与训练信号的选项及其与设计的冲突点。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
 ## 快速开始
@@ -233,6 +234,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── belief-heads.md      # 信念头：五个头、损失掩码、meta 先验与实验数字
 │   ├── training.md          # 策略训练：优势估计与特权 critic 的公式、符号约定、rollout 数据布局；PPO 自博弈训练循环
 │   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）
+│   ├── scaling.md           # 训练规模与训练信号：现状、先前项目、选项
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── data.md              # 数据抓取、禁限表校对流程、环境快照统计
 │   ├── replays.md           # 回放格式、.yrpX 导出与 .yrp / .yrpX 读取
