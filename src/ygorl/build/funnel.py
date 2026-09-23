@@ -55,6 +55,9 @@ class FunnelConfig:
     workers: int = 1  # parallel solver processes for one deck (1: in this process)
     threads: int = 1  # solver threads per process
     solver_seed: int | None = 1  # fixed rollout seed (the search is still bounded by wall time)
+    # Opt-in count budget (solver --max-rollouts): rollouts per solver phase and worker. solve_ms still bounds every
+    # phase, so with threads=1 a run is reproducible only when the count binds first (solve_ms set well above it).
+    max_rollouts: int | None = None
     env: str | None = None  # environment directory or version: rules of the duel; stamps the result
     binary: Path | None = None
     budget_s: float = DEFAULT_BUDGET_S  # stage-1 budget in solver process-seconds per deck
@@ -148,7 +151,8 @@ def _evaluate_hand(task: _HandTask) -> dict:
     for alt, targets in enumerate(task.targets):
         job = HandJob(deck_path=task.deck_path, hand_index=task.index, hand_seed=task.hand_seed, targets=targets,
                       workdir=task.workdir, scratch=task.scratch / f"t{alt}", solve_ms=cfg.solve_ms, threads=cfg.threads,
-                      fire=cfg.fire, fire_ms=cfg.fire_ms, binary=cfg.binary, solver_seed=cfg.solver_seed, env=cfg.env)  # fmt: skip
+                      fire=cfg.fire, fire_ms=cfg.fire_ms, binary=cfg.binary, solver_seed=cfg.solver_seed,
+                      max_rollouts=cfg.max_rollouts, env=cfg.env)  # fmt: skip
         demo = solve_hand(job)
         records.append(demo.to_json())
         out.hand = list(demo.hand)
