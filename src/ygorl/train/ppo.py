@@ -52,8 +52,10 @@ class PPOConfig:
     # > 0: the prior KL only on the turn player's own decisions up to this turn (globals is_my_turn / turn), the
     # states the turn-1 solver demonstrations cover (docs/bc.md「补救实验」); other rows count as 0; 0 = every row
     kl_prior_turns: int = 0
-    # stop an update's remaining minibatches once one exceeds 1.5 x target_kl (approx_kl); None = every epoch
-    target_kl: float | None = None
+    # stop an update's remaining minibatches once one exceeds 1.5 x target_kl (approx_kl); None = every epoch.
+    # From a BC warm start the fixed 32 steps overshoot (docs/benchmarks.md 「BC 热启动 + PPO」); from scratch it
+    # rarely triggers (approx_kl ~0.006-0.009 per update)
+    target_kl: float | None = 0.01
     q_coef: float = 0.5
     v_coef: float = 0.5
     lr: float = 1e-3

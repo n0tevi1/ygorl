@@ -253,7 +253,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
    **只在第 1 回合用先验**：`--kl-prior-turns N`（`PPOConfig.kl_prior_turns`，默认 0 = 所有行）只对「回合玩家自己的决策、回合数 ≤ N」
    的行（观测 `globals` 的 `is_my_turn` 与 `turn` 两列）计先验 KL，其余行按 0 计入同一个均值（被选中的行权重与不限制时相同）；
    日志多一个 `kl_prior_rows`（本段被选中的行数）。`N = 1` 即求解器示范覆盖的先攻第 1 回合，理由与对比实验见 [bc.md](bc.md)「补救实验」。
-   **按 KL 提前停**：`--target-kl X`（`PPOConfig.target_kl`，默认关）——某个 minibatch 的 `approx_kl` 超过 1.5 X 时，本次更新余下的
+   **按 KL 提前停**：`--target-kl X`（`PPOConfig.target_kl`，默认 0.01；`--target-kl 0` 关闭）——某个 minibatch 的 `approx_kl` 超过 1.5 X 时，本次更新余下的
    minibatch 都跳过（日志 `minibatches` / `early_stop`）。步长按「策略实际移动了多少」封顶，而不是按固定的轮数：同一组学习率与轮数，
    从零开始（熵约 1.3）每次约 0.006–0.009，从 BC 热启动（熵约 0.7）则到 0.023–0.029、裁剪比例约 0.2（[benchmarks.md](benchmarks.md)）。
 4. `reference ← (1 − τ) reference + τ θ`，`τ = reference_ema`（默认 0.02 / 次更新）。

@@ -65,8 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--kl-prior", type=float, default=0.0, help="KL coefficient to the BC prior")
     g.add_argument("--kl-prior-turns", type=int, default=0,
                    help="apply the prior KL only to the turn player's decisions up to this turn (default 0: all)")
-    g.add_argument("--target-kl", type=float, default=None,
-                   help="stop an update's remaining minibatches once one exceeds 1.5x this approx_kl (default: off)")
+    g.add_argument("--target-kl", type=float, default=0.01,
+                   help="stop an update's remaining minibatches once one exceeds 1.5x this approx_kl; 0 = off")
     g.add_argument("--init-from", default=None, metavar="CKPT",
                    help="initialize the actor from a policy (e.g. BC) or PPO checkpoint with the same network config")
     g = p.add_argument_group("league and evaluation")
@@ -97,7 +97,7 @@ def config_from_args(args, decks: list[str]):
     ppo = PPOConfig(objective=args.objective, estimator=args.estimator, entropy_coef=args.entropy,
                     kl_ref_coef=args.kl_ref, reference_ema=args.ema, lr=args.lr, epochs=args.epochs,
                     minibatch_size=args.minibatch, kl_prior_coef=args.kl_prior,
-                    kl_prior_turns=args.kl_prior_turns, target_kl=args.target_kl)  # fmt: skip
+                    kl_prior_turns=args.kl_prior_turns, target_kl=args.target_kl or None)  # fmt: skip
     return TrainConfig(decks=tuple(decks), pairings=args.pairings, env=args.env, max_turns=args.max_turns,
                        max_decisions=args.max_decisions, num_envs=args.envs, env_threads=args.env_threads,
                        steps=args.steps, event_length=args.event_length, skip_forced=not args.keep_forced, net=net,

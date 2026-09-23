@@ -370,7 +370,8 @@ def test_target_kl_stops_an_update_once_the_policy_moved_enough():
     env = NimEnv(num_envs=4, max_pile=15)
     model = NimModel(max_pile=15)
     ro = RolloutCollector(env, model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0).collect()
-    full = PPOLearner(copy.deepcopy(model), PPOConfig(epochs=6, minibatch_size=16, lr=5e-2)).update(ro)
+    assert PPOConfig().target_kl == 0.01  # the default (docs/benchmarks.md 「BC 热启动 + PPO」)
+    full = PPOLearner(copy.deepcopy(model), PPOConfig(epochs=6, minibatch_size=16, lr=5e-2, target_kl=None)).update(ro)
     assert full["minibatches"] == 6 * 4 and full["early_stop"] == 0
     capped = PPOLearner(copy.deepcopy(model), PPOConfig(epochs=6, minibatch_size=16, lr=5e-2, target_kl=1e-4)).update(ro)
     assert 1 <= capped["minibatches"] < full["minibatches"] and capped["early_stop"] == 1
