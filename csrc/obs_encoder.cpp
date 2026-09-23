@@ -190,6 +190,30 @@ Row material_row(uint32_t code, uint32_t seq, uint32_t k, int side, const CardDa
     return r;
 }
 
+// Keep only the first row of each class of equivalent action rows in the mask (docs/encoding.md 「等价动作去重」;
+// Python: ygorl.env.encoding.mask_duplicates). Rows without a card-table row or with a hidden card are never merged.
+void mask_duplicates(const std::vector<int32_t>& cards, const std::vector<int32_t>& actions,
+                     std::vector<int32_t>& mask, uint32_t decision) {
+    // deck, hand, GY, banished, Extra Deck: the sequence carries nothing a choice between copies could use
+    auto unordered = [](int32_t loc) { return loc == 1 || loc == 2 || loc == 5 || loc == 6 || loc == 7; };
+    std::map<std::vector<int32_t>, size_t> first;
+    const size_t n = static_cast<size_t>(std::count(mask.begin(), mask.end(), 1));  // legal rows are a prefix here
+    for (size_t i = 0; i < n; ++i) {
+        const int32_t* a = actions.data() + i * A_ACTION;
+        const int32_t card_row = a[1], card_index = a[2];
+        if (card_row == 0 || card_index == 0) continue;
+        std::vector<int32_t> key(a, a + A_ACTION);
+        key[1] = key[9] = 0;
+        if (decision == MSG_SELECT_UNSELECT_CARD) key[8] = 0;  // the list index there
+        const int32_t* c = cards.data() + static_cast<size_t>(card_row - 1) * F_CARD;
+        key.insert(key.end(), c, c + F_CARD);
+        int32_t* kc = key.data() + A_ACTION;
+        kc[col::OVERLAY_INDEX] = 0;
+        if (unordered(kc[col::LOCATION])) kc[col::SEQUENCE] = 0;
+        if (!first.emplace(std::move(key), i).second) mask[i] = 0;
+    }
+}
+
 uint32_t chain_size(const std::string& f) {
     size_t pos = 4;  // duel options
     for (int p = 0; p < 2; ++p) {
@@ -334,6 +358,7 @@ void encode(Duel& core, const Tracker& tracker, const std::vector<Action>& actio
         }
         row[9] = clamp(static_cast<int64_t>(a.index) + 1, 0, 255);
     }
+    mask_duplicates(out.cards, out.actions, out.action_mask, decision ? decision->type : 0);
 }
 
 }  // namespace ygorl::host

@@ -53,7 +53,8 @@ class EncodedVecEnv:
 
         The default (inference mode) never computes it. Evaluation and play must use the default.
         ``event_length`` is the number of event tokens per observation (docs/encoding.md; 0 = none).
-        ``skip_forced=True`` plays every decision with exactly one legal action inside the C++ loop, so
+        ``skip_forced=True`` plays every decision with exactly one choosable row (one legal action, or only
+        equivalent copies of one; docs/encoding.md) inside the C++ loop, so
         only decisions with a real choice come back (the games are identical; ``step`` counts differ).
         """
         self.cards = cards if cards is not None else default_cards()
@@ -93,7 +94,8 @@ class EncodedVecEnv:
         return self._pool.pending()
 
     def play(self, specs: Sequence[GameSpec], choose: Callable[[int, int, int], int]) -> list[dict]:
-        """Play every spec with ``choose(seed, step, n_legal) -> index``; results in spec order."""
+        """Play every spec with ``choose(seed, step, n) -> k``, which picks the ``k``-th of the ``n`` rows the mask
+        leaves (equivalent copies are masked, docs/encoding.md); results in spec order."""
         results: list[dict | None] = [None] * len(specs)
         queue = iter(enumerate(specs))
         running: dict[int, list] = {}  # env -> [spec index, step]
@@ -115,7 +117,7 @@ class EncodedVecEnv:
                     if not launch(ev.env_id):
                         active -= 1
                     continue
-                n = int(ev.obs["action_mask"].sum())
+                legal = np.flatnonzero(ev.obs["action_mask"])
                 running[ev.env_id][1] = step + 1
-                self.step(ev.env_id, choose(specs[i].seed, step, n))
+                self.step(ev.env_id, int(legal[choose(specs[i].seed, step, len(legal))]))
         return results  # type: ignore[return-value]

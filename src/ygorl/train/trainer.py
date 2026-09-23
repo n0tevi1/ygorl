@@ -54,7 +54,7 @@ class TrainConfig:
     steps: int = 64  # rows per environment slot per rollout (T)
     min_batch: int | None = None  # ready decisions per forward pass (default num_envs // 2)
     event_length: int = 64  # event tokens per observation (window mode)
-    skip_forced: bool = True  # decisions with one legal action are played in C++ and produce no rows
+    skip_forced: bool = True  # decisions with one choosable row are played in C++ and produce no rows
     net: dict = field(default_factory=lambda: dict(SMALL_NET))  # NetConfig overrides (vocab_size is set)
     text_dir: str | None = None  # frozen text tables (T5.2); None = off
     privileged_critic: bool = True  # design I9: the critic sees the opponent ground truth

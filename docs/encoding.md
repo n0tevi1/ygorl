@@ -7,7 +7,7 @@
 | `cards` | `[N_CARDS=160, F=23]` | 卡片 token 表，按下文顺序排列，未用行全 0 |
 | `globals` | `[G=22]` | 全局向量 |
 | `actions` | `[MAX_OPTIONS=128, A=10]` | 当前 step 的合法动作（多选已拆步，见 [engine.md](engine.md)） |
-| `action_mask` | `[MAX_OPTIONS]` | 1 = 该行是合法动作 |
+| `action_mask` | `[MAX_OPTIONS]` | 1 = 该行是合法动作，且是其等价类的第一行（见下「等价动作去重」） |
 
 卡片身份用 `CardVocab` 下标（`0` 填充，`1` 未知/背面，真实卡从 `2` 起；见 `ygorl.cards.cdb.CardVocab`）。`CardVocab.from_db(db)` 按卡密排序新建，卡库增卡后下标会整体移动；训练产物必须与所用词表一起保存（`CardVocab.save`），卡库更新时用 `CardVocab.from_db(db, base=旧词表)` 只追加新卡，旧下标不变（T6.3 热启动依赖这一点）。
 
@@ -93,6 +93,16 @@
 EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），所以描述的高位是卡片密码、低 20 位是串序号；比 `1 << 20` 小的描述是系统串。`effect_card` + `effect_index` 就是效果级文本嵌入（设计 I5）的查表键。
 
 **决策中的隐藏信息**：核心在 SELECT_CARD / SELECT_TRIBUTE / SELECT_UNSELECT_CARD 里写的是真实卡密，包括对手里侧、手牌、卡组中的卡（例如选择破坏对手盖放的卡）；EDOPro 服务端把这三种消息里对手卡的卡密清零后才发给玩家（`generic_duel.cpp` `Sending`）。主机在解码决策时做同样的事（`messages.hide_private`，C++ `host::hide_private`）：对手的卡若不在墓地 / 超量素材中，且在卡组 / 手牌中或里侧表示（SELECT_TRIBUTE 不带表示形式，未知一律按隐藏处理），卡密置 0。表侧的对手卡保留卡密（它在场上本就可见）。因此 `DecisionPoint.actions`、动作表第 2 列、以及所有 agent（含 GreedyAgent）都看不到这些卡的身份；原始消息日志（回放、`.yrpX` 导出）不受影响。这是审计发现的泄露（修复前动作表第 2 列会带出对手里侧卡的身份），`tests/test_visibility.py` 覆盖 Python 与 C++ 两条路径。
+
+**等价动作去重**：同一张卡的多张副本常各占一行（手里 3 张灰流丽 → 3 行「连锁灰流丽」），它们对决策方没有区别，却让均匀初始策略偏向发动（3/4 而不是 1/2），熵奖励也被摊到等价行上。因此 `action_mask` 只保留每个等价类的**第一行**，其余行照常编码、mask 置 0。第 i、j 行（i < j，都在前 128 行内）等价，当且仅当：
+
+1. 两行都指向卡片表中的一行（第 1 列 > 0），且卡的身份对决策方可见（第 2 列 > 0）；
+2. 动作行除 `card_row`（1）与 `index`（9）外各列相同；SELECT_UNSELECT_CARD（`globals[18]`）中 `value`（8）是列表下标，也不比较；
+3. 两张卡在卡片表中的行除 `overlay_index`（3）外各列相同；卡组、手牌、墓地、除外、额外卡组里的卡另外不比较 `sequence`（2）。怪兽区、魔陷区的序号决定纵列与连接方向，不同序号不等价；超量素材行的 `sequence` 是所属怪兽的序号，也必须相同。
+
+于是公开标志不同（一张已经给对手看过）、表示形式不同（表侧 / 里侧除外）、数值被效果改过、效果串不同的都不算等价；身份对决策方隐藏的卡（对手手牌、里侧卡）也不合并。多选拆步不受影响：选了代表行之后，下一步列出剩余的副本，任何多重集仍然可达。主机的 `skip_forced`（[training.md](training.md)）按 mask 判定：去重后只剩一行的决策也视为强制。`globals[20]` 仍是去重前的合法动作总数。`ygorl.env.encoding.canonical_action(obs, i)` 把任意一行映射到它的代表行（行为克隆、回放标签用）。10 套测试牌组 40 局随机对局里，7.4% 的非强制决策有被合并的行（SELECT_CARD 36%，多为从卡组检索多张同名卡之一；SELECT_IDLECMD 10%；SELECT_CHAIN 3%），其中 75 个因此变成强制决策。
+
+已知简化：手牌序号在对手看来可能带信息（例如对手见过被检索公开的那张卡加到了手牌末位），合并后总是用序号最小的副本；需要隐藏时仍可选洗切手牌（`shuffle`）。
 
 **截断（未解决）**：合法动作超过 128 个时（主要是 ANNOUNCE_CARD 宣言卡名，可达上千个）只编码前 128 个，`globals[20]` 记录真实数量，`action_mask` 只标前 128 行，**第 128 行之后的动作 agent 选不到**。T2.3 只处理了多选拆步，没有处理这一点；可能的方案是把宣言拆成「先选类别 / 种族 / 属性再选卡」的多步，或按信念头排序只列前 128 个。待网络（T4b.1）落地后决定，见 [eng-plan.md](eng-plan.md) T2.3 备注。
 

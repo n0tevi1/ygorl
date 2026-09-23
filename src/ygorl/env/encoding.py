@@ -52,6 +52,53 @@ def _clamp(value: int, lo: int = 0, hi: int = CLAMP) -> int:
     return max(lo, min(hi, value))
 
 
+# Zones where the sequence of a card says nothing a choice between copies could use (LOCATION_ENUM values: deck,
+# hand, GY, banished, Extra Deck); monster / spell-trap zone sequences are columns and link arrows.
+_UNORDERED = (1, 2, 5, 6, 7)
+
+
+def _equivalence_key(cards: np.ndarray, action: np.ndarray, decision: int) -> bytes | None:
+    """What makes an action row distinct to the decider, or None for a row that is never merged (docs/encoding.md)."""
+    card_row, card_index = int(action[1]), int(action[2])
+    if card_row == 0 or card_index == 0:  # no card-table row, or a card hidden from the decider
+        return None
+    a = action.copy()
+    a[1] = a[9] = 0
+    if decision == C.MSG_SELECT_UNSELECT_CARD:
+        a[8] = 0  # the list index there
+    c = cards[card_row - 1].copy()
+    c[OVERLAY_INDEX] = 0
+    if c[LOCATION] in _UNORDERED:
+        c[SEQUENCE] = 0
+    return a.tobytes() + c.tobytes()
+
+
+def action_representatives(cards: np.ndarray, actions: np.ndarray, n: int, decision: int) -> np.ndarray:
+    """``rep[i]`` = the first of the first ``n`` action rows that is equivalent to row ``i`` (``i`` if none is)."""
+    rep = np.arange(n)
+    first: dict[bytes, int] = {}
+    for i in range(n):
+        key = _equivalence_key(cards, actions[i], decision)
+        if key is not None:
+            rep[i] = first.setdefault(key, i)
+    return rep
+
+
+def mask_duplicates(cards: np.ndarray, actions: np.ndarray, mask: np.ndarray, decision: int) -> None:
+    """Keep only the first row of each class of equivalent actions in ``mask`` (in place; docs/encoding.md)."""
+    n = int(np.count_nonzero(mask))  # the legal rows are a prefix before deduplication
+    rep = action_representatives(cards, actions, n, decision)
+    mask[:n] = rep == np.arange(n)
+
+
+def canonical_action(obs: Mapping[str, np.ndarray], index: int) -> int:
+    """The row the policy can choose for action ``index`` of an encoded observation (its class representative)."""
+    n = min(int(obs["globals"][20]), MAX_OPTIONS)
+    if not 0 <= index < n:
+        raise IndexError(f"action {index} out of range for {n} encoded actions")
+    return int(action_representatives(obs["cards"], obs["actions"], n, int(obs["globals"][18]))[index])
+
+
 class ObservationEncoder:
     """Encode a :class:`DecisionPoint` for its deciding player (see docs/encoding.md).
 
@@ -97,6 +144,7 @@ class ObservationEncoder:
         if n:
             table[:n] = np.asarray(rows[:n], dtype=np.int64).astype(np.int32)
         actions, mask = self._actions(point, viewer, keys, deck_rows, n)
+        mask_duplicates(table, actions, mask, point.decision.TYPE)
         return {"cards": table, "globals": self._globals(point, core, viewer), "actions": actions, "action_mask": mask}
 
     def encode_privileged(self, point: DecisionPoint, core) -> dict[str, np.ndarray]:

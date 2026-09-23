@@ -1,5 +1,7 @@
 #include "host_pool.h"
 
+#include <algorithm>
+
 namespace ygorl::host {
 
 HostPool::HostPool(size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
@@ -43,11 +45,21 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
             if (!host || host->done()) throw std::runtime_error("env has no running game");
             host->act(job.action);
         }
-        // A decision with a single legal action has no choice to learn: take it here (same game either way).
-        while (skip_forced_ && !host->done() && host->actions().size() == 1) host->act(0);
-        if (!host->done() && !host->actions().empty()) {  // actions() may stop the duel (decision limit)
-            ev.player = host->player();
+        // A decision with a single choosable row has nothing to learn: take it here (same game either way). The
+        // single-action case needs no encoding; otherwise the mask decides (equivalent copies are masked out).
+        while (!host->done() && !host->actions().empty()) {  // actions() may stop the duel (decision limit)
+            if (skip_forced_ && host->actions().size() == 1) {
+                host->act(0);
+                continue;
+            }
             host->observe(ev.obs);
+            if (!skip_forced_) break;
+            const auto& mask = ev.obs.action_mask;
+            if (std::count(mask.begin(), mask.end(), 1) != 1) break;
+            host->act(static_cast<size_t>(std::find(mask.begin(), mask.end(), 1) - mask.begin()));
+        }
+        if (!host->done() && !host->actions().empty()) {
+            ev.player = host->player();
             if (privileged_) {
                 host->observe_privileged(ev.privileged);
                 ev.has_privileged = true;

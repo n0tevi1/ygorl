@@ -48,7 +48,7 @@ checkpoint / 日志）。需要 `uv sync --extra train`。
 - **两人交替**：当前策略自博弈时，同一局双方的行按时间顺序放在同一列，所有行都参与训练。行的视角随 `players` 切换，见 §2。
 - **多步决策**：多选拆步（T2.3，逐张选 + Finish）就是同一座位的连续多行，中间行奖励为 0；不需要特殊标记。
   连锁响应、效果内选择同理：谁被问到谁出一行。
-- **强制决策**（只有一个合法动作，约占全部决策的 60%，绝大多数是「对方发动时只能选择不连锁」）：训练默认 `TrainConfig.skip_forced = True`，由 C++ 步进环境直接走掉（`EncodedVecEnv(skip_forced=True)`），**不出行**、不做推理。对局轨迹与不跳过时完全相同（`tests/test_host_pool.py`）；这样的行本来就没有策略梯度（log 概率为 0），跳过后每局的行数减少约 60%，信用分配的步数也随之缩短。`tools/train_ppo.py --keep-forced` 恢复逐行记录。统计里的「决策数」只算出行和快照对手的决策，不含被跳过的强制决策。
+- **强制决策**（只有一个合法动作，约占全部决策的 60%，绝大多数是「对方发动时只能选择不连锁」；也包括合法动作都是同一张卡的等价副本、mask 只剩一行的决策，见 [encoding.md](encoding.md)「等价动作去重」）：训练默认 `TrainConfig.skip_forced = True`，由 C++ 步进环境直接走掉（`EncodedVecEnv(skip_forced=True)`），**不出行**、不做推理。对局轨迹与不跳过时完全相同（`tests/test_host_pool.py`）；这样的行本来就没有策略梯度（log 概率为 0），跳过后每局的行数减少约 60%，信用分配的步数也随之缩短。`tools/train_ppo.py --keep-forced` 恢复逐行记录。统计里的「决策数」只算出行和快照对手的决策，不含被跳过的强制决策。
 - **裁掉填充**：观测的卡片（160）、动作（128）、事件（64）行都按上限补零，而实际平均只有约 66 张卡、2.8 个动作。`PolicyNet.features` 先把一批观测裁到这批里最长的有效前缀（`nets.policy.trim_padding`），算完再把输出补回原宽度；PPO 更新在整条 rollout 上裁一次，之后每个 minibatch 都从小张量里取。有效行的输出与不裁时一致（`tests/test_nets.py`、`tests/test_train_loop.py`）。加上跳过强制决策，每 2048 行一次更新从约 19 s 降到约 10 s。
 - **主机代答**（课程模式 T2.6 的 `solo` / `handtrap` 下替对手自动放弃）：不是 agent 决策，**不出行**
   （与 `DuelResult.actions` / `record_steps` 一致）；它的后果体现在下一行的状态里。
