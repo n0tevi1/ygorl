@@ -120,14 +120,14 @@ g.save("graph.json.gz"); g.load("graph.json.gz")
 `load_or_build()` 的磁盘缓存（`$YGORL_CACHE_DIR` 或 `~/.cache/ygorl/synergy/`）以构图模块（`lua / filters / scripts / synergy_graph.py`）
 源码、脚本文件、常量文件、`cards.cdb` 与 `max_fanout` 为键，不会返回过期的图；测试会话共用一次构建（`tests/conftest.py` 的 `real_graph`）。
 
-**扩展点。** Yugipedia SMW 关系（T5.1）与卡文本相似度（T5.2）目前无法离线获取；它们可作为新的边类型经
-`SynergyGraph.add_edges` 并入（`save/load` 支持任意额外类型），不需要改动挖掘部分。
+**扩展点。** Yugipedia SMW 关系（T5.1，已随环境快照提供，见 [data.md](data.md) 的 `relations.json`）与卡文本相似度（T5.2）
+可作为新的边类型经 `SynergyGraph.add_edges` 并入（`save/load` 支持任意额外类型），不需要改动挖掘部分；目前尚未接入。
 
 ## 召回检验（代理）
 
 验收标准（工程计划）：协同图召回 ≥ 80% 的 meta 引擎包，meta 卡表只用于检验、不参与构图。
-**真实 meta 卡表要到 T5.1 才有（masterduelmeta / YGOPRODECK 在当前网络策略下不可达）**，
-所以现在用**代理引擎包**评估，结果只能作为代理指标：
+本节写作时还没有真实 meta 卡表，所以用**代理引擎包**评估，结果只能作为代理指标（T5.1 的真实 meta 卡组现已在
+`environments/md-2026-09/meta/`，尚未据此重新评估）：
 
 - 代理包由 `tools/make_proxy_packages.py` 从 `tools/make_test_decks.py` 的 `DECKS`（10 套测试牌组的系列核心）派生，
   写入 `tests/data/proxy_packages.json`（卡密为键，卡名只作注释）：去掉泛用卡（泛用陷阱、泛用额外卡组怪兽，手坑与泛用魔陷本来就不在 `DECKS` 里），

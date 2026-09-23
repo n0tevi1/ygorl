@@ -11,6 +11,7 @@
 | `ygorl branch` | 从回放的某一步分叉，比较候选动作 | `fork`（[branching.md](branching.md)） |
 | `ygorl arena` | 配对种子对局，agent a 对 agent b 的胜率与 Wilson 区间 | `Arena`、`merge`（[evaluation.md](evaluation.md)） |
 | `ygorl matrix` | 牌组两两对局的胜率矩阵 + Nash 混合 + alpha-rank | `build_matrix`、`analyze`、`MetaGame.save` |
+| `ygorl env` | `build`：抓取数据并生成 MD 环境；`check`：校验环境并打印摘要 | `ygorl.data.build.build`、`load_environment`（[data.md](data.md)） |
 
 ## 通用约定
 
@@ -157,11 +158,36 @@ written to out/matrix.json
 
 每格 10 局时区间很宽，上例只演示格式；比较牌组强弱需要足够的局数（看 JSON 里每格的 `ci_low` / `ci_high`）。
 
+## `ygorl env`
+
+```
+ygorl env build VERSION [--root DIR] [--raw DIR] [--offline | --refresh] [--since YYYY-MM-DD] [--min-share F]
+                        [--max-decks N] [--no-relations] [--reviewed-by NAME]
+ygorl env check PATH|VERSION
+```
+
+- `build`：从 YGOPRODECK、masterduelmeta、Yugipedia 抓取缺失的原始文件到 `<环境>/raw/`，生成 `environments/<VERSION>/` 并按 T0.4 校验
+  （含 meta 卡组合法性）；版本号形如 `md-YYYY-MM[-修订]`。来源、参数、校对流程见 [data.md](data.md)。输出卡池大小、禁限张数、meta 份额与警告
+  （禁限表待校对、无法对应的卡、建议推迟的 meta 窗口起点）。抓取失败、原始文件缺失（`--offline`）、结果校验不过时退出码 2。
+- `check`：带卡片数据库加载环境（与 `--env` 相同的校验），打印版本、`fingerprint` 前缀、卡池大小、禁限张数与校对状态、每套 meta 的份额。
+
+```
+$ uv run ygorl env check md-2026-09
+environment md-2026-09 (md) at /path/to/ygorl/environments/md-2026-09
+fingerprint e621b4774bf2b6d1
+pool        13858 cards
+banlist     2026.09 MD: 108 forbidden, 73 limited, 26 semi-limited (review pending)
+meta        20 decks, share 71.7%, all legal
+    8.9%  Dracotail
+    ...
+```
+
 ## 测试
 
 - `tests/test_cli.py`：每个命令的输出与直接调用 API 的结果一致（`duel` 对 `Duel.run`，`arena` 对 `Arena.run_many` + `merge`，`matrix` 对 `build_matrix` + `analyze`），
   回放保存与 `.yrpX` 导出、`--verify` 成功与截断日志后的 `MISMATCH`、环境查找与报错、目录作牌组、`--vs`、环境 meta 卡组写入 `artifacts/matrix/`，以及各种用法错误；
   不合法牌组（未知 `password`、空文件、4 张同名、额外卡组怪兽在主卡组或反之、超过 60 张、环境禁止或卡池外的卡、不合法的 meta 卡组）在三个命令下都以退出码 2 拒绝，
   损坏的回放 / `.ydk` / 环境文件与不合理的环境规则给出干净的错误，`--name` 不能带路径。
-- `tests/test_readme.py`：逐行执行 README「快速开始」里以 `uv run ygorl` 开头的示例（在临时目录中，`--games` 上限 2、`--rollouts` 上限 1），
+- `tests/test_data_sources.py`：`ygorl env build --offline`（小型原始文件）与 `ygorl env check`，以及用法错误（非 `md-` 版本、`--offline` 与 `--refresh` 同用）。
+- `tests/test_readme.py`：逐行执行 README「快速开始」里以 `uv run ygorl` 开头的示例（在临时目录中，`tests/decks` 与 `environments` 链接到仓库，`--games` 上限 2、`--rollouts` 上限 1），
   全部退出码 0，且每个子命令至少有一个示例。
