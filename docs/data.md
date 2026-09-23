@@ -110,9 +110,9 @@ YGOPRODECK 的 `banlist_info` 没有 MD 字段，不能作第二来源。
 值是 Yugipedia 页面名（多数是系列，也有「Level 4 Monster Cards」「Link Monster」这类卡片群），只含卡池里的卡。
 `relations.json` 是环境目录里的可选文件，`load_environment` 不读它，也不计入 `fingerprint`。
 
-**尚未接入协同图。** [synergy.md](synergy.md) 的扩展点可以直接用它：对 `archetype_support[X]` 里的每张卡 `s`、`archseries[X]` 里的每张卡 `m`
-加一条 `s → m` 的 `archetype_support` 边（`archseries_related` 同理），经 `SynergyGraph.add_edges` 并入；Yugipedia 系列名与 cdb `setcode`
-的名字不完全一致，所以用 `archseries` 解析成员而不是 `setcode`。
+**接入协同图**（可选，默认不启用）：`ygorl.build.relations.add_relation_edges(graph, load_relations(env))` 对 `archetype_support[X]` 里的每张**非成员**卡 `s`、
+`archseries[X]` 里的每张卡 `m` 加一条 `s → m` 的 `archetype_support` 边（`archseries_related` 同理，需显式开启；`anti_support` 不建边；成员超过 100 张的系列跳过），
+规则与理由见 [synergy.md](synergy.md#yugipedia-关系边可选)。Yugipedia 系列名与 cdb `setcode` 的名字不完全一致，所以用 `archseries` 解析成员而不是 `setcode`。
 
 ## 快照 `environments/md-2026-09`
 
