@@ -12,8 +12,10 @@ from pathlib import Path
 
 import pytest
 
+from ygorl.build.relations import RELATION_TYPES, add_relation_edges, load_relations, relation_edges
 from ygorl.build.synergy_graph import (
     EDGE_TYPES,
+    REACH_TYPES,
     Edge,
     SynergyGraph,
     build_graph,
@@ -183,6 +185,35 @@ def test_package_coverage_and_recall(mini):
     assert report.coverage["b"] == pytest.approx(1 / 3)
 
 
+
+def test_relation_edges():
+    relations = {
+        "archseries": {"A": [1, 2, 3], "Big": list(range(100, 202))},
+        "archetype_support": {"A": [1, 9], "Big": [9], "Link Monster": [9]},
+        "archseries_related": {"A": [8]},
+        "anti_support": {"A": [7]},
+    }
+    edges, stats = relation_edges(relations, ("archetype_support",))
+    assert sorted((e.src, e.dst, e.type, e.fanout, e.evidence) for e in edges) == [
+        (9, m, "archetype_support", 3, "yugipedia") for m in (1, 2, 3)
+    ]  # member 1 is no source; "Big" (102 members) is capped; "Link Monster" has no members
+    assert stats["archetype_support"] == {"archetypes": 1, "capped_archetypes": 1} and stats["anti_support_skipped"] == 1
+    with_members, _ = relation_edges(relations, ("archetype_support",), member_sources=True)
+    assert {(e.src, e.dst) for e in with_members} == {(9, 1), (9, 2), (9, 3), (1, 2), (1, 3)}
+    assert len(relation_edges(relations, ("archetype_support",), max_fanout=200)[0]) == 3 + 102
+    with pytest.raises(ValueError):
+        relation_edges(relations, ("anti_support",))  # anti-support never becomes a synergy edge
+
+    g = SynergyGraph({p: {} for p in (1, 2, 3, 8, 9)})
+    stats = add_relation_edges(g, relations, RELATION_TYPES)
+    assert {(e.src, e.dst, e.type) for e in g.edges()} == {(9, 1, "archetype_support"), (9, 2, "archetype_support"),
+                                                          (9, 3, "archetype_support"), (8, 1, "archseries_related"),
+                                                          (8, 2, "archseries_related"), (8, 3, "archseries_related")}  # fmt: skip
+    assert g.meta["relations"]["archseries_related"]["edges"] == 3 and stats["archetype_support"]["edges"] == 3
+    assert g.summary()["edges_by_type"]["archetype_support"] == 3
+    assert SynergyGraph.from_json(g.to_json()).edge(8, 2, "archseries_related").evidence == "yugipedia"
+
+
 # ---------------------------------------------------------------- real data
 
 SNAKE_EYE_ASH, SNAKE_EYE_OAK, SNAKE_EYES_POPLAR = 9674034, 45663742, 90241276
@@ -244,3 +275,46 @@ def test_proxy_package_recall(real_graph):
     assert report.recall >= 0.8, report.coverage
     reach = evaluate_recall(real_graph, packages, threshold=0.8, types=("search", "special_summon"))
     assert reach.recall >= 0.8, reach.coverage
+
+
+ENVIRONMENT = "md-2026-09"
+META_PACKAGES = Path(__file__).resolve().parents[1] / "environments" / ENVIRONMENT / "artifacts" / "meta_packages.json"
+
+
+def meta_packages():
+    data = json.loads(META_PACKAGES.read_text())
+    return data, {name: [pw for pw, _name in pkg["members"]] for name, pkg in data["packages"].items()}
+
+
+def test_meta_packages_are_reproducible(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    out = tmp_path / "p.json"
+    cmd = [sys.executable, str(root / "tools" / "make_meta_packages.py"), ENVIRONMENT, "--out", str(out)]
+    subprocess.run(cmd, check=True, capture_output=True, cwd=root)
+    assert out.read_text() == META_PACKAGES.read_text()
+
+
+def test_meta_package_recall(real_graph):
+    """Acceptance (eng plan T5.3): recall >= 80% of the real meta engine packages (docs/synergy.md).
+
+    Thresholds sit just below the values measured on the committed md-2026-09
+    snapshot (script edges 0.935 / 0.871, + Yugipedia archetype_support 1.000 / 0.968).
+    """
+    from ygorl.data.environment import load_environment
+
+    env = load_environment(ENVIRONMENT)
+    data, packages = meta_packages()
+    env.check_stamp(data["environment"])
+    assert len(packages) >= 25
+    graph = real_graph.restrict(env.card_pool, stamp=env.stamp())
+    script = evaluate_recall(graph, packages)
+    assert script.recall >= 0.9, script.missed
+    reach = evaluate_recall(graph, packages, types=REACH_TYPES)
+    assert reach.recall >= 0.85, reach.missed
+
+    add_relation_edges(graph, load_relations(env))  # default: archetype_support, non-member sources
+    both = evaluate_recall(graph, packages)
+    assert both.recall >= 0.95, both.missed
+    assert all(both.coverage[n] >= script.coverage[n] for n in packages)  # extra edges never lower coverage
+    reach = evaluate_recall(graph, packages, types=REACH_TYPES + ("archetype_support",))
+    assert reach.recall >= 0.93, reach.missed

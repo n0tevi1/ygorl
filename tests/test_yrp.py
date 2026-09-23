@@ -36,12 +36,14 @@ def game(db):
     return duel, result, Replay.from_duel(duel, result)
 
 
-def test_parse_exported_yrpx_and_its_embedded_yrp1(game, tmp_path):
+@pytest.mark.parametrize("compress", [True, False])
+def test_parse_exported_yrpx_and_its_embedded_yrp1(game, tmp_path, compress):
     duel, result, rep = game
     path = tmp_path / "g.yrpX"
-    rep.to_yrpx(path, names=("Alice", "Bob"))
+    rep.to_yrpx(path, names=("Alice", "Bob"), compress=compress)
     yrpx = load_yrp(path)
     assert yrpx.id == REPLAY_YRPX and yrpx.kind == "yrpX"
+    assert bool(yrpx.flag & FLAG_COMPRESSED) == bool(yrpx.embedded.flag & FLAG_COMPRESSED) == compress
     assert yrpx.names == ("Bob", "Alice")  # seat order: b moved first
     assert yrpx.seed == tuple(rep.core_seed) and yrpx.rule_flags == rep.rule_flags
     assert yrpx.packets[0][0] == 4  # MSG_START
@@ -53,9 +55,10 @@ def test_parse_exported_yrpx_and_its_embedded_yrp1(game, tmp_path):
 
 
 def test_lzma_compressed_body_is_read(game, tmp_path):
+    """A body compressed with other LZMA settings (dictionary 1 MiB, liblzma defaults) than ours is read too."""
     _, result, rep = game
     path = tmp_path / "g.yrpX"
-    rep.to_yrpx(path)
+    rep.to_yrpx(path, compress=False)
     raw = path.read_bytes()
     inner_raw = next(p for m, p in parse_yrp(raw).packets if m == 231)
     header, body = bytearray(inner_raw[:72]), inner_raw[72:]
@@ -113,16 +116,25 @@ def _plain(db):
 def test_malformed_files_raise_clear_errors(game, tmp_path, mutate, message):
     _, _, rep = game
     path = tmp_path / "g.yrpX"
-    rep.to_yrpx(path)
+    rep.to_yrpx(path, compress=False)
     inner = next(p for m, p in parse_yrp(path.read_bytes()).packets if m == 231)
     with pytest.raises(YrpError, match=message):
         parse_yrp(mutate(inner))
 
 
-def test_yrpx_without_embedded_yrp1_is_not_replayable(game, tmp_path):
+def test_truncated_lzma_body_raises(game, tmp_path):
     _, _, rep = game
     path = tmp_path / "g.yrpX"
     rep.to_yrpx(path)
+    raw = path.read_bytes()
+    with pytest.raises(YrpError, match="LZMA decompression failed"):
+        parse_yrp(raw[: len(raw) // 2])
+
+
+def test_yrpx_without_embedded_yrp1_is_not_replayable(game, tmp_path):
+    _, _, rep = game
+    path = tmp_path / "g.yrpX"
+    rep.to_yrpx(path, compress=False)
     raw = path.read_bytes()
     parsed = parse_yrp(raw)
     last = parsed.packets[-1]

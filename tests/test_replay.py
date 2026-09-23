@@ -2,6 +2,7 @@
 
 import gzip
 import json
+import lzma
 import struct
 import time
 from pathlib import Path
@@ -196,13 +197,22 @@ def test_step_records_with_candidates_and_probabilities(db):
 # ------------------------------------------------------------------------ .yrpX
 
 
+def lzma_uncompress(stream, props, size):
+    """EDOPro's LzmaUncompress: 5 property bytes kept apart, a bare LZMA1 stream, decoding stops at ``size`` bytes."""
+    d, dict_size = props[0], struct.unpack_from("<I", props, 1)[0]
+    lzma1 = {"id": lzma.FILTER_LZMA1, "lc": d % 9, "lp": d // 9 % 5, "pb": d // 45, "dict_size": dict_size}
+    return lzma.LZMADecompressor(lzma.FORMAT_RAW, filters=[lzma1]).decompress(stream, max_length=size)
+
+
 def parse_header(buf):
     ident, version, flag, stamp, datasize, hsh = struct.unpack_from("<6I", buf, 0)
     props = buf[24:32]
     header_version = struct.unpack_from("<Q", buf, 32)[0]
     seed = list(struct.unpack_from("<4Q", buf, 40))
+    body = lzma_uncompress(buf[72:], props, datasize) if flag & COMPRESSED else buf[72:]
+    assert len(body) == datasize
     return {"id": ident, "version": version, "flag": flag, "datasize": datasize, "props": props,
-            "header_version": header_version, "seed": seed}, buf[72:]  # fmt: skip
+            "header_version": header_version, "seed": seed}, body  # fmt: skip
 
 
 def read_names(body, pos):
@@ -257,17 +267,25 @@ def parse_yrpx(buf):
 
 
 YRPX, YRP1, OLD_REPLAY_MODE = 0x58707279, 0x31707279, 231
+COMPRESSED = 0x1
 EXPECTED_FLAGS = 0x10 | 0x20 | 0x100 | 0x200  # LUA64 | NEWREPLAY | 64BIT_DUELFLAG | EXTENDED_HEADER
+# LzmaCompress(level 5, dictSize 1 << 24, lc 3, lp 0, pb 2) in EDOPro's Replay::EndRecord: (pb * 5 + lp) * 9 + lc, dictSize
+EDOPRO_LZMA_PROPS = bytes([93]) + (1 << 24).to_bytes(4, "little")
 
 
-def test_yrpx_export_structure(db, env, tmp_path):
+@pytest.mark.parametrize("compress", [True, False])
+def test_yrpx_export_structure(db, env, tmp_path, compress):
     duel, result = record(db, env)
     rep = Replay.from_duel(duel, result)
     path = tmp_path / "game.yrpX"
-    rep.to_yrpx(path, names=("Alice", "Bob"), env=env)
+    rep.to_yrpx(path, names=("Alice", "Bob"), env=env, compress=compress)
     header, names, flags, packets = parse_yrpx(path.read_bytes())
-    assert header["id"] == YRPX and header["flag"] == EXPECTED_FLAGS and header["header_version"] == 1
-    assert header["seed"] == rep.core_seed and header["datasize"] == len(path.read_bytes()) - 72
+    flag, props = (EXPECTED_FLAGS | COMPRESSED, EDOPRO_LZMA_PROPS) if compress else (EXPECTED_FLAGS, bytes(5))
+    assert header["id"] == YRPX and header["flag"] == flag and header["header_version"] == 1
+    assert header["props"] == props + bytes(3)
+    assert header["seed"] == rep.core_seed
+    if not compress:
+        assert header["datasize"] == len(path.read_bytes()) - 72
     assert names == ["Bob", "Alice"] and flags == rep.rule_flags  # seat order: b moved first (first=1)
     assert packets[0][0] == C.MSG_START and len(packets[0][1]) == 17  # u8 type, 2x u32 LP, 4x u16 deck sizes
     assert packets[-1][0] == OLD_REPLAY_MODE
@@ -278,11 +296,33 @@ def test_yrpx_export_structure(db, env, tmp_path):
 
     y_header, y_names, params, decks, responses = parse_yrp1(packets[-1][1])
     assert y_header["id"] == YRP1 and y_header["seed"] == rep.core_seed and y_names == ["Bob", "Alice"]
+    assert y_header["flag"] == flag and y_header["props"] == props + bytes(3)  # EDOPro compresses both replays
     assert params == (8000, 5, 1, rep.rule_flags)
     # engine player 0 is deck b because first=1; decks are stored in load (post-shuffle) order
     assert sorted(decks[0][0]) == sorted(B.main) and decks[0][1] == list(B.extra)
     assert sorted(decks[1][0]) == sorted(A.main) and decks[1][1] == list(A.extra)
     assert responses == rep.responses
+
+
+def test_compression_changes_only_the_encoding_and_shrinks_the_file(db, env, tmp_path):
+    """Same header fields and packets either way; the LZMA file of a full game is a small fraction of the raw one."""
+    duel, result = record(db, env, seed=23)
+    rep = Replay.from_duel(duel, result)
+    packed, raw = tmp_path / "packed.yrpX", tmp_path / "raw.yrpX"
+    rep.to_yrpx(packed, env=env)
+    rep.to_yrpx(raw, env=env, compress=False)
+    (hp, *rest_p, pp), (hr, *rest_r, pr) = parse_yrpx(packed.read_bytes()), parse_yrpx(raw.read_bytes())
+    assert rest_p == rest_r and pp[:-1] == pr[:-1] and len(pp) > 1000  # names, rule flags, every packet but the last
+
+    def fixed(header):  # everything but the encoding
+        return {k: v for k, v in header.items() if k not in ("flag", "props", "datasize")}
+
+    assert hp["flag"] == hr["flag"] | COMPRESSED and fixed(hp) == fixed(hr)
+    # the embedded yrp1 differs only by its own compression: same header fields, same body
+    (yp, body_p), (yr, body_r) = parse_header(pp[-1][1]), parse_header(pr[-1][1])
+    assert yp["flag"] == yr["flag"] | COMPRESSED and fixed(yp) == fixed(yr) and body_p == body_r
+    assert hp["datasize"] == hr["datasize"] - len(pr[-1][1]) + len(pp[-1][1])
+    assert len(raw.read_bytes()) > 500_000 and len(packed.read_bytes()) * 20 < len(raw.read_bytes())
 
 
 def test_embedded_yrp1_resimulates_like_edopro_old_mode(db, env, tmp_path):

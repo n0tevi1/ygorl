@@ -20,6 +20,8 @@ def add_parser(subparsers) -> None:
     p.add_argument("replay", type=Path, help="replay file (.json or .json.gz)")
     p.add_argument("--verify", action="store_true", help="re-simulate and compare with the recorded result")
     p.add_argument("--export-yrpx", type=Path, default=None, metavar="OUT", help="write an EDOPro replay (.yrpX)")
+    p.add_argument("--yrpx-uncompressed", action="store_true",
+                   help="write the .yrpX without LZMA compression (EDOPro reads both)")
     add_env_option(p, "environment of the replay (default: its recorded version under the environments root)")
     p.set_defaults(func=run)
 
@@ -34,6 +36,8 @@ def _result_text(r: dict, tail: str = "") -> str:
 def run(args: argparse.Namespace) -> int:
     from ygorl.engine.replay import FORMAT, FORMAT_VERSION
 
+    if args.yrpx_uncompressed and args.export_yrpx is None:
+        raise CommandError("--yrpx-uncompressed needs --export-yrpx OUT")
     rep = load_replay(args.replay)
     lines = _metadata(args.replay, rep, FORMAT, FORMAT_VERSION)
     code = 0
@@ -60,7 +64,8 @@ def run(args: argparse.Namespace) -> int:
             if args.export_yrpx is not None:
                 args.export_yrpx.parent.mkdir(parents=True, exist_ok=True)
                 rep.to_yrpx(args.export_yrpx, names=(rep.decks["a"].get("name") or "Player A",
-                                                     rep.decks["b"].get("name") or "Player B"), env=env)  # fmt: skip
+                                                     rep.decks["b"].get("name") or "Player B"),
+                           env=env, compress=not args.yrpx_uncompressed)  # fmt: skip
                 lines.append(f"yrpX       {args.export_yrpx}")
         except (ValueError, OSError) as exc:
             print("\n".join(lines))

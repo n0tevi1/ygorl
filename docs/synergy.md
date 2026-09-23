@@ -20,7 +20,9 @@ g.save("graph.json.gz"); g.load("graph.json.gz")
 
 命令行：`uv run python tools/build_synergy_graph.py [--out graph.json.gz] [--workers 2]`，
 打印统计与代理召回（见下）。`--environment <version>` 把图限制到该环境的卡池、打上
-`Environment.stamp()` 并写入 `environments/<version>/artifacts/synergy_graph.json.gz`。
+`Environment.stamp()` 并写入 `environments/<version>/artifacts/synergy_graph.json.gz`（`--out` 可改写到别处），
+同时打印该环境 meta 引擎包的召回；再加 `--relations [archetype_support,archseries_related]` 则并入该环境的
+Yugipedia 关系边，并分别打印不含 / 含关系边的召回（见[召回检验](#召回检验)）。
 
 ## 模块
 
@@ -30,6 +32,7 @@ g.save("graph.json.gz"); g.load("graph.json.gz")
 | `ygorl.build.filters` | 过滤条件 IR（`Pred / And / Or / Not`）、从 Lua 过滤函数编译 IR（`FilterCompiler`）、在卡片数据库上用位集求值（`CardIndex`）。 |
 | `ygorl.build.scripts` | 单个脚本的事实抽取：效果与分类、目标查询（动作 + 位置 + 过滤条件）、召唤 / 素材手续、`listed_names` 等。 |
 | `ygorl.build.synergy_graph` | 构图、`SynergyGraph`（邻接查询、保存 / 载入、统计、按卡池限制）、磁盘缓存、召回评估。 |
+| `ygorl.build.relations` | 可选边源：把环境的 Yugipedia 关系（`relations.json`）转成 `archetype_support` / `archseries_related` 边并入图（见下「Yugipedia 关系边」）。 |
 | `ygorl.build.packages` | 引擎包枚举（T5.4）：局部生长、可达密度打分、去重、跨系列标记。 |
 
 ## 解析覆盖
@@ -120,20 +123,117 @@ g.save("graph.json.gz"); g.load("graph.json.gz")
 `load_or_build()` 的磁盘缓存（`$YGORL_CACHE_DIR` 或 `~/.cache/ygorl/synergy/`）以构图模块（`lua / filters / scripts / synergy_graph.py`）
 源码、脚本文件、常量文件、`cards.cdb` 与 `max_fanout` 为键，不会返回过期的图；测试会话共用一次构建（`tests/conftest.py` 的 `real_graph`）。
 
-**扩展点。** Yugipedia SMW 关系（T5.1）与卡文本相似度（T5.2）目前无法离线获取；它们可作为新的边类型经
-`SynergyGraph.add_edges` 并入（`save/load` 支持任意额外类型），不需要改动挖掘部分。
+**扩展点。** 其它关系来源作为新的边类型经 `SynergyGraph.add_edges` 并入（`save/load` 支持任意额外类型），不需要改动挖掘部分：
+Yugipedia SMW 关系已接入（下一节，默认不启用），卡文本相似度（T5.2）以后同样接入。
 
-## 召回检验（代理）
+## Yugipedia 关系边（可选）
+
+`ygorl.build.relations` 把环境目录里的 `relations.json`（T5.1，[data.md](data.md)）转成边。**默认不启用**：`build_graph`、
+`load_or_build` 与磁盘缓存得到的仍是纯脚本图，上面的统计与下面的「脚本边」召回都不含这些边；需要时显式调用：
+
+```python
+from ygorl.build.relations import add_relation_edges, load_relations
+
+g = load_or_build().restrict(env.card_pool, stamp=env.stamp())
+add_relation_edges(g, load_relations(env))                      # 默认只加 archetype_support
+add_relation_edges(g, load_relations(env), ("archseries_related",))  # 另一种类型单独开启
+```
+
+对每个系列页面 `X`（成员 `M = archseries[X]`，按 Yugipedia 系列名而不是 cdb `setcode` 解析）：
+
+| 边类型 | 边 | 默认 |
+|------|------|------|
+| `archetype_support` | `archetype_support[X]` 中每张**非成员**卡 `s` → `M` 中每张卡 | 是 |
+| `archseries_related` | `archseries_related[X]` 中每张卡 `r` → `M` 中每张卡 | 否（需显式传入） |
+
+- `fanout = |M|`、`locations = 0`、`evidence = "yugipedia"`；同一 `(src, dst, type)` 由多个系列产生时按 `fanout` 取最小值合并。
+  图的 `meta.relations` 记录来源、抓取日期、每种类型用到 / 被上限剪掉的系列数与边数。
+- **上限**：`|M| > 100`（与脚本查询的 `max_fanout` 相同）的系列跳过，理由也相同：「HERO」（157 张）、「Number」「Chaos」「Performapal」这类大页面说明不了哪些卡要一起用，
+  每个还会带来上万条边。没有 `archseries` 条目的页面（「Link Monster」「Level 4 Monster Cards」这类卡片群）没有成员，不产生边。
+- **成员不作为来源**（`member_sources=False`）：Yugipedia 把系列自己的成员也列在该系列的 `archetype_support` 下（14 张 Dracotail 全都「支援」Dracotail），
+  按字面连边只是把系列成员关系写成稠密的完全二部图：md-2026-09 上 `archetype_support` 的 14.5 万对里 10.7 万对来自成员，而召回完全不变。
+  只保留非成员来源后，这些边表达的正是脚本图可能漏掉的信息：系列外的卡支援该系列（「Sage with Eyes of Blue」→「Blue-Eyes」怪兽、
+  「Nadir Servant」→「Dogmatika」卡）。`member_sources=True` 恢复字面含义。
+- **`anti_support` 不建边**：它表示「克制该系列」的卡（如针对连接怪兽的卡），而图上的边在所有使用处（召回、T5.4 的包生长）都被当作
+  「两张卡应该放在一起」的理由，把反支援连成边会产生错误的正协同；只在统计里记数量（`anti_support_skipped`）。
+- `archseries_related` 默认关闭：它除了真实的关联（「Maiden of White」与「Blue-Eyes」）还包含与协同无关的页面
+  （「Recolored counterpart」100 张、「Signature move」84 张），md-2026-09 上约 8.3 万条边里约 1.7 万条来自这两页。
+
+md-2026-09 的卡池图（脚本边 99,368 条）加入默认的 `archetype_support` 后多 37,369 条边（581 个系列，5 个超过上限），
+再加 `archseries_related` 共多 120,524 条。T5.4 的 `enumerate_packages` 默认只看脚本边类型，不受影响。
+
+## 召回检验
 
 验收标准（工程计划）：协同图召回 ≥ 80% 的 meta 引擎包，meta 卡表只用于检验、不参与构图。
-**真实 meta 卡表要到 T5.1 才有（masterduelmeta / YGOPRODECK 在当前网络策略下不可达）**，
-所以现在用**代理引擎包**评估，结果只能作为代理指标：
+定义：包的**覆盖度** = 包内成员在「包诱导子图（指定边类型）的最大弱连通分量」中的比例；覆盖度 ≥ 0.8 记为召回。
+`evaluate_recall(graph, packages, threshold=0.8, types=None)` 返回召回率、每包覆盖度、召回 / 漏召列表。
+
+### 真实 meta 引擎包（md-2026-09）
+
+**引擎包的推导**（`tools/make_meta_packages.py`，规则固定、没有针对单个卡组调整）从环境的 20 套 meta 卡组
+（`environments/md-2026-09/meta/*.ydk`，主卡组 + 额外卡组）得到 31 个包、共 335 张卡，写入
+`environments/md-2026-09/artifacts/meta_packages.json`（卡密为键、卡名只作注释，带 `Environment.stamp()`）：
+
+1. **已知泛用卡**全部去掉：`tests/data/generic_pool.json`（手坑、解场、泛用魔陷、泛用额外卡组怪兽）与
+   `tools/make_proxy_packages.py` 的 `GENERIC`，两者都在 T5.1 之前整理、与这些卡组无关（28 张）。
+2. **拆出共用引擎**（与代理包的做法一致）：按「哪些 meta 卡组用了这张卡」（签名）分组；签名含 ≥ 2 套卡组的组是共用引擎候选
+   （如 Branded 与 Dracotail 共用的 Branded 卡），只出现在 1 套卡组的是该卡组自己的候选。
+3. **按声明关系拆分**：每个候选组按一种只取自卡片数据库的「声明关系」（不用协同图，也不用 Yugipedia）分成连通分量：
+   两张卡基础系列码相同（`setcode & 0xfff`），或一张卡的文本用引号提到另一张的卡名或其卡名中的字符串（"Dracotail" → Dracotail Faimena），
+   或两张卡的文本引用了同一个字符串（都提到 "Temple of the Kings"）；卡文本里引用自身卡名的（「"X" 的效果 1 回合只能使用 1 次」）不算。
+4. **≥ 3 张的分量成为包**，其余卡视为泛用：出现在 ≥ 2 套卡组、又不属于任何共用引擎的卡（`shared`，35 张：Maxx "C"、Fuwalos、
+   Bystial Magnamhut、Dominus 陷阱、Golden Cloud Beast - Malong……），以及只出现在 1 套卡组、既不属于该卡组的任何系列也不与其它卡互相点名的卡
+   （`unrelated`，86 张：Pot of Desires、Upstart Goblin、Solemn Strike、Garura、Firewall Dragon、Keldo / Mudora……）。
+   去掉的卡按原因列在同一文件的 `excluded` 里，可逐张审阅。
+
+第 3 步使一套卡组里并用的两个引擎成为两个包（Vanquish Soul 与 K9、Ryzeal 与 Mitsurugi、Radiant Typhoon 与 Zoodiac、Magistus 与 Fairy Tail、
+Orcust 与 Sinful Spoils / Azamina、Maliss 与 @Ignister），与基因型「若干引擎包份数」的单位一致。`--per-deck` 不做这一步
+（同一签名组合成一个包），得到更严格的变体（24 个包）。
+
+**偏向与局限（必须和数字一起读）：** 声明关系与脚本过滤条件同源（系列码、点名），所以这些包天然偏向协同图擅长的「系列核心 + 点名卡」；
+只靠种族 / 等级 / 事件诱发协同的卡（Keldo / Mudora、Bonfire、Preparation of Rites、Fabled Lurrie）按第 4 步被当作泛用卡去掉，不参与检验。
+反过来，互相点名的泛用卡也会成包（VS K9 里的 Rank 5 泛用超量 `number`）。20 套卡组太少，频率规则抓不到只出现一次的泛用卡，所以才需要第 3、4 步。
+
+**结果**（`tools/build_synergy_graph.py --environment md-2026-09 --relations`；图限制在 md-2026-09 卡池）：
+
+| 边 | 引擎包 | 全部边类型 | 仅 `search` + `special_summon`（+ 关系边） |
+|------|------|------|------|
+| 脚本 | 31 个（默认） | **0.935（29/31）**，平均覆盖 0.957 | **0.871（27/31）**，0.926 |
+| 脚本 + `archetype_support` | 31 个 | 1.000（31/31），0.989 | 0.968（30/31），0.981 |
+| 脚本 + `archetype_support` + `archseries_related` | 31 个 | 1.000（31/31），0.989 | 1.000（31/31），0.989 |
+| 脚本 | 24 个（`--per-deck`） | 0.750（18/24），0.899 | 0.667（16/24），0.863 |
+| 脚本 + `archetype_support` | 24 个（`--per-deck`） | 0.792（19/24），0.916 | 0.750（18/24），0.906 |
+
+**结论：在真实 meta 引擎包上，纯脚本图的召回为 0.935（全部边类型）/ 0.871（仅检索 / 特召），满足 ≥ 80% 的验收标准**；
+加入 Yugipedia 支援关系后为 1.000 / 0.968。按卡组不拆引擎的严格变体为 0.750 / 0.667，不满足，原因见下。
+
+各包覆盖度（脚本边，全部 / 仅检索 + 特召；+`archetype_support` 后）：Blue-Eyes、Clown Crew、Dracotail、Branded（共用，13 张）、Elfnote、
+Fairy Tail、Fiendsmith、@Ignister、K9、Kewl Tune、Lunalight、Mitsurugi、Orcust、Azamina、Primite、Radiant Typhoon（两个）、Ryzeal、Sky Striker、
+Tearlaments、Yummy、Zoodiac 均为 1.00 / 1.00；Vanquish Soul 1.00 / 0.91；Magistus 1.00 / 0.88；Odion 1.00 / 0.86；
+Resonators 1.00 / **0.74**（+关系 0.79）；The Fallen & The Virtuous + Albion the Branded Dragon + Ecclesia and the Dark Dragon（`branded-shared-2`，5 套卡组共用）1.00 / **0.67**（+关系 1.00）；
+HEROs 0.97 / 0.97；Maliss 0.90 / 0.90；**Branded（Branded 卡组自有部分，12 张）0.58**（+关系 1.00）；**`number` 0.20**（+关系 0.80）。漏召的原因：
+
+- **Branded 自有部分（0.58）**：Branded Retribution / Branded Opening、Nadir Servant / Dogmatika Ecclesia、Despian Proskenion 的连接都指向
+  Fallen of Albaz、Branded Fusion，而这两张在共用包 `branded-shared` 里（Dracotail 也用）。这是拆出共用引擎的副作用，不是缺边；
+  Yugipedia 的 Branded / Dogmatika 支援关系直接连上了它们。
+- **`number`（0.20）**：Number 104 / C104、N.As.H. Knight / CXyz N.As.Ch. Knight、Arc Rebellion 是泛用 Rank 5 超量，因为互相点名而被第 3、4 步留下（规则的误报）；
+  它们之间的关系是「以 X 为素材时获得效果」（条件判断，不是对象过滤）与 Rank-Up 魔法，而素材要求「5 星怪兽 4 只」匹配 > 100 张、被 `max_fanout` 剪掉。
+- **仅检索 / 特召时**：Resonators 的 4 张额外卡组同调怪兽与 Bone Archfiend、Ecclesia and the Dark Dragon、Magistus 的 Ninaruru / Endymion 只通过素材或送墓边相连，属预期。
+- 未连上但包仍被召回的成员：Maliss in Underground（发动时把「Maliss」卡除外，除外类动作不建边）、Xtra HERO Infernal Devicer（「HERO 怪兽 2 只」素材匹配 > 100 张，被 `max_fanout` 剪掉）。
+- **严格变体（`--per-deck`）** 另外漏掉 5 个双引擎卡组：Vanquish Soul K9 0.42、Radiant Typhoon Zoodiac 0.64、Ryzeal Mitsurugi 0.65、
+  Magistus Fairy Tail 0.68、Orcust 0.70。每个引擎各自完整连通，但两个引擎之间没有过滤层面的边：它们是因为「两套都强」或共用额外卡组 /
+  送墓之类的泛用手段而并用，Yugipedia 关系也不连接它们。让图覆盖这种「并用」需要对局数据或共现统计，不属于脚本挖掘的范围。
+
+`tests/test_synergy_graph.py::test_meta_package_recall` 把上面的数字固定为回归测试（阈值略低于实测：脚本 0.9 / 0.85，+`archetype_support` 0.95 / 0.93），
+`test_meta_packages_are_reproducible` 检查提交的包文件可由工具重新生成。包文件带环境戳，环境内容变化（`fingerprint` 改变）或换环境时用 `tools/make_meta_packages.py <版本>` 重新推导。
+
+### 代理引擎包（历史）
+
+T5.1 之前没有真实 meta 卡表，用**代理引擎包**评估（数字保留作对照；该测试 `test_proxy_package_recall` 仍在）：
 
 - 代理包由 `tools/make_proxy_packages.py` 从 `tools/make_test_decks.py` 的 `DECKS`（10 套测试牌组的系列核心）派生，
   写入 `tests/data/proxy_packages.json`（卡密为键，卡名只作注释）：去掉泛用卡（泛用陷阱、泛用额外卡组怪兽，手坑与泛用魔陷本来就不在 `DECKS` 里），
   跨牌组共用的引擎单独成包（Fiendsmith、Ryzeal）。共 11 个包、8–20 张 / 包。
-- 定义：包的**覆盖度** = 包内成员在「包诱导子图（指定边类型）的最大弱连通分量」中的比例；覆盖度 ≥ 0.8 记为召回。
-  `evaluate_recall(graph, packages, threshold=0.8, types=None)` 返回召回率、每包覆盖度、召回 / 漏召列表。
 
 | 边类型 | 召回（覆盖度 ≥ 0.8） | 平均覆盖度 |
 |------|------|------|
@@ -146,8 +246,8 @@ Voiceless Voice 0.83；Kashtira 0.80；**Tearlaments 0.77（漏召）**。未连
 - Voiceless Voice：Dogmatika Ecclesia / Nadir Servant 自成 Dogmatika 小簇，与仪式核心没有过滤层面的边；
 - Kashtira Big Bang、Kashtira Arise-Heart（泛用 7 星超量素材被 `max_fanout` 剪掉）、Promethean Princess（泛用素材 / 泛用炎属性复活）、Necroquip Princess。
 
-`tests/test_synergy_graph.py::test_proxy_package_recall` 把代理召回 ≥ 0.8 固定为回归测试。T5.1 提供真实 meta 卡表后，
-应改用真实引擎包重新评估，并把本节数字替换为真实结果。
+代理包是人工整理的系列核心，真实 meta 包（上节）则含共用引擎、双引擎卡组与 meta 里实际的点名卡；两者结论一致：脚本图能把系列核心连起来，
+漏掉的是事件诱发协同、泛用素材与没有卡片层面联系的并用。
 
 ## 局限
 
@@ -157,6 +257,8 @@ Voiceless Voice 0.83；Kashtira 0.80；**Tearlaments 0.77（漏召）**。未连
   「自己墓地有 X 存在的场合」的条件检查误读成对 X 的动作（这些边的 `evidence` 标为 `category` / `name`，可按需过滤）。
 - **泛用查询被剪掉。** `max_fanout = 100` 会去掉「4 星以下战士族」这类宽过滤与大多数泛用素材要求；这些关系留给 T5.2 的文本相似度与 T5.4 的密度排序处理。
 - **素材附加检查未解析。** 连接 / 同调手续里 `s.lcheck` 之类的组检查函数（「包含 X 的怪兽 2 只」）不参与匹配，只看单卡素材过滤。
+- **Yugipedia 关系边粒度粗。** 它只说「支援该系列」，不说怎么支援，一张支援卡连向系列全体成员；用来补连通性，不应当作检索 / 特召路径
+  （T5.4 的可达打分只看 `search` / `special_summon`，默认也不读这些边）。
 - **环境无关。** 图按子模块中的全部官方脚本构建；绑定环境时用 `restrict(pool, stamp)`，`fanout` 仍是在全卡池上计算的。
 
 ## 引擎包枚举（T5.4）
