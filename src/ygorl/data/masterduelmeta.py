@@ -177,9 +177,18 @@ class DeckRecord:
     main: tuple[int, ...]
     extra: tuple[int, ...]
     unmapped: tuple[str, ...] = ()
+    source: str = ""  # rankedType / tournamentType name: "Master I", "Rating Duels", an event or tournament
 
     def counts(self) -> Counter[int]:
         return Counter(self.main) + Counter(self.extra)
+
+
+def deck_source(deck: Mapping[str, Any]) -> str:
+    for key in ("rankedType", "tournamentType"):
+        info = deck.get(key)
+        if isinstance(info, dict) and info.get("name"):
+            return str(info["name"])
+    return ""
 
 
 def deck_weight(deck: Mapping[str, Any]) -> float:
@@ -228,7 +237,8 @@ def parse_top_decks(decks: Any, ids: Mapping[str, tuple[str | None, str]], mappe
                 else:
                     sections[section].extend([mapped.password] * amount)
         out.append(DeckRecord(dtype, SITE + str(d.get("url", "")), created, deck_weight(d),
-                              tuple(sections["main"]), tuple(sections["extra"]), tuple(unmapped)))  # fmt: skip
+                              tuple(sections["main"]), tuple(sections["extra"]), tuple(unmapped),
+                              deck_source(d)))  # fmt: skip
     return out
 
 

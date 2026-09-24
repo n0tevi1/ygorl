@@ -208,7 +208,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── cmake/                   # CMake 片段（ocgcore.cmake：复制核心、打补丁、编成静态库）
 ├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序、Lua 字符串哈希种子、Lua 分配器钩子），构建时应用
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
-├── environments/            # 环境版本目录（规范见 docs/environments.md）：md-2026-09 快照由 ygorl env build 生成；*/raw/ 原始抓取文件不进 git；<版本>/artifacts/meta_packages.json 为协同图召回检验用的 meta 引擎包
+├── environments/            # 环境版本目录（规范见 docs/environments.md）：md-2026-09 快照由 ygorl env build 生成；*/raw/ 原始抓取文件不进 git；<版本>/artifacts/meta_packages.json 为协同图召回检验用的 meta 引擎包；artifacts/decks/ + deck_corpus.json 为牌组语料（tools/build_deck_corpus.py）
 ├── csrc/                    # C++：core_backend（OCG_* 封装）、duel_pool（线程池）、host / obs_encoder（C++ 主机层与观测编码）、privileged（训练态对手真值）、event_encoder + event_binding（事件 token 流）、host_pool + worker_pool（C++ 步进环境）、arena（每局内存 arena 与快照）、binding（pybind11）；exports.map 为链接导出表
 ├── src/ygorl/               # Python 包
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
