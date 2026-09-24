@@ -320,6 +320,16 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 1 小时的 CPU 训练对 random 0.537（0.429–0.643）、对 greedy 0.150（0.088–0.244），与未训练策略（0.475 / 0.113）的区间重叠——
 还谈不上学会；原因与调参方向见下。
 
+**GPU**（`TrainConfig.device` / `--device cuda`，ROCm 也叫 `cuda`）：学习器、行动网络、BC 先验与钉住的对手都放到该设备；
+收集的整段观测在设备上拼好，优势估计仍在 CPU 上算（逐行数据小），checkpoint 一律按 CPU 加载。ROCm 上权重梯度走 `ygorl.nets.gemm` 的按 `K` 切分，
+并自动打开融合注意力（原因与实测见 [benchmarks.md](benchmarks.md)「GPU 学习器」）。两个**实验开关**，默认关闭：
+
+- `overlap_collect`（`--overlap`）：更新进行时在另一个线程（GPU 上另一个 stream）用「更新开始前的权重」的副本收集下一段；联赛记账
+  （快照、评估、checkpoint）只在两步之间、没有收集在跑时进行。代价是每段数据落后一次更新，偏离设计的同步 PPO（[scaling.md](scaling.md) S3），采用前要先改设计。
+- `bf16`（`--bf16`）：行动与更新都在 bf16 autocast 下跑；GPU 上更新约快 10–20%，CPU 上更慢。
+
+`tools/bench_train.py` 测 `Trainer.step()` 的收集 / 更新耗时、行/秒与（AMD GPU 上的）忙碌率。
+
 ### 8.7 测试
 
 - `tests/test_ppo.py`（玩具博弈，约 15 秒）：Nim 自博弈在 VRPO 与 GAE 下都收敛到最优策略（每个必胜局面取 `n mod 4`），
@@ -342,8 +352,9 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
   1e-3–1e-2 区间（[benchmarks.md](benchmarks.md)「PPO 步长」）。同样 1 小时，更新次数翻倍（281 次），对 greedy 从 0.05 升到
   0.188（区间 0.117–0.287，与未训练不重叠），但几乎全部来自驾驶 kashtira；驾驶 snake_eye（长 combo）基本没学到。
 - 从零训练在 CPU 预算内进展很小，原因、先前项目的做法与扩规模 / 训练信号的选项见 [scaling.md](scaling.md)（#60、#61、#62）。
-- 更新是瓶颈：CPU 上 2,048 行 × 2 轮约 20–25 秒，收集只占约 10%。GPU、更大的批、稀疏 / 行级的 ID 嵌入更新是后续的提速方向；
-  收集与更新目前串行（同步 PPO），actor / learner 分离留给有 GPU 的机器。
+- 更新是瓶颈：CPU 上 2,048 行 × 2 轮约 20–25 秒，收集只占约 10%。GPU 已接入（上文「GPU」，Radeon 8060S 上同算法 2.35 倍、
+  叠加实验开关与更多并行局 1.7 倍，[benchmarks.md](benchmarks.md)「GPU 学习器」）；收集与更新默认仍串行（同步 PPO）。
+  再往上是稀疏 / 行级的 ID 嵌入更新与减少 kernel 数（[scaling.md](scaling.md) S5）。
 - 进行中的对局不进 checkpoint；续训时槽位重新开局（少量半局数据丢弃）。
 - 评估走 Python `Duel` + 锁步 C++ 主机，单局推理批量为 1，比训练路径慢；每次评估的局数因此较少（区间宽），正式对比用
   `ygorl arena` 多打。

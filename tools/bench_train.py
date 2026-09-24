@@ -4,7 +4,8 @@
 
 Runs ``--updates`` steps with evaluation, snapshots and checkpoints off, drops the first (warm-up) and reports the
 mean collect / update seconds, decisions per second while collecting and rows per second overall; ``--json``
-appends one line per run for docs/benchmarks.md.
+appends one line per run for docs/benchmarks.md. On an AMD GPU the mean ``gpu_busy_percent``
+over the measured steps is included.
 """
 
 from __future__ import annotations
@@ -13,10 +14,38 @@ import argparse
 import json
 import statistics
 import tempfile
+import threading
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+class GpuBusy:
+    """Mean of the amdgpu ``gpu_busy_percent`` counter sampled every 10 ms (None without an AMD GPU)."""
+
+    PATHS = sorted(Path("/sys/class/drm").glob("card*/device/gpu_busy_percent"))
+
+    def __init__(self) -> None:
+        self.samples: list[int] = []
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self) -> None:
+        with self.PATHS[0].open() as f:
+            while not self._stop.wait(0.01):
+                f.seek(0)
+                self.samples.append(int(f.read()))
+
+    def start(self) -> None:
+        if self.PATHS:
+            self._thread.start()
+
+    def stop(self) -> float | None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join()
+        return round(statistics.fmean(self.samples), 1) if self.samples else None
 
 
 def main() -> None:
@@ -39,6 +68,7 @@ def main() -> None:
     p.add_argument("--overlap", action="store_true",
                    help="experimental: collect the next rollout while updating (one update stale)")
     p.add_argument("--bf16", action="store_true", help="experimental: bf16 autocast on a GPU")
+    p.add_argument("--label", default="", help="free-form tag stored in the JSON line")
     p.add_argument("--json", type=Path, default=None, help="append the summary as one JSON line")
     args = p.parse_args()
 
@@ -53,10 +83,13 @@ def main() -> None:
                       torch_threads=args.torch_threads, event_length=args.event_length, net=net, ppo=ppo,
                       device=args.device, overlap_collect=args.overlap, bf16=args.bf16, snapshot_every=0,
                       checkpoint_every=0, eval_every=0)  # fmt: skip
+    busy = GpuBusy()
     records = []
     with tempfile.TemporaryDirectory() as tmp:
         trainer = Trainer(cfg, tmp, log=None)
         for i in range(args.updates):
+            if i == 1:
+                busy.start()  # after the warm-up step
             t0 = time.perf_counter()
             r = trainer.step()
             r["step_s"] = time.perf_counter() - t0
@@ -68,12 +101,14 @@ def main() -> None:
     def mean(key):
         return round(statistics.fmean(r[key] for r in kept), 3)
 
-    summary = {"device": args.device, "envs": args.envs, "steps": args.steps, "env_threads": args.env_threads,
-               "collect_threads": args.collect_threads, "overlap": args.overlap, "bf16": args.bf16, "torch_threads": args.torch_threads, "d_model": args.d_model,
+    summary = {"label": args.label, "device": args.device, "envs": args.envs, "steps": args.steps,
+               "min_batch": args.min_batch, "env_threads": args.env_threads, "collect_threads": args.collect_threads,
+               "torch_threads": args.torch_threads, "overlap": args.overlap, "bf16": args.bf16, "d_model": args.d_model,
                "layers": args.layers, "epochs": args.epochs, "minibatch": args.minibatch, "rows": kept[0]["rows"],
-               "collect_s": mean("collect_s"), "update_s": mean("update_s"), "minibatches": mean("minibatches"),
-               "decisions_per_s": round(mean("decisions_per_s")),
-               "rows_per_s": round(sum(r["rows"] for r in kept) / sum(r["step_s"] for r in kept))}  # fmt: skip
+               "collect_s": mean("collect_s"), "update_s": mean("update_s"), "step_s": mean("step_s"),
+               "minibatches": mean("minibatches"), "decisions_per_s": round(mean("decisions_per_s")),
+               "rows_per_s": round(sum(r["rows"] for r in kept) / sum(r["step_s"] for r in kept)),
+               "gpu_busy": busy.stop()}  # fmt: skip
     print(json.dumps(summary))
     if args.json is not None:
         with args.json.open("a") as f:
