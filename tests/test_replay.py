@@ -532,3 +532,28 @@ def test_games_ended_by_the_engine_get_no_extra_msg_win(db, env, tmp_path):
     Replay.from_yrp(path).to_yrpx(again, cards=db)
     *_, packets = parse_yrpx(again.read_bytes())
     assert [m for m, _ in packets].count(C.MSG_WIN) == 1
+
+
+def test_verify_accepts_an_old_decision_limit_win_by_lp(db, env, tmp_path, capsys):
+    """Before 2026-09-24 a decision-limit end went to the higher LP; it is a draw now. ``replay --verify`` still
+    checks the responses, turns and LP of such a replay, not its winner."""
+    from ygorl.cli import main
+
+    for seed in range(37, 60):
+        duel, result = record(db, env, seed=seed, config=DuelConfig.from_environment(env, max_decisions=300))
+        if result.reason == "decision_limit" and result.lp[0] != result.lp[1]:
+            break
+    else:
+        pytest.skip("no decision-limit game with unequal LP among these seeds")
+    assert result.winner is None
+    rep = Replay.from_duel(duel, result)
+    rep.result = {**rep.result, "winner": 0 if result.lp[0] > result.lp[1] else 1}  # as recorded by the old rule
+    path = tmp_path / "old.json"
+    rep.save(path)
+    code = main(["replay", str(path), "--verify", "--env", str(env.root)])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "verify     ok" in out
+    rep.result = {**rep.result, "turns": rep.result["turns"] + 1}  # anything else still has to match
+    rep.save(path)
+    assert main(["replay", str(path), "--verify", "--env", str(env.root)]) == 1

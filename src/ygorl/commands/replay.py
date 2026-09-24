@@ -51,7 +51,14 @@ def run(args: argparse.Namespace) -> int:
                 got = {"winner": result.winner, "reason": result.reason, "win_reason": result.win_reason,
                        "turns": result.turns, "lp": list(result.lp)}  # fmt: skip
                 text = _result_text(got, f" responses={len(result.responses)}/{len(rep.responses)}")
-                diff = [k for k in _COMPARED if rep.result and got[k] != rep.result.get(k)]
+                # A decision-limit end: the log holds only completed responses, so the replay runs out of it
+                # (log_exhausted) instead of reaching the limit, and before 2026-09-24 the higher LP won where it is a
+                # draw now. Its winner and reason are a scoring rule, not something the log reproduces; the responses,
+                # turns and LP still must match.
+                limit = (rep.result and rep.result.get("reason") == "decision_limit"
+                         and got["reason"] in ("decision_limit", "log_exhausted"))  # fmt: skip
+                diff = [k for k in _COMPARED if rep.result and got[k] != rep.result.get(k)
+                        and not (limit and k in ("winner", "reason"))]  # fmt: skip
                 if result.responses != rep.responses:
                     diff.append("responses")
                 if diff:
