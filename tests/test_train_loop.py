@@ -510,3 +510,9 @@ def test_pool_games_are_recorded_during_training(tmp_path):
     recorded = sum(i["games"] for i in trainer.pool.info())
     assert trainer.counters["snapshots"] == 4 and trainer.pool.sampling == "pfsp"
     assert recorded > 0 and trainer.league["games"] <= recorded
+
+
+def test_league_defaults_follow_design_i1():
+    """Design I1: PFSP over the snapshot pool; the admission threshold stays off (it did not help, #61)."""
+    cfg = TrainConfig(decks=PAIR)
+    assert cfg.pool_sampling == "pfsp" and cfg.snapshot_min_win_rate is None
