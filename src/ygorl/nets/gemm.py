@@ -1,11 +1,12 @@
 """Weight-gradient GEMMs on ROCm GPUs (docs/benchmarks.md「GPU 学习器」).
 
 Every weight gradient of the token-level layers is ``a.T @ b`` over all tokens of a minibatch: a ``[K, m]`` by
-``[K, n]`` product with ``K`` in the tens of thousands and ``m, n`` about 64. rocBLAS runs it as a single small
-output tile with no split over ``K`` (a handful of workgroups on a 40-CU GPU): 2.5 ms for ``K`` = 51,200, where the
-same sum split into chunks and reduced with ``bmm`` takes 0.13 ms. :func:`tn_mm` does that split on ROCm and is the
-plain product elsewhere; :func:`use_split_k` switches a model's ``nn.Linear`` layers to a backward that uses it.
-Values equal the plain product up to float summation order.
+``[K, n]`` product with ``K`` in the tens of thousands and ``m, n`` about 64. rocBLAS ships no tuned fp32 GEMM
+kernels for gfx1150 / gfx1151 (ROCm 7.2 and 7.14: one generic 32 x 32 tile per contraction type, versus hundreds for
+gfx1100), and that tile does not split ``K``: 2.5-3.7 ms for ``K`` = 51,200, where the same sum split into chunks and
+reduced with ``bmm`` takes 0.13 ms. Even gfx1100's tuned kernels (``HSA_OVERRIDE_GFX_VERSION=11.0.0``) take 0.9 ms.
+:func:`tn_mm` does that split on ROCm and is the plain product elsewhere; :func:`use_split_k` switches a model's
+``nn.Linear`` layers to a backward that uses it. Values equal the plain product up to float summation order.
 """
 
 from __future__ import annotations
