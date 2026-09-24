@@ -80,7 +80,7 @@ class TrainConfig:
     pin_opponents: tuple[str, ...] = ()
     pinned_share: float = 0.5
     snapshot_every: int = 10  # updates
-    pool_sampling: str = "uniform"  # "uniform" or "pfsp" (SnapshotPool): opponents the learner loses to come up more
+    pool_sampling: str = "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
     pfsp_power: float = 2.0
     # a due snapshot joins the pool only if the learner scored above this in its pool games since the last one joined
     # (at least snapshot_min_games of them; ygo-agent's OSFP uses 0.55); None = always; an empty pool always takes one

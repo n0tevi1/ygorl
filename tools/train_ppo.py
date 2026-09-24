@@ -76,8 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="keep this policy / PPO checkpoint in the opponent pool for the whole run (repeatable)")
     g.add_argument("--pinned-share", type=float, default=0.5, help="share of pool games against pinned opponents")
     g.add_argument("--snapshot-every", type=int, default=10)
-    g.add_argument("--pool-sampling", choices=("uniform", "pfsp"), default="uniform",
-                   help="pfsp: draw pool opponents by (1 - learner win rate) ** --pfsp-power")
+    g.add_argument("--pool-sampling", choices=("uniform", "pfsp"), default="pfsp",
+                   help="pfsp (default, design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power")
     g.add_argument("--pfsp-power", type=float, default=2.0)
     g.add_argument("--snapshot-min-win-rate", type=float, default=None,
                    help="a due snapshot joins the pool only if the learner scored above this against the pool")
