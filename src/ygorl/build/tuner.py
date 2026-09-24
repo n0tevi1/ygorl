@@ -28,7 +28,6 @@ import numpy as np
 from ygorl.cards.ydk import Deck
 from ygorl.engine.duel import DuelConfig
 from ygorl.eval.arena import derive_seed
-from ygorl.eval.batched import paired_specs, play_policies
 
 
 @dataclass(frozen=True)
@@ -119,6 +118,8 @@ class PairedEvaluator:
         return self.opponents[int(idx)]
 
     def scores(self, decks: Sequence[Deck], pairs: range) -> np.ndarray:
+        from ygorl.eval.batched import paired_specs, play_policies  # needs PyTorch (the train extra)
+
         specs = [s for d in decks for k in pairs
                  for s in paired_specs(d, self._opponent(k), 1, derive_seed(self.seed, 1, k), self.config)]  # fmt: skip
         env = self.env_factory(min(self.num_envs, len(specs)))
