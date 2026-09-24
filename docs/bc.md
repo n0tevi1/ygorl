@@ -66,7 +66,7 @@ uv run ygorl arena tests/decks --agent-a policy:out/bc12/policy.pt --agent-b ran
 ## 评估的定义
 
 - **等价副本**：观测的 `action_mask` 只保留同一张卡等价副本中的第一行（[encoding.md](encoding.md)「等价动作去重」）。示范若选了另一张副本，
-  训练标签换成它的代表行（`canonical_action`）；去重后只剩一行的决策按强制决策跳过（`skipped["forced"]`）。
+  训练标签换成它的代表行（`canonical_action`）；去重后只剩一行的决策按强制决策跳过（`skipped["forced"]`）；示范动作是被遮住的「撤销类空操作」（[encoding.md](encoding.md)）的样本也跳过（`skipped["undo"]`）。
 - **步准确率**（teacher forcing，`step_accuracy`）：在示范线的每个样本上，网络 argmax 是否等于示范动作（代表行）；同时给出均匀随机猜中的期望（`uniform_accuracy`，按去重后的可选行数）作参照。
 - **自由对局**（`play_opening`）：从记录的起始对局（与求解器完全相同的种子字、卡组顺序、`DUEL_PSEUDO_SHUFFLE` 与白板对手；求解器没解出的起手用 `start_replay` 按
   `hand_seed` 重建，单测核对重建结果与求解器记录的起始对局一致）让 agent 下第 1 回合，对手以被动选项应答（与示范补完回合相同），

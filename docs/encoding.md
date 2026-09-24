@@ -7,7 +7,7 @@
 | `cards` | `[N_CARDS=160, F=23]` | 卡片 token 表，按下文顺序排列，未用行全 0 |
 | `globals` | `[G=22]` | 全局向量 |
 | `actions` | `[MAX_OPTIONS=128, A=10]` | 当前 step 的合法动作（多选已拆步，见 [engine.md](engine.md)） |
-| `action_mask` | `[MAX_OPTIONS]` | 1 = 该行是合法动作，且是其等价类的第一行（见下「等价动作去重」） |
+| `action_mask` | `[MAX_OPTIONS]` | 1 = 该行是合法动作，是其等价类的第一行（见下「等价动作去重」），且不只是撤销上一步（「撤销类空操作」） |
 
 卡片身份用 `CardVocab` 下标（`0` 填充，`1` 未知/背面，真实卡从 `2` 起；见 `ygorl.cards.cdb.CardVocab`）。`CardVocab.from_db(db)` 按卡密排序新建，卡库增卡后下标会整体移动；训练产物必须与所用词表一起保存（`CardVocab.save`），卡库更新时用 `CardVocab.from_db(db, base=旧词表)` 只追加新卡，旧下标不变（T6.3 热启动依赖这一点）。
 
@@ -102,6 +102,17 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 于是公开标志不同（一张已经给对手看过）、表示形式不同（表侧 / 里侧除外）、数值被效果改过、效果串不同的都不算等价；身份对决策方隐藏的卡（对手手牌、里侧卡）也不合并。同一张卡在一个决策里占多行时也按同样规则合并：特殊召唤列表里一张卡按每个召唤手续各列一次（核心按卡处理，之后再问用哪个手续），连锁列表里同一个诱发效果因不同事件各列一次（观测看不出是哪个事件）。多选拆步不受影响：选了代表行之后，下一步列出剩余的副本，任何多重集仍然可达。主机的 `skip_forced`（[training.md](training.md)）按 mask 判定：去重后只剩一行的决策也视为强制。`globals[20]` 仍是去重前的合法动作总数。`ygorl.env.encoding.canonical_action(obs, i)` 把任意一行映射到它的代表行（行为克隆、回放标签用）。10 套测试牌组 40 局随机对局里，5.3% 的非强制决策有被合并的行（SELECT_CARD 20%，多为从卡组检索多张同名卡之一；SELECT_IDLECMD 9%；SELECT_CHAIN 2%），其中 87 个因此变成强制决策。
 
+**撤销类空操作**：有两种动作只是把上一步撤回，局面回到**完全相同**的决策，`action_mask` 把它们置 0（其余行不变，且至少留一行）：
+
+1. **退出刚开始的命令**：玩家在主要阶段 / 战斗阶段菜单（`MSG_SELECT_IDLECMD` / `MSG_SELECT_BATTLECMD`）选了一个命令（召唤、发动、攻击……），之后只被问到他自己的决策、中间没有任何对局事件时，`cancel` 会退回原菜单——被遮住。事件指除决策、`MSG_RETRY`、`MSG_HINT`、`MSG_WAITING`、`MSG_CARD_HINT`、`MSG_PLAYER_HINT`、`MSG_SHOW_HINT` 之外的任何消息（连锁、移动、公开……）；有了事件（例如效果处理中「可以不选」的 `cancel`）就不再遮。
+2. **立即反悔的选 / 取消选**：SELECT_UNSELECT_CARD 里，上一步（同一玩家、之间没有事件）选了卡 X，这一步「取消选 X」被遮住；上一步取消选了 X，这一步「再选 X」被遮住。X 按卡密与位置（控制者、区域、序号）认定。
+
+动机：确定性的策略（argmax）会在「宣言攻击 → 取消选攻击对象 → 宣言攻击 …」这类来回里走不出去，直到决策数上限。
+不丢任何结局：每个被遮的动作只撤销上一步，任何用到它的路线都可以去掉这段来回、在更早的决策上直接选别的；最优策略用不着它。
+更长的循环（例如选 A、选 B、取消 A、取消 B）仍然可能，决策数上限兜底。主机把这些行的下标放在 `DecisionPoint.undo`（C++ `Tracker::undo()`），
+编码器在等价动作去重之后再遮；`skip_forced` 按遮完的 mask 判定。`tests/test_undo.py` 在随机对局里验证：随机策略每次真的走了被遮的动作，
+下一次决策都与之前那个决策完全相同。
+
 已知简化：手牌序号在对手看来可能带信息（例如对手见过被检索公开的那张卡加到了手牌末位），合并后总是用序号最小的副本；需要隐藏时仍可选洗切手牌（`shuffle`）。SELECT_SUM 的 `value` 只存求和参数的低 16 位，高 16 位（另一种等级）不同的同名卡会被合并；同名卡的这一半只有被效果改过才会不同，实际极少。
 
 **截断（未解决）**：合法动作超过 128 个时（主要是 ANNOUNCE_CARD 宣言卡名，可达上千个）只编码前 128 个，`globals[20]` 记录真实数量，`action_mask` 只标前 128 行，**第 128 行之后的动作 agent 选不到**。T2.3 只处理了多选拆步，没有处理这一点；可能的方案是把宣言拆成「先选类别 / 种族 / 属性再选卡」的多步，或按信念头排序只列前 128 个。待网络（T4b.1）落地后决定，见 [eng-plan.md](eng-plan.md) T2.3 备注。
@@ -110,7 +121,7 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 - Python 参考：`ygorl.env.encoding.ObservationEncoder`（`tests/test_encoding.py`）。
 - C++：`csrc/host.{h,cpp}`（决策解码、动作状态机、主机侧 tracker）与 `csrc/obs_encoder.cpp`（编码），通过 `ygorl._core.HostDuel` / `ygorl._core.DecisionState` 暴露。
-- 校验：`tests/test_cpp_host.py` 对 19 种决策消息做随机报文 + 随机选择路径的差分测试（动作列表与应答字节必须与 `ygorl.engine.actions` 一致），并在 5 局真实对局中逐步比对动作、四个观测数组与终局；`uv run python tools/check_cpp_encoder.py --points 10000` 做验收。2026-09-22 的一次运行：8 局、10,530 个决策点、0 处不一致，覆盖 16 种决策类型（其余类型由差分测试覆盖）；2026-09-23 加入等价动作去重后重跑，同样 10,530 个决策点、0 处不一致。
+- 校验：`tests/test_cpp_host.py` 对 19 种决策消息做随机报文 + 随机选择路径的差分测试（动作列表与应答字节必须与 `ygorl.engine.actions` 一致），并在 5 局真实对局中逐步比对动作、四个观测数组与终局；`uv run python tools/check_cpp_encoder.py --points 10000` 做验收。2026-09-22 的一次运行：8 局、10,530 个决策点、0 处不一致，覆盖 16 种决策类型（其余类型由差分测试覆盖）；2026-09-23 加入等价动作去重与撤销类空操作后重跑，同样 10,530 个决策点、0 处不一致。
 
 ## 训练态真值（privileged，T2.5）
 

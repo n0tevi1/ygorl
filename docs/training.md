@@ -245,7 +245,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
      + q_coef · L_Q + v_coef · L_V                 （critic.q_loss / v_loss，默认各 0.5）
 ```
 
-   梯度裁剪到 `max_grad_norm`（0.5），Adam（lr 3e-4）。KL 与熵只在合法候选上求和（掩码 logit 为 −1e9，概率严格为 0）。
+   梯度裁剪到 `max_grad_norm`（0.5），Adam（lr 1e-3；默认 4 轮 × 256 行的批，每次更新 32 步，见下「步长」）。KL 与熵只在合法候选上求和（掩码 logit 为 −1e9，概率严格为 0）。
    **热启动与先验**：`--init-from CKPT`（`TrainConfig.init_from`）把 actor 设成某个检查点的网络、critic 从头训；`--bc-prior CKPT`
    给 `π_BC`。两者都接受 PPO 训练的 checkpoint 或 BC 等导出的策略检查点（`ygorl.nets.agent`，[bc.md](bc.md)），按文件的 `format`
    字段区分（`train.checkpoint.load_actor`）。热启动时本次运行沿用检查点的卡片词表，网络配置（`d_model`、层数、历史模块等）必须与
@@ -253,6 +253,9 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
    **只在第 1 回合用先验**：`--kl-prior-turns N`（`PPOConfig.kl_prior_turns`，默认 0 = 所有行）只对「回合玩家自己的决策、回合数 ≤ N」
    的行（观测 `globals` 的 `is_my_turn` 与 `turn` 两列）计先验 KL，其余行按 0 计入同一个均值（被选中的行权重与不限制时相同）；
    日志多一个 `kl_prior_rows`（本段被选中的行数）。`N = 1` 即求解器示范覆盖的先攻第 1 回合，理由与对比实验见 [bc.md](bc.md)「补救实验」。
+   **按 KL 提前停**：`--target-kl X`（`PPOConfig.target_kl`，默认 0.01；`--target-kl 0` 关闭）——某个 minibatch 的 `approx_kl` 超过 1.5 X 时，本次更新余下的
+   minibatch 都跳过（日志 `minibatches` / `early_stop`）。步长按「策略实际移动了多少」封顶，而不是按固定的轮数：同一组学习率与轮数，
+   从零开始（熵约 1.3）每次约 0.006–0.009，从 BC 热启动（熵约 0.7）则到 0.023–0.029、裁剪比例约 0.2（[benchmarks.md](benchmarks.md)）。
 4. `reference ← (1 − τ) reference + τ θ`，`τ = reference_ema`（默认 0.02 / 次更新）。
 
 **策略目标可插拔**：`PolicyObjective` 有两个钩子——`prepare(rollout, estimate) -> [T, B]` 在整段上算每行权重
@@ -262,7 +265,9 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 同一起点多次 rollout 估计成功概率的对数梯度）只需在 `prepare` 里按起点分组算权重、在 `loss` 里用它，收集器、联赛、critic 不变。
 
 日志指标（每次更新）：`loss`、`policy_loss`、`entropy`、`kl_ref`、`kl_prior`、`q_loss`、`v_loss`、`approx_kl`、`clip_frac`、
-`grad_norm`、`q_explained_var`（行为时 Q 对 Q 目标的解释方差）、`adv_mean` / `adv_std`。
+`grad_norm`、`q_explained_var`（行为时 Q 对 Q 目标的解释方差）、`adv_mean` / `adv_std`、`minibatches` / `early_stop`；
+诊断用的按动作类型拆开的优势：`adv/<kind>`（选中动作属于该类型的行的平均优势，类型见 `ACTION_KINDS`）与 `rows/<kind>`（行数）——
+例如检验「搜索 / 抽卡类动作被系统性地判为负优势」（局面靠卡组耗尽决胜时的现象）。
 
 ### 8.3 联赛与牌组池（`selfplay`）
 
@@ -273,6 +278,10 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 - **快照池**（`SnapshotPool`）：每 `snapshot_every` 次更新冻结一份当前模型，超过 `pool_size` 逐出最旧的；
   **keep-best**：每 `eval_every` 次更新评估一次，对 `keep_best_by`（默认 greedy）的胜率创新高就把该 checkpoint 复制为
   `best.pt`，并把这份模型钉在池里（不被逐出，直到更好的替换它）。
+- **固定对手**（`TrainConfig.pin_opponents` / `--pin CKPT`，可重复）：把策略检查点（例如 BC 热启动用的那份）或 PPO checkpoint 整局钉在池里，
+  不被逐出、不进 checkpoint（续训时按配置重新钉上，id 为 −1、−2……）；池局里固定对手合占 `pinned_share`（默认 0.5），其余均分给快照。
+  词表与事件窗口长度必须与本次运行相同。用意：自博弈早期的历史快照都接近随机，固定一个会进战斗、会展开的对手让信号更有用
+  （Gin Rummy 2026「更强对手的课程」、cjiang1209/yugioh-agent 默认对 greedy 训练）。
 
 ### 8.4 评估
 
@@ -311,6 +320,16 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 1 小时的 CPU 训练对 random 0.537（0.429–0.643）、对 greedy 0.150（0.088–0.244），与未训练策略（0.475 / 0.113）的区间重叠——
 还谈不上学会；原因与调参方向见下。
 
+**GPU**（`TrainConfig.device` / `--device cuda`，ROCm 也叫 `cuda`）：学习器、行动网络、BC 先验与钉住的对手都放到该设备；
+收集的整段观测在设备上拼好，优势估计仍在 CPU 上算（逐行数据小），checkpoint 一律按 CPU 加载。ROCm 上权重梯度走 `ygorl.nets.gemm` 的按 `K` 切分，
+并自动打开融合注意力（原因与实测见 [benchmarks.md](benchmarks.md)「GPU 学习器」）。两个**实验开关**，默认关闭：
+
+- `overlap_collect`（`--overlap`）：更新进行时在另一个线程（GPU 上另一个 stream）用「更新开始前的权重」的副本收集下一段；联赛记账
+  （快照、评估、checkpoint）只在两步之间、没有收集在跑时进行。代价是每段数据落后一次更新，偏离设计的同步 PPO（[scaling.md](scaling.md) S3），采用前要先改设计。
+- `bf16`（`--bf16`）：行动与更新都在 bf16 autocast 下跑；GPU 上更新约快 10–20%，CPU 上更慢。
+
+`tools/bench_train.py` 测 `Trainer.step()` 的收集 / 更新耗时、行/秒与（AMD GPU 上的）忙碌率。
+
 ### 8.7 测试
 
 - `tests/test_ppo.py`（玩具博弈，约 15 秒）：Nim 自博弈在 VRPO 与 GAE 下都收敛到最优策略（每个必胜局面取 `n mod 4`），
@@ -327,10 +346,15 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 
 ### 8.8 限制与后续
 
-- 1 小时实验里每次更新只有 4 次 Adam 步（2 轮 × 2 个 1,024 行的批），`approx_kl` 约 1e-5、裁剪比例约 0：策略几乎不动。
-  T4b.5 应先把每次更新的策略变化调到 1e-3–1e-2 量级（更小的批 / 更多轮 / 更大的学习率），再做 BC 预热与消融。
-- 更新是瓶颈：CPU 上 2,048 行 × 2 轮约 20–25 秒，收集只占约 10%。GPU、更大的批、稀疏 / 行级的 ID 嵌入更新是后续的提速方向；
-  收集与更新目前串行（同步 PPO），actor / learner 分离留给有 GPU 的机器。
+- **步长**（T4b.5 起）：T4b.4 的 1 小时实验每次更新只有 4 次 Adam 步（2 轮 × 2 个 1,024 行的批），`approx_kl` 约 1e-5、
+  裁剪比例约 0，策略几乎不动。Adam 每步把每个参数挪动约一个学习率，与梯度大小无关，所以步数与学习率决定每次更新走多远。
+  扫描后默认改为 lr 1e-3、4 轮 × 256 行（每次更新 32 步）：`approx_kl` 约 5e-3–9e-3、裁剪比例约 0.08，落在 PPO 常见的
+  1e-3–1e-2 区间（[benchmarks.md](benchmarks.md)「PPO 步长」）。同样 1 小时，更新次数翻倍（281 次），对 greedy 从 0.05 升到
+  0.188（区间 0.117–0.287，与未训练不重叠），但几乎全部来自驾驶 kashtira；驾驶 snake_eye（长 combo）基本没学到。
+- 从零训练在 CPU 预算内进展很小，原因、先前项目的做法与扩规模 / 训练信号的选项见 [scaling.md](scaling.md)（#60、#61、#62）。
+- 更新是瓶颈：CPU 上 2,048 行 × 2 轮约 20–25 秒，收集只占约 10%。GPU 已接入（上文「GPU」，Radeon 8060S 上同算法 2.35 倍、
+  叠加实验开关与更多并行局 1.7 倍，[benchmarks.md](benchmarks.md)「GPU 学习器」）；收集与更新默认仍串行（同步 PPO）。
+  再往上是稀疏 / 行级的 ID 嵌入更新与减少 kernel 数（[scaling.md](scaling.md) S5）。
 - 进行中的对局不进 checkpoint；续训时槽位重新开局（少量半局数据丢弃）。
 - 评估走 Python `Duel` + 锁步 C++ 主机，单局推理批量为 1，比训练路径慢；每次评估的局数因此较少（区间宽），正式对比用
   `ygorl arena` 多打。

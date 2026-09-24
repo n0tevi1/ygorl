@@ -52,13 +52,17 @@ class PPOConfig:
     # > 0: the prior KL only on the turn player's own decisions up to this turn (globals is_my_turn / turn), the
     # states the turn-1 solver demonstrations cover (docs/bc.md「补救实验」); other rows count as 0; 0 = every row
     kl_prior_turns: int = 0
+    # stop an update's remaining minibatches once one exceeds 1.5 x target_kl (approx_kl); None = every epoch.
+    # From a BC warm start the fixed 32 steps overshoot (docs/benchmarks.md 「BC 热启动 + PPO」); from scratch it
+    # rarely triggers (approx_kl ~0.006-0.009 per update)
+    target_kl: float | None = 0.01
     q_coef: float = 0.5
     v_coef: float = 0.5
-    lr: float = 3e-4
+    lr: float = 1e-3
     adam_eps: float = 1e-5
     max_grad_norm: float = 0.5
-    epochs: int = 2
-    minibatch_size: int = 512
+    epochs: int = 4  # 4 x 256-row minibatches of 2,048 rows: approx_kl ~5e-3 per update (docs/benchmarks.md)
+    minibatch_size: int = 256
     adv_norm: str = "standard"  # normalize_advantages mode, over the whole rollout
 
     def __post_init__(self) -> None:
@@ -76,6 +80,8 @@ class PPOConfig:
             raise ValueError("epochs and minibatch_size must be at least 1")
         if self.kl_prior_turns < 0:
             raise ValueError("kl_prior_turns must be >= 0 (0 = every row)")
+        if self.target_kl is not None and not self.target_kl > 0:
+            raise ValueError("target_kl must be positive (or None)")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -176,6 +182,26 @@ def _masked_mean_rows(x: Tensor, mask: Tensor) -> Tensor:
     return torch.where(mask, x, torch.zeros((), dtype=x.dtype, device=x.device)).sum(-1)
 
 
+def _advantage_by_kind(obs, actions: Tensor, adv: Tensor) -> dict[str, float]:
+    """Diagnostics: mean advantage (``adv/<kind>``) and row count (``rows/<kind>``) per kind of the chosen action.
+
+    Needs the encoded action table (``obs["actions"]`` column 0 is the kind + 1, docs/encoding.md); {} otherwise.
+    """
+    if not isinstance(obs, dict) or "actions" not in obs:
+        return {}
+    from ygorl.env.encoding import ACTION_KINDS
+
+    rows = torch.arange(actions.shape[0], device=actions.device)
+    kind = obs["actions"][rows, actions, 0].long() - 1
+    out: dict[str, float] = {}
+    for k in torch.unique(kind).tolist():
+        if 0 <= k < len(ACTION_KINDS):
+            sel = kind == k
+            out[f"adv/{ACTION_KINDS[k]}"] = float(adv[sel].mean())
+            out[f"rows/{ACTION_KINDS[k]}"] = int(sel.sum())
+    return out
+
+
 class PPOLearner:
     """Owns the model's optimizer, the EMA reference policy and the optional BC prior."""
 
@@ -205,7 +231,7 @@ class PPOLearner:
         logp, ref = torch.log_softmax(logits, -1), torch.log_softmax(ref_logits, -1)
         per_row = _masked_mean_rows(logp.exp() * (logp - ref), mask)
         if rows is not None:
-            per_row = torch.where(rows, per_row, torch.zeros((), dtype=per_row.dtype))
+            per_row = torch.where(rows, per_row, torch.zeros((), dtype=per_row.dtype, device=per_row.device))
         return per_row.mean()
 
     @staticmethod
@@ -227,7 +253,7 @@ class PPOLearner:
     @torch.no_grad()
     def _score(self, module: nn.Module, obs, n: int) -> Tensor:
         chunk = max(1, self.cfg.minibatch_size)
-        out = [_logits_of(module, _index(obs, torch.arange(i, min(i + chunk, n)))).float() for i in range(0, n, chunk)]
+        out = [_logits_of(module, _index(obs, slice(i, min(i + chunk, n)))).float() for i in range(0, n, chunk)]
         return torch.cat(out)
 
     # -- update --------------------------------------------------------------------------------------
@@ -242,16 +268,17 @@ class PPOLearner:
 
     def update(self, ro: Rollout) -> dict[str, float]:
         cfg, model = self.cfg, self.model
-        est = self.targets(ro)
-        adv = self.objective.prepare(ro, est).reshape(-1).float()
-        q_targets = est.q_targets.reshape(-1).float()
-        v_targets = est.v_targets.reshape(-1).float()
-        actions = ro.actions.reshape(-1)
-        old_logp = ro.log_probs.reshape(-1)
+        est = self.targets(ro)  # on the CPU with the rollout's per-row data; the batch tensors go to the model
+        dev = next(model.parameters()).device
+        adv = self.objective.prepare(ro, est).reshape(-1).float().to(dev)
+        q_targets = est.q_targets.reshape(-1).float().to(dev)
+        v_targets = est.v_targets.reshape(-1).float().to(dev)
+        actions = ro.actions.reshape(-1).to(dev)
+        old_logp = ro.log_probs.reshape(-1).to(dev)
         # Cut the rollout's padding once (nets.policy.trim_padding): every minibatch then gathers from the smaller
         # tensors, and logits / masks only span the rollout's longest action list (same values, see tests).
         obs = trim_padding(ro.obs)
-        mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]]
+        mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]].to(dev)
         n = actions.shape[0]
         ref_logits = self._score(self.reference, obs, n) if cfg.kl_ref_coef > 0 else None
         prior_logits = self._score(self.prior, obs, n) if self.prior is not None and cfg.kl_prior_coef > 0 else None
@@ -260,8 +287,11 @@ class PPOLearner:
         model.train()
         sums: dict[str, float] = defaultdict(float)
         steps = 0
+        stopped = False
         for _ in range(cfg.epochs):
-            perm = torch.randperm(n)
+            if stopped:
+                break
+            perm = torch.randperm(n, device=dev)
             for start in range(0, n, cfg.minibatch_size):
                 idx = perm[start : start + cfg.minibatch_size]
                 out = model(_index(obs, idx), _index(ro.privileged, idx))
@@ -288,6 +318,10 @@ class PPOLearner:
                                  *extra.items()):  # fmt: skip
                     sums[key] += float(val.detach()) if isinstance(val, Tensor) else float(val)
                 steps += 1
+                kl_now = extra.get("approx_kl")
+                if cfg.target_kl is not None and kl_now is not None and float(kl_now) > 1.5 * cfg.target_kl:
+                    stopped = True  # the policy moved enough for this batch of data
+                    break
         self.updates += 1
         self.update_reference()
         stats = {k: v / steps for k, v in sums.items()}
@@ -295,6 +329,8 @@ class PPOLearner:
         stats["q_explained_var"] = _explained_variance(taken_q, q_targets)
         stats["adv_mean"], stats["adv_std"] = float(adv.mean()), float(adv.std(correction=0))
         stats["rows"] = n
+        stats["minibatches"], stats["early_stop"] = steps, int(stopped)
+        stats.update(_advantage_by_kind(obs, actions, adv))
         if prior_rows is not None:
             stats["kl_prior_rows"] = int(prior_rows.sum())
         return stats

@@ -7,7 +7,8 @@ ordinary duels and turns its decisions into the same ``(observation, action row)
 - :class:`DemoRecorder` wraps the agent of one seat, sees every decision point of the duel (``observe``,
   the event stream needs them all) and encodes the seat's non-forced decisions from ``min_turn`` on with
   :class:`~ygorl.env.observer.PointObserver`, i.e. the observations ``EncodedVecEnv`` and ``NetPolicy``
-  produce. Labels are mapped to the representative row of their equivalent copies (``canonical_action``).
+  produce. Labels are mapped to the representative row of their equivalent copies (``canonical_action``);
+  a decision whose action is a masked no-op undo (e.g. Greedy backing out of an attack) is skipped.
 - :func:`record_games` plays a list of ``GameSpec`` s (both seats via ``first``), optionally in parallel.
 - :data:`SUBSETS` select samples by their ``meta``: ``all``, or ``battle`` — the decisions the root-cause
   analysis found missing (own battle-phase decisions, and the main-phase-1 choice to enter the battle phase).
@@ -87,6 +88,8 @@ class DemoRecorder:
             self.skipped["forced"] += 1
         elif idx >= MAX_OPTIONS:
             self.skipped["beyond_128"] += 1
+        elif not obs["action_mask"][canonical_action(obs, idx)]:
+            self.skipped["undo"] += 1  # a no-op undo the mask hides (docs/encoding.md 「撤销类空操作」)
         else:
             kinds = {a.kind for a in point.actions}
             self.obs.append({k: obs[k] for k in OBS_KEYS if k in obs})

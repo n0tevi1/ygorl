@@ -18,6 +18,7 @@ from ygorl.cards.cdb import CardVocab
 from ygorl.env.encoding import ACTION_KINDS
 from ygorl.env.events import EVENT_TYPES
 from ygorl.nets.config import NetConfig
+from ygorl.nets.gemm import tn_mm
 from ygorl.nets.text import EFFECT_SLOTS, TextFeatures
 
 LOG_CLAMP = math.log1p(65535)  # the encoders clamp magnitudes to [0, 65535]
@@ -55,7 +56,7 @@ class _SummedRows(torch.autograd.Function):
     def backward(ctx, grad: Tensor):
         (idx,) = ctx.saved_tensors
         counts = grad.new_zeros(idx.shape[0], ctx.rows).scatter_add_(1, idx, grad.new_ones(idx.shape))
-        return None, counts.t() @ grad
+        return None, tn_mm(counts, grad)
 
 
 class CategoricalEmbedding(nn.Module):

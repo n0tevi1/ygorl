@@ -361,3 +361,40 @@ def test_policy_objective_is_pluggable():
         register_objective("recording", None)
     with pytest.raises(ValueError, match="objective"):
         PPOConfig(objective="recording")
+
+
+def test_target_kl_stops_an_update_once_the_policy_moved_enough():
+    """``target_kl``: the remaining minibatches of an update are skipped once one of them exceeds 1.5x the target
+    (approx_kl); without it every epoch runs."""
+    torch.manual_seed(0)
+    env = NimEnv(num_envs=4, max_pile=15)
+    model = NimModel(max_pile=15)
+    ro = RolloutCollector(env, model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0).collect()
+    assert PPOConfig().target_kl == 0.01  # the default (docs/benchmarks.md 「BC 热启动 + PPO」)
+    full = PPOLearner(copy.deepcopy(model), PPOConfig(epochs=6, minibatch_size=16, lr=5e-2, target_kl=None)).update(ro)
+    assert full["minibatches"] == 6 * 4 and full["early_stop"] == 0
+    capped = PPOLearner(copy.deepcopy(model), PPOConfig(epochs=6, minibatch_size=16, lr=5e-2, target_kl=1e-4)).update(ro)
+    assert 1 <= capped["minibatches"] < full["minibatches"] and capped["early_stop"] == 1
+    with pytest.raises(ValueError):
+        PPOConfig(target_kl=0.0)
+
+
+def test_pinned_snapshots_stay_and_get_their_share_of_pool_games():
+    model = NimModel(max_pile=15)
+    pool = SnapshotPool(capacity=2, pinned_share=0.5)
+    pinned = pool.pin(NimModel(max_pile=15), tag="bc")
+    ids = [pool.add(model, update=u) for u in range(5)]
+    assert pinned in pool.ids() and ids[0] not in pool.ids() and len(pool) == 3  # capacity counts regular only
+    rng = np.random.default_rng(0)
+    draws = [pool.sample(rng) for _ in range(4000)]
+    assert abs(draws.count(pinned) / len(draws) - 0.5) < 0.03
+    snap = pool.get(pinned)
+    assert not any(p.requires_grad for p in snap.parameters()) and not snap.training
+    # pinned opponents come from the configuration, not the checkpoint: state_dict leaves them out
+    restored = SnapshotPool(capacity=2, pinned_share=0.5)
+    again = restored.pin(NimModel(max_pile=15), tag="bc")
+    restored.load_state_dict(pool.state_dict(), lambda: NimModel(max_pile=15))
+    assert again == pinned and restored.ids() == pool.ids()
+    alone = SnapshotPool(capacity=2, pinned_share=0.5)
+    only = alone.pin(model, tag="bc")
+    assert {alone.sample(rng) for _ in range(20)} == {only}

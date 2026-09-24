@@ -3,6 +3,7 @@ and the ``policy:<checkpoint>`` agent (lockstep C++ host) on the arena / duel pa
 
 import importlib.util
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -406,3 +407,66 @@ def test_init_from_rejects_a_different_network_or_vocab(run, vocab, tmp_path):
     save_policy(tmp_path / "other.pt", PolicyNet(trainer.net_config), shuffled, event_length=16)
     with pytest.raises(ValueError, match="vocab"):
         Trainer(_small_cfg(bc_prior=str(tmp_path / "other.pt")), tmp_path / "b", log=None)
+
+
+def test_update_reports_the_mean_advantage_per_action_kind(db, vocab):
+    """Diagnostics: ``adv/<kind>`` is the mean advantage of the rows whose chosen action has that kind."""
+    from ygorl.env.encoding import ACTION_KINDS
+    from ygorl.train.ppo import PPOLearner
+
+    col = collector(db, vocab, max_decisions=120, steps=24)
+    ro = col.collect()
+    stats = PPOLearner(col.model, PPOConfig(minibatch_size=16, epochs=1)).update(ro)
+    kinds = {k[4:] for k in stats if k.startswith("adv/")}
+    assert kinds and kinds <= set(ACTION_KINDS)
+    assert all(np.isfinite(stats[f"adv/{k}"]) and stats[f"rows/{k}"] > 0 for k in kinds)
+    assert sum(stats[f"rows/{k}"] for k in kinds) == stats["rows"]
+
+
+def test_pinned_opponents_join_the_pool_and_must_match_the_run(run, tmp_path):
+    from dataclasses import replace as dc_replace
+
+    from ygorl.cards.cdb import CardVocab
+    from ygorl.nets import PolicyNet
+    from ygorl.nets.agent import save_checkpoint as save_policy
+
+    trainer, _ = run
+    bc = save_policy(tmp_path / "bc.pt", PolicyNet(trainer.net_config), trainer.vocab, event_length=16)
+    t = Trainer(_small_cfg(pin_opponents=(str(bc),), pinned_share=1.0, selfplay_fraction=0.0), tmp_path / "a",
+                log=None)  # fmt: skip
+    assert t.pool.ids() == [-1] and t.pool.info()[0]["tag"] == "pinned:bc.pt"
+    ro = t.collector.collect()  # every game against the pinned opponent
+    assert ro.opponent_decisions > 0
+    assert TrainConfig.from_dict(t.cfg.to_dict()).pin_opponents == (str(bc),)
+    long_events = save_policy(tmp_path / "e64.pt", PolicyNet(trainer.net_config), trainer.vocab, event_length=64)
+    with pytest.raises(ValueError, match="event tokens"):
+        Trainer(_small_cfg(pin_opponents=(str(long_events),)), tmp_path / "b", log=None)
+    passwords = [trainer.vocab.password(i) for i in range(CardVocab.FIRST_INDEX, len(trainer.vocab))]
+    other = save_policy(tmp_path / "other.pt", PolicyNet(dc_replace(trainer.net_config)),
+                        CardVocab(passwords[1:] + passwords[:1]), event_length=16)  # fmt: skip
+    with pytest.raises(ValueError, match="vocab"):
+        Trainer(_small_cfg(pin_opponents=(str(other),)), tmp_path / "c", log=None)
+
+
+def _params(module):
+    return [p.detach().clone() for p in module.parameters()]
+
+
+def test_overlapped_collection_acts_with_the_weights_the_update_started_from(tmp_path):
+    """overlap_collect: while update k runs, the next rollout is collected with a copy of the weights before update k;
+    league bookkeeping (snapshots) between steps still works and every step trains on a full rollout."""
+    cfg = replace(_small_cfg(overlap_collect=True, selfplay_fraction=0.5), snapshot_every=1)
+    trainer = Trainer(cfg, tmp_path, log=None)
+    assert trainer.acting is not trainer.model and trainer.collector.model is trainer.acting
+    before = _params(trainer.model)
+    trainer.step()
+    after_first = _params(trainer.model)
+    assert all(torch.equal(a, b) for a, b in zip(_params(trainer.acting), before))
+    assert not all(torch.equal(a, b) for a, b in zip(after_first, before))
+    trainer.train(max_updates=1)
+    start = _params(trainer.model)
+    trainer.step()
+    assert all(torch.equal(a, b) for a, b in zip(_params(trainer.acting), start))
+    metrics = [json.loads(line) for line in (tmp_path / "metrics.jsonl").read_text().splitlines()]
+    assert [m["update"] for m in metrics] == [1, 2, 3] and all(m["rows"] == 16 for m in metrics)
+    assert len(trainer.pool) > 0

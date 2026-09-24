@@ -14,12 +14,15 @@ Run directory: ``config.json``, ``vocab.json`` (``CardVocab.save``), ``metrics.j
 
 from __future__ import annotations
 
+import copy
 import json
+import os
 import shutil
 import statistics
 import time
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
@@ -33,6 +36,7 @@ from ygorl.env.encoded import EncodedVecEnv
 from ygorl.eval.arena import derive_seed
 from ygorl.nets.actor_critic import ActorCritic
 from ygorl.nets.config import NetConfig
+from ygorl.nets.gemm import use_split_k
 from ygorl.nets.text import TextFeatures
 from ygorl.train.checkpoint import (
     load_actor,
@@ -71,6 +75,10 @@ class TrainConfig:
     ppo: PPOConfig = field(default_factory=PPOConfig)
     selfplay_fraction: float = 0.75  # deals against the current policy; the rest against pool snapshots
     pool_size: int = 8
+    # fixed opponents kept in the pool for the whole run (policy or PPO checkpoints, e.g. the BC warm start) and
+    # their share of the pool games; the run's card vocab and event length must match
+    pin_opponents: tuple[str, ...] = ()
+    pinned_share: float = 0.5
     snapshot_every: int = 10  # updates
     checkpoint_every: int = 10
     eval_every: int = 25
@@ -80,6 +88,11 @@ class TrainConfig:
     eval_workers: int = 2
     eval_greedy_policy: bool = False  # evaluate the argmax policy (policy-greedy) instead of sampling
     seed: int = 0
+    device: str = "cpu"  # PyTorch device of the learner and the acting network ("cuda" also covers ROCm)
+    # Experimental, not in the design (synchronous PPO; docs/scaling.md S3): collect the next rollout on a thread with
+    # a copy of the weights the update starts from, while the update runs; every rollout is then one update stale
+    overlap_collect: bool = False
+    bf16: bool = False  # experimental: bf16 autocast for acting and the update on a GPU
     torch_threads: int = 4  # during updates
     collect_threads: int = 2  # PyTorch threads while collecting (the env threads share the cores)
     bc_prior: str | None = None  # checkpoint of a BC policy: KL prior (ppo.kl_prior_coef)
@@ -95,6 +108,7 @@ class TrainConfig:
         d = asdict(self)
         d["ppo"] = self.ppo.to_dict()
         d["decks"], d["eval_opponents"] = list(self.decks), list(self.eval_opponents)
+        d["pin_opponents"] = list(self.pin_opponents)
         return d
 
     @classmethod
@@ -102,7 +116,7 @@ class TrainConfig:
         known = {f.name for f in fields(cls)}
         d = {k: v for k, v in data.items() if k in known}
         d["ppo"] = PPOConfig.from_dict(d.get("ppo", {}))
-        for key in ("decks", "eval_opponents"):
+        for key in ("decks", "eval_opponents", "pin_opponents"):
             if key in d:
                 d[key] = tuple(d[key])
         return cls(**d)
@@ -134,6 +148,9 @@ class Trainer:
                             else DuelConfig(**overrides))  # fmt: skip
         self.decks = [load_ydk(p) for p in cfg.decks]
         self.cards = default_cards()
+        self.device = torch.device(cfg.device)
+        if self.device.type == "cuda" and torch.version.hip:  # fused attention with a mask (docs/benchmarks.md)
+            os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
         init = load_actor(cfg.init_from, cfg.text_dir) if cfg.init_from and state is None else None
         if state is not None:
             self.vocab = vocab_from_text(state["vocab"])
@@ -157,16 +174,30 @@ class Trainer:
             if vocab_passwords(loaded.vocab) != vocab_passwords(self.vocab):
                 raise ValueError(f"{cfg.bc_prior}: its card vocab differs from the run's; the prior would read "
                                  "other cards from the same indices")  # fmt: skip
-            prior = loaded.net
+            prior = loaded.net.to(self.device)
         self.learner = PPOLearner(self.model, cfg.ppo, prior)
-        self.pool = SnapshotPool(cfg.pool_size)
+        self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share)
+        for path in cfg.pin_opponents:
+            pinned = load_actor(path, cfg.text_dir)
+            if vocab_passwords(pinned.vocab) != vocab_passwords(self.vocab):
+                raise ValueError(f"{path}: its card vocab differs from the run's (pinned opponent)")
+            if pinned.event_length != cfg.event_length:
+                raise ValueError(f"{path}: trained with {pinned.event_length} event tokens, the run uses "
+                                 f"{cfg.event_length} (pinned opponent)")  # fmt: skip
+            self.pool.pin(pinned.net.to(self.device), tag=f"pinned:{Path(path).name}")
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
                                          selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced)  # fmt: skip
-        self.collector = RolloutCollector(self.env, self.model, self.schedule, cfg.steps, opponents=self.schedule.opponent,
-                                          seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch)  # fmt: skip
+        # the acting network: the model itself, or a copy refreshed before each overlapped collection
+        self.acting = copy.deepcopy(self.model) if cfg.overlap_collect else self.model
+        self._pending: Rollout | None = None
+        self._executor = ThreadPoolExecutor(1, thread_name_prefix="collect") if cfg.overlap_collect else None
+        self._stream = torch.cuda.Stream(self.device) if cfg.overlap_collect and self.device.type == "cuda" else None
+        self.collector = RolloutCollector(self.env, self.acting, self.schedule, cfg.steps, opponents=self.schedule.opponent,
+                                          seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
+                                          device=self.device)  # fmt: skip
         self.counters = {"updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0}  # fmt: skip
         self.best = {"score": None, "update": None}
@@ -176,8 +207,9 @@ class Trainer:
 
     def _new_model(self) -> ActorCritic:
         c = self.cfg
-        return ActorCritic(self.net_config, self._text, privileged=c.privileged_critic, privileged_dim=c.privileged_dim,
+        model = ActorCritic(self.net_config, self._text, privileged=c.privileged_critic, privileged_dim=c.privileged_dim,
                            critic_hidden=c.critic_hidden, shared_backbone=c.shared_backbone)  # fmt: skip
+        return use_split_k(model).to(self.device)
 
     # -- persistence ----------------------------------------------------------------------------------
     @classmethod
@@ -234,23 +266,49 @@ class Trainer:
         self.save()
         return last
 
+    def _autocast(self):
+        return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.cfg.bf16)
+
+    def _collect(self) -> Rollout:
+        if self._stream is None:
+            with self._autocast():
+                return self.collector.collect()
+        with torch.cuda.stream(self._stream), self._autocast():
+            ro = self.collector.collect()
+        self._stream.synchronize()  # the rollout's tensors are complete before the learner's stream reads them
+        return ro
+
     def step(self) -> dict:
         cfg = self.cfg
+        t_step = time.perf_counter()
         torch.set_num_threads(cfg.collect_threads)
-        ro = self.collector.collect()
+        future = None
+        if cfg.overlap_collect:
+            ro, self._pending = self._pending or self._collect(), None
+            self.acting.load_state_dict(self.model.state_dict())
+            if self._stream is not None:
+                self._stream.wait_stream(torch.cuda.current_stream(self.device))
+            future = self._executor.submit(self._collect)
+        else:
+            ro = self._collect()
         torch.set_num_threads(cfg.torch_threads)
         t0 = time.perf_counter()
-        stats = self.learner.update(ro)
+        with self._autocast():
+            stats = self.learner.update(ro)
         update_s = time.perf_counter() - t0
+        if future is not None:  # the league bookkeeping between steps never runs next to a collection
+            self._pending = future.result()
+        step_s = time.perf_counter() - t_step
         c = self.counters
         c["updates"] = self.learner.updates
         c["rows"] += ro.players.numel()
         c["decisions"] += ro.decisions
         c["games"] += len(ro.games)
-        c["seconds"] += ro.seconds + update_s
+        c["seconds"] += step_s
         c["truncated"] += sum(g.truncated for g in ro.games)
         c["errors"] += sum(g.reason == "error" for g in ro.games)
         record = {"update": c["updates"], "time": round(time.time(), 1), **self._rollout_stats(ro, update_s),
+                  "step_s": round(step_s, 2), "rows_per_s": ro.players.numel() / max(step_s, 1e-9),
                   **{k: round(v, 5) if isinstance(v, float) else v for k, v in stats.items()},
                   "total": dict(c), "pool": len(self.pool)}  # fmt: skip
         with (self.run_dir / "metrics.jsonl").open("a") as f:
@@ -270,7 +328,7 @@ class Trainer:
         return {
             "rows": ro.players.numel(), "decisions": ro.decisions, "collect_s": round(ro.seconds, 2),
             "update_s": round(update_s, 2), "decisions_per_s": ro.decisions / max(ro.seconds, 1e-9),
-            "rows_per_s": ro.players.numel() / max(ro.seconds + update_s, 1e-9), "games": len(games),
+            "games": len(games),
             "selfplay_games": sum(g.assignment.opponent is None for g in games),
             "pool_games": len(pool_scores), "pool_win_rate": None if not pool_scores else round(_mean(pool_scores), 3),
             "first_player_win_rate": None if not first_wins else round(_mean(first_wins), 3),

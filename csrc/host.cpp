@@ -821,6 +821,26 @@ void Tracker::stop(const std::string& reason, const std::string& error) {
     state_.reset();
 }
 
+namespace {
+// Messages that change nothing in the game (mirror of duel._NOT_EVENTS); any other message ends a no-op window.
+bool is_game_event(uint8_t type, bool decoded_decision) {
+    if (decoded_decision) return false;
+    switch (type) {
+        case MSG_RETRY: case MSG_HINT: case MSG_WAITING: case MSG_CARD_HINT: case MSG_PLAYER_HINT: case MSG_SHOW_HINT:
+            return false;
+        default:
+            return true;
+    }
+}
+
+bool is_menu(uint8_t type) { return type == MSG_SELECT_IDLECMD || type == MSG_SELECT_BATTLECMD; }
+
+bool same_card(const CardRef& c, uint32_t code, const Loc& loc) {
+    return c.code == code && c.loc.controller == loc.controller && c.loc.location == loc.location &&
+           c.loc.sequence == loc.sequence;
+}
+}  // namespace
+
 void Tracker::on_buffer(const std::string& buf, int status) {
     state_.reset();
     std::optional<Decision> decision;
@@ -839,9 +859,18 @@ void Tracker::on_buffer(const std::string& buf, int status) {
             std::memcpy(&v, rec + 1 + off, 4);
             return v;
         };
+        bool decoded = false;
         if (is_decision_type(type)) {
-            if (auto d = decode_decision(rec, len)) decision = std::move(d);
-        } else {
+            if (auto d = decode_decision(rec, len)) {
+                decision = std::move(d);
+                decoded = true;
+            }
+        }
+        if (is_game_event(type, decoded)) {
+            inside_ = -1;
+            toggle_.reset();
+        }
+        if (!is_decision_type(type)) {
             switch (type) {
                 case MSG_NEW_TURN:
                     if (plen >= 1) {
@@ -912,7 +941,28 @@ void Tracker::on_buffer(const std::string& buf, int status) {
         stop("turn_limit");
         return;
     }
+    if (decision->player != inside_ || is_menu(decision->type)) inside_ = -1;
+    if (toggle_ && toggle_->player != decision->player) toggle_.reset();
     state_ = std::make_unique<DecisionState>(*decision, cards_);
+}
+
+std::vector<size_t> Tracker::undo() const {
+    std::vector<size_t> out;
+    if (!state_) return out;
+    const Decision& d = state_->decision();
+    const auto& acts = state_->actions();
+    for (size_t i = 0; i < acts.size(); ++i) {
+        const Action& a = acts[i];
+        if (a.kind == CANCEL && inside_ >= 0) {
+            out.push_back(i);  // backs out of the command to the unchanged menu
+        } else if (toggle_ && d.type == MSG_SELECT_UNSELECT_CARD && a.has_card &&
+                   ((a.kind == SELECT && toggle_->kind == UNSELECT) || (a.kind == UNSELECT && toggle_->kind == SELECT)) &&
+                   same_card(a.card, toggle_->code, toggle_->loc)) {
+            out.push_back(i);  // reverses the previous select / unselect
+        }
+    }
+    if (out.size() >= acts.size()) out.clear();
+    return out;
 }
 
 const std::vector<Action>* Tracker::actions() {
@@ -930,9 +980,16 @@ const std::vector<Action>* Tracker::actions() {
 }
 
 const std::string* Tracker::act(size_t index) {
-    if (!actions()) throw std::runtime_error("no decision is pending");
+    const auto* acts = actions();
+    if (!acts) throw std::runtime_error("no decision is pending");
+    const Decision d = state_->decision();
+    const Action a = index < acts->size() ? (*acts)[index] : Action{};
     state_->step(index);  // throws out_of_range before any bookkeeping
     ++decisions_;
+    if (is_menu(d.type)) inside_ = d.player;
+    toggle_.reset();
+    if (d.type == MSG_SELECT_UNSELECT_CARD && (a.kind == SELECT || a.kind == UNSELECT) && a.has_card)
+        toggle_ = Toggle{d.player, a.kind, a.card.code, a.card.loc};
     if (state_->done()) {
         responses_.push_back(state_->response());
         state_.reset();

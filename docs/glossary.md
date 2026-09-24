@@ -72,11 +72,24 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `viewer` | 视角玩家 | 观测按其可见性编码 |
 | public / hidden | 公开 / 隐藏 | `messages.is_hidden_from` 定义对决策方隐藏的卡 |
 | equivalent action / `canonical_action` | 等价动作 / 代表行 | 同一张卡的多张副本在同一决策里各占一行时只保留第一行（`action_mask`），见 encoding.md「等价动作去重」 |
+| no-op undo / `DecisionPoint.undo` | 撤销类空操作 | 退出刚开始的命令、立即反悔的选 / 取消选；局面回到完全相同的决策，`action_mask` 遮住，见 encoding.md |
 | `abstain` | 放弃响应 token | 有响应窗口而未连锁（事件流） |
 | `snapshot` / `restore` | 快照 / 恢复 | 每局 arena 的内存拷贝（T2.8） |
 | `fork` / `branch` / `rollout` | 分叉 / 分支 / 推演 | 从某个决策点尝试候选并下完（T2.9） |
 | `curriculum` / `learner` | 课程模式 / 学习方 | full / solo / handtrap（T2.6） |
 | `privileged` | 训练态真值 | 只给 critic 与信念头，绝不喂给 actor |
+
+## 训练与搜索
+
+| 标识符 | 中文 | 说明 |
+|--------|------|------|
+| BC / warm start | 行为克隆 / 热启动 | 用求解器与 Greedy 示范预训练，再接 PPO（bc.md） |
+| `target_kl` | 按 KL 提前停 | 一次更新内 minibatch 的 `approx_kl` 超过 1.5 × 目标即停（training.md） |
+| pinned opponent | 固定对手 | `--pin` 钉进快照池的固定策略，不被逐出、不入 `state_dict` |
+| lethal search / `lethal:<agent>` | 致死搜索 | 影子对局上推演本回合，找到赢下来的线就照走（T4e.1，evaluation.md） |
+| PIMC | 完美信息蒙特卡洛 | 按信念采样对手隐藏信息后在每个样本里搜索（T4e.1 阶段 C） |
+| GRPO | 组相对策略优化 | 同一起点采多条样本，以组内相对奖励作优势、无 critic；本仓库只考虑第 1 回合展开（scaling.md T11） |
+| DPO | 直接偏好优化 | 用同一输入的优 / 劣样本对直接微调策略；本仓库只考虑求解器线对未达成线（scaling.md T12） |
 
 ## 组牌与评估
 

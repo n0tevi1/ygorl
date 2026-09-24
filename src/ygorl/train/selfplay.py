@@ -42,11 +42,20 @@ class Snapshot:
 
 
 class SnapshotPool:
-    def __init__(self, capacity: int = 8) -> None:
+    """Frozen past policies. Regular snapshots are evicted oldest first beyond ``capacity``; the keep-best one and
+    *pinned* opponents (fixed policies from the configuration, e.g. a BC checkpoint) stay. Pinned opponents get
+    ``pinned_share`` of the draws together (the rest uniform over the others); they are not part of
+    :meth:`state_dict` — the configuration pins them again, with the same negative ids, when a run resumes."""
+
+    def __init__(self, capacity: int = 8, pinned_share: float = 0.5) -> None:
         if capacity < 1:
             raise ValueError("capacity must be at least 1")
+        if not 0 <= pinned_share <= 1:
+            raise ValueError("pinned_share must be in [0, 1]")
         self.capacity = capacity
+        self.pinned_share = pinned_share
         self._snaps: OrderedDict[int, Snapshot] = OrderedDict()
+        self._pinned: OrderedDict[int, Snapshot] = OrderedDict()
         self._next_id = 0
         self.best_id: int | None = None
 
@@ -82,22 +91,31 @@ class SnapshotPool:
     def best_score(self) -> float | None:
         return None if self.best_id is None else self._snaps[self.best_id].score
 
+    def pin(self, model: nn.Module, tag: str = "pinned") -> int:
+        """Keep a frozen copy of ``model`` for the whole run (ids -1, -2, ... in pinning order)."""
+        sid = -(len(self._pinned) + 1)
+        self._pinned[sid] = Snapshot(sid, 0, self._freeze(model), tag)
+        return sid
+
     def sample(self, rng: np.random.Generator) -> int | None:
-        """A uniformly random snapshot id, or None when the pool is empty."""
-        ids = self.ids()
-        return None if not ids else ids[int(rng.integers(len(ids)))]
+        """A snapshot id (pinned ones take ``pinned_share`` of the draws), or None when the pool is empty."""
+        pinned, regular = list(self._pinned), list(self._snaps)
+        if pinned and (not regular or rng.random() < self.pinned_share):
+            return pinned[int(rng.integers(len(pinned)))]
+        return None if not regular else regular[int(rng.integers(len(regular)))]
 
     def get(self, sid: int) -> nn.Module:
-        return self._snaps[sid].model
+        return (self._pinned if sid < 0 else self._snaps)[sid].model
 
     def ids(self) -> list[int]:
-        return list(self._snaps)
+        return [*self._pinned, *self._snaps]
 
     def info(self) -> list[dict]:
-        return [{"id": s.id, "update": s.update, "tag": s.tag, "score": s.score} for s in self._snaps.values()]
+        return [{"id": s.id, "update": s.update, "tag": s.tag, "score": s.score}
+                for s in (*self._pinned.values(), *self._snaps.values())]  # fmt: skip
 
     def __len__(self) -> int:
-        return len(self._snaps)
+        return len(self._pinned) + len(self._snaps)
 
     def state_dict(self) -> dict:
         return {"capacity": self.capacity, "next_id": self._next_id, "best_id": self.best_id,

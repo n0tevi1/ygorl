@@ -361,6 +361,13 @@ void encode(Duel& core, const Tracker& tracker, const std::vector<Action>& actio
         row[9] = clamp(static_cast<int64_t>(a.index) + 1, 0, 255);
     }
     mask_duplicates(out.cards, out.actions, out.action_mask, decision ? decision->type : 0);
+    // rows that only undo the previous step (mirror of encoding.mask_undo), keeping at least one row
+    std::vector<size_t> undo_rows;
+    for (size_t i : tracker.undo())
+        if (i < out.action_mask.size() && out.action_mask[i]) undo_rows.push_back(i);
+    const auto live = static_cast<size_t>(std::count(out.action_mask.begin(), out.action_mask.end(), 1));
+    if (!undo_rows.empty() && live > undo_rows.size())
+        for (size_t i : undo_rows) out.action_mask[i] = 0;
 }
 
 }  // namespace ygorl::host
