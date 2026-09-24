@@ -35,6 +35,7 @@
   拒绝该环境，错误里带 meta 卡组文件路径与违反的规则；环境清单的其它校验（LP、起手、类型等）见 [environments.md](environments.md)。
 - **`--max-turns N`**（`duel` / `arena` / `matrix`）：回合上限，到达时 LP 高者胜、相等为平局（`reason=turn_limit`），默认 200。
   决策数上限（`DuelConfig.max_decisions`，`reason=decision_limit`）只用来截断死循环，**记为平局**、不按 LP 判胜（2026-09-24 起；此前按 LP，循环中领先的一方会被判胜）。
+  `ygorl replay --verify` 对记录为 `decision_limit` 的回放不比较胜者与终局原因（应答日志只有完整应答，重放以 `log_exhausted` 结束；旧回放按 LP 记的胜者也照样通过），应答、回合、LP 照常比较。
 - **输出文件**的父目录自动创建。
 - **退出码**：0 成功；1 结果不健康（`replay --verify` 未到达录制的终局；`arena` / `matrix` 有对局抛异常，`arena` 另含 retry、未知消息）；
   2 用法或输入错误，打印为 `ygorl <命令>: error: ...`，不打印 traceback：参数不合法、文件不存在、未知 agent、环境不符、
