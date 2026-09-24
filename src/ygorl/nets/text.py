@@ -8,6 +8,11 @@ On-disk layout of a text directory (all ``.npy``; rows keyed by the 8-digit ``pa
 
 Either pair may be missing; that feature is then absent. Passwords not in the vocab are ignored; vocab
 entries without a vector (and the padding / unknown indices) get a zero vector.
+
+* ``card_facts.npz`` (optional, ``tools/build_card_facts.py``; docs/nets.md「卡片事实」): per password its archetype
+  codes ``setcodes [N, 4]``, the archetypes its scripts refer to ``references [N, R]``, the cdb effect-category bits
+  ``categories [N]`` (uint64) and the script (action, location) pairs ``queries [N, Q]`` with ``query_names [Q]``.
+  Archetype codes are reduced to their archetype part (low 12 bits) and numbered 1.. in code order (0 = none).
 """
 
 from __future__ import annotations
@@ -23,6 +28,8 @@ EFFECT_SLOTS = 17  # column = string index + 1 (action column 4 / chaining value
 
 CARD_FILES = ("card_text.npy", "card_text_passwords.npy")
 EFFECT_FILES = ("effect_text.npy", "effect_text_keys.npy")
+FACTS_FILE = "card_facts.npz"
+N_CATEGORIES = 64
 
 
 @dataclass
@@ -35,6 +42,12 @@ class TextFeatures:
     card: np.ndarray | None  # [V, Dc] float32
     effect: np.ndarray | None  # [M + 1, De] float32
     effect_lookup: np.ndarray | None  # [V, EFFECT_SLOTS] int64
+    # card facts (all None without card_facts.npz): archetype numbers 1..n_archetypes, 0 = none
+    archetypes: np.ndarray | None = None  # [V, 4] int64
+    references: np.ndarray | None = None  # [V, R] int64
+    categories: np.ndarray | None = None  # [V, N_CATEGORIES] float32 multi-hot
+    queries: np.ndarray | None = None  # [V, Q] float32 multi-hot
+    n_archetypes: int = 0
 
     def __post_init__(self) -> None:
         if (self.effect is None) != (self.effect_lookup is None):
@@ -46,7 +59,39 @@ class TextFeatures:
     def vocab_size(self) -> int | None:
         if self.card is not None:
             return self.card.shape[0]
-        return None if self.effect_lookup is None else self.effect_lookup.shape[0]
+        if self.effect_lookup is not None:
+            return self.effect_lookup.shape[0]
+        return None if self.archetypes is None else self.archetypes.shape[0]
+
+    @property
+    def has_facts(self) -> bool:
+        return self.archetypes is not None
+
+    def with_facts(self, vocab: CardVocab, facts: dict) -> TextFeatures:
+        """These tables plus the card facts of a ``card_facts.npz`` (password-keyed arrays), aligned to ``vocab``."""
+        pws = np.asarray(facts["passwords"], dtype=np.int64)
+        own = np.asarray(facts["setcodes"], dtype=np.int64) & 0x0FFF
+        refs = np.asarray(facts["references"], dtype=np.int64) & 0x0FFF
+        codes = np.unique(np.concatenate([own.ravel(), refs.ravel()]))
+        codes = codes[codes > 0]
+        number = {int(c): i + 1 for i, c in enumerate(codes)}
+        v = len(vocab)
+        arch = np.zeros((v, own.shape[1]), np.int64)
+        ref = np.zeros((v, refs.shape[1]), np.int64)
+        cats = np.zeros((v, N_CATEGORIES), np.float32)
+        queries = np.asarray(facts["queries"], dtype=np.float32)
+        qv = np.zeros((v, queries.shape[1]), np.float32)
+        bits = np.arange(N_CATEGORIES, dtype=np.uint64)
+        cat_rows = ((np.asarray(facts["categories"], dtype=np.uint64)[:, None] >> bits) & np.uint64(1)).astype(np.float32)
+        for row, pw in enumerate(pws):
+            if int(pw) not in vocab:
+                continue
+            i = vocab.index(int(pw))
+            arch[i] = [number.get(int(c), 0) for c in own[row]]
+            ref[i] = [number.get(int(c), 0) for c in refs[row]]
+            cats[i] = cat_rows[row]
+            qv[i] = queries[row]
+        return TextFeatures(self.card, self.effect, self.effect_lookup, arch, ref, cats, qv, len(codes))
 
     def card_effect_mean(self) -> np.ndarray | None:
         """``[V, De]``: mean of each card's effect-string vectors (zero for cards without strings)."""
@@ -86,14 +131,20 @@ class TextFeatures:
         path = Path(path)
         has_card = all((path / f).is_file() for f in CARD_FILES)
         has_effect = all((path / f).is_file() for f in EFFECT_FILES)
-        if not (has_card or has_effect):
+        has_facts = (path / FACTS_FILE).is_file()
+        if not (has_card or has_effect or has_facts):
             return None
         arrays = {}
         if has_card:
             arrays |= {"card_vectors": np.load(path / CARD_FILES[0]), "card_passwords": np.load(path / CARD_FILES[1])}
         if has_effect:
             arrays |= {"effect_vectors": np.load(path / EFFECT_FILES[0]), "effect_keys": np.load(path / EFFECT_FILES[1])}
-        return cls.from_arrays(vocab, **arrays)
+        out = cls.from_arrays(vocab, **arrays)
+        if has_facts:
+            with np.load(path / FACTS_FILE) as f:
+                out = out.with_facts(vocab, {k: f[k] for k in ("passwords", "setcodes", "references", "categories",
+                                                                "queries")})  # fmt: skip
+        return out
 
     @classmethod
     def random(cls, vocab_size: int, card_dim: int, effect_dim: int, rng: np.random.Generator,

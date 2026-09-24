@@ -573,3 +573,58 @@ def test_trimming_keeps_masked_copies_inside_the_action_list(real_obs):
         with torch.no_grad():
             outs.append(net(batch).logits)
     assert torch.allclose(outs[1][mask], outs[0][mask], atol=1e-5) and (outs[1][~mask] == MASKED_LOGIT).all()
+
+
+# -- card facts (archetypes, references, categories, queries) ---------------------------
+
+
+def write_facts(path, passwords):
+    np.savez_compressed(path / "card_facts.npz", passwords=np.asarray(passwords, np.int64),
+                        setcodes=np.array([[0x10F2, 0x1, 0, 0], [0x0F2, 0, 0, 0], [0, 0, 0, 0]], np.int64),
+                        references=np.array([[0x10F2, 0], [0, 0], [0x5, 0x1]], np.int64),
+                        categories=np.array([1, 2 ** 63, 0], np.uint64),
+                        queries=np.array([[1, 0], [0, 1], [1, 1]], np.uint8), query_names=np.array(["a", "b"]))  # fmt: skip
+
+
+def test_card_facts_load_share_one_archetype_table(tmp_path):
+    vocab = CardVocab([89631139, 46986414, 14558127])  # indices 2, 3, 4
+    write_facts(tmp_path, [14558127, 89631139, 46986414])
+    t = TextFeatures.load(tmp_path, vocab)
+    assert t.card is None and t.has_facts and t.vocab_size == len(vocab)
+    # archetype part (low 12 bits): 0x0F2 (from 0x10F2, 0x0F2 and the sub-archetype reference 0x10F2), 0x001, 0x005
+    assert t.n_archetypes == 3
+    number = {0x001: 1, 0x005: 2, 0x0F2: 3}
+    assert list(t.archetypes[4]) == [number[0xF2], number[0x1], 0, 0] and list(t.archetypes[2]) == [number[0xF2], 0, 0, 0]
+    assert list(t.references[4]) == [number[0xF2], 0] and list(t.references[3]) == [number[0x5], number[0x1]]
+    assert t.categories[4, 0] == 1 and t.categories[2, 63] == 1 and not t.categories[3].any()
+    assert list(t.queries[3]) == [1, 1] and not t.archetypes[[0, 1]].any()  # padding / unknown: nothing
+
+
+def test_card_facts_views_and_id_dropout(tmp_path):
+    vocab_size = small().vocab_size
+    rng = np.random.default_rng(0)
+    passwords = list(range(1000, 1000 + vocab_size))
+    vocab = CardVocab(passwords[: vocab_size - 2])
+    np.savez_compressed(tmp_path / "card_facts.npz", passwords=np.asarray(passwords, np.int64),
+                        setcodes=rng.integers(0, 6, (vocab_size, 4)), references=rng.integers(0, 6, (vocab_size, 3)),
+                        categories=rng.integers(0, 2**40, vocab_size).astype(np.uint64),
+                        queries=rng.integers(0, 2, (vocab_size, 5)).astype(np.uint8), query_names=np.array(list("abcde")))  # fmt: skip
+    facts = TextFeatures.load(tmp_path, vocab)
+    cfg = small(id_dropout=0.5).with_text(facts)
+    assert (cfg.n_archetypes, cfg.n_reference_slots, cfg.n_queries, cfg.n_categories) == (5, 3, 5, 64)
+    torch.manual_seed(0)
+    net = PolicyNet(cfg, facts)
+    batch = random_batch(4)
+    net.eval()
+    a, b = net(batch).logits, net(batch).logits
+    assert torch.equal(a, b)  # no dropout in eval mode
+    net.train()
+    assert not torch.equal(net(batch).logits, a)  # ID dropout is on in training
+    net(batch).log_probs()[batch["action_mask"]].sum().backward()
+    for name in ("identity.archetype.weight", "identity.reference_proj.weight", "identity.category_proj.weight",
+                 "identity.query_proj.weight"):  # fmt: skip
+        assert dict(net.named_parameters())[name].grad.abs().sum() > 0, name
+    with pytest.raises(ValueError):
+        PolicyNet(cfg)  # facts configured but not supplied
+    off = small(card_facts=False).with_text(facts)
+    assert off.n_archetypes == 0 and not any("archetype" in n for n, _ in PolicyNet(off, facts).named_parameters())

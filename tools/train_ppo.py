@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--layers", type=int, default=1, help="board and history Transformer layers (default 1)")
     g.add_argument("--history", default="transformer", choices=("transformer", "lstm", "none"))
     g.add_argument("--no-id-embedding", action="store_true", help="drop the per-card ID embedding")
+    g.add_argument("--text-dir", default=None,
+                   help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)")
+    g.add_argument("--no-card-facts", action="store_true", help="ignore card_facts.npz in --text-dir")
+    g.add_argument("--no-text", action="store_true", help="ignore the text tables in --text-dir")
+    g.add_argument("--id-dropout", type=float, default=0.0, help="training: drop each card's ID embedding")
     g.add_argument("--separate-critic", action="store_true", help="critic gets its own trunk")
     g.add_argument("--no-privileged", action="store_true", help="non-privileged critic (ablation)")
     g = p.add_argument_group("PPO")
@@ -105,7 +110,8 @@ def config_from_args(args, decks: list[str]):
     from ygorl.train.trainer import TrainConfig
 
     net = {"d_model": args.d_model, "n_heads": 4, "board_layers": args.layers, "history_layers": args.layers,
-           "history": args.history, "id_embedding": not args.no_id_embedding}  # fmt: skip
+           "history": args.history, "id_embedding": not args.no_id_embedding, "card_facts": not args.no_card_facts,
+           "card_text": not args.no_text, "effect_text": not args.no_text, "id_dropout": args.id_dropout}  # fmt: skip
     ppo = PPOConfig(objective=args.objective, estimator=args.estimator, entropy_coef=args.entropy,
                     kl_ref_coef=args.kl_ref, reference_ema=args.ema, lr=args.lr, epochs=args.epochs,
                     minibatch_size=args.minibatch, kl_prior_coef=args.kl_prior,
@@ -113,6 +119,7 @@ def config_from_args(args, decks: list[str]):
     return TrainConfig(decks=tuple(decks), pairings=args.pairings, env=args.env, max_turns=args.max_turns,
                        max_decisions=args.max_decisions, num_envs=args.envs, env_threads=args.env_threads,
                        steps=args.steps, event_length=args.event_length, skip_forced=not args.keep_forced, net=net,
+                       text_dir=args.text_dir,
                        privileged_critic=not args.no_privileged, shared_backbone=not args.separate_critic, ppo=ppo,
                        selfplay_fraction=args.selfplay_fraction, pool_size=args.pool_size,
                        pin_opponents=tuple(args.pin), pinned_share=args.pinned_share,

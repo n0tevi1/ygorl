@@ -62,6 +62,35 @@ T5.2 离线生成、本仓库不下载模型。目录内（例如 `environments/
 `card_text_dim` / `effect_text_dim`（0 = 关）。文本表是**非持久 buffer**，不进 `state_dict`（检查点不必带上百 MB 的冻结表）；
 从检查点重建时用同一目录重新 `load` 并传给 `PolicyNet`，宽度或词表大小不符直接报错。`TextFeatures.random` 生成随机表供测试。
 
+## 卡片事实（实验，默认关闭）
+
+动机：只在 10 套牌上训练的策略，对没见过的卡几乎只剩结构化列可用（ID 嵌入未训练，范数约为初始化水平；trace 审查），
+泛化差（对 Greedy 0.83 → 0.53）。卡片表里原本没有系列（setcode），而 T5.3 从 Lua 脚本挖出的效果语义也没进网络。
+
+`tools/build_card_facts.py OUT_DIR` 写 `OUT_DIR/card_facts.npz`（按卡密；与文本表放同一目录，`TextFeatures.load` 一并读、按词表对齐）：
+
+| 数组 | 形状 | 含义 |
+|------|------|------|
+| `setcodes` | `[N, 4]` | cdb 系列码 |
+| `references` | `[N, 8]` | 脚本引用的系列：检索 / 特召等过滤器里的 `IsSetCard`、`listed_series`、素材系列 |
+| `categories` | `[N]` uint64 | cdb 效果类别位 |
+| `queries` / `query_names` | `[N, Q]` / `[Q]` | 脚本「从哪里拿什么」的（动作, 区域）对（`ygorl.build.scripts`，至少 20 张卡用到的，Q = 46） |
+
+系列码只取系列部分（低 12 位），在成员与引用的并集上编号 1..（0 = 无）。数据库 14,755 张卡：8,235 张有系列、5,740 张引用了系列、7,953 张有查询；490 个系列。
+
+网络（`CardIdentity`，`NetConfig.card_facts` 开关，维度由 `with_text` 从表里填）：卡片身份再加四项——
+系列成员嵌入之和、引用系列嵌入之和经一层投影（**与成员共用一张系列表**，「检索 X 系列」与「是 X 系列」在同一空间）、
+类别多热的线性投影、查询多热的线性投影。`id_dropout`（训练时按概率把每张卡的 ID 嵌入项置零）逼网络用可泛化的视角。
+热启动（`init_from`）允许新配置只多出卡片视角（文本、事实、ID 丢弃）：旧权重照载，新模块从零开始（`CARD_VIEW_FIELDS`）。
+检查点不带这些表，加载时按训练配置的 `text_dir` 重读。命令行：`tools/train_ppo.py --text-dir DIR [--no-text] [--no-card-facts] [--id-dropout P]`。
+
+## 卡片表示探针
+
+`tools/probe_card_embeddings.py TEXT_DIR...`：给每张卡（去掉异画）贴上系列、cdb 效果类别、脚本（动作, 区域）三组标签，
+对每种表示（网络已有的结构化列、每个文本模型的「卡文本 ⊕ 效果串均值」、两者拼接）各训一个线性多标签探针，报宏平均 ROC-AUC；
+另报同系列近邻比例（余弦 top-10）。`--split archetype`（默认）按系列整体划分训练 / 测试——新系列才是泛化要面对的（按卡划分时同系列兄弟卡会泄露）；
+这时「系列」一项没有意义（测试集的系列在训练里没出现过），只看类别与查询。结果见 [benchmarks.md](benchmarks.md)「卡片表示」。
+
 ## 历史模块（T4b.2）
 
 两种骨干实现同一接口 `HistoryEncoder`：

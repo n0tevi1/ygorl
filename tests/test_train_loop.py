@@ -525,3 +525,49 @@ def test_eval_pairings_is_a_fixed_sample_of_the_training_pairings(tmp_path):
     everything = Trainer(_small_cfg(pairings="all"), tmp_path / "c", log=None)
     assert a == b and len(a) == 2 and set(a) <= set(everything.schedule.decks.pairs)
     assert everything.eval_pairings() == list(everything.schedule.decks.pairs)
+
+
+def test_warm_start_may_add_card_views(tmp_path, vocab):
+    """init_from a checkpoint without card facts / ID dropout: the old weights load, the new view modules start
+    fresh; any other network difference is still an error."""
+    from ygorl.nets.text import TextFeatures
+
+    base = Trainer(_small_cfg(), tmp_path / "base", log=None)
+    base.step()
+    ckpt = base.save()
+    feat = tmp_path / "features"
+    feat.mkdir()
+    pws = [vocab.password(i) for i in range(2, len(vocab))]
+    n = len(pws)
+    np.savez_compressed(feat / "card_facts.npz", passwords=np.asarray(pws, np.int64),
+                        setcodes=np.tile([[0x1, 0, 0, 0]], (n, 1)), references=np.zeros((n, 2), np.int64),
+                        categories=np.zeros(n, np.uint64), queries=np.zeros((n, 3), np.uint8),
+                        query_names=np.array(["a", "b", "c"]))  # fmt: skip
+    assert TextFeatures.load(feat, vocab).has_facts
+    grown = replace(_small_cfg(), init_from=str(ckpt), text_dir=str(feat), net={**TINY, "id_dropout": 0.2})
+    trainer = Trainer(grown, tmp_path / "grown", log=None)
+    assert trainer.net_config.n_archetypes == 1 and trainer.net_config.id_dropout == 0.2
+    old = dict(base.model.actor.named_parameters())
+    for name, p in trainer.model.actor.named_parameters():
+        if name in old:
+            assert torch.equal(p, old[name]), name
+    assert trainer.step()["rows"] == 16
+    with pytest.raises(ValueError):
+        Trainer(replace(grown, net={**TINY, "d_model": 32}), tmp_path / "bad", log=None)
+
+
+def test_a_checkpoint_with_card_facts_reloads_them(tmp_path, vocab):
+    from ygorl.train.checkpoint import load_actor
+
+    feat = tmp_path / "features"
+    feat.mkdir()
+    pws = [vocab.password(i) for i in range(2, len(vocab))]
+    n = len(pws)
+    np.savez_compressed(feat / "card_facts.npz", passwords=np.asarray(pws, np.int64),
+                        setcodes=np.tile([[0x1, 0, 0, 0]], (n, 1)), references=np.zeros((n, 2), np.int64),
+                        categories=np.zeros(n, np.uint64), queries=np.zeros((n, 3), np.uint8),
+                        query_names=np.array(["a", "b", "c"]))  # fmt: skip
+    trainer = Trainer(replace(_small_cfg(), text_dir=str(feat)), tmp_path / "run", log=None)
+    path = trainer.save()
+    pol = load_actor(path)  # the run's text_dir comes from its config
+    assert pol.net_config.n_archetypes == 1 and pol.net.identity.archetype is not None
