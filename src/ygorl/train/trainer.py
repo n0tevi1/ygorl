@@ -15,6 +15,7 @@ Run directory: ``config.json``, ``vocab.json`` (``CardVocab.save``), ``metrics.j
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import statistics
 import time
@@ -33,6 +34,7 @@ from ygorl.env.encoded import EncodedVecEnv
 from ygorl.eval.arena import derive_seed
 from ygorl.nets.actor_critic import ActorCritic
 from ygorl.nets.config import NetConfig
+from ygorl.nets.gemm import use_split_k
 from ygorl.nets.text import TextFeatures
 from ygorl.train.checkpoint import (
     load_actor,
@@ -84,6 +86,7 @@ class TrainConfig:
     eval_workers: int = 2
     eval_greedy_policy: bool = False  # evaluate the argmax policy (policy-greedy) instead of sampling
     seed: int = 0
+    device: str = "cpu"  # PyTorch device of the learner and the acting network ("cuda" also covers ROCm)
     torch_threads: int = 4  # during updates
     collect_threads: int = 2  # PyTorch threads while collecting (the env threads share the cores)
     bc_prior: str | None = None  # checkpoint of a BC policy: KL prior (ppo.kl_prior_coef)
@@ -139,6 +142,9 @@ class Trainer:
                             else DuelConfig(**overrides))  # fmt: skip
         self.decks = [load_ydk(p) for p in cfg.decks]
         self.cards = default_cards()
+        self.device = torch.device(cfg.device)
+        if self.device.type == "cuda" and torch.version.hip:  # fused attention with a mask (docs/benchmarks.md)
+            os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
         init = load_actor(cfg.init_from, cfg.text_dir) if cfg.init_from and state is None else None
         if state is not None:
             self.vocab = vocab_from_text(state["vocab"])
@@ -162,7 +168,7 @@ class Trainer:
             if vocab_passwords(loaded.vocab) != vocab_passwords(self.vocab):
                 raise ValueError(f"{cfg.bc_prior}: its card vocab differs from the run's; the prior would read "
                                  "other cards from the same indices")  # fmt: skip
-            prior = loaded.net
+            prior = loaded.net.to(self.device)
         self.learner = PPOLearner(self.model, cfg.ppo, prior)
         self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share)
         for path in cfg.pin_opponents:
@@ -172,14 +178,15 @@ class Trainer:
             if pinned.event_length != cfg.event_length:
                 raise ValueError(f"{path}: trained with {pinned.event_length} event tokens, the run uses "
                                  f"{cfg.event_length} (pinned opponent)")  # fmt: skip
-            self.pool.pin(pinned.net, tag=f"pinned:{Path(path).name}")
+            self.pool.pin(pinned.net.to(self.device), tag=f"pinned:{Path(path).name}")
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
                                          selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced)  # fmt: skip
         self.collector = RolloutCollector(self.env, self.model, self.schedule, cfg.steps, opponents=self.schedule.opponent,
-                                          seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch)  # fmt: skip
+                                          seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
+                                          device=self.device)  # fmt: skip
         self.counters = {"updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0}  # fmt: skip
         self.best = {"score": None, "update": None}
@@ -189,8 +196,9 @@ class Trainer:
 
     def _new_model(self) -> ActorCritic:
         c = self.cfg
-        return ActorCritic(self.net_config, self._text, privileged=c.privileged_critic, privileged_dim=c.privileged_dim,
+        model = ActorCritic(self.net_config, self._text, privileged=c.privileged_critic, privileged_dim=c.privileged_dim,
                            critic_hidden=c.critic_hidden, shared_backbone=c.shared_backbone)  # fmt: skip
+        return use_split_k(model).to(self.device)
 
     # -- persistence ----------------------------------------------------------------------------------
     @classmethod

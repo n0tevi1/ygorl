@@ -83,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--keep-best-by", default="greedy")
     g.add_argument("--eval-workers", type=int, default=2)
     g.add_argument("--seed", type=int, default=0)
+    g.add_argument("--device", default="cpu", help="PyTorch device of the learner and acting network (cpu, cuda)")
     g.add_argument("--torch-threads", type=int, default=4)
     g.add_argument("--collect-threads", type=int, default=2)
     return p
@@ -107,7 +108,7 @@ def config_from_args(args, decks: list[str]):
                        snapshot_every=args.snapshot_every, checkpoint_every=args.checkpoint_every,
                        eval_every=args.eval_every, eval_pairs=args.eval_pairs,
                        eval_opponents=tuple(s for s in args.eval_opponents.split(",") if s),
-                       keep_best_by=args.keep_best_by, eval_workers=args.eval_workers, seed=args.seed,
+                       keep_best_by=args.keep_best_by, eval_workers=args.eval_workers, seed=args.seed, device=args.device,
                        torch_threads=args.torch_threads, collect_threads=args.collect_threads,
                        bc_prior=args.bc_prior, init_from=args.init_from)  # fmt: skip
 

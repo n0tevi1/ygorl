@@ -191,7 +191,7 @@ def _advantage_by_kind(obs, actions: Tensor, adv: Tensor) -> dict[str, float]:
         return {}
     from ygorl.env.encoding import ACTION_KINDS
 
-    rows = torch.arange(actions.shape[0])
+    rows = torch.arange(actions.shape[0], device=actions.device)
     kind = obs["actions"][rows, actions, 0].long() - 1
     out: dict[str, float] = {}
     for k in torch.unique(kind).tolist():
@@ -231,7 +231,7 @@ class PPOLearner:
         logp, ref = torch.log_softmax(logits, -1), torch.log_softmax(ref_logits, -1)
         per_row = _masked_mean_rows(logp.exp() * (logp - ref), mask)
         if rows is not None:
-            per_row = torch.where(rows, per_row, torch.zeros((), dtype=per_row.dtype))
+            per_row = torch.where(rows, per_row, torch.zeros((), dtype=per_row.dtype, device=per_row.device))
         return per_row.mean()
 
     @staticmethod
@@ -253,7 +253,7 @@ class PPOLearner:
     @torch.no_grad()
     def _score(self, module: nn.Module, obs, n: int) -> Tensor:
         chunk = max(1, self.cfg.minibatch_size)
-        out = [_logits_of(module, _index(obs, torch.arange(i, min(i + chunk, n)))).float() for i in range(0, n, chunk)]
+        out = [_logits_of(module, _index(obs, slice(i, min(i + chunk, n)))).float() for i in range(0, n, chunk)]
         return torch.cat(out)
 
     # -- update --------------------------------------------------------------------------------------
@@ -268,16 +268,17 @@ class PPOLearner:
 
     def update(self, ro: Rollout) -> dict[str, float]:
         cfg, model = self.cfg, self.model
-        est = self.targets(ro)
-        adv = self.objective.prepare(ro, est).reshape(-1).float()
-        q_targets = est.q_targets.reshape(-1).float()
-        v_targets = est.v_targets.reshape(-1).float()
-        actions = ro.actions.reshape(-1)
-        old_logp = ro.log_probs.reshape(-1)
+        est = self.targets(ro)  # on the CPU with the rollout's per-row data; the batch tensors go to the model
+        dev = next(model.parameters()).device
+        adv = self.objective.prepare(ro, est).reshape(-1).float().to(dev)
+        q_targets = est.q_targets.reshape(-1).float().to(dev)
+        v_targets = est.v_targets.reshape(-1).float().to(dev)
+        actions = ro.actions.reshape(-1).to(dev)
+        old_logp = ro.log_probs.reshape(-1).to(dev)
         # Cut the rollout's padding once (nets.policy.trim_padding): every minibatch then gathers from the smaller
         # tensors, and logits / masks only span the rollout's longest action list (same values, see tests).
         obs = trim_padding(ro.obs)
-        mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]]
+        mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]].to(dev)
         n = actions.shape[0]
         ref_logits = self._score(self.reference, obs, n) if cfg.kl_ref_coef > 0 else None
         prior_logits = self._score(self.prior, obs, n) if self.prior is not None and cfg.kl_prior_coef > 0 else None
@@ -290,7 +291,7 @@ class PPOLearner:
         for _ in range(cfg.epochs):
             if stopped:
                 break
-            perm = torch.randperm(n)
+            perm = torch.randperm(n, device=dev)
             for start in range(0, n, cfg.minibatch_size):
                 idx = perm[start : start + cfg.minibatch_size]
                 out = model(_index(obs, idx), _index(ro.privileged, idx))
