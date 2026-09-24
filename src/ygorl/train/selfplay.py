@@ -39,21 +39,41 @@ class Snapshot:
     model: nn.Module
     tag: str = "snapshot"
     score: float | None = None
+    games: int = 0  # pool games of the learner against this snapshot
+    learner_points: float = 0.0  # the learner's points in them (1 / 0.5 / 0)
+
+    @property
+    def learner_win_rate(self) -> float:
+        """The learner's score against this snapshot, with one prior game at 0.5 (0.5 before any game)."""
+        return (self.learner_points + 0.5) / (self.games + 1)
 
 
 class SnapshotPool:
     """Frozen past policies. Regular snapshots are evicted oldest first beyond ``capacity``; the keep-best one and
     *pinned* opponents (fixed policies from the configuration, e.g. a BC checkpoint) stay. Pinned opponents get
     ``pinned_share`` of the draws together (the rest uniform over the others); they are not part of
-    :meth:`state_dict` — the configuration pins them again, with the same negative ids, when a run resumes."""
+    :meth:`state_dict` — the configuration pins them again, with the same negative ids, when a run resumes.
 
-    def __init__(self, capacity: int = 8, pinned_share: float = 0.5) -> None:
+    ``sampling``: ``"uniform"`` over the regular snapshots, or ``"pfsp"`` (prioritized fictitious self-play,
+    AlphaStar's "hard" weighting): snapshot ``s`` is drawn with weight ``(1 - p_s) ** pfsp_power``, ``p_s`` the
+    learner's score against it (:meth:`record`; 0.5 before any game), so the opponents it loses to come up more."""
+
+    SAMPLING = ("uniform", "pfsp")
+
+    def __init__(self, capacity: int = 8, pinned_share: float = 0.5, sampling: str = "uniform",
+                 pfsp_power: float = 2.0) -> None:  # fmt: skip
         if capacity < 1:
             raise ValueError("capacity must be at least 1")
         if not 0 <= pinned_share <= 1:
             raise ValueError("pinned_share must be in [0, 1]")
+        if sampling not in self.SAMPLING:
+            raise ValueError(f"sampling must be one of {self.SAMPLING}, got {sampling!r}")
+        if pfsp_power < 0:
+            raise ValueError("pfsp_power must be >= 0")
         self.capacity = capacity
         self.pinned_share = pinned_share
+        self.sampling = sampling
+        self.pfsp_power = pfsp_power
         self._snaps: OrderedDict[int, Snapshot] = OrderedDict()
         self._pinned: OrderedDict[int, Snapshot] = OrderedDict()
         self._next_id = 0
@@ -102,7 +122,19 @@ class SnapshotPool:
         pinned, regular = list(self._pinned), list(self._snaps)
         if pinned and (not regular or rng.random() < self.pinned_share):
             return pinned[int(rng.integers(len(pinned)))]
-        return None if not regular else regular[int(rng.integers(len(regular)))]
+        if not regular:
+            return None
+        if self.sampling == "uniform":
+            return regular[int(rng.integers(len(regular)))]
+        w = np.array([(1.0 - self._snaps[i].learner_win_rate) ** self.pfsp_power for i in regular]) + 1e-6
+        return regular[int(rng.choice(len(regular), p=w / w.sum()))]
+
+    def record(self, sid: int, learner_score: float) -> None:
+        """One finished pool game against snapshot ``sid`` (ignored if it has left the pool)."""
+        snap = (self._pinned if sid < 0 else self._snaps).get(sid)
+        if snap is not None:
+            snap.games += 1
+            snap.learner_points += learner_score
 
     def get(self, sid: int) -> nn.Module:
         return (self._pinned if sid < 0 else self._snaps)[sid].model
@@ -111,7 +143,8 @@ class SnapshotPool:
         return [*self._pinned, *self._snaps]
 
     def info(self) -> list[dict]:
-        return [{"id": s.id, "update": s.update, "tag": s.tag, "score": s.score}
+        return [{"id": s.id, "update": s.update, "tag": s.tag, "score": s.score, "games": s.games,
+                 "learner_win_rate": round(s.learner_win_rate, 3)}
                 for s in (*self._pinned.values(), *self._snaps.values())]  # fmt: skip
 
     def __len__(self) -> int:
@@ -119,8 +152,9 @@ class SnapshotPool:
 
     def state_dict(self) -> dict:
         return {"capacity": self.capacity, "next_id": self._next_id, "best_id": self.best_id,
-                "snapshots": [{"id": s.id, "update": s.update, "tag": s.tag, "score": s.score,
-                               "state": s.model.state_dict()} for s in self._snaps.values()]}  # fmt: skip
+                "snapshots": [{"id": s.id, "update": s.update, "tag": s.tag, "score": s.score, "games": s.games,
+                               "learner_points": s.learner_points, "state": s.model.state_dict()}
+                              for s in self._snaps.values()]}  # fmt: skip
 
     def load_state_dict(self, state: dict, factory: Callable[[], nn.Module]) -> None:
         """Rebuild the snapshots with ``factory()`` (a fresh model of the same architecture)."""
@@ -129,7 +163,8 @@ class SnapshotPool:
         for s in state["snapshots"]:
             model = factory()
             model.load_state_dict(s["state"])
-            self._snaps[int(s["id"])] = Snapshot(int(s["id"]), int(s["update"]), self._freeze(model), s["tag"], s["score"])
+            self._snaps[int(s["id"])] = Snapshot(int(s["id"]), int(s["update"]), self._freeze(model), s["tag"], s["score"],
+                                                 int(s.get("games", 0)), float(s.get("learner_points", 0.0)))
         self._next_id = int(state["next_id"])
         self.best_id = state["best_id"]
 

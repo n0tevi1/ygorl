@@ -278,6 +278,10 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 - **快照池**（`SnapshotPool`）：每 `snapshot_every` 次更新冻结一份当前模型，超过 `pool_size` 逐出最旧的；
   **keep-best**：每 `eval_every` 次更新评估一次，对 `keep_best_by`（默认 greedy）的胜率创新高就把该 checkpoint 复制为
   `best.pt`，并把这份模型钉在池里（不被逐出，直到更好的替换它）。
+- **PFSP 与入池门槛**（#61，默认关闭）：池记录学习方对每个快照的结果（只计非截断的池局，`learner_win_rate` 带一局 0.5 的先验）。
+  `pool_sampling="pfsp"`（`--pool-sampling pfsp`）按 `(1 − p) ** pfsp_power`（默认 2，AlphaStar 的 hard 权重）抽快照，学习方打不过的对手更常出现；
+  `snapshot_min_win_rate`（`--snapshot-min-win-rate 0.55`，ygo-agent 的 OSFP）让到期的快照只在「上次入池以来学习方在池局里的得分 > 门槛、且至少
+  `snapshot_min_games` 局」时入池，否则跳过并计入 `snapshots_skipped`；池空时总是入池。入池以来的窗口（`league`）随 checkpoint 保存。
 - **固定对手**（`TrainConfig.pin_opponents` / `--pin CKPT`，可重复）：把策略检查点（例如 BC 热启动用的那份）或 PPO checkpoint 整局钉在池里，
   不被逐出、不进 checkpoint（续训时按配置重新钉上，id 为 −1、−2……）；池局里固定对手合占 `pinned_share`（默认 0.5），其余均分给快照。
   词表与事件窗口长度必须与本次运行相同。用意：自博弈早期的历史快照都接近随机，固定一个会进战斗、会展开的对手让信号更有用
