@@ -34,6 +34,7 @@
   命令行加载环境时一并用卡片数据库检查它的全部 meta 卡组（`load_environment(..., cards=...)`），不合法的 meta 卡组让任何命令以退出码 2
   拒绝该环境，错误里带 meta 卡组文件路径与违反的规则；环境清单的其它校验（LP、起手、类型等）见 [environments.md](environments.md)。
 - **`--max-turns N`**（`duel` / `arena` / `matrix`）：回合上限，到达时 LP 高者胜、相等为平局（`reason=turn_limit`），默认 200。
+  决策数上限（`DuelConfig.max_decisions`，`reason=decision_limit`）只用来截断死循环，**记为平局**、不按 LP 判胜（2026-09-24 起；此前按 LP，循环中领先的一方会被判胜）。
 - **输出文件**的父目录自动创建。
 - **退出码**：0 成功；1 结果不健康（`replay --verify` 未到达录制的终局；`arena` / `matrix` 有对局抛异常，`arena` 另含 retry、未知消息）；
   2 用法或输入错误，打印为 `ygorl <命令>: error: ...`，不打印 traceback：参数不合法、文件不存在、未知 agent、环境不符、
@@ -80,7 +81,7 @@ $ uv run ygorl replay out/game.json.gz --verify --export-yrpx out/again.yrpX
 replay     out/game.json.gz (ygorl-replay v1, ocgcore 11.0)
 environment none
 seed       1 (a moves first)
-rules      flags 0x2e800, lp 8000, hand 5, draw 1, max_turns 200, max_decisions 20000, curriculum full
+rules      flags 0x2e800, lp 8000, hand 5, draw 1, max_turns 200, max_decisions 6000, curriculum full
 deck_a     snake_eye: 40 main, 15 extra, 0 side
 deck_b     kashtira: 40 main, 15 extra, 0 side
 responses  493 (0 agent steps recorded)

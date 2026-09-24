@@ -68,13 +68,24 @@ def test_first_player_swap(db):
     assert b.points[0].player == 0  # engine player 0 always moves first
 
 
-def test_step_limit_decides_by_lp(db):
-    result = Duel(8, None, DECKS["branded_despia"], DECKS["tearlaments"], cards=db,
-                  config=DuelConfig(max_decisions=20)).run(RandomAgent(0), RandomAgent(0))  # fmt: skip
-    assert result.reason == "decision_limit"
-    assert result.decisions <= 20
-    lp_a, lp_b = result.lp
-    assert result.winner == (None if lp_a == lp_b else (0 if lp_a > lp_b else 1))
+def test_decision_limit_is_a_draw_whatever_the_lp(db):
+    """The decision limit only stops loops: never a win by LP (the turn limit is the LP rule), on both hosts."""
+    from ygorl.env import GameSpec
+    from ygorl.env.encoded import EncodedVecEnv, chooser
+
+    cfg = DuelConfig(max_decisions=400)
+    results = []
+    for seed in range(8, 14):
+        r = Duel(seed, None, DECKS["branded_despia"], DECKS["tearlaments"], cards=db, config=cfg).run(
+            RandomAgent(0), RandomAgent(0))  # fmt: skip
+        results.append(r)
+        if r.reason == "decision_limit":
+            assert r.winner is None and r.decisions <= 400
+    assert any(r.reason == "decision_limit" and r.lp[0] != r.lp[1] for r in results)
+    specs = [GameSpec(seed=s, deck_a=DECKS["branded_despia"], deck_b=DECKS["tearlaments"], config=cfg) for s in range(8, 14)]
+    for res in EncodedVecEnv(2, 1, cards=db).play(specs, chooser):
+        if res["reason"] == "decision_limit":
+            assert res["winner"] is None
 
 
 def test_turn_limit(db):

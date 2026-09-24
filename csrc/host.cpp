@@ -946,6 +946,11 @@ void Tracker::on_buffer(const std::string& buf, int status) {
     state_ = std::make_unique<DecisionState>(*decision, cards_);
 }
 
+Tracker::ActKey Tracker::act_key(int player, const Action& a) {
+    if (!a.has_card) return {player, false, 0, 0, 0, 0, a.description};
+    return {player, true, a.card.code, a.card.loc.controller, a.card.loc.location, a.card.loc.sequence, a.description};
+}
+
 std::vector<size_t> Tracker::undo() const {
     std::vector<size_t> out;
     if (!state_) return out;
@@ -959,6 +964,12 @@ std::vector<size_t> Tracker::undo() const {
                    ((a.kind == SELECT && toggle_->kind == UNSELECT) || (a.kind == UNSELECT && toggle_->kind == SELECT)) &&
                    same_card(a.card, toggle_->code, toggle_->loc)) {
             out.push_back(i);  // reverses the previous select / unselect
+        } else if (is_menu(d.type) && a.kind == SHUFFLE) {
+            out.push_back(i);  // reorders the hand, changes nothing else
+        } else if (is_menu(d.type) && a.kind == ACTIVATE && activations_turn_ == turn_) {
+            auto it = activations_.find(act_key(d.player, a));
+            if (it != activations_.end() && it->second >= MAX_MENU_ACTIVATIONS)
+                out.push_back(i);  // the same effect again: repeated activation limit
         }
     }
     if (out.size() >= acts.size()) out.clear();
@@ -986,7 +997,16 @@ const std::string* Tracker::act(size_t index) {
     const Action a = index < acts->size() ? (*acts)[index] : Action{};
     state_->step(index);  // throws out_of_range before any bookkeeping
     ++decisions_;
-    if (is_menu(d.type)) inside_ = d.player;
+    if (is_menu(d.type)) {
+        inside_ = d.player;
+        if (a.kind == ACTIVATE) {
+            if (activations_turn_ != turn_) {
+                activations_.clear();
+                activations_turn_ = turn_;
+            }
+            ++activations_[act_key(d.player, a)];
+        }
+    }
     toggle_.reset();
     if (d.type == MSG_SELECT_UNSELECT_CARD && (a.kind == SELECT || a.kind == UNSELECT) && a.has_card)
         toggle_ = Toggle{d.player, a.kind, a.card.code, a.card.loc};
@@ -1000,7 +1020,8 @@ const std::string* Tracker::act(size_t index) {
 
 int Tracker::winner() const {
     if (reason_ == "turn_limit" || reason_ == "decision_limit" || reason_ == "error") {
-        if (reason_ == "error" || lp_[0] == lp_[1]) return -1;
+        // the turn limit is a rule (the higher LP wins); the decision limit only stops a loop: a draw
+        if (reason_ != "turn_limit" || lp_[0] == lp_[1]) return -1;
         return lp_[0] > lp_[1] ? 0 : 1;
     }
     return engine_winner_;
