@@ -72,3 +72,20 @@ def test_trainer_step_on_gpu(tmp_path):
     resumed = Trainer.resume(path, tmp_path / "resumed", log=None)
     assert next(resumed.model.parameters()).is_cuda
     assert resumed.step()["update"] == 2
+
+
+@rocm
+def test_overlapped_bf16_training_on_gpu(tmp_path):
+    from pathlib import Path
+
+    from ygorl.train.ppo import PPOConfig
+    from ygorl.train.trainer import TrainConfig, Trainer
+
+    decks = tuple(str(p) for p in sorted((Path(__file__).parent / "decks").glob("*.ydk"))[:2])
+    cfg = TrainConfig(decks=decks, num_envs=4, steps=8, device="cuda", overlap_collect=True, bf16=True,
+                      snapshot_every=1, checkpoint_every=0, eval_every=0, ppo=PPOConfig(epochs=1, minibatch_size=16))  # fmt: skip
+    trainer = Trainer(cfg, tmp_path, log=None)
+    assert trainer._stream is not None  # noqa: SLF001
+    records = [trainer.step() for _ in range(3)]
+    assert [r["update"] for r in records] == [1, 2, 3] and all(r["rows"] == 32 for r in records)
+    assert all(torch.isfinite(torch.tensor(r["loss"])) for r in records)

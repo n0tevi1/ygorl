@@ -3,6 +3,7 @@ and the ``policy:<checkpoint>`` agent (lockstep C++ host) on the arena / duel pa
 
 import importlib.util
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -445,3 +446,27 @@ def test_pinned_opponents_join_the_pool_and_must_match_the_run(run, tmp_path):
                         CardVocab(passwords[1:] + passwords[:1]), event_length=16)  # fmt: skip
     with pytest.raises(ValueError, match="vocab"):
         Trainer(_small_cfg(pin_opponents=(str(other),)), tmp_path / "c", log=None)
+
+
+def _params(module):
+    return [p.detach().clone() for p in module.parameters()]
+
+
+def test_overlapped_collection_acts_with_the_weights_the_update_started_from(tmp_path):
+    """overlap_collect: while update k runs, the next rollout is collected with a copy of the weights before update k;
+    league bookkeeping (snapshots) between steps still works and every step trains on a full rollout."""
+    cfg = replace(_small_cfg(overlap_collect=True, selfplay_fraction=0.5), snapshot_every=1)
+    trainer = Trainer(cfg, tmp_path, log=None)
+    assert trainer.acting is not trainer.model and trainer.collector.model is trainer.acting
+    before = _params(trainer.model)
+    trainer.step()
+    after_first = _params(trainer.model)
+    assert all(torch.equal(a, b) for a, b in zip(_params(trainer.acting), before))
+    assert not all(torch.equal(a, b) for a, b in zip(after_first, before))
+    trainer.train(max_updates=1)
+    start = _params(trainer.model)
+    trainer.step()
+    assert all(torch.equal(a, b) for a, b in zip(_params(trainer.acting), start))
+    metrics = [json.loads(line) for line in (tmp_path / "metrics.jsonl").read_text().splitlines()]
+    assert [m["update"] for m in metrics] == [1, 2, 3] and all(m["rows"] == 16 for m in metrics)
+    assert len(trainer.pool) > 0

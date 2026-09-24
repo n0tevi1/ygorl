@@ -36,6 +36,9 @@ def main() -> None:
     p.add_argument("--epochs", type=int, default=4)
     p.add_argument("--minibatch", type=int, default=256)
     p.add_argument("--no-target-kl", action="store_true", help="always run every epoch (fixed update cost)")
+    p.add_argument("--overlap", action="store_true",
+                   help="experimental: collect the next rollout while updating (one update stale)")
+    p.add_argument("--bf16", action="store_true", help="experimental: bf16 autocast on a GPU")
     p.add_argument("--json", type=Path, default=None, help="append the summary as one JSON line")
     args = p.parse_args()
 
@@ -48,7 +51,8 @@ def main() -> None:
     cfg = TrainConfig(decks=tuple(decks), num_envs=args.envs, steps=args.steps, min_batch=args.min_batch,
                       env_threads=args.env_threads, collect_threads=args.collect_threads,
                       torch_threads=args.torch_threads, event_length=args.event_length, net=net, ppo=ppo,
-                      device=args.device, snapshot_every=0, checkpoint_every=0, eval_every=0)  # fmt: skip
+                      device=args.device, overlap_collect=args.overlap, bf16=args.bf16, snapshot_every=0,
+                      checkpoint_every=0, eval_every=0)  # fmt: skip
     records = []
     with tempfile.TemporaryDirectory() as tmp:
         trainer = Trainer(cfg, tmp, log=None)
@@ -65,7 +69,7 @@ def main() -> None:
         return round(statistics.fmean(r[key] for r in kept), 3)
 
     summary = {"device": args.device, "envs": args.envs, "steps": args.steps, "env_threads": args.env_threads,
-               "collect_threads": args.collect_threads, "torch_threads": args.torch_threads, "d_model": args.d_model,
+               "collect_threads": args.collect_threads, "overlap": args.overlap, "bf16": args.bf16, "torch_threads": args.torch_threads, "d_model": args.d_model,
                "layers": args.layers, "epochs": args.epochs, "minibatch": args.minibatch, "rows": kept[0]["rows"],
                "collect_s": mean("collect_s"), "update_s": mean("update_s"), "minibatches": mean("minibatches"),
                "decisions_per_s": round(mean("decisions_per_s")),

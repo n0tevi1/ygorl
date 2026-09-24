@@ -64,6 +64,9 @@ Python 运行时依赖写在 `pyproject.toml`、锁定在 `uv.lock`，`uv sync` 
 [nashpy](https://github.com/drvinceknight/Nashpy)（连带 scipy、networkx 等）用于对局矩阵的 Nash 均衡（`ygorl.eval.matchup`）。
 策略训练（M4，`ygorl.nets` / `ygorl.train`）另需 PyTorch，放在可选依赖组 `train` 里：`uv sync --extra train`
 （从 PyPI 安装 Linux 版 torch，自带 CUDA 运行库，安装后约 5 GB；只跑引擎、评估与组牌不需要它，相关测试在未安装时自动跳过）。
+AMD GPU（ROCm，例如 Ryzen AI Max+ 395 的 Radeon 8060S 核显）：`uv sync --extra train` 之后换成同版本的 ROCm 轮子
+`uv pip install "torch==<uv.lock 中的版本>" --index-url https://download.pytorch.org/whl/rocm<系统 ROCm 版本>`（例如 `rocm7.2`），
+之后用 `uv run --no-sync` 运行，否则 `uv run` 会按锁文件换回 PyPI 版；训练加 `--device cuda`（ROCm 也叫 `cuda`，见 [docs/training.md](docs/training.md)）。
 开发工具在 `dev` 依赖组（`uv sync` 默认安装）：pytest（单测）、ruff（lint，`uv run ruff check src tests tools`）。
 个别工具另有系统依赖：`tools/tsan/check.sh` 需要 ninja、GCC 的 libtsan 与 `setarch`（util-linux）；`tools/check_ygoprodeck.py` 需要能访问
 YGOPRODECK API 的网络；`tools/crosscheck_banlist.py` 需要能访问 YGOPRODECK 与 Yugipedia 的网络（`--from` 离线重跑）。CI 与云端会话 hook 另装 ccache 以加速重编。

@@ -84,6 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--eval-workers", type=int, default=2)
     g.add_argument("--seed", type=int, default=0)
     g.add_argument("--device", default="cpu", help="PyTorch device of the learner and acting network (cpu, cuda)")
+    g.add_argument("--overlap", action="store_true",
+                   help="experimental: collect the next rollout while updating (one update stale)")
+    g.add_argument("--bf16", action="store_true", help="experimental: bf16 autocast on a GPU")
     g.add_argument("--torch-threads", type=int, default=4)
     g.add_argument("--collect-threads", type=int, default=2)
     return p

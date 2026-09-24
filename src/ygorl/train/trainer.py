@@ -14,6 +14,7 @@ Run directory: ``config.json``, ``vocab.json`` (``CardVocab.save``), ``metrics.j
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import shutil
@@ -21,6 +22,7 @@ import statistics
 import time
 from collections import Counter
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 
@@ -87,6 +89,10 @@ class TrainConfig:
     eval_greedy_policy: bool = False  # evaluate the argmax policy (policy-greedy) instead of sampling
     seed: int = 0
     device: str = "cpu"  # PyTorch device of the learner and the acting network ("cuda" also covers ROCm)
+    # Experimental, not in the design (synchronous PPO; docs/scaling.md S3): collect the next rollout on a thread with
+    # a copy of the weights the update starts from, while the update runs; every rollout is then one update stale
+    overlap_collect: bool = False
+    bf16: bool = False  # experimental: bf16 autocast for acting and the update on a GPU
     torch_threads: int = 4  # during updates
     collect_threads: int = 2  # PyTorch threads while collecting (the env threads share the cores)
     bc_prior: str | None = None  # checkpoint of a BC policy: KL prior (ppo.kl_prior_coef)
@@ -184,7 +190,12 @@ class Trainer:
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced)  # fmt: skip
-        self.collector = RolloutCollector(self.env, self.model, self.schedule, cfg.steps, opponents=self.schedule.opponent,
+        # the acting network: the model itself, or a copy refreshed before each overlapped collection
+        self.acting = copy.deepcopy(self.model) if cfg.overlap_collect else self.model
+        self._pending: Rollout | None = None
+        self._executor = ThreadPoolExecutor(1, thread_name_prefix="collect") if cfg.overlap_collect else None
+        self._stream = torch.cuda.Stream(self.device) if cfg.overlap_collect and self.device.type == "cuda" else None
+        self.collector = RolloutCollector(self.env, self.acting, self.schedule, cfg.steps, opponents=self.schedule.opponent,
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
                                           device=self.device)  # fmt: skip
         self.counters = {"updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
@@ -255,23 +266,49 @@ class Trainer:
         self.save()
         return last
 
+    def _autocast(self):
+        return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.cfg.bf16)
+
+    def _collect(self) -> Rollout:
+        if self._stream is None:
+            with self._autocast():
+                return self.collector.collect()
+        with torch.cuda.stream(self._stream), self._autocast():
+            ro = self.collector.collect()
+        self._stream.synchronize()  # the rollout's tensors are complete before the learner's stream reads them
+        return ro
+
     def step(self) -> dict:
         cfg = self.cfg
+        t_step = time.perf_counter()
         torch.set_num_threads(cfg.collect_threads)
-        ro = self.collector.collect()
+        future = None
+        if cfg.overlap_collect:
+            ro, self._pending = self._pending or self._collect(), None
+            self.acting.load_state_dict(self.model.state_dict())
+            if self._stream is not None:
+                self._stream.wait_stream(torch.cuda.current_stream(self.device))
+            future = self._executor.submit(self._collect)
+        else:
+            ro = self._collect()
         torch.set_num_threads(cfg.torch_threads)
         t0 = time.perf_counter()
-        stats = self.learner.update(ro)
+        with self._autocast():
+            stats = self.learner.update(ro)
         update_s = time.perf_counter() - t0
+        if future is not None:  # the league bookkeeping between steps never runs next to a collection
+            self._pending = future.result()
+        step_s = time.perf_counter() - t_step
         c = self.counters
         c["updates"] = self.learner.updates
         c["rows"] += ro.players.numel()
         c["decisions"] += ro.decisions
         c["games"] += len(ro.games)
-        c["seconds"] += ro.seconds + update_s
+        c["seconds"] += step_s
         c["truncated"] += sum(g.truncated for g in ro.games)
         c["errors"] += sum(g.reason == "error" for g in ro.games)
         record = {"update": c["updates"], "time": round(time.time(), 1), **self._rollout_stats(ro, update_s),
+                  "step_s": round(step_s, 2), "rows_per_s": ro.players.numel() / max(step_s, 1e-9),
                   **{k: round(v, 5) if isinstance(v, float) else v for k, v in stats.items()},
                   "total": dict(c), "pool": len(self.pool)}  # fmt: skip
         with (self.run_dir / "metrics.jsonl").open("a") as f:
@@ -291,7 +328,7 @@ class Trainer:
         return {
             "rows": ro.players.numel(), "decisions": ro.decisions, "collect_s": round(ro.seconds, 2),
             "update_s": round(update_s, 2), "decisions_per_s": ro.decisions / max(ro.seconds, 1e-9),
-            "rows_per_s": ro.players.numel() / max(ro.seconds + update_s, 1e-9), "games": len(games),
+            "games": len(games),
             "selfplay_games": sum(g.assignment.opponent is None for g in games),
             "pool_games": len(pool_scores), "pool_win_rate": None if not pool_scores else round(_mean(pool_scores), 3),
             "first_player_win_rate": None if not first_wins else round(_mean(first_wins), 3),
