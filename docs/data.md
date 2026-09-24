@@ -104,6 +104,23 @@ MD 表；但 YGOPRODECK 网站禁限页背后的 `https://ygoprodeck.com/api/ban
   每套的卡表数、合法卡表数和代表卡表 URL。份额之和 < 1，剩余视为「其它」。
 - **合法性**：构建最后用 `load_environment(path, cards=CardDB.load())` 校验整个环境，任何一套 meta 卡组不合法都会失败（T0.4 的规则）。
 
+## 牌组语料（`artifacts/deck_corpus.json`、`artifacts/decks/`）
+
+`meta/` 只有当前窗口里有份额的类型各一份代表卡表（环境定义的一部分）。训练用的多牌组池（T4d.1）与调卡组的起点需要更多、更杂的牌组，
+所以另建**牌组语料**：`tools/build_deck_corpus.py <版本> --fetch --smoke`（`ygorl.data.corpus`）。
+
+- **来源**：masterduelmeta `top-decks` 的全部历史（`--since`，默认 2021-01-01；排位、比赛与活动卡表都算，Dice Rally、Legend Anthology、N/R Festival
+  等活动里有大量娱乐卡组）。站点的用户投稿卡组没有公开 API，不抓网页。原始下载在 `out/deck_corpus/raw`（不入库），限速 1 次/秒。
+- **过滤**：卡片全部对应、且在本环境（卡池 + 禁限表 + 构筑规则）下合法；同一张卡表（主 + 额外计数相同）只算一次。
+- **选取**：每个类型在最新的至多 400 份合法卡表里取中心卡表（medoid），再按最远点依次取与已选卡表 L1 距离 ≥ `--min-distance`（默认 8 张）的卡表，
+  每类型至多 `--per-type`（默认 3）份。都是真实卡表，`.ydk` 头部注释写明类型、来源（排位 / 比赛 / 活动名）、日期与 URL。
+- **冒烟**：`--smoke` 让每套牌对环境的第一套 meta 牌组先后攻各打一局（greedy 对 random），有异常、脚本错误或未知消息就以 1 退出。
+- 产物绑定环境版本：禁限表或卡池变了就在新版本里重建。
+
+md-2026-09（2026-09-24 抓取）：历史卡表 86,295 份、576 个类型，其中 397 个类型有在本环境下合法的卡表；选出 **1,021 套**（中心卡表 397、差异卡表 624；
+291 个类型 3 份、42 个 2 份、64 个 1 份），20 个 meta 类型全部在内。来源前几位：Legend Anthology 116、N/R Festival 86、Theme Chronicle 78、Master V 57、
+Master I 56。冒烟 2,042 局，0 异常、0 脚本错误、0 未知消息。`.ydk` 共约 4 MB，进 git。
+
 ## Yugipedia 关系（`relations.json`）
 
 四个 SMW 属性：`Archetype support`（支援某系列）、`Anti-support`（反支援）、`Archseries related`（与某系列相关）以及 `Archseries`
@@ -149,6 +166,7 @@ MD 表；但 YGOPRODECK 网站禁限页背后的 `https://ygoprodeck.com/api/ban
 | `ygorl.data.cardmap` | `CardMapper`：来源卡密 / 卡名 → 原卡密 |
 | `ygorl.data.ygoprodeck` | `fetch_md_cards`、`parse_md_pool` |
 | `ygorl.data.masterduelmeta` | `fetch_cards` / `fetch_articles` / `fetch_top_decks`；`parse_banlist`、`last_banlist_update`、`parse_top_decks`、`summarize_types`（份额与 medoid） |
+| `ygorl.data.corpus` | `select_lists`：牌组语料的每类型选取（中心卡表 + 最远点）；驱动脚本 `tools/build_deck_corpus.py` |
 | `ygorl.data.yugipedia` | `fetch_property`、`parse_property`、`relations` |
 | `ygorl.data.build` | `BuildOptions`、`build`（抓取 → 解析 → 写入 → 校验）、校对报告 |
 

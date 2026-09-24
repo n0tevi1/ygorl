@@ -143,4 +143,5 @@ TCG / OCG / GOAT 等表直接取自 `third_party/LFLists`；**MD 表没有上游
 |------|--------|------|
 | `artifacts/matrix/<name>.json` | `ygorl.eval.matchup.MetaGame.save(env=env, name=...)` | 对局胜率矩阵、Nash 混合、alpha-rank（格式见 [evaluation.md](evaluation.md)） |
 | `artifacts/meta_packages.json` | `tools/make_meta_packages.py <版本>` | 由 meta 卡组推导的引擎包（协同图召回检验用，规则见 [synergy.md](synergy.md#真实-meta-引擎包md-2026-09)），进 git |
+| `artifacts/deck_corpus.json`、`artifacts/decks/*.ydk` | `tools/build_deck_corpus.py <版本> --fetch --smoke` | 牌组语料：全部历史卡表里在本环境下合法的每个类型至多 3 份真实卡表（含娱乐 / 活动卡组），训练牌组池与调卡组的起点（[data.md](data.md#牌组语料artifactsdeck_corpusjsonartifactsdecks)），进 git |
 | `artifacts/synergy_graph.json.gz` | `tools/build_synergy_graph.py --environment <版本>` | 限制到本卡池的协同图（可加 `--relations`），约 0.7 MB，按需生成 |

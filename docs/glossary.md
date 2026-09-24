@@ -97,6 +97,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 |--------|------|------|
 | `environment` | 环境 | 格式 + 卡池 + 禁限表 + 规则 + meta + 版本 |
 | `meta` / meta pool | 环境主流卡组 / meta 池 | |
+| `deck corpus` | 牌组语料 | 环境下合法的历史卡表（每个类型至多 3 份，含娱乐 / 活动卡组），`artifacts/deck_corpus.json`（`ygorl.data.corpus`） |
 | `package` | 引擎包 | 协同图上的连通卡组组件（T5.4） |
 | `genotype` | 基因型 | 引擎包份数 + 泛用槽 + 额外卡组（T5.5） |
 | generic slot | 泛用槽 | 手坑、解场等不属于引擎包的卡 |
