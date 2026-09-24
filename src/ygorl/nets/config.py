@@ -34,7 +34,8 @@ class NetConfig:
     effect_text_dim: int = 0  # width of the supplied effect-text vectors (0 = off)
     # card facts (docs/nets.md「卡片事实」; experimental): archetype membership and referenced archetypes through one
     # shared archetype table, effect-category bits, script (action, location) queries; set from tables by with_text
-    card_facts: bool = True  # use the card facts when the feature directory has them
+    card_facts: bool = False  # opt-in: use the card facts when the feature directory has them (a file appearing
+    # later must not change the network of a run being resumed)
     n_archetypes: int = 0  # archetype table rows - 1 (0 = off)
     n_archetype_slots: int = 0
     n_reference_slots: int = 0

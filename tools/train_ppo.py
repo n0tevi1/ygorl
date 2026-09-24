@@ -51,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--no-id-embedding", action="store_true", help="drop the per-card ID embedding")
     g.add_argument("--text-dir", default=None,
                    help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)")
-    g.add_argument("--no-card-facts", action="store_true", help="ignore card_facts.npz in --text-dir")
+    g.add_argument("--card-facts", action="store_true", help="use card_facts.npz in --text-dir (experimental)")
     g.add_argument("--no-text", action="store_true", help="ignore the text tables in --text-dir")
     g.add_argument("--id-dropout", type=float, default=0.0, help="training: drop each card's ID embedding")
     g.add_argument("--separate-critic", action="store_true", help="critic gets its own trunk")
@@ -110,7 +110,7 @@ def config_from_args(args, decks: list[str]):
     from ygorl.train.trainer import TrainConfig
 
     net = {"d_model": args.d_model, "n_heads": 4, "board_layers": args.layers, "history_layers": args.layers,
-           "history": args.history, "id_embedding": not args.no_id_embedding, "card_facts": not args.no_card_facts,
+           "history": args.history, "id_embedding": not args.no_id_embedding, "card_facts": args.card_facts,
            "card_text": not args.no_text, "effect_text": not args.no_text, "id_dropout": args.id_dropout}  # fmt: skip
     ppo = PPOConfig(objective=args.objective, estimator=args.estimator, entropy_coef=args.entropy,
                     kl_ref_coef=args.kl_ref, reference_ema=args.ema, lr=args.lr, epochs=args.epochs,

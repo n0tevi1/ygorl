@@ -610,7 +610,8 @@ def test_card_facts_views_and_id_dropout(tmp_path):
                         categories=rng.integers(0, 2**40, vocab_size).astype(np.uint64),
                         queries=rng.integers(0, 2, (vocab_size, 5)).astype(np.uint8), query_names=np.array(list("abcde")))  # fmt: skip
     facts = TextFeatures.load(tmp_path, vocab)
-    cfg = small(id_dropout=0.5).with_text(facts)
+    cfg = small(id_dropout=0.5, card_facts=True).with_text(facts)
+    assert small(id_dropout=0.5).with_text(facts).n_archetypes == 0  # facts are opt-in
     assert (cfg.n_archetypes, cfg.n_reference_slots, cfg.n_queries, cfg.n_categories) == (5, 3, 5, 64)
     torch.manual_seed(0)
     net = PolicyNet(cfg, facts)
@@ -620,11 +621,34 @@ def test_card_facts_views_and_id_dropout(tmp_path):
     assert torch.equal(a, b)  # no dropout in eval mode
     net.train()
     assert not torch.equal(net(batch).logits, a)  # ID dropout is on in training
-    net(batch).log_probs()[batch["action_mask"]].sum().backward()
+    params = dict(net.named_parameters())
     for name in ("identity.archetype.weight", "identity.reference_proj.weight", "identity.category_proj.weight",
                  "identity.query_proj.weight"):  # fmt: skip
-        assert dict(net.named_parameters())[name].grad.abs().sum() > 0, name
+        assert not params[name].any(), name  # the new views start at zero
+    net(batch).log_probs()[batch["action_mask"]].sum().backward()
+    for name in ("identity.archetype.weight", "identity.category_proj.weight", "identity.query_proj.weight"):
+        assert params[name].grad.abs().sum() > 0, name
+    # the reference projection learns once the archetype table is non-zero
+    with torch.no_grad():
+        params["identity.archetype.weight"].normal_()
+    net.zero_grad()
+    net(batch).log_probs()[batch["action_mask"]].sum().backward()
+    assert params["identity.reference_proj.weight"].grad.abs().sum() > 0
     with pytest.raises(ValueError):
         PolicyNet(cfg)  # facts configured but not supplied
-    off = small(card_facts=False).with_text(facts)
+    off = small().with_text(facts)
     assert off.n_archetypes == 0 and not any("archetype" in n for n, _ in PolicyNet(off, facts).named_parameters())
+
+
+def test_id_dropout_keeps_the_expected_contribution():
+    """Inverted dropout: kept ID embeddings are scaled by 1 / (1 - p), so training matches eval on average."""
+    from ygorl.nets.encoders import CardIdentity
+
+    torch.manual_seed(0)
+    ident = CardIdentity(small(id_dropout=0.25))
+    index = torch.full((20000,), 7)
+    ident.eval()
+    full = ident(index)[0]
+    ident.train()
+    mean = ident(index).mean(0)
+    torch.testing.assert_close(mean, full, atol=0.02, rtol=0.05)

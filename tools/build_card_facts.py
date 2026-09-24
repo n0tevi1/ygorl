@@ -35,12 +35,12 @@ def main() -> int:
     from ygorl.engine.duel import default_cards
 
     def setcards(f: Filter, out: set[int]) -> None:
-        """Archetype codes of every ``setcard`` predicate in a filter tree."""
+        """Archetype parts (low 12 bits) of the ``setcard`` predicates in a filter tree, outside negations."""
         if isinstance(f, Pred):
             if f.kind == "setcard":
-                out.update(int(a) & 0xFFFF for a in f.args if isinstance(a, int) and a)
+                out.update(int(a) & 0x0FFF for a in f.args if isinstance(a, int) and a)
         elif isinstance(f, Not):
-            setcards(f.item, out)
+            pass  # "not archetype X" excludes X: it is no reference to it
         else:  # And / Or
             for item in f.items:
                 setcards(item, out)
@@ -64,7 +64,7 @@ def main() -> int:
         r: set[int] = set()
         q: set[str] = set()
         if f is not None:
-            r.update(int(s) & 0xFFFF for s in (*f.listed_series, *f.material_setcodes) if s)
+            r.update(int(s) & 0x0FFF for s in (*f.listed_series, *f.material_setcodes) if s)
             for x in f.queries:
                 setcards(x.filter, r)
                 for bit, name in LOCATIONS.items():

@@ -115,12 +115,13 @@ class CardIdentity(nn.Module):
             self.register_buffer("categories", torch.as_tensor(text.categories).float(), persistent=False)
             self.register_buffer("queries", torch.as_tensor(text.queries).float(), persistent=False)
             self.archetype = nn.Embedding(cfg.n_archetypes + 1, d, padding_idx=0)
-            nn.init.normal_(self.archetype.weight, std=0.02)
-            with torch.no_grad():
-                self.archetype.weight[0].zero_()
             self.reference_proj = nn.Linear(d, d, bias=False)
             self.category_proj = nn.Linear(cfg.n_categories, d, bias=False)
             self.query_proj = nn.Linear(cfg.n_queries, d, bias=False)
+            # start at zero: a network that gains these views (warm start) plays exactly as before; the archetype
+            # table then learns through membership, and the reference projection once the table is non-zero
+            for m in (self.archetype, self.reference_proj, self.category_proj, self.query_proj):
+                nn.init.zeros_(m.weight)
         self.id_dropout = cfg.id_dropout
 
     def forward(self, index: Tensor) -> Tensor:
@@ -128,9 +129,9 @@ class CardIdentity(nn.Module):
         out = self.status(index.clamp(max=CardVocab.FIRST_INDEX))
         if self.id_embedding is not None:
             ids = self.id_embedding(index)
-            if self.training and self.id_dropout > 0:
+            if self.training and self.id_dropout > 0:  # inverted dropout: the expectation matches eval mode
                 keep = torch.rand(index.shape, device=index.device) >= self.id_dropout
-                ids = ids * keep.unsqueeze(-1).to(ids.dtype)
+                ids = ids * (keep.unsqueeze(-1).to(ids.dtype) / (1 - self.id_dropout))
             out = out + ids
         if self.archetype is not None:
             out = out + self.archetype(self.archetypes[index]).sum(-2)

@@ -544,13 +544,21 @@ def test_warm_start_may_add_card_views(tmp_path, vocab):
                         categories=np.zeros(n, np.uint64), queries=np.zeros((n, 3), np.uint8),
                         query_names=np.array(["a", "b", "c"]))  # fmt: skip
     assert TextFeatures.load(feat, vocab).has_facts
-    grown = replace(_small_cfg(), init_from=str(ckpt), text_dir=str(feat), net={**TINY, "id_dropout": 0.2})
+    grown = replace(_small_cfg(), init_from=str(ckpt), text_dir=str(feat),
+                    net={**TINY, "id_dropout": 0.2, "card_facts": True})
     trainer = Trainer(grown, tmp_path / "grown", log=None)
     assert trainer.net_config.n_archetypes == 1 and trainer.net_config.id_dropout == 0.2
     old = dict(base.model.actor.named_parameters())
     for name, p in trainer.model.actor.named_parameters():
         if name in old:
             assert torch.equal(p, old[name]), name
+    # the new views start at zero: the grown actor plays exactly like the checkpoint (eval mode, no dropout)
+    ro = base.collector.collect()
+    trainer.model.actor.eval()
+    base.model.actor.eval()
+    with torch.no_grad():
+        torch.testing.assert_close(trainer.model.actor(ro.obs).logits, base.model.actor(ro.obs).logits)
+    trainer.model.actor.train()
     assert trainer.step()["rows"] == 16
     with pytest.raises(ValueError):
         Trainer(replace(grown, net={**TINY, "d_model": 32}), tmp_path / "bad", log=None)
@@ -567,7 +575,8 @@ def test_a_checkpoint_with_card_facts_reloads_them(tmp_path, vocab):
                         setcodes=np.tile([[0x1, 0, 0, 0]], (n, 1)), references=np.zeros((n, 2), np.int64),
                         categories=np.zeros(n, np.uint64), queries=np.zeros((n, 3), np.uint8),
                         query_names=np.array(["a", "b", "c"]))  # fmt: skip
-    trainer = Trainer(replace(_small_cfg(), text_dir=str(feat)), tmp_path / "run", log=None)
+    trainer = Trainer(replace(_small_cfg(), text_dir=str(feat), net={**TINY, "card_facts": True}), tmp_path / "run",
+                      log=None)  # fmt: skip
     path = trainer.save()
     pol = load_actor(path)  # the run's text_dir comes from its config
     assert pol.net_config.n_archetypes == 1 and pol.net.identity.archetype is not None
