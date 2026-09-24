@@ -75,7 +75,7 @@
 | T2 | 按 KL 提前停（`--target-kl`） | 热启动时固定步长走太远（P4n） | I1 | **已采用**（默认 0.01）：K 对 Random 0.910、对 Greedy 0.550 |
 | T3 | 熵 0.01 或退火 | ygo-agent 0.01；VGC-Bench 退火；P1 / P4n 的熵向均匀漂移 | **与 I1 冲突** | KE：熵塌缩、对 Random −0.075（显著），不采用；退火未测 |
 | T4 | 固定对手（`--pin` BC 检查点）、快照入池门槛、PFSP | Gin Rummy、cjiang、ygo-agent OSFP、AlphaStar | I1 | KP：无帮助（进战斗率 80%）；门槛 / PFSP 待做 |
-| T5 | 更大的批 + 更少轮 | ygo-agent 约 32k 步 / 次、1 轮 | I1 | 待做 |
+| T5 | 更大的批 + 更少轮 | ygo-agent 约 32k 步 / 次、1 轮 | I1 | 第一轮（单种子、200 次更新、GPU）：8,192 行 × 1 轮对 Greedy 0.755，K（2,048 × 4）0.685，差 +0.070（−0.008, +0.148）；各训练 1 小时后持平（T5L 0.785 vs KL 0.790，差 −0.005），都比 200 次更新的 K 高约 0.10（[benchmarks.md](benchmarks.md)「BC 热启动 + PPO：在 GPU 上」）；不采用为默认 |
 | T6 | 快赢压力：每回合折扣或 LP 判定的回合上限 | ygo-agent `greedy_reward`、Metamon | **与 C3 冲突** | 待决定 |
 | T7 | 势函数塑形（LP 差、卡差） | Ng et al. 1999、PerfectDou、Suphx | **与 C3 冲突** | 待决定 |
 | T8 | UPGO | ygo-agent、AlphaStar | **与 I2 冲突** | 待决定 |
