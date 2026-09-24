@@ -85,6 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--checkpoint-every", type=int, default=10)
     g.add_argument("--eval-every", type=int, default=25)
     g.add_argument("--eval-pairs", type=int, default=8, help="paired seeds per deck pairing and baseline")
+    g.add_argument("--eval-pairings", type=int, default=0,
+                   help="evaluate on a fixed sample of this many training pairings (0 = all; for large deck pools)")
     g.add_argument("--eval-opponents", default="greedy,random")
     g.add_argument("--keep-best-by", default="greedy")
     g.add_argument("--eval-workers", type=int, default=2)
@@ -117,7 +119,7 @@ def config_from_args(args, decks: list[str]):
                        snapshot_every=args.snapshot_every, pool_sampling=args.pool_sampling, pfsp_power=args.pfsp_power,
                        snapshot_min_win_rate=args.snapshot_min_win_rate, snapshot_min_games=args.snapshot_min_games,
                        checkpoint_every=args.checkpoint_every,
-                       eval_every=args.eval_every, eval_pairs=args.eval_pairs,
+                       eval_every=args.eval_every, eval_pairs=args.eval_pairs, eval_pairings=args.eval_pairings,
                        eval_opponents=tuple(s for s in args.eval_opponents.split(",") if s),
                        keep_best_by=args.keep_best_by, eval_workers=args.eval_workers, seed=args.seed, device=args.device,
                        torch_threads=args.torch_threads, collect_threads=args.collect_threads,
