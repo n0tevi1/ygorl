@@ -379,6 +379,34 @@ def test_target_kl_stops_an_update_once_the_policy_moved_enough():
         PPOConfig(target_kl=0.0)
 
 
+def test_pfsp_draws_the_opponents_the_learner_loses_to():
+    """pool_sampling pfsp: weight (1 - p) ** power by the learner's recorded score p (0.5 before any game);
+    the records survive state_dict; uniform ignores them."""
+    model = NimModel(max_pile=15)
+    pool = SnapshotPool(capacity=3, sampling="pfsp", pfsp_power=2.0)
+    easy, hard, fresh = (pool.add(model, update=u) for u in range(3))
+    for _ in range(9):
+        pool.record(easy, 1.0)  # p = 9.5 / 10 -> weight 0.0025
+        pool.record(hard, 0.0)  # p = 0.5 / 10 -> weight 0.9025
+    pool.record(-5, 1.0)  # unknown / evicted ids are ignored
+    rng = np.random.default_rng(0)
+    draws = [pool.sample(rng) for _ in range(6000)]
+    expected = np.array([0.05**2, 0.95**2, 0.5**2])
+    for sid, share in zip((easy, hard, fresh), expected / expected.sum()):
+        assert abs(draws.count(sid) / len(draws) - share) < 0.02
+    info = {i["id"]: i for i in pool.info()}
+    assert info[hard]["games"] == 9 and info[hard]["learner_win_rate"] == 0.05
+    restored = SnapshotPool(capacity=3, sampling="pfsp")
+    restored.load_state_dict(pool.state_dict(), lambda: NimModel(max_pile=15))
+    assert restored.info() == pool.info()
+    uniform = SnapshotPool(capacity=3)
+    uniform.load_state_dict(pool.state_dict(), lambda: NimModel(max_pile=15))
+    draws = [uniform.sample(rng) for _ in range(3000)]
+    assert abs(draws.count(easy) / len(draws) - 1 / 3) < 0.03
+    with pytest.raises(ValueError):
+        SnapshotPool(sampling="elo")
+
+
 def test_pinned_snapshots_stay_and_get_their_share_of_pool_games():
     model = NimModel(max_pile=15)
     pool = SnapshotPool(capacity=2, pinned_share=0.5)

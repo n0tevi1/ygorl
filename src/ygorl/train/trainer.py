@@ -80,6 +80,12 @@ class TrainConfig:
     pin_opponents: tuple[str, ...] = ()
     pinned_share: float = 0.5
     snapshot_every: int = 10  # updates
+    pool_sampling: str = "uniform"  # "uniform" or "pfsp" (SnapshotPool): opponents the learner loses to come up more
+    pfsp_power: float = 2.0
+    # a due snapshot joins the pool only if the learner scored above this in its pool games since the last one joined
+    # (at least snapshot_min_games of them; ygo-agent's OSFP uses 0.55); None = always; an empty pool always takes one
+    snapshot_min_win_rate: float | None = None
+    snapshot_min_games: int = 20
     checkpoint_every: int = 10
     eval_every: int = 25
     eval_pairs: int = 8  # paired seeds per deck pairing and baseline (2 games each)
@@ -176,7 +182,7 @@ class Trainer:
                                  "other cards from the same indices")  # fmt: skip
             prior = loaded.net.to(self.device)
         self.learner = PPOLearner(self.model, cfg.ppo, prior)
-        self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share)
+        self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share, cfg.pool_sampling, cfg.pfsp_power)
         for path in cfg.pin_opponents:
             pinned = load_actor(path, cfg.text_dir)
             if vocab_passwords(pinned.vocab) != vocab_passwords(self.vocab):
@@ -199,7 +205,8 @@ class Trainer:
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
                                           device=self.device)  # fmt: skip
         self.counters = {"updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
-                         "errors": 0}  # fmt: skip
+                         "errors": 0, "snapshots": 0, "snapshots_skipped": 0}  # fmt: skip
+        self.league = {"games": 0, "points": 0.0}  # the learner's pool games since the last snapshot joined
         self.best = {"score": None, "update": None}
         if state is not None:
             self._restore(state)
@@ -226,7 +233,7 @@ class Trainer:
         return {"config": self.cfg.to_dict(), "net_config": self.net_config.to_dict(), "vocab": self.vocab_text,
                 "environment": self.environment.stamp() if self.environment is not None else None,
                 "learner": self.learner.state_dict(), "pool": self.pool.state_dict(),
-                "schedule": self.schedule.state_dict(), "counters": dict(self.counters), "best": dict(self.best),
+                "schedule": self.schedule.state_dict(), "counters": dict(self.counters), "best": dict(self.best), "league": dict(self.league),
                 "rng": {"torch": torch.get_rng_state(), "collector": self.collector.generator.get_state()}}  # fmt: skip
 
     def _restore(self, state: dict) -> None:
@@ -237,6 +244,7 @@ class Trainer:
         self.schedule.load_state_dict(state["schedule"])
         self.counters.update(state["counters"])
         self.best.update(state["best"])
+        self.league.update(state.get("league", {}))
         torch.set_rng_state(state["rng"]["torch"])
         self.collector.generator.set_state(state["rng"]["collector"])
 
@@ -256,7 +264,7 @@ class Trainer:
                 done += 1
                 u = self.counters["updates"]
                 if cfg.snapshot_every and u % cfg.snapshot_every == 0:
-                    self.pool.add(self.model, update=u)
+                    self.maybe_snapshot(u)
                 if cfg.eval_every and u % cfg.eval_every == 0:
                     self.evaluate()
                 elif cfg.checkpoint_every and u % cfg.checkpoint_every == 0:
@@ -277,6 +285,19 @@ class Trainer:
             ro = self.collector.collect()
         self._stream.synchronize()  # the rollout's tensors are complete before the learner's stream reads them
         return ro
+
+    def maybe_snapshot(self, update: int) -> bool:
+        """Add a snapshot of the model to the pool, unless the admission threshold holds it back."""
+        cfg, lg = self.cfg, self.league
+        regular = [i for i in self.pool.ids() if i >= 0]
+        if cfg.snapshot_min_win_rate is not None and regular:
+            if lg["games"] < cfg.snapshot_min_games or lg["points"] / lg["games"] <= cfg.snapshot_min_win_rate:
+                self.counters["snapshots_skipped"] += 1
+                return False
+        self.pool.add(self.model, update=update)
+        self.counters["snapshots"] += 1
+        self.league.update(games=0, points=0.0)
+        return True
 
     def step(self) -> dict:
         cfg = self.cfg
@@ -307,6 +328,11 @@ class Trainer:
         c["seconds"] += step_s
         c["truncated"] += sum(g.truncated for g in ro.games)
         c["errors"] += sum(g.reason == "error" for g in ro.games)
+        for g in ro.games:
+            if g.learner_score is not None and not g.truncated:
+                self.pool.record(g.assignment.opponent, g.learner_score)
+                self.league["games"] += 1
+                self.league["points"] += g.learner_score
         record = {"update": c["updates"], "time": round(time.time(), 1), **self._rollout_stats(ro, update_s),
                   "step_s": round(step_s, 2), "rows_per_s": ro.players.numel() / max(step_s, 1e-9),
                   **{k: round(v, 5) if isinstance(v, float) else v for k, v in stats.items()},

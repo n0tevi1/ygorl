@@ -76,6 +76,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="keep this policy / PPO checkpoint in the opponent pool for the whole run (repeatable)")
     g.add_argument("--pinned-share", type=float, default=0.5, help="share of pool games against pinned opponents")
     g.add_argument("--snapshot-every", type=int, default=10)
+    g.add_argument("--pool-sampling", choices=("uniform", "pfsp"), default="uniform",
+                   help="pfsp: draw pool opponents by (1 - learner win rate) ** --pfsp-power")
+    g.add_argument("--pfsp-power", type=float, default=2.0)
+    g.add_argument("--snapshot-min-win-rate", type=float, default=None,
+                   help="a due snapshot joins the pool only if the learner scored above this against the pool")
+    g.add_argument("--snapshot-min-games", type=int, default=20)
     g.add_argument("--checkpoint-every", type=int, default=10)
     g.add_argument("--eval-every", type=int, default=25)
     g.add_argument("--eval-pairs", type=int, default=8, help="paired seeds per deck pairing and baseline")
@@ -108,7 +114,9 @@ def config_from_args(args, decks: list[str]):
                        privileged_critic=not args.no_privileged, shared_backbone=not args.separate_critic, ppo=ppo,
                        selfplay_fraction=args.selfplay_fraction, pool_size=args.pool_size,
                        pin_opponents=tuple(args.pin), pinned_share=args.pinned_share,
-                       snapshot_every=args.snapshot_every, checkpoint_every=args.checkpoint_every,
+                       snapshot_every=args.snapshot_every, pool_sampling=args.pool_sampling, pfsp_power=args.pfsp_power,
+                       snapshot_min_win_rate=args.snapshot_min_win_rate, snapshot_min_games=args.snapshot_min_games,
+                       checkpoint_every=args.checkpoint_every,
                        eval_every=args.eval_every, eval_pairs=args.eval_pairs,
                        eval_opponents=tuple(s for s in args.eval_opponents.split(",") if s),
                        keep_best_by=args.keep_best_by, eval_workers=args.eval_workers, seed=args.seed, device=args.device,

@@ -470,3 +470,43 @@ def test_overlapped_collection_acts_with_the_weights_the_update_started_from(tmp
     metrics = [json.loads(line) for line in (tmp_path / "metrics.jsonl").read_text().splitlines()]
     assert [m["update"] for m in metrics] == [1, 2, 3] and all(m["rows"] == 16 for m in metrics)
     assert len(trainer.pool) > 0
+
+
+def test_snapshot_admission_threshold_and_pool_results(tmp_path):
+    """snapshot_min_win_rate: a due snapshot joins only after the learner scored above the threshold in enough pool
+    games since the last one joined; an empty pool always takes one; pool results reach the snapshots."""
+    from ygorl.train.rollout import Assignment, FinishedGame
+
+    cfg = replace(_small_cfg(), snapshot_min_win_rate=0.55, snapshot_min_games=4)
+    trainer = Trainer(cfg, tmp_path, log=None)
+    assert trainer.maybe_snapshot(1) and len(trainer.pool) == 1  # empty pool
+    assert not trainer.maybe_snapshot(2)  # no pool games yet
+    sid = trainer.pool.ids()[0]
+
+    def played(scores):
+        for s in scores:
+            g = FinishedGame(Assignment(None, sid, 0), None if s == 0.5 else (0 if s == 1 else 1), "win", False, 1, {})
+            trainer.pool.record(g.assignment.opponent, g.learner_score)
+            trainer.league["games"] += 1
+            trainer.league["points"] += g.learner_score
+
+    played([1, 0, 1, 0])  # 0.5: not above 0.55
+    assert not trainer.maybe_snapshot(3)
+    played([1, 1, 1, 1])  # 6 / 8 = 0.75
+    assert trainer.maybe_snapshot(4) and len(trainer.pool) == 2 and trainer.league == {"games": 0, "points": 0.0}
+    assert trainer.counters["snapshots"] == 2 and trainer.counters["snapshots_skipped"] == 2
+    info = {i["id"]: i for i in trainer.pool.info()}
+    assert info[sid]["games"] == 8 and info[sid]["learner_win_rate"] == round(6.5 / 9, 3)
+    state = trainer.state_dict()
+    assert state["league"] == {"games": 0, "points": 0.0}
+
+
+def test_pool_games_are_recorded_during_training(tmp_path):
+    """Finished (not truncated) pool games reach the snapshots' records and the admission window."""
+    cfg = replace(_small_cfg(selfplay_fraction=0.0, pool_sampling="pfsp"), snapshot_every=1, max_decisions=None,
+                  steps=256)  # fmt: skip
+    trainer = Trainer(cfg, tmp_path, log=None)
+    trainer.train(max_updates=4)
+    recorded = sum(i["games"] for i in trainer.pool.info())
+    assert trainer.counters["snapshots"] == 4 and trainer.pool.sampling == "pfsp"
+    assert recorded > 0 and trainer.league["games"] <= recorded
