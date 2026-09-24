@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from ygorl.build.tuner import Edit, apply, neighbors, paired_difference, successive_halving, tech_pool
+from ygorl.build.tuner import Edit, apply, neighbors, paired_difference, successive_halving, tech_pool, validate
 from ygorl.cards.ydk import Deck
 
 EXTRA = {900, 901}
@@ -17,6 +17,8 @@ def legal(deck):  # stand-in: at most 3 copies, 40 main cards
 def test_apply_and_neighbors_keep_sections_and_legality():
     d = apply(BASE, Edit(1, 50, "main"))
     assert d.counts()[1] == 2 and d.counts()[50] == 1 and len(d.main) == 40 and d.extra == BASE.extra
+    # in place: every other card keeps its position (same shuffle -> same hands but for this card)
+    assert d.main[0] == 50 and d.main[1:] == BASE.main[1:]
     edits = neighbors(BASE, [50, 2, 901], lambda pw: pw in EXTRA, legal)
     kinds = {(e.section, e.into) for e, _ in edits}
     assert ("extra", 901) in kinds and ("main", 50) in kinds and ("main", 901) not in kinds
@@ -38,6 +40,7 @@ def test_paired_difference():
     m, lo, hi = paired_difference([1, 1, 0.5, 1], [0.5, 0.5, 0.5, 0.5])
     assert m == 0.375 and lo < m < hi
     assert paired_difference([1.0], [0.0])[1] == -np.inf
+    assert paired_difference([1, np.nan, 1], [0, 0, np.nan])[0] == 1.0  # pairs missing on either side are skipped
 
 
 class FakeEvaluator:
@@ -68,3 +71,16 @@ def test_successive_halving_finds_the_better_card_and_doubles_pairs():
     assert [c[0] for c in ev.calls] == [9, 5, 3] and ev.calls[1][1:] == (100, 200)
     mean, lo, _ = paired_difference(finals[0].scores, base.scores)
     assert mean > 0.15 and lo > 0
+
+
+def test_no_candidates_and_fresh_validation():
+    ev = FakeEvaluator()
+    base, finals = successive_halving(BASE, [], ev, first_pairs=10, log=print)
+    assert finals == [] and base.edit is None
+    edits = neighbors(BASE, [50, 52], lambda pw: pw in EXTRA, legal)
+    edits = [e for e in edits if e[0].out == 10]
+    base, finals = successive_halving(BASE, edits, ev, first_pairs=50, finalists=1)
+    (cand, fresh, base_fresh), = validate(BASE, finals, ev, 300, offset=10_000)
+    assert cand is finals[0] and len(fresh) == len(base_fresh) == 300
+    assert ev.calls[-1] == (2, 10_000, 10_300)  # the base deck and the finalist, on pairs the search never used
+    assert paired_difference(fresh, base_fresh)[1] > 0

@@ -18,6 +18,7 @@ against the environment's meta decks (piloted by the same or another policy), on
 from __future__ import annotations
 
 import math
+import warnings
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -42,9 +43,11 @@ class Edit:
 
 
 def apply(deck: Deck, edit: Edit) -> Deck:
+    """``deck`` with the first copy of ``edit.out`` replaced by ``edit.into`` *in place*: the deck shuffle permutes
+    positions by seed and size only, so every other card keeps its position and the same seed deals the base deck
+    and the candidate the same hands but for this one card (common random numbers)."""
     cards = list(getattr(deck, edit.section))
-    cards.remove(edit.out)
-    cards.append(edit.into)
+    cards[cards.index(edit.out)] = edit.into
     return replace(deck, **{edit.section: tuple(cards)})
 
 
@@ -93,7 +96,8 @@ class PairedEvaluator:
 
     Game pair ``k`` is the same for every deck: seed ``derive_seed(seed, 1, k)``, opponent drawn with
     ``derive_seed(seed, 2, k)``, both first players. :meth:`scores` returns, per deck, one score per pair (mean of
-    its two games: 1 / 0.5 / 0 from the deck's side), so decks are compared pair by pair.
+    its two games: 1 / 0.5 / 0 from the deck's side), so decks are compared pair by pair. A game that raised in
+    the engine is missing (NaN), not a draw; a pair with both games missing is NaN. ``errors`` counts those games.
     """
 
     env_factory: Callable[[int], object]  # num_envs -> EncodedVecEnv
@@ -107,6 +111,7 @@ class PairedEvaluator:
     config: DuelConfig = field(default_factory=lambda: DuelConfig(max_decisions=4000))
     games: int = 0
     seconds: float = 0.0
+    errors: int = 0
 
     def _opponent(self, k: int) -> Deck:
         p = np.asarray(self.weights, dtype=float)
@@ -120,8 +125,13 @@ class PairedEvaluator:
         records, stats = play_policies(env, specs, self.policy, self.opponent, device=self.device)
         self.games += len(specs)
         self.seconds += stats["seconds"]
-        s = np.array([1.0 if r.winner == 0 else 0.5 if r.winner is None else 0.0 for r in records])
-        return s.reshape(len(decks), len(pairs), 2).mean(-1)
+        s = np.array([np.nan if r.reason == "exception" else 1.0 if r.winner == 0 else 0.5 if r.winner is None else 0.0
+                      for r in records])  # fmt: skip
+        s = s.reshape(len(decks), len(pairs), 2)
+        self.errors += int(np.isnan(s).sum())
+        with np.errstate(invalid="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN pairs stay NaN
+            return np.nanmean(s, -1)
 
 
 @dataclass
@@ -132,9 +142,11 @@ class Candidate:
 
 
 def paired_difference(a: Sequence[float], b: Sequence[float]) -> tuple[float, float, float]:
-    """Mean of ``a - b`` over the shared pairs with a normal 95% interval."""
+    """Mean of ``a - b`` over the shared pairs (skipping pairs missing on either side) with a normal 95% interval."""
     n = min(len(a), len(b))
-    d = np.asarray(a[:n]) - np.asarray(b[:n])
+    d = np.asarray(a[:n], dtype=float) - np.asarray(b[:n], dtype=float)
+    d = d[np.isfinite(d)]
+    n = len(d)
     if n < 2:
         return float(d.mean()) if n else 0.0, -math.inf, math.inf
     h = 1.96 * float(d.std(ddof=1)) / math.sqrt(n)
@@ -148,6 +160,8 @@ def successive_halving(base: Deck, edits: Sequence[tuple[Edit, Deck]], evaluator
     the base deck, until ``finalists`` remain; returns the base candidate and the survivors, best first."""
     base_c = Candidate(None, base)
     alive = [Candidate(e, d) for e, d in edits]
+    if not alive:
+        return base_c, []
     target = first_pairs
     while True:
         todo = [c for c in [base_c, *alive] if len(c.scores) < target]
@@ -171,5 +185,15 @@ def successive_halving(base: Deck, edits: Sequence[tuple[Edit, Deck]], evaluator
         target *= 2
 
 
+def validate(base: Deck, finalists: Sequence[Candidate], evaluator: PairedEvaluator, pairs: int,
+             offset: int = 1_000_000) -> list[tuple[Candidate, list[float], list[float]]]:  # fmt: skip
+    """Replay the finalists and the base deck on ``pairs`` fresh pairs (indices from ``offset``, never used by the
+    search): the selection used the search's games, so only these give an unbiased paired difference. Returns
+    ``(finalist, its fresh scores, the base deck's fresh scores)``."""
+    decks = [base, *(c.deck for c in finalists)]
+    s = evaluator.scores(decks, range(offset, offset + pairs))
+    return [(c, s[i + 1].tolist(), s[0].tolist()) for i, c in enumerate(finalists)]
+
+
 __all__ = ["Candidate", "Edit", "PairedEvaluator", "apply", "neighbors", "paired_difference", "successive_halving",
-           "tech_pool"]
+           "tech_pool", "validate"]

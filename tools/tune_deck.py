@@ -5,9 +5,11 @@
 
 The base deck's type is the type of its nearest list in the environment's deck corpus (card-count L1 distance);
 candidate cards come from the other corpus lists of that type and the cards most common across the meta lists.
-``--candidates`` random legal swaps go through successive halving (docs/tuning.md). Writes ``report.json`` (every
-finalist's edit, paired difference to the base deck with its 95% interval, games, seconds) and, when the best
-finalist's interval is above 0, ``tuned.ydk``.
+``--candidates`` random legal swaps go through successive halving (docs/tuning.md); the finalists and the base deck
+then replay ``--validation-pairs`` fresh pairs, and only those decide significance (the search's own games are biased
+by the selection). Writes ``report.json`` (every finalist's edit, search difference, fresh paired difference to the
+base deck with its 95% interval, games, engine errors, seconds) and, when the best fresh interval is above 0,
+``tuned.ydk``.
 """
 
 from __future__ import annotations
@@ -27,6 +29,8 @@ def main() -> int:
     ap.add_argument("--candidates", type=int, default=64)
     ap.add_argument("--first-pairs", type=int, default=25)
     ap.add_argument("--finalists", type=int, default=3)
+    ap.add_argument("--validation-pairs", type=int, default=200,
+                    help="fresh pairs replayed by the finalists and the base deck; only they decide significance")
     ap.add_argument("--meta-top", type=int, default=60)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cpu")
@@ -38,7 +42,7 @@ def main() -> int:
     import numpy as np
     import torch
 
-    from ygorl.build.tuner import PairedEvaluator, neighbors, paired_difference, successive_halving, tech_pool
+    from ygorl.build.tuner import PairedEvaluator, neighbors, paired_difference, successive_halving, tech_pool, validate
     from ygorl.cards.ydk import load_ydk
     from ygorl.data.environment import load_environment
     from ygorl.engine.duel import default_cards
@@ -84,23 +88,31 @@ def main() -> int:
     base_cand, finals = successive_halving(base, edits, evaluator, first_pairs=args.first_pairs,
                                            finalists=args.finalists, log=lambda m: print(m, flush=True))  # fmt: skip
     rows = []
-    for c in finals:
-        mean, lo, hi = paired_difference(c.scores, base_cand.scores)
+    checked = validate(base, finals, evaluator, args.validation_pairs) if finals else []
+    for c, fresh, base_fresh in checked:
+        search = paired_difference(c.scores, base_cand.scores)
+        mean, lo, hi = paired_difference(fresh, base_fresh)
         rows.append({"edit": c.edit.describe(names), "out": c.edit.out, "into": c.edit.into,
-                     "section": c.edit.section, "pairs": len(c.scores), "win_rate": float(np.mean(c.scores)),
-                     "diff": mean, "ci": [lo, hi]})  # fmt: skip
-        print(f"  {c.edit.describe(names):60s} {mean:+.3f} ({lo:+.3f}, {hi:+.3f}) over {len(c.scores)} pairs")
-    print(f"base win rate {np.mean(base_cand.scores):.3f} over {len(base_cand.scores)} pairs; "
-          f"{evaluator.games} games in {evaluator.seconds:.0f}s")
+                     "section": c.edit.section, "search_pairs": len(c.scores), "search_diff": search[0],
+                     "validation_pairs": len(fresh), "win_rate": float(np.nanmean(fresh)),
+                     "base_win_rate": float(np.nanmean(base_fresh)), "diff": mean, "ci": [lo, hi],
+                     "deck": c.deck})  # fmt: skip
+    rows.sort(key=lambda r: r["diff"], reverse=True)
+    for r in rows:
+        print(f"  {r['edit']:60s} search {r['search_diff']:+.3f} | fresh {r['diff']:+.3f} ({r['ci'][0]:+.3f}, "
+              f"{r['ci'][1]:+.3f}) over {r['validation_pairs']} pairs")
+    print(f"base win rate {np.nanmean(base_cand.scores):.3f} over {len(base_cand.scores)} search pairs; "
+          f"{evaluator.games} games ({evaluator.errors} engine errors) in {evaluator.seconds:.0f}s")
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
         report = {"base": str(args.base), "env": env.stamp(), "checkpoint": args.checkpoint, "type": dtype,
-                  "candidate_cards": len(pool), "candidates": len(edits), "base_win_rate": float(np.mean(base_cand.scores)),
-                  "base_pairs": len(base_cand.scores), "finalists": rows, "games": evaluator.games,
-                  "seconds": evaluator.seconds}  # fmt: skip
+                  "candidate_cards": len(pool), "candidates": len(edits),
+                  "base_win_rate": float(np.nanmean(base_cand.scores)), "base_pairs": len(base_cand.scores),
+                  "finalists": [{k: v for k, v in r.items() if k != "deck"} for r in rows], "games": evaluator.games,
+                  "errors": evaluator.errors, "seconds": evaluator.seconds}  # fmt: skip
         (args.out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1) + "\n")
         if rows and rows[0]["ci"][0] > 0:
-            best = finals[0].deck
+            best = rows[0]["deck"]
             (args.out / "tuned.ydk").write_text(best.to_ydk(), encoding="utf-8")
             print(f"significant improvement: wrote {args.out / 'tuned.ydk'}")
         else:
