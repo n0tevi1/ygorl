@@ -156,7 +156,8 @@ class CardEncoder(nn.Module):
     def __init__(self, cfg: NetConfig, identity: CardIdentity) -> None:
         super().__init__()
         self.identity = identity
-        self.columns = list(self.CATEGORICAL)
+        # a buffer, not a list: indexing with a list copies it to the device on every forward
+        self.register_buffer("columns", torch.tensor(list(self.CATEGORICAL)), persistent=False)
         self.categorical = CategoricalEmbedding(list(self.CATEGORICAL.values()), cfg.d_model)
         self.numeric = nn.Linear(self.N_NUMERIC, cfg.d_model)
 
@@ -176,7 +177,8 @@ class GlobalEncoder(nn.Module):
 
     def __init__(self, cfg: NetConfig) -> None:
         super().__init__()
-        self.columns = list(self.CATEGORICAL)
+        # a buffer, not a list: indexing with a list copies it to the device on every forward
+        self.register_buffer("columns", torch.tensor(list(self.CATEGORICAL)), persistent=False)
         self.categorical = CategoricalEmbedding(list(self.CATEGORICAL.values()), cfg.d_model)
         self.numeric = nn.Linear(self.N_NUMERIC, cfg.d_model)
 
@@ -239,7 +241,8 @@ class EventEmbedding(nn.Module):
         self.d_model = d
         self.identity = identity
         self.effect = effect
-        self.columns = list(self.CATEGORICAL)
+        # a buffer, not a list: indexing with a list copies it to the device on every forward
+        self.register_buffer("columns", torch.tensor(list(self.CATEGORICAL)), persistent=False)
         self.categorical = CategoricalEmbedding(list(self.CATEGORICAL.values()), d)
         self.numeric = nn.Linear(self.N_NUMERIC, d)
         self.card2_proj = nn.Linear(d, d, bias=False)  # second card (target / effect owner) has its own role

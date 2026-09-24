@@ -89,6 +89,7 @@ class TrainConfig:
     checkpoint_every: int = 10
     eval_every: int = 25
     eval_pairs: int = 8  # paired seeds per deck pairing and baseline (2 games each)
+    eval_pairings: int = 0  # evaluate on this many training pairings, a fixed sample (seeded); 0 = all of them
     eval_opponents: tuple[str, ...] = ("greedy", "random")
     keep_best_by: str = "greedy"
     eval_workers: int = 2
@@ -365,6 +366,15 @@ class Trainer:
         }  # fmt: skip
 
     # -- evaluation and keep-best -----------------------------------------------------------------------
+    def eval_pairings(self) -> list[tuple[int, int]]:
+        """The deck pairings of the periodic evaluation: all training pairings, or a fixed seeded sample of them."""
+        pairs = self.schedule.decks.pairs
+        k = self.cfg.eval_pairings
+        if not k or k >= len(pairs):
+            return list(pairs)
+        idx = np.random.default_rng(derive_seed(self.cfg.seed, 5)).choice(len(pairs), k, replace=False)
+        return [pairs[i] for i in sorted(idx)]
+
     def evaluate(self) -> dict[str, dict]:
         """Save ``checkpoints/update_N.pt`` and play it against every baseline; update keep-best."""
         cfg = self.cfg
@@ -373,7 +383,7 @@ class Trainer:
         shutil.copyfile(path, self.run_dir / "checkpoints" / "latest.pt")
         results = {}
         for opponent in cfg.eval_opponents:
-            rep, seconds = evaluate_checkpoint(path, self.decks, opponent, pairings=self.schedule.decks.pairs,
+            rep, seconds = evaluate_checkpoint(path, self.decks, opponent, pairings=self.eval_pairings(),
                                                pairs=cfg.eval_pairs, config=self.duel_config, env=self.environment,
                                                workers=cfg.eval_workers, seed=derive_seed(cfg.seed, 4),
                                                greedy_policy=cfg.eval_greedy_policy)  # fmt: skip

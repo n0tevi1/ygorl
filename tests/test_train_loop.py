@@ -516,3 +516,12 @@ def test_league_defaults_follow_design_i1():
     """Design I1: PFSP over the snapshot pool; the admission threshold stays off (it did not help, #61)."""
     cfg = TrainConfig(decks=PAIR)
     assert cfg.pool_sampling == "pfsp" and cfg.snapshot_min_win_rate is None
+
+
+def test_eval_pairings_is_a_fixed_sample_of_the_training_pairings(tmp_path):
+    cfg = replace(_small_cfg(pairings="all"), eval_pairings=2)
+    a = Trainer(cfg, tmp_path / "a", log=None).eval_pairings()
+    b = Trainer(cfg, tmp_path / "b", log=None).eval_pairings()
+    everything = Trainer(_small_cfg(pairings="all"), tmp_path / "c", log=None)
+    assert a == b and len(a) == 2 and set(a) <= set(everything.schedule.decks.pairs)
+    assert everything.eval_pairings() == list(everything.schedule.decks.pairs)
