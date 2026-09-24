@@ -166,3 +166,21 @@ MetaGame.load(path, env=env)                     # 环境不符时抛 Environmen
 `environment`（`Environment.stamp()` 或 `null`）、`decks`、`deck_hashes`（主/额外/副卡组的 sha256 前 16 位）、
 `agent`、`seed`、`pairs`、`confidence`、`errors`、`win_rate`、`games`、`ci_low`、`ci_high`、`nash`、`alpha_rank`、`alpha`、`population_size`。
 传入 `env` 保存时，矩阵必须是在同一环境（版本与指纹）下构建的，否则抛 `EnvironmentConfigError`。
+
+## 批量评估（策略对策略，`ygorl.eval.batched`）
+
+`Arena` 每局是一个 Python `Duel`，策略 agent 在 CPU 上一次只答一个决策。调卡组要在很多牌组上打很多局网络策略之间的对局，
+所以 `play_policies(env, specs, policy_a, policy_b)` 把对局放在 C++ 步进路径（`EncodedVecEnv`，`skip_forced=True`）上跑，
+每轮把同一策略所有就绪的决策合成一次前向（可在 GPU 上）。
+
+- **配对**同 Arena：`paired_specs(deck_a, deck_b, pairs, seed, config)` 给每个种子先后攻各一局、两局同一牌序；记录是 deck a 一侧的
+  `GameRecord`，`summarize` 与配对比较照用。
+- **采样**：每个决策用由（对局种子、先攻方、座位、该座位第几个决策）导出的均匀数从掩码后的 softmax 里抽，结果与批怎么拼、线程快慢无关
+  （测试：1 个环境与 4 个环境逐局相同）。与 Arena 同分布，但不是同一串随机数。
+- **失败**：开不了局（`reset` 抛异常）记为 `exception` 并接着打下一局；引擎在局中出错（`reason="error"`）也记为 `exception`、不算平局，
+  都进报告的 `errors`。
+- 只能打网络策略（greedy / random 在 Python 里，仍用 Arena）。
+
+命令行：`tools/eval_batched.py CKPT --decks DIR [--opponents DIR] [--opponent-checkpoint CKPT2] [--pairings 200] [--pairs 1]
+[--device cuda] [--envs 256] [--out report.json]`：CKPT 驾驶 `--decks` 里的牌，对手策略驾驶 `--opponents` 里的牌，按 `--seed`
+抽一次对阵；打印总胜率（Wilson 区间）与先后攻分项，`--out` 另写按驾驶牌组拆开的胜率与耗时统计。吞吐见 [benchmarks.md](benchmarks.md)。

@@ -72,12 +72,18 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
     t0, forwards, decisions, forward_s = time.perf_counter(), 0, 0, 0.0
 
     def launch(env_id: int) -> bool:
-        nxt = next(queue, None)
-        if nxt is None:
-            return False
-        running[env_id] = [nxt[0], 0, 0]
-        env.reset(env_id, nxt[1])
-        return True
+        """Start the next spec on ``env_id``; a spec whose duel cannot start is recorded as an exception (as in the
+        arena) and the next one is tried."""
+        for i, spec in queue:
+            try:
+                env.reset(env_id, spec)
+            except Exception as exc:  # noqa: BLE001 - recorded, counted as an error
+                records[i] = GameRecord(pair=i // pairs_per_spec, seed=spec.seed, first=spec.first, winner=None,
+                                        reason="exception", error=f"{type(exc).__name__}: {exc}")  # fmt: skip
+                continue
+            running[env_id] = [i, 0, 0]
+            return True
+        return False
 
     active = sum(launch(e) for e in range(env.num_envs))
     while active:
@@ -90,8 +96,11 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
                 w = res.get("winner")
                 deck_of_seat = [(spec.first + p) % 2 for p in (0, 1)]  # engine seat p holds deck (first + p) % 2
                 lp = res.get("lp", (0, 0))
+                reason = str(res.get("reason", ""))
+                failed = reason == "error"  # the engine raised: an error, not a draw (the arena's "exception")
                 records[i] = GameRecord(pair=i // pairs_per_spec, seed=spec.seed, first=spec.first,
-                                        winner=None if w is None else deck_of_seat[w], reason=str(res.get("reason", "")),
+                                        winner=None if w is None or failed else deck_of_seat[w],
+                                        reason="exception" if failed else reason,
                                         turns=int(res.get("turns", 0)), decisions=int(res.get("decisions", 0)),
                                         win_reason=res.get("win_reason"),
                                         lp=(lp[deck_of_seat.index(0)], lp[deck_of_seat.index(1)]),

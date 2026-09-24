@@ -56,3 +56,16 @@ def test_greedy_play_is_reproducible_and_seats_follow_the_decks(setup):
     other = PolicyNet(net.cfg)
     g3, _ = play_policies(_env(2, cards, vocab), specs, net, other, greedy=True)
     assert [r.first for r in g3] == [r.first for r in g1] and g3 != g1
+
+
+def test_a_deck_that_cannot_start_is_recorded_and_the_rest_play(setup):
+    cards, vocab, net, specs = setup
+    from dataclasses import replace
+
+    # EncodedVecEnv.reset refuses curriculum modes: a game that cannot start
+    bad = [replace(specs[0], config=replace(specs[0].config, curriculum="solo")), *specs[1:3]]
+    recs, _ = play_policies(_env(1, cards, vocab), bad, net)
+    assert recs[0].reason == "exception" and recs[0].winner is None and recs[0].error
+    assert all(r.reason != "exception" for r in recs[1:])
+    rep = summarize(recs, agent_a="a", agent_b="b", deck_a="x", deck_b="y", seed=5)
+    assert rep.errors == 1

@@ -54,6 +54,8 @@ def main() -> int:
     theirs = [load_ydk(p) for p in deck_files(args.opponents)] if args.opponents else mine
     if not mine or not theirs:
         raise SystemExit("no decks found")
+    if theirs is mine and len(mine) < 2:
+        raise SystemExit("one deck against itself: give at least two decks or --opponents")
     pol = load_actor(args.checkpoint)
     opp = load_actor(args.opponent_checkpoint) if args.opponent_checkpoint else pol
     if vocab_passwords(opp.vocab) != vocab_passwords(pol.vocab) or opp.event_length != pol.event_length:
