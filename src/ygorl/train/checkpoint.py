@@ -85,10 +85,10 @@ def load_policy(path: str | Path, text_dir: str | Path | None = None) -> LoadedP
     cfg = NetConfig.from_dict(state["net_config"])
     vocab = vocab_from_text(state["vocab"])
     text = None
-    if cfg.card_text_dim or cfg.effect_text_dim:
+    if cfg.card_text_dim or cfg.effect_text_dim or cfg.n_archetypes:
         where = text_dir or state["config"].get("text_dir")
         if where is None:
-            raise ValueError(f"{path}: the network uses frozen text tables; pass their directory")
+            raise ValueError(f"{path}: the network uses frozen text tables / card facts; pass their directory")
         text = TextFeatures.load(where, vocab)
     net = PolicyNet(cfg, text)
     model = state["learner"]["model"]

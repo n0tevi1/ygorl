@@ -51,6 +51,12 @@ from ygorl.train.rollout import Rollout, RolloutCollector
 from ygorl.train.selfplay import DeckPool, SelfPlaySchedule, SnapshotPool
 
 SMALL_NET = {"d_model": 64, "n_heads": 4, "board_layers": 1, "history_layers": 1}
+# A warm start may add card views (text tables, card facts, ID dropout) to the checkpoint's network: those modules
+# start fresh, every other weight must fit (docs/nets.md「卡片事实」)
+CARD_VIEW_FIELDS = frozenset({"card_text", "effect_text", "card_text_dim", "effect_text_dim", "card_facts",
+                              "n_archetypes", "n_archetype_slots", "n_reference_slots", "n_categories", "n_queries",
+                              "id_dropout"})  # fmt: skip
+CARD_VIEW_MODULES = ("text_proj", "archetype", "reference_proj", "category_proj", "query_proj", "effect.proj")
 
 
 @dataclass(frozen=True)
@@ -170,11 +176,16 @@ class Trainer:
         torch.manual_seed(derive_seed(cfg.seed, 0))
         self.model = self._new_model()
         if init is not None:
-            if init.net_config.to_dict() != self.net_config.to_dict():
-                raise ValueError(f"{cfg.init_from}: its network {init.net_config.to_dict()} differs from the configured "
-                                 f"{self.net_config.to_dict()} (set the same net options)")  # fmt: skip
-            self.model.actor.load_state_dict(init.net.state_dict())
-            self.log(f"initialized the actor from {cfg.init_from} (the critic starts fresh)")
+            old, new = init.net_config.to_dict(), self.net_config.to_dict()
+            differ = {k for k in old.keys() | new.keys() if old.get(k) != new.get(k)}
+            if differ - CARD_VIEW_FIELDS:
+                raise ValueError(f"{cfg.init_from}: its network {old} differs from the configured {new} "
+                                 "(set the same net options)")  # fmt: skip
+            missing, unexpected = self.model.actor.load_state_dict(init.net.state_dict(), strict=not differ)
+            if unexpected or any(not any(m in k for m in CARD_VIEW_MODULES) for k in missing):
+                raise ValueError(f"{cfg.init_from}: weights do not fit (missing {missing}, unexpected {unexpected})")
+            added = f"; new card views start fresh: {sorted(differ)}" if differ else ""
+            self.log(f"initialized the actor from {cfg.init_from} (the critic starts fresh{added})")
         prior = None
         if cfg.bc_prior:
             loaded = load_actor(cfg.bc_prior, cfg.text_dir)

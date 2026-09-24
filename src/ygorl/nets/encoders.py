@@ -105,12 +105,38 @@ class CardIdentity(nn.Module):
             _table(text, "effect", cfg.effect_text_dim, cfg.vocab_size)
             self.register_buffer("effect_mean", torch.as_tensor(text.card_effect_mean()).float(), persistent=False)
             self.effect_text_proj = nn.Linear(cfg.effect_text_dim, d, bias=False)
+        # card facts (docs/nets.md「卡片事实」): membership and references share one archetype table, so "searches
+        # archetype X" and "is archetype X" land in the same space
+        self.archetype = self.reference_proj = self.category_proj = self.query_proj = None
+        if cfg.n_archetypes:
+            _facts(text, cfg)
+            self.register_buffer("archetypes", torch.as_tensor(text.archetypes).long(), persistent=False)
+            self.register_buffer("references", torch.as_tensor(text.references).long(), persistent=False)
+            self.register_buffer("categories", torch.as_tensor(text.categories).float(), persistent=False)
+            self.register_buffer("queries", torch.as_tensor(text.queries).float(), persistent=False)
+            self.archetype = nn.Embedding(cfg.n_archetypes + 1, d, padding_idx=0)
+            self.reference_proj = nn.Linear(d, d, bias=False)
+            self.category_proj = nn.Linear(cfg.n_categories, d, bias=False)
+            self.query_proj = nn.Linear(cfg.n_queries, d, bias=False)
+            # start at zero: a network that gains these views (warm start) plays exactly as before; the archetype
+            # table then learns through membership, and the reference projection once the table is non-zero
+            for m in (self.archetype, self.reference_proj, self.category_proj, self.query_proj):
+                nn.init.zeros_(m.weight)
+        self.id_dropout = cfg.id_dropout
 
     def forward(self, index: Tensor) -> Tensor:
         index = index.clamp(0, self.vocab_size - 1)
         out = self.status(index.clamp(max=CardVocab.FIRST_INDEX))
         if self.id_embedding is not None:
-            out = out + self.id_embedding(index)
+            ids = self.id_embedding(index)
+            if self.training and self.id_dropout > 0:  # inverted dropout: the expectation matches eval mode
+                keep = torch.rand(index.shape, device=index.device) >= self.id_dropout
+                ids = ids * (keep.unsqueeze(-1).to(ids.dtype) / (1 - self.id_dropout))
+            out = out + ids
+        if self.archetype is not None:
+            out = out + self.archetype(self.archetypes[index]).sum(-2)
+            out = out + self.reference_proj(self.archetype(self.references[index]).sum(-2))
+            out = out + self.category_proj(self.categories[index]) + self.query_proj(self.queries[index])
         if self.card_text_proj is not None:
             out = out + self.card_text_proj(self.card_text[index])
         if self.effect_text_proj is not None:
@@ -132,6 +158,18 @@ class EffectText(nn.Module):
     def forward(self, card: Tensor, slot: Tensor) -> Tensor:
         row = self.lookup[card.clamp(0, self.vocab_size - 1), slot.clamp(0, EFFECT_SLOTS - 1)]
         return self.proj(self.vectors[row])
+
+
+def _facts(text: TextFeatures | None, cfg: NetConfig) -> None:
+    if text is None or not text.has_facts:
+        raise ValueError("config enables card facts but the feature directory has no card_facts.npz")
+    got = (text.n_archetypes, text.archetypes.shape[1], text.references.shape[1], text.categories.shape[1],
+           text.queries.shape[1], text.archetypes.shape[0])  # fmt: skip
+    want = (cfg.n_archetypes, cfg.n_archetype_slots, cfg.n_reference_slots, cfg.n_categories, cfg.n_queries,
+            cfg.vocab_size)  # fmt: skip
+    if got != want:
+        raise ValueError(f"card facts {got} do not match the config {want} (archetypes, slots, references, "
+                         "categories, queries, vocab)")  # fmt: skip
 
 
 def _table(text: TextFeatures | None, kind: str, width: int, vocab_size: int):

@@ -68,6 +68,8 @@ Python 运行时依赖写在 `pyproject.toml`、锁定在 `uv.lock`，`uv sync` 
 AMD GPU（ROCm，例如 Ryzen AI Max+ 395 的 Radeon 8060S 核显）：`uv sync --extra train` 之后换成同版本的 ROCm 轮子
 `uv pip install "torch==<uv.lock 中的版本>" --index-url https://download.pytorch.org/whl/rocm<系统 ROCm 版本>`（例如 `rocm7.2`），
 之后用 `uv run --no-sync` 运行，否则 `uv run` 会按锁文件换回 PyPI 版；训练加 `--device cuda`（ROCm 也叫 `cuda`，见 [docs/training.md](docs/training.md)）。
+卡文本 / 效果文本嵌入的离线生成（`tools/build_text_embeddings.py`，T5.2）另需 sentence-transformers，在可选依赖组 `text` 里：`uv sync --extra train --extra text`
+（ROCm 机器上先按上面装好 ROCm 版 torch，再 `uv pip install "sentence-transformers>=3"`，以免换回 PyPI 的 torch）；首次运行从 Hugging Face 下载所选模型。训练与推理只读生成好的 `.npy`，不需要它。
 开发工具在 `dev` 依赖组（`uv sync` 默认安装）：pytest（单测）、ruff（lint，`uv run ruff check src tests tools`）。
 个别工具另有系统依赖：`tools/tsan/check.sh` 需要 ninja、GCC 的 libtsan 与 `setarch`（util-linux）；`tools/check_ygoprodeck.py` 需要能访问
 YGOPRODECK API 的网络；`tools/crosscheck_banlist.py` 需要能访问 YGOPRODECK 与 Yugipedia 的网络（`--from` 离线重跑）。CI 与云端会话 hook 另装 ccache 以加速重编。
