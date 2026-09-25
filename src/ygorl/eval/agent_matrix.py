@@ -122,7 +122,9 @@ class AgentMatrix:
         """Agents by alpha-rank mass, then Nash weight, then mean win rate (strongest first)."""
         m = self.array()
         mean = [(m[i].sum() - 0.5) / max(1, len(self.agents) - 1) for i in range(len(self.agents))]
-        order = sorted(range(len(self.agents)), key=lambda i: (-self.alpha_rank[i], -self.nash[i], -mean[i], self.agents[i]))
+        order = sorted(
+            range(len(self.agents)), key=lambda i: (-self.alpha_rank[i], -self.nash[i], -mean[i], self.agents[i])
+        )
         return [self.agents[i] for i in order]
 
     def total_errors(self) -> int:
