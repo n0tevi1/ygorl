@@ -301,7 +301,9 @@ def test_belief_policy_checks_widths():
     with pytest.raises(ValueError, match="d_model"):
         BeliefPolicy(PolicyNet(NetConfig(vocab_size=50, d_model=16, n_heads=4)), BeliefHeads(cfg), feed_policy=False)
     # a policy without the belief input keeps working (existing callers)
-    model = BeliefPolicy(PolicyNet(NetConfig(vocab_size=50, d_model=32, n_heads=4)), BeliefHeads(cfg), feed_policy=False)
+    model = BeliefPolicy(
+        PolicyNet(NetConfig(vocab_size=50, d_model=32, n_heads=4)), BeliefHeads(cfg), feed_policy=False
+    )
     obs = collate([random_obs(np.random.default_rng(1)) for _ in range(2)])
     policy, _ = model(obs, prior_tensors(random_prior(b=2)))
     assert torch.isfinite(policy.log_probs()[:, :4]).all()

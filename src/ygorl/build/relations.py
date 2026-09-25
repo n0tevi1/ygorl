@@ -84,7 +84,10 @@ def relation_edges(
         raise ValueError(f"unknown relation types {sorted(unknown)}; have {RELATION_TYPES}")
     archseries: Mapping[str, list[int]] = relations.get("archseries", {})
     edges: list[Edge] = []
-    stats: dict = {"max_fanout": max_fanout, "anti_support_skipped": sum(len(v) for v in relations.get("anti_support", {}).values())}
+    stats: dict = {
+        "max_fanout": max_fanout,
+        "anti_support_skipped": sum(len(v) for v in relations.get("anti_support", {}).values()),
+    }
     for etype in types:
         used = capped = 0
         for page, sources in sorted(relations.get(etype, {}).items()):

@@ -424,7 +424,9 @@ def evaluate_deck(deck: Deck, targets: Sequence[str] | Sequence[Sequence[str]], 
     deck_path = root / f"{deck.name}.ydk"
     deck_path.write_text(deck.to_ydk(), encoding="utf-8")
     workdir = Workdir.create(root / "workdir").path
-    tasks = [_HandTask(deck_path, i, s, alts, config, workdir, root / f"hand{i}") for i, s in enumerate(config.hand_seeds())]
+    tasks = [
+        _HandTask(deck_path, i, s, alts, config, workdir, root / f"hand{i}") for i, s in enumerate(config.hand_seeds())
+    ]
     outcomes: list[HandOutcome] = []
     stopped = False
     start = time.monotonic()

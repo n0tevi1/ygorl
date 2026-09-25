@@ -61,7 +61,17 @@ def test_idlecmd():
     )
     st = make_decision(msg)
     assert st.player == 0
-    assert kinds(st) == ["summon", "spsummon", "reposition", "mset", "sset", "sset", "activate", "battle_phase", "end_phase"]
+    assert kinds(st) == [
+        "summon",
+        "spsummon",
+        "reposition",
+        "mset",
+        "sset",
+        "sset",
+        "activate",
+        "battle_phase",
+        "end_phase",
+    ]
     assert st.actions()[6].description == 112 and st.actions()[6].card.code == 7
     assert make_decision(msg).step(0) == i32(0)
     assert make_decision(msg).step(5) == i32(4 | (1 << 16))
@@ -74,7 +84,10 @@ def test_battlecmd():
     msg = M.SelectBattleCmd(
         1,
         activatable=(M.ChainOption(7, M.Location(1, C.LOCATION_MZONE, 0), 1, 0),),
-        attackable=(M.AttackOption(8, M.Location(1, C.LOCATION_MZONE, 1), True), M.AttackOption(9, M.Location(1, C.LOCATION_MZONE, 2), False)),
+        attackable=(
+            M.AttackOption(8, M.Location(1, C.LOCATION_MZONE, 1), True),
+            M.AttackOption(9, M.Location(1, C.LOCATION_MZONE, 2), False),
+        ),
         can_main2=True,
         can_end_phase=False,
     )
@@ -227,7 +240,10 @@ def test_unselect_card():
 
 
 def test_counter_distribution():
-    opts = (M.CounterOption(1, M.Location(0, C.LOCATION_SZONE, 0), 3), M.CounterOption(2, M.Location(0, C.LOCATION_SZONE, 1), 1))
+    opts = (
+        M.CounterOption(1, M.Location(0, C.LOCATION_SZONE, 0), 3),
+        M.CounterOption(2, M.Location(0, C.LOCATION_SZONE, 1), 1),
+    )
     st = make_decision(M.SelectCounter(0, 0x1, 2, opts))
     assert kinds(st) == ["counter", "counter"]
     st.step(1)
@@ -272,8 +288,12 @@ def test_announce_race_and_attribute():
 # ------------------------------------------------------------------ announce card
 
 
-def mk(password, type_=C.TYPE_MONSTER | C.TYPE_EFFECT, alias=0, setcodes=(), race=C.RACE_DRAGON, attr=C.ATTRIBUTE_LIGHT):
-    return Card(password, f"c{password}", "", ("",) * 16, alias, 3, tuple(setcodes), type_, 0, 0, 4, 0, 0, race, attr, 0, 0)
+def mk(
+    password, type_=C.TYPE_MONSTER | C.TYPE_EFFECT, alias=0, setcodes=(), race=C.RACE_DRAGON, attr=C.ATTRIBUTE_LIGHT
+):
+    return Card(
+        password, f"c{password}", "", ("",) * 16, alias, 3, tuple(setcodes), type_, 0, 0, 4, 0, 0, race, attr, 0, 0
+    )
 
 
 POOL = {
@@ -302,7 +322,9 @@ def test_is_declarable():
     assert is_declarable(POOL[4], anything + (C.OPCODE_ALLOW_TOKENS,))
     # setcode 0xDD matches both 0xDD and its sub-archetype 0x10DD; 0x10DD only the latter
     assert is_declarable(POOL[5], (0xDD, C.OPCODE_ISSETCARD)) and is_declarable(POOL[6], (0xDD, C.OPCODE_ISSETCARD))
-    assert is_declarable(POOL[5], (0x10DD, C.OPCODE_ISSETCARD)) and not is_declarable(POOL[6], (0x10DD, C.OPCODE_ISSETCARD))
+    assert is_declarable(POOL[5], (0x10DD, C.OPCODE_ISSETCARD)) and not is_declarable(
+        POOL[6], (0x10DD, C.OPCODE_ISSETCARD)
+    )
     assert not is_declarable(POOL[1], ())  # empty program -> stack size != 1
 
 

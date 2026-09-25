@@ -79,7 +79,7 @@ def test_shapes_and_dtypes(db, encoder):
     assert obs["globals"].shape == (22,) and obs["actions"].shape == (MAX_OPTIONS, 10)
     assert obs["action_mask"].shape == (MAX_OPTIONS,)
     assert 0 < obs["action_mask"].sum() <= min(len(point.actions), MAX_OPTIONS)  # equivalent copies are masked
-    assert obs["action_mask"][0] and not obs["action_mask"][len(point.actions):].any()
+    assert obs["action_mask"][0] and not obs["action_mask"][len(point.actions) :].any()
     assert obs["globals"][20] == len(point.actions)
 
 
@@ -95,7 +95,11 @@ def test_first_decision_content(db, encoder):
     own_extra = rows[(rows[:, COL["location"]] == 7) & (rows[:, COL["controller"]] == 0)]
     assert len(own_hand) == 5 and own_hand[:, COL["visible"]].all() and (own_hand[:, COL["card_index"]] > 1).all()
     assert len(opp_hand) == 5 and not opp_hand[:, COL["visible"]].any() and (opp_hand[:, COL["card_index"]] == 1).all()
-    assert len(own_deck) == 35 and (own_deck[:, COL["sequence"]] == 0).all() and (own_deck[:, COL["controller"]] == 0).all()
+    assert (
+        len(own_deck) == 35
+        and (own_deck[:, COL["sequence"]] == 0).all()
+        and (own_deck[:, COL["controller"]] == 0).all()
+    )
     assert list(own_deck[:, COL["card_index"]]) == sorted(own_deck[:, COL["card_index"]])
     assert len(own_extra) == 15
     assert not ((rows[:, COL["location"]] == 1) & (rows[:, COL["controller"]] == 1)).any()  # no opponent deck rows
@@ -113,7 +117,7 @@ def test_hidden_rows_carry_no_identity(db, encoder):
         cards = obs["cards"]
         hidden = cards[(cards[:, COL["card_index"]] != 0) & (cards[:, COL["visible"]] == 0)]
         assert (hidden[:, COL["card_index"]] == 1).all()
-        assert not hidden[:, COL["type"]:].any()
+        assert not hidden[:, COL["type"] :].any()
 
 
 def test_action_rows_point_at_matching_cards(db, encoder):

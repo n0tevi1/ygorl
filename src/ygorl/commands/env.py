@@ -62,7 +62,9 @@ def run_build(args: argparse.Namespace) -> int:
     s = result.stats
     ban = ", ".join(f"{v} {k}" for k, v in s["banlist"].items())
     print(f"built      {result.path}")
-    print(f"pool       {s['pool']} cards ({len(s['pool_unmapped'])} unmapped, {len(s['pool_by_name'])} matched by name)")
+    print(
+        f"pool       {s['pool']} cards ({len(s['pool_unmapped'])} unmapped, {len(s['pool_by_name'])} matched by name)"
+    )
     print(f"banlist    {ban} ({len(s['banlist_unmapped'])} unmapped, review {s['review']})")
     print(f"meta       {s['meta_decks']} decks, share {s['meta_share']:.1%} of {s['meta_counted']} counted lists "
           f"({len(s['meta_skipped'])} popular types without a legal list)")  # fmt: skip

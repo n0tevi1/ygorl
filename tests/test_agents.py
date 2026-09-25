@@ -38,7 +38,9 @@ def effect(code, description=0, location=C.LOCATION_HAND, sequence=0):
 
 def point(decision, *, turn=1, phase=C.PHASE_MAIN1, events=(), index=0):
     state = make_decision(decision, default_cards())
-    return DecisionPoint(index, decision.player, turn, phase, (8000, 8000), decision, state.actions(), state, tuple(events))
+    return DecisionPoint(
+        index, decision.player, turn, phase, (8000, 8000), decision, state.actions(), state, tuple(events)
+    )
 
 
 def idle(summonable=(), spsummonable=(), msetable=(), ssetable=(), activatable=(), battle=True, end=True):
@@ -102,7 +104,9 @@ def test_greedy_main_phase_priorities():
 
 def test_greedy_normal_summons_the_strongest_monster():
     g = GreedyAgent(0)
-    a = chosen(g, idle(summonable=[card(KURIBOH, sequence=0), card(BLUE_EYES, sequence=1), card(CELTIC_GUARDIAN, sequence=2)]))
+    a = chosen(
+        g, idle(summonable=[card(KURIBOH, sequence=0), card(BLUE_EYES, sequence=1), card(CELTIC_GUARDIAN, sequence=2)])
+    )
     assert a.kind == "summon" and a.card.code == BLUE_EYES
 
 

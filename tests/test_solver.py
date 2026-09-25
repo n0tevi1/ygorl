@@ -81,7 +81,13 @@ def test_board_check_counts_copies_and_zones():
     # positions: 1 = face-up attack, 4 = face-up defense, 10 = face-down (set)
     board = {"players": [{"mzone": [{"code": 1, "position": 1}, {"code": 1, "position": 4}], "szone": [{"code": 3, "position": 10}],
                           "hand": [7], "grave": [5, 5], "banished": [], "lp": 8000}, {}]}  # fmt: skip
-    ok = [TargetCard(1, "atk"), TargetCard(1, "mzone"), TargetCard(3, "szone", True), TargetCard(5, "grave"), TargetCard(5, "grave")]
+    ok = [
+        TargetCard(1, "atk"),
+        TargetCard(1, "mzone"),
+        TargetCard(3, "szone", True),
+        TargetCard(5, "grave"),
+        TargetCard(5, "grave"),
+    ]
     assert board_summary_missing(board, ok) == []
     # like the solver's judge, atk/def only say "face-up in a monster zone": two face-up copies satisfy 1@def twice
     assert board_summary_missing(board, [TargetCard(1, "def"), TargetCard(1, "def")]) == []
@@ -116,12 +122,22 @@ def test_solve_request_arguments(tmp_path):
     args = req.args(wd, tmp_path / "out")
     assert args[:1] == ["t.yrpX"]
     joined = " ".join(args)
-    assert f"--workdir {tmp_path}" in joined and f"--scriptdir {tmp_path / 'script-root'} --scriptdir {tmp_path / 'official'}" in joined
+    assert (
+        f"--workdir {tmp_path}" in joined
+        and f"--scriptdir {tmp_path / 'script-root'} --scriptdir {tmp_path / 'official'}" in joined
+    )
     assert "--no-ref --deck d.ydk --hand 9674034|45663742 --target 48452496@atk" in joined
-    assert "--solve-ms 5000 --threads 1 --seed 3 --max-written 2 --json" in joined and args[-2:] == ["--outdir", str(tmp_path / "out")]
+    assert "--solve-ms 5000 --threads 1 --seed 3 --max-written 2 --json" in joined and args[-2:] == [
+        "--outdir",
+        str(tmp_path / "out"),
+    ]
     fire = SolveRequest(template=Path("line.yrpX"), fire=ASH_BLOSSOM, fire_ms=4000, solve_ms=1000)
     fargs = fire.args(wd, tmp_path / "o")
-    assert "--fire 14558127 --fire-bake --fire-ms 4000" in " ".join(fargs) and "--no-ref" not in fargs and "--deck" not in fargs
+    assert (
+        "--fire 14558127 --fire-bake --fire-ms 4000" in " ".join(fargs)
+        and "--no-ref" not in fargs
+        and "--deck" not in fargs
+    )
     assert "--max-rollouts" not in fargs
     counted = SolveRequest(template=Path("line.yrpX"), fire=ASH_BLOSSOM, max_rollouts=500).args(wd, tmp_path / "o")
     assert "--max-rollouts 500" in " ".join(counted)
@@ -134,7 +150,15 @@ def test_workdir_mirrors_our_script_priority(tmp_path, db):
     assert (wd.path / "cards.cdb").resolve().is_file()
     root = wd.scriptdirs[0]
     assert (root / "constant.lua").is_file() and not any(p.is_dir() for p in root.iterdir())
-    assert [p.name for p in wd.scriptdirs[1:]] == ["official", "pre-release", "pre-errata", "goat", "rush", "skill", "unofficial"]
+    assert [p.name for p in wd.scriptdirs[1:]] == [
+        "official",
+        "pre-release",
+        "pre-errata",
+        "goat",
+        "rush",
+        "skill",
+        "unofficial",
+    ]
     assert Workdir.create(tmp_path / "wd").scriptdirs == wd.scriptdirs  # idempotent
 
 
@@ -223,7 +247,9 @@ def test_convert_line_rejects_a_response_the_engine_refuses(db, tmp_path):
 def test_demonstration_roundtrip_and_iter_steps(db, tmp_path):
     _, yrp = _short_game(db, tmp_path)
     line = convert_line(yrp, [], responses=yrp.replayable().responses[:10], cards=db)
-    demo = Demonstration.start_from(yrp, deck=SNAKE, hand=[1, 2, 3], hand_index=0, hand_seed=1, variant="plain", targets=[], environment=None)
+    demo = Demonstration.start_from(
+        yrp, deck=SNAKE, hand=[1, 2, 3], hand_index=0, hand_seed=1, variant="plain", targets=[], environment=None
+    )
     demo.lines.append(line)
     demo.status = "solved"
     path = tmp_path / "demos.jsonl"
@@ -244,7 +270,9 @@ def test_demonstration_roundtrip_and_iter_steps(db, tmp_path):
     with pytest.raises(DemoError, match="board differs"):
         verify_line(tampered, 0, cards=db)
     first_multi = next(i for i, (p, _) in enumerate(steps) if len(p.actions) > 1)
-    tampered.lines[0].actions[first_multi] = (tampered.lines[0].actions[first_multi] + 1) % len(steps[first_multi][0].actions)
+    tampered.lines[0].actions[first_multi] = (tampered.lines[0].actions[first_multi] + 1) % len(
+        steps[first_multi][0].actions
+    )
     with pytest.raises(DemoError):
         verify_line(tampered, 0, cards=db)
 
@@ -295,7 +323,9 @@ def test_end_to_end_fire_variant(db, tmp_path):
     assert ASH_BLOSSOM in fire.start["decks"]["b"]["main"]  # baked into the opponent's deck
     for i, line in enumerate(fire.lines):
         steps = list(iter_steps(fire, i, cards=db))
-        assert any(p.player == 1 and p.actions[a].kind == "chain" and p.actions[a].card.code == ASH_BLOSSOM for p, a in steps)
+        assert any(
+            p.player == 1 and p.actions[a].kind == "chain" and p.actions[a].card.code == ASH_BLOSSOM for p, a in steps
+        )
 
 
 FAKE_SOLVER = """#!/bin/sh
@@ -338,10 +368,14 @@ def test_batch_planning_and_resume(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="snake_eye"):
         load_targets(bad)
 
-    spec = importlib.util.spec_from_file_location("solve_openings", Path(__file__).parents[1] / "tools" / "solve_openings.py")
+    spec = importlib.util.spec_from_file_location(
+        "solve_openings", Path(__file__).parents[1] / "tools" / "solve_openings.py"
+    )
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
-    unsolved = _fake_solver(tmp_path, "#!/bin/sh\necho '@event {\"type\":\"written\",\"written\":0,\"candidates\":0}'\nexit 0\n")
+    unsolved = _fake_solver(
+        tmp_path, '#!/bin/sh\necho \'@event {"type":"written","written":0,"candidates":0}\'\nexit 0\n'
+    )
     out = tmp_path / "demos.jsonl"
     argv = [str(Path(__file__).parent / "decks" / "snake_eye.ydk"), "--hands", "2", "--solve-ms", "100", "--workers", "1",
             "--binary", str(unsolved), "--out", str(out), "--scratch", str(tmp_path / "scratch")]  # fmt: skip

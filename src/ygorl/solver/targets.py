@@ -70,7 +70,9 @@ def board_summary(core, turn: int, lp: tuple[int, int]) -> dict:
             out = []
             for i, c in enumerate(parse_query_location(core.query_location(_BOARD_FLAGS, p, loc))):
                 if c is not None and c.get("code"):
-                    out.append({"code": c["code"], "position": c.get("position", 0), "sequence": i, "overlay": c["overlay"]})
+                    out.append(
+                        {"code": c["code"], "position": c.get("position", 0), "sequence": i, "overlay": c["overlay"]}
+                    )
             return out
 
         extra = cards(C.LOCATION_EXTRA)

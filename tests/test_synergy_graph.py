@@ -28,7 +28,9 @@ from ygorl.engine import constants as C
 EFFECT = C.TYPE_MONSTER | C.TYPE_EFFECT
 
 
-def mk(password, *, setcodes=(), type=EFFECT, level=4, race=C.RACE_WARRIOR, attribute=C.ATTRIBUTE_EARTH, alias=0, name=None):
+def mk(
+    password, *, setcodes=(), type=EFFECT, level=4, race=C.RACE_WARRIOR, attribute=C.ATTRIBUTE_EARTH, alias=0, name=None
+):
     return Card(
         password=password, name=name or f"card{password}", desc="", strings=("",) * 16, alias=alias, ot=3,
         setcodes=tuple(setcodes), type=type, attack=1000, defense=1000, level=level, lscale=0, rscale=0,
@@ -185,7 +187,6 @@ def test_package_coverage_and_recall(mini):
     assert report.coverage["b"] == pytest.approx(1 / 3)
 
 
-
 def test_relation_edges():
     relations = {
         "archseries": {"A": [1, 2, 3], "Big": list(range(100, 202))},
@@ -197,7 +198,9 @@ def test_relation_edges():
     assert sorted((e.src, e.dst, e.type, e.fanout, e.evidence) for e in edges) == [
         (9, m, "archetype_support", 3, "yugipedia") for m in (1, 2, 3)
     ]  # member 1 is no source; "Big" (102 members) is capped; "Link Monster" has no members
-    assert stats["archetype_support"] == {"archetypes": 1, "capped_archetypes": 1} and stats["anti_support_skipped"] == 1
+    assert (
+        stats["archetype_support"] == {"archetypes": 1, "capped_archetypes": 1} and stats["anti_support_skipped"] == 1
+    )
     with_members, _ = relation_edges(relations, ("archetype_support",), member_sources=True)
     assert {(e.src, e.dst) for e in with_members} == {(9, 1), (9, 2), (9, 3), (1, 2), (1, 3)}
     assert len(relation_edges(relations, ("archetype_support",), max_fanout=200)[0]) == 3 + 102
@@ -263,7 +266,11 @@ def proxy_packages():
 def test_proxy_packages_are_reproducible(tmp_path):
     root = Path(__file__).resolve().parents[1]
     out = tmp_path / "p.json"
-    subprocess.run([sys.executable, str(root / "tools" / "make_proxy_packages.py"), "--out", str(out)], check=True, capture_output=True)
+    subprocess.run(
+        [sys.executable, str(root / "tools" / "make_proxy_packages.py"), "--out", str(out)],
+        check=True,
+        capture_output=True,
+    )
     assert out.read_text() == PROXY.read_text()
 
 

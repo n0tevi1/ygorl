@@ -133,7 +133,9 @@ class TextEmbeddings:
     def __init__(self, table: Any, vocab: CardVocab, missing: Iterable[int] = ()) -> None:
         table = np.asarray(table, dtype=np.float64)
         if table.ndim != 2 or table.shape[0] != len(vocab):
-            raise ValueError(f"embedding table has {table.shape[0] if table.ndim else 0} rows, vocab needs {len(vocab)}")
+            raise ValueError(
+                f"embedding table has {table.shape[0] if table.ndim else 0} rows, vocab needs {len(vocab)}"
+            )
         self.table, self.vocab, self.missing = table, vocab, frozenset(int(p) for p in missing)
 
     @classmethod
@@ -459,7 +461,9 @@ def _hand_traps(space: GenotypeSpace) -> Callable[[np.ndarray], np.ndarray]:
     return lambda counts: (np.asarray(counts, dtype=np.float64) @ mask).astype(np.int64)
 
 
-EXACT_DESCRIPTORS: dict[str, Callable[[GenotypeSpace], Callable[[np.ndarray], np.ndarray]]] = {"hand_traps": _hand_traps}
+EXACT_DESCRIPTORS: dict[str, Callable[[GenotypeSpace], Callable[[np.ndarray], np.ndarray]]] = {
+    "hand_traps": _hand_traps
+}
 
 
 @dataclass(frozen=True)
@@ -496,7 +500,9 @@ class Surrogate:
         self.targets = tuple(targets)
         unknown = [d for d in descriptors if d not in self.targets and d not in EXACT_DESCRIPTORS]
         if unknown:
-            raise ValueError(f"unknown descriptor(s) {unknown}: neither a target nor one of {sorted(EXACT_DESCRIPTORS)}")
+            raise ValueError(
+                f"unknown descriptor(s) {unknown}: neither a target nor one of {sorted(EXACT_DESCRIPTORS)}"
+            )
         self.descriptor_names = tuple(descriptors)
         self._exact = {d: EXACT_DESCRIPTORS[d](features.space) for d in descriptors if d not in self.targets}
         b = {t: (0.0, 1.0) if t.startswith("win_rate") else None for t in self.targets}
@@ -515,11 +521,15 @@ class Surrogate:
     def n_observations(self) -> int:
         return len(self._counts)
 
-    def add(self, items: Sequence[Item], labels: Sequence[Mapping[str, float]], weights: Sequence[float] | None = None) -> None:
+    def add(
+        self, items: Sequence[Item], labels: Sequence[Mapping[str, float]], weights: Sequence[float] | None = None
+    ) -> None:
         """Record labelled decks (genotypes, decks or count vectors); does not refit."""
         counts = self.features.as_counts(items)
         if len(labels) != len(counts) or (weights is not None and len(weights) != len(counts)):
-            raise ValueError(f"{len(counts)} items, {len(labels)} labels, {None if weights is None else len(weights)} weights")
+            raise ValueError(
+                f"{len(counts)} items, {len(labels)} labels, {None if weights is None else len(weights)} weights"
+            )
         new = {c.tobytes() for c in counts} - self._index.keys()  # a deck repeated in this call is one new row
         if new:
             t = len(self.targets)

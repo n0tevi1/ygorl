@@ -260,7 +260,9 @@ class MetaGame:
         return meta
 
 
-def analyze(matrix: MatchupMatrix, *, alpha: float = DEFAULT_ALPHA, population_size: int = DEFAULT_POPULATION) -> MetaGame:
+def analyze(
+    matrix: MatchupMatrix, *, alpha: float = DEFAULT_ALPHA, population_size: int = DEFAULT_POPULATION
+) -> MetaGame:
     """Solve the meta game of ``matrix``: Nash mixture and alpha-rank."""
     m = matrix.array()
     return MetaGame(matrix=matrix, nash=tuple(float(v) for v in nash_mixture(m)),

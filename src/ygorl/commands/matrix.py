@@ -35,7 +35,9 @@ def add_parser(subparsers) -> None:
                    help="games per deck pair, rounded up to an even number (default 20)")  # fmt: skip
     p.add_argument("--workers", type=int, default=1, metavar="N", help="worker processes (default 1)")
     p.add_argument("--seed", type=int, default=0, help="matrix seed (default 0)")
-    p.add_argument("--confidence", type=float, default=0.95, help="level of the per-cell Wilson interval (default 0.95)")
+    p.add_argument(
+        "--confidence", type=float, default=0.95, help="level of the per-cell Wilson interval (default 0.95)"
+    )
     p.add_argument("--alpha", type=float, default=None, help="alpha-rank selection intensity (default 10)")
     p.add_argument("--population", type=int, default=None, metavar="M", help="alpha-rank population size (default 50)")
     add_env_option(p, "environment: rules and meta decks; the result is stamped with it (default: none)")

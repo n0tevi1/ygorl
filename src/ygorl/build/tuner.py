@@ -178,8 +178,10 @@ def successive_halving(base: Deck, edits: Sequence[tuple[Edit, Deck]], evaluator
         alive.sort(key=lambda c: paired_difference(c.scores, base_c.scores)[0], reverse=True)
         if log:
             best = alive[0]
-            log(f"{target} pairs: {len(alive)} candidates, base {np.mean(base_c.scores):.3f}, best "
-                f"{paired_difference(best.scores, base_c.scores)[0]:+.3f} ({evaluator.games} games, {evaluator.seconds:.0f}s)")
+            log(
+                f"{target} pairs: {len(alive)} candidates, base {np.mean(base_c.scores):.3f}, best "
+                f"{paired_difference(best.scores, base_c.scores)[0]:+.3f} ({evaluator.games} games, {evaluator.seconds:.0f}s)"
+            )
         if len(alive) <= finalists:
             return base_c, alive
         alive = alive[: max(finalists, int(math.ceil(len(alive) * keep)))]
@@ -196,5 +198,14 @@ def validate(base: Deck, finalists: Sequence[Candidate], evaluator: PairedEvalua
     return [(c, s[i + 1].tolist(), s[0].tolist()) for i, c in enumerate(finalists)]
 
 
-__all__ = ["Candidate", "Edit", "PairedEvaluator", "apply", "neighbors", "paired_difference", "successive_halving",
-           "tech_pool", "validate"]
+__all__ = [
+    "Candidate",
+    "Edit",
+    "PairedEvaluator",
+    "apply",
+    "neighbors",
+    "paired_difference",
+    "successive_halving",
+    "tech_pool",
+    "validate",
+]

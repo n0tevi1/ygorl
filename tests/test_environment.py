@@ -103,11 +103,25 @@ def test_missing_meta_deck_file(tmp_path):
         ({"manifest": {"deck": {"bogus": 1}}}, "unknown keys"),
         ({"meta": {"decks": [{"name": "A", "file": "meta/alpha.ydk", "share": 1.5}]}}, r"outside \[0, 1\]"),
         (
-            {"meta": {"decks": [{"name": "A", "file": "meta/alpha.ydk", "share": 0.6}, {"name": "B", "file": "meta/alpha.ydk", "share": 0.6}]}},
+            {
+                "meta": {
+                    "decks": [
+                        {"name": "A", "file": "meta/alpha.ydk", "share": 0.6},
+                        {"name": "B", "file": "meta/alpha.ydk", "share": 0.6},
+                    ]
+                }
+            },
             "sum to",
         ),
         (
-            {"meta": {"decks": [{"name": "A", "file": "meta/alpha.ydk", "share": 0.1}, {"name": "A", "file": "meta/alpha.ydk", "share": 0.1}]}},
+            {
+                "meta": {
+                    "decks": [
+                        {"name": "A", "file": "meta/alpha.ydk", "share": 0.1},
+                        {"name": "A", "file": "meta/alpha.ydk", "share": 0.1},
+                    ]
+                }
+            },
             "duplicate deck name",
         ),
         ({"meta": {"decks": [{"name": "A", "file": "../x.ydk", "share": 0.1}]}}, "escapes"),
@@ -149,7 +163,10 @@ def test_invalid_pool_and_version(tmp_path):
         ({"player": {"starting_lp": 0}}, "starting_lp must be at least 1"),
         ({"player": {"starting_lp": 2**31}}, "starting_lp must be at most"),
         ({"player": {"starting_hand": 70}}, "starting_hand 70 is larger than deck.main_min 40"),
-        ({"player": {"starting_hand": 21}, "deck": {"main_min": 20}}, "starting_hand 21 is larger than deck.main_min 20"),
+        (
+            {"player": {"starting_hand": 21}, "deck": {"main_min": 20}},
+            "starting_hand 21 is larger than deck.main_min 20",
+        ),
         ({"player": {"draw_per_turn": 41}}, "draw_per_turn 41 is larger than deck.main_min 40"),
         ({"player": {"starting_hand": 1.5}}, "non-negative integer"),
         ({"deck": {"main_min": 61}}, "main_min 61 is larger than deck.main_max 60"),

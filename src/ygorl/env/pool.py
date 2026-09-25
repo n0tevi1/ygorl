@@ -30,7 +30,16 @@ from dataclasses import dataclass, field
 
 from ygorl import _core
 from ygorl.cards.ydk import Deck
-from ygorl.engine.duel import DecisionPoint, Duel, DuelConfig, DuelResult, DuelTracker, default_cards, default_scripts, expand_seed
+from ygorl.engine.duel import (
+    DecisionPoint,
+    Duel,
+    DuelConfig,
+    DuelResult,
+    DuelTracker,
+    default_cards,
+    default_scripts,
+    expand_seed,
+)
 
 
 @dataclass(frozen=True)

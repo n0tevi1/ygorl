@@ -219,7 +219,10 @@ class FakeHttp:
 
 def test_fetch_top_decks_stops_at_the_window(tmp_path, monkeypatch):
     monkeypatch.setattr(mdm, "DECKS_PAGE", 2)
-    pages = [[{"created": "2026-09-20"}, {"created": "2026-09-10"}], [{"created": "2026-09-05"}, {"created": "2026-08-30"}]]
+    pages = [
+        [{"created": "2026-09-20"}, {"created": "2026-09-10"}],
+        [{"created": "2026-09-05"}, {"created": "2026-08-30"}],
+    ]
     http = FakeHttp(pages + [[{"created": "never fetched"}]])
     path = mdm.fetch_top_decks(tmp_path, "2026-09-01", http=http)
     assert [d["created"] for d in read_raw(path)] == ["2026-09-20", "2026-09-10", "2026-09-05"]
@@ -327,7 +330,9 @@ def test_rebuild_applies_overrides_and_keeps_review_and_options(tmp_path, raw, d
     assert again.stats["review"] == "reviewed"
     assert load_environment(again.path).manifest["sources"]["build"]["since"] == "2026-09-10"
     # a correction lifts Kashtira Fenrir: the banlist changes, so it needs a new review
-    (first.path / REVIEW_DIR / OVERRIDES).write_text(f"{FENRIR} 3 --not limited in game\n{ALUBER} 2\n", encoding="utf-8")
+    (first.path / REVIEW_DIR / OVERRIDES).write_text(
+        f"{FENRIR} 3 --not limited in game\n{ALUBER} 2\n", encoding="utf-8"
+    )
     assert CROSSCHECK not in (first.path / REVIEW_DIR / "report.md").read_text(encoding="utf-8")
     (first.path / REVIEW_DIR / CROSSCHECK).write_text("# cross-check\n", encoding="utf-8")  # linked, never overwritten
     third = _build(tmp_path, raw, db)
@@ -349,7 +354,9 @@ def test_offline_build_needs_raw_files(tmp_path, raw, db):
 
 def test_hand_replaced_raw_file(tmp_path, raw, db):
     """A source that broke can be replaced by a hand-made file with the documented minimal keys."""
-    (raw / mdm.BANLIST_FILE).write_text(json.dumps([{"name": "Kashtira Fenrir", "banStatus": "Forbidden"}]), encoding="utf-8")
+    (raw / mdm.BANLIST_FILE).write_text(
+        json.dumps([{"name": "Kashtira Fenrir", "banStatus": "Forbidden"}]), encoding="utf-8"
+    )
     (raw / mdm.BANLIST_FILE).with_name("banlist.json.source.json").unlink()
     result = _build(tmp_path, raw, db, relations=False)
     env = load_environment(result.path, cards=db)

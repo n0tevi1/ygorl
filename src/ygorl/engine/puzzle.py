@@ -22,6 +22,7 @@ from ygorl.engine import constants as C
 from ygorl.engine import messages as M
 from ygorl.engine.duel import default_cards, default_scripts, expand_seed
 
+
 @dataclass(frozen=True)
 class Placement:
     """One card of a puzzle: ``password`` put in ``location`` / ``sequence`` of ``team``.

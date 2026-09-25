@@ -78,7 +78,9 @@ def _multiclass(probs, targets, mask) -> tuple[np.ndarray, np.ndarray]:
     if ((p < 0) | (p > 1)).any():
         raise ValueError(f"probs must lie in [0, 1] (min {p.min():.4g}, max {p.max():.4g})")
     if p.size and not np.allclose(p.sum(-1), 1.0, rtol=0, atol=_SUM_ATOL):
-        raise ValueError(f"probs rows must sum to 1 (atol {_SUM_ATOL}); max deviation {np.abs(p.sum(-1) - 1).max():.4g}")
+        raise ValueError(
+            f"probs rows must sum to 1 (atol {_SUM_ATOL}); max deviation {np.abs(p.sum(-1) - 1).max():.4g}"
+        )
     if t.size and (not np.isfinite(t.astype(float)).all() or (t != np.round(t)).any()):
         raise ValueError("targets must be integer class indices")
     t = t.astype(np.int64)

@@ -18,7 +18,9 @@ def test_tokenize_strips_comments_and_long_strings():
 
 
 def test_parse_filter_expression():
-    toks = lua.tokenize("c:IsSetCard(SET_SNAKE_EYE) and not c:IsCode(id) and (c:IsLevel(1) or c:IsRace(RACE_FIEND|RACE_DRAGON))")
+    toks = lua.tokenize(
+        "c:IsSetCard(SET_SNAKE_EYE) and not c:IsCode(id) and (c:IsLevel(1) or c:IsRace(RACE_FIEND|RACE_DRAGON))"
+    )
     expr, end = lua.parse_expr(toks, 0)
     assert end == len(toks)
     assert isinstance(expr, BinOp) and expr.op == "and"
@@ -33,7 +35,11 @@ def test_parse_filter_expression():
 
 def test_operator_precedence():
     expr, _ = lua.parse_expr(lua.tokenize("a or b and c == 1 + 2 * 3"), 0)
-    assert expr == BinOp("or", Name("a"), BinOp("and", Name("b"), BinOp("==", Name("c"), BinOp("+", Const(1), BinOp("*", Const(2), Const(3))))))
+    assert expr == BinOp(
+        "or",
+        Name("a"),
+        BinOp("and", Name("b"), BinOp("==", Name("c"), BinOp("+", Const(1), BinOp("*", Const(2), Const(3))))),
+    )
     expr, _ = lua.parse_expr(lua.tokenize("LOCATION_HAND|LOCATION_DECK&0xff"), 0)
     assert expr == BinOp("|", Name("LOCATION_HAND"), BinOp("&", Name("LOCATION_DECK"), Const(0xFF)))
     expr, _ = lua.parse_expr(lua.tokenize("-1 - -2"), 0)
@@ -56,7 +62,9 @@ def test_calls_tables_and_anonymous_functions():
     table, fn = expr.args
     assert isinstance(table, Table)
     assert table.get("handler") == Name("c")
-    assert table.get("fusfilter") == Call(Index(Name("aux"), "FilterBoolFunction"), (Index(Name("Card"), "IsSetCard"), Name("SET_X")))
+    assert table.get("fusfilter") == Call(
+        Index(Name("aux"), "FilterBoolFunction"), (Index(Name("Card"), "IsSetCard"), Name("SET_X"))
+    )
     assert table.positional() == [Const(3)]
     assert isinstance(fn, FuncExpr) and fn.params == ("c",)
     assert [lua.unparse(r) for r in lua.returns(toks, fn.body)] == ["c:IsFaceup()"]

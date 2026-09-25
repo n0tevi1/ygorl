@@ -178,7 +178,9 @@ def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | Non
         request = SolveRequest(template=template, deck=deck_file, hand=tuple(hand), targets=tuple(targets),
                                solve_ms=job.solve_ms, threads=job.threads, seed=job.solver_seed,
                                max_written=max(4, 2 * job.lines), max_rollouts=job.max_rollouts)  # fmt: skip
-        run = run_solver(request, Workdir.create(job.workdir), scratch / "out", binary=job.binary, timeout=job.timeout_s)
+        run = run_solver(
+            request, Workdir.create(job.workdir), scratch / "out", binary=job.binary, timeout=job.timeout_s
+        )
         demo.solver = _solver_meta(run, request)
         if run.returncode != 0 and not run.solutions:
             demo.status, demo.error = "error", f"solver exited with {run.returncode}: {run.problems()}"
@@ -199,7 +201,9 @@ def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | Non
 def solve_fire(job: HandJob, base: Demonstration, fire: int, *, cards=None,
                scripts: _core.ScriptDirectory | None = None) -> Demonstration:  # fmt: skip
     """The ``--fire`` variant of a solved hand: the opponent plays ``fire`` at every legal window of its best line."""
-    demo = replace(base, variant="fire", fire=fire, status="pending", error="", start=None, lines=[], rejected=[], solver={})
+    demo = replace(
+        base, variant="fire", fire=fire, status="pending", error="", start=None, lines=[], rejected=[], solver={}
+    )
     if not base.lines:
         demo.status, demo.error = "skipped", "the plain opening has no verified line to test"
         return demo

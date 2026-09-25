@@ -48,7 +48,7 @@ def test_core_pool_start_returns_first_decision(db):
     decks = [list(d) for d in duel.loaded_decks()]
     pool.start(0, expand_seed(1), duel.config.rule_flags, (8000, 5, 1), (8000, 5, 1), decks)
     assert pool.pending() == 1
-    (env_id, status, buf, logs, error), = pool.recv(1, -1)
+    ((env_id, status, buf, logs, error),) = pool.recv(1, -1)
     assert env_id == 0 and status == _core.DUEL_STATUS_AWAITING and error == ""
     names = [m.name for m in M.decode_buffer(buf)]
     assert names.count("MSG_DRAW") == 2 and names[-1].startswith("MSG_SELECT")

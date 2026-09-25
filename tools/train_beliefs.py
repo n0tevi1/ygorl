@@ -246,7 +246,9 @@ def collect(args, db, vocab, meta, rogue, pools) -> dict[str, np.ndarray]:
 
 
 def evidence_of(data, idx) -> Evidence:
-    return Evidence(*(data[f"ev_{k}"][idx] for k in ("seen", "seen_other", "visible", "public_hand", "counts", "set_zones")))
+    return Evidence(
+        *(data[f"ev_{k}"][idx] for k in ("seen", "seen_other", "visible", "public_hand", "counts", "set_zones"))
+    )
 
 
 def targets_of(data, idx) -> dict[str, np.ndarray]:
@@ -351,9 +353,10 @@ def hdt_probs(priors, idx, base_rate: float) -> dict[str, np.ndarray]:
 
 def per_role_auc(p: np.ndarray, t: dict[str, np.ndarray], meta: MetaTable) -> dict[str, float]:
     m = t["hand_roles_mask"]
-    return {n: round(roc_auc(p[:, r], t["hand_roles"][:, r], mask=m[:, r]), 4) for n, r in
-            zip(meta.role_names, range(meta.n_roles))} | {
-            f"{n}/rate": round(float(t["hand_roles"][:, r][m[:, r]].mean()), 4) for r, n in enumerate(meta.role_names)}
+    return {
+        n: round(roc_auc(p[:, r], t["hand_roles"][:, r], mask=m[:, r]), 4)
+        for n, r in zip(meta.role_names, range(meta.n_roles))
+    } | {f"{n}/rate": round(float(t["hand_roles"][:, r][m[:, r]].mean()), 4) for r, n in enumerate(meta.role_names)}
 
 
 def targets_batch(t: dict[str, np.ndarray], meta: MetaTable) -> BeliefBatch:
@@ -441,7 +444,9 @@ def main() -> None:
     lines = ["| 指标 | " + " | ".join(names) + " | n |", "|---|" + "---:|" * (len(names) + 1)]
     for key in keys:
         n = int(reports["hdt"][key.split("/")[0] + "/n"])
-        lines.append(f"| {key} | " + " | ".join(f"{reports[m].get(key, float('nan')):.3f}" for m in names) + f" | {n} |")
+        lines.append(
+            f"| {key} | " + " | ".join(f"{reports[m].get(key, float('nan')):.3f}" for m in names) + f" | {n} |"
+        )
     table = "\n".join(lines)
     print(table)
     info = {"args": {k: str(v) for k, v in vars(args).items()},

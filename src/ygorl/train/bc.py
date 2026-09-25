@@ -70,7 +70,9 @@ class BCData:
 
     def batch(self, idx: np.ndarray, device: torch.device | str | None = None) -> tuple[dict, torch.Tensor]:
         """Samples ``idx`` as tensors, with the padding rows no sample of the batch uses cut off (:func:`trim_padding`)."""
-        return to_tensors(trim_padding({k: v[idx] for k, v in self.obs.items()}), device), torch.as_tensor(self.actions[idx])
+        return to_tensors(trim_padding({k: v[idx] for k, v in self.obs.items()}), device), torch.as_tensor(
+            self.actions[idx]
+        )
 
     def subset(self, keep: np.ndarray) -> BCData:
         keep = np.asarray(keep)
@@ -252,7 +254,9 @@ class BCConfig:
     seed: int = 0
 
 
-def bc_loss(net: PolicyNet, obs: dict, target: torch.Tensor, label_smoothing: float = 0.0) -> tuple[torch.Tensor, torch.Tensor]:
+def bc_loss(
+    net: PolicyNet, obs: dict, target: torch.Tensor, label_smoothing: float = 0.0
+) -> tuple[torch.Tensor, torch.Tensor]:
     """(mean cross-entropy over the legal candidates, logits). Illegal rows carry ``MASKED_LOGIT``: probability 0.
 
     With label smoothing the smoothed mass goes to the legal candidates only.

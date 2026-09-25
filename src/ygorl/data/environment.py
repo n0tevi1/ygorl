@@ -108,8 +108,10 @@ class Environment:
         """
         artifacts = self.artifacts_dir
         path = artifacts.joinpath(*parts)
-        if not parts or any(Path(p).is_absolute() or ".." in Path(p).parts for p in parts) or (
-            artifacts.resolve() not in path.resolve().parents
+        if (
+            not parts
+            or any(Path(p).is_absolute() or ".." in Path(p).parts for p in parts)
+            or (artifacts.resolve() not in path.resolve().parents)
         ):
             raise EnvironmentConfigError(f"artifact path {'/'.join(map(str, parts))!r} escapes {artifacts}")
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -36,7 +36,9 @@ def softmax(scores: list[float], temperature: float = 1.0) -> list[float]:
 class PolicyAgent:
     name = "policy"
 
-    def __init__(self, policy: Policy, *, seed: int | None = None, greedy: bool = False, temperature: float = 1.0) -> None:
+    def __init__(
+        self, policy: Policy, *, seed: int | None = None, greedy: bool = False, temperature: float = 1.0
+    ) -> None:
         if temperature <= 0:
             raise ValueError("temperature must be positive")
         self.policy = policy

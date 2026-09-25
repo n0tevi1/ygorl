@@ -74,9 +74,13 @@ def validate_deck(
              ("side", deck.side, 0, rules.side_max))  # fmt: skip
     for section, seq, lo, hi in sizes:
         if len(seq) < lo:
-            out.append(Violation(f"{section}_too_small", f"{section.capitalize()} Deck has {len(seq)} cards (minimum {lo})"))
+            out.append(
+                Violation(f"{section}_too_small", f"{section.capitalize()} Deck has {len(seq)} cards (minimum {lo})")
+            )
         if len(seq) > hi:
-            out.append(Violation(f"{section}_too_large", f"{section.capitalize()} Deck has {len(seq)} cards (maximum {hi})"))
+            out.append(
+                Violation(f"{section}_too_large", f"{section.capitalize()} Deck has {len(seq)} cards (maximum {hi})")
+            )
 
     known: set[int] = set()
     for pw in dict.fromkeys(deck.main + deck.extra + deck.side):
@@ -91,10 +95,16 @@ def validate_deck(
 
     for pw in dict.fromkeys(deck.main):
         if pw in known and cards[pw].type & C.TYPE_MONSTER and cards[pw].type & EXTRA_DECK_TYPES:
-            out.append(Violation("extra_in_main", f"{_label(pw, cards)} is an Extra Deck monster but is in the Main Deck", pw))
+            out.append(
+                Violation("extra_in_main", f"{_label(pw, cards)} is an Extra Deck monster but is in the Main Deck", pw)
+            )
     for pw in dict.fromkeys(deck.extra):
         if pw in known and not (cards[pw].type & C.TYPE_MONSTER and cards[pw].type & EXTRA_DECK_TYPES):
-            out.append(Violation("main_in_extra", f"{_label(pw, cards)} is not an Extra Deck monster but is in the Extra Deck", pw))
+            out.append(
+                Violation(
+                    "main_in_extra", f"{_label(pw, cards)} is not an Extra Deck monster but is in the Extra Deck", pw
+                )
+            )
 
     counts = Counter(canonical_password(pw, cards) for pw in deck.main + deck.extra + deck.side if pw in known)
     for pw, n in counts.items():
@@ -105,7 +115,9 @@ def validate_deck(
             out.append(Violation("forbidden", f"{_label(pw, cards)} is forbidden ({n} in deck)", pw))
         elif banlist is not None and banlist.limit(pw) < rules.max_copies:
             status = LIMIT_NAMES.get(allowed, f"limit {allowed}")
-            out.append(Violation("over_limit", f"{_label(pw, cards)}: {n} copies, banlist allows {allowed} ({status})", pw))
+            out.append(
+                Violation("over_limit", f"{_label(pw, cards)}: {n} copies, banlist allows {allowed} ({status})", pw)
+            )
         else:
             out.append(Violation("over_limit", f"{_label(pw, cards)}: {n} copies (maximum {allowed})", pw))
     return out

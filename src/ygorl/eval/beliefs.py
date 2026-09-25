@@ -167,7 +167,9 @@ def _map_heads(batch: BeliefBatch, fn) -> BeliefBatch:
 
 def uniform_predictor(batch: BeliefBatch) -> BeliefBatch:
     """Constant maximum-entropy predictions: 0.5 for binary heads, 1/K for multiclass heads."""
-    return _map_heads(batch, lambda name, h: np.full(h.probs.shape, 0.5 if HEAD_SPECS[name][0] else 1 / h.probs.shape[-1]))
+    return _map_heads(
+        batch, lambda name, h: np.full(h.probs.shape, 0.5 if HEAD_SPECS[name][0] else 1 / h.probs.shape[-1])
+    )
 
 
 def random_predictor(batch: BeliefBatch, *, seed: int = 0) -> BeliefBatch:
@@ -263,7 +265,9 @@ def synthetic_batch(n: int, *, seed: int = 0, **kwargs) -> BeliefBatch:
     if unknown:
         raise TypeError(f"unknown synthetic_batch arguments: {sorted(unknown)}")
     o = {**SYNTHETIC_DEFAULTS, **kwargs}
-    k, c, s, r, pub, sig = (o[x] for x in ("n_deck_types", "n_cards", "n_set_zones", "n_roles", "public_fraction", "signal"))
+    k, c, s, r, pub, sig = (
+        o[x] for x in ("n_deck_types", "n_cards", "n_set_zones", "n_roles", "public_fraction", "signal")
+    )
     rng = np.random.default_rng(seed)
 
     def zipf(m):

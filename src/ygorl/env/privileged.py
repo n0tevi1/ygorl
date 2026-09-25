@@ -105,7 +105,9 @@ class CandidateCards:
         return np.where(valid, self.column[np.clip(index, 0, len(self.column) - 1)], -1)
 
 
-def copy_counts(rows: np.ndarray, candidates: CandidateCards | CardVocab, *, where: np.ndarray | None = None) -> np.ndarray:
+def copy_counts(
+    rows: np.ndarray, candidates: CandidateCards | CardVocab, *, where: np.ndarray | None = None
+) -> np.ndarray:
     """Copies per card in a ``[..., P, 3]`` row list -> ``[..., C]`` int (not clipped).
 
     With a :class:`CandidateCards` the columns are its candidates; with the :class:`CardVocab`

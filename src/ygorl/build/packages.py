@@ -82,7 +82,9 @@ def setcodes_from_db(db: Mapping) -> dict[int, tuple[int, ...]]:
 class Affinity:
     """Undirected specificity-weighted adjacency of a synergy graph."""
 
-    def __init__(self, graph: SynergyGraph, types: Iterable[str] = EDGE_TYPES, weights: Mapping[str, float] = TYPE_WEIGHT) -> None:
+    def __init__(
+        self, graph: SynergyGraph, types: Iterable[str] = EDGE_TYPES, weights: Mapping[str, float] = TYPE_WEIGHT
+    ) -> None:
         adj: dict[int, dict[int, float]] = {}
         for e in graph.edges(types):
             w = weights.get(e.type, 0.5) / math.sqrt(max(e.fanout, 1))
@@ -238,7 +240,9 @@ def enumerate_packages(
     for seed in seeds:
         if seed not in graph.nodes:
             continue
-        grown = grow_package(graph, seed, max_size=max_size, min_affinity=min_affinity, min_share=min_share, affinity=affinity)
+        grown = grow_package(
+            graph, seed, max_size=max_size, min_affinity=min_affinity, min_share=min_share, affinity=affinity
+        )
         if len(grown) < min_size:
             continue
         key = tuple(sorted(grown))

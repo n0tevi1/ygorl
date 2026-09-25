@@ -98,12 +98,14 @@ def test_a_masked_undo_really_returns_to_the_same_decision(db, seed, a, b):
         if i not in point.undo or point.actions[i].kind in ("shuffle", "activate"):
             continue  # rules 3-4 (shuffle, repeated activation) are no-ops, not undos: no round trip to check
         if point.actions[i].kind == "unselect":
-            prev_point, prev_i = next(((p, j) for p, j in reversed(history[:k]) if p.player == point.player), (None, None))
+            prev_point, prev_i = next(
+                ((p, j) for p, j in reversed(history[:k]) if p.player == point.player), (None, None)
+            )
             prev = prev_point.actions[prev_i] if prev_point is not None else None
             if prev is None or prev.kind != "select" or prev.card != point.actions[i].card:
                 continue  # rule 5 (a long selection moves forward only), not the reversal of the previous step
         taken += 1
-        nxt = next((p for p, _ in history[k + 1:] if p.player == point.player), None)
+        nxt = next((p for p, _ in history[k + 1 :] if p.player == point.player), None)
         if nxt is None:
             continue
         kind = point.actions[i].kind
@@ -115,7 +117,6 @@ def test_a_masked_undo_really_returns_to_the_same_decision(db, seed, a, b):
             assert nxt.decision == before.decision
         assert len(point.undo) < len(point.actions)  # never every row
     assert sum(bool(p.undo) for p, _ in history) > 0
-
 
 
 def test_shuffle_and_the_repeated_activation_limit_are_masked_in_the_menus(db):

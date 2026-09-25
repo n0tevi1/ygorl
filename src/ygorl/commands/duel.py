@@ -32,10 +32,13 @@ def add_parser(subparsers) -> None:
     p.add_argument("--agent-b", default="random", metavar="AGENT", help="agent of side b (default random)")
     add_env_option(p, "environment: rules, LP and hand size (default: none, Master Rule 5 defaults)")
     add_max_turns_option(p)
-    p.add_argument("--save-replay", type=Path, default=None, metavar="PATH", help="write the replay (.json or .json.gz)")
+    p.add_argument(
+        "--save-replay", type=Path, default=None, metavar="PATH", help="write the replay (.json or .json.gz)"
+    )
     p.add_argument("--yrpx", type=Path, default=None, metavar="PATH", help="export an EDOPro replay (.yrpX)")
-    p.add_argument("--yrpx-uncompressed", action="store_true",
-                   help="write the .yrpX without LZMA compression (EDOPro reads both)")
+    p.add_argument(
+        "--yrpx-uncompressed", action="store_true", help="write the .yrpX without LZMA compression (EDOPro reads both)"
+    )
     p.set_defaults(func=run)
 
 
@@ -80,11 +83,11 @@ def run(args: argparse.Namespace) -> int:
                 lines.append(f"replay     {args.save_replay}")
             if args.yrpx is not None:
                 args.yrpx.parent.mkdir(parents=True, exist_ok=True)
-                replay.to_yrpx(args.yrpx, names=(deck_a.name, deck_b.name), env=env,
-                               compress=not args.yrpx_uncompressed)
+                replay.to_yrpx(
+                    args.yrpx, names=(deck_a.name, deck_b.name), env=env, compress=not args.yrpx_uncompressed
+                )
                 lines.append(f"yrpX       {args.yrpx}")
         except (OSError, ValueError) as exc:
             raise CommandError(str(exc)) from None
     print("\n".join(lines))
     return 0
-

@@ -73,7 +73,9 @@ def main() -> int:
     for rank, p in enumerate(top, 1):
         arch = label(p)
         flag = " CROSS" if p.cross_archetype else ""
-        print(f"#{rank:<3d} score {p.score:5.2f}  size {len(p):2d}  starters {len(p.starters)}  density {p.density:.2f}  [{arch}]{flag}")
+        print(
+            f"#{rank:<3d} score {p.score:5.2f}  size {len(p):2d}  starters {len(p.starters)}  density {p.density:.2f}  [{arch}]{flag}"
+        )
         starters = set(p.starters)
         print("     " + "; ".join(f"{'*' if m in starters else ''}{db[m].name} ({m})" for m in p.members))
     if args.json:
@@ -85,7 +87,9 @@ def main() -> int:
     print(f"\nproxy packages vs. all {len(pkgs)} packages (best overlap coefficient |P & R| / min(|P|, |R|), rank):")
     for name, members in sorted(mod.load_packages().items()):
         ref = {db.canonical(m) for m in members}
-        best = max(((len(ref & set(p.members)) / min(len(ref), len(p)), -i) for i, p in enumerate(pkgs, 1)), default=(0.0, 0))
+        best = max(
+            ((len(ref & set(p.members)) / min(len(ref), len(p)), -i) for i, p in enumerate(pkgs, 1)), default=(0.0, 0)
+        )
         print(f"  {name:18s} {best[0]:.2f}  (#{-best[1]})")
     return 0
 

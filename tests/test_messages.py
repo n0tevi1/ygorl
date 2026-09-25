@@ -83,7 +83,9 @@ def test_select_battlecmd():
 def test_select_card_and_chain():
     card = struct.pack("<I", 42) + struct.pack("<" + LOC[0], *LOC[1:])
     msg = M.decode_message(rec(C.MSG_SELECT_CARD, "BBIII", 0, 1, 1, 2, 1) + card)
-    assert msg == M.SelectCard(0, True, 1, 2, (M.CardInfo(42, M.Location(0, C.LOCATION_HAND, 2, C.POS_FACEDOWN_DEFENSE)),))
+    assert msg == M.SelectCard(
+        0, True, 1, 2, (M.CardInfo(42, M.Location(0, C.LOCATION_HAND, 2, C.POS_FACEDOWN_DEFENSE)),)
+    )
     chain = rec(C.MSG_SELECT_CHAIN, "BBBIII", 1, 0, 0, 0x10, 0x20, 1) + card + struct.pack("<QB", 77, 1)
     msg = M.decode_message(chain)
     assert isinstance(msg, M.SelectChain) and not msg.forced and msg.chains[0].description == 77
@@ -109,14 +111,20 @@ def test_place_disfield_position_announce():
 
 
 def test_tribute_counter_sort_unselect():
-    t = M.decode_message(rec(C.MSG_SELECT_TRIBUTE, "BBIII", 0, 0, 1, 2, 1) + struct.pack("<IBBIB", 7, 0, C.LOCATION_MZONE, 0, 2))
+    t = M.decode_message(
+        rec(C.MSG_SELECT_TRIBUTE, "BBIII", 0, 0, 1, 2, 1) + struct.pack("<IBBIB", 7, 0, C.LOCATION_MZONE, 0, 2)
+    )
     assert t.cards[0].release_param == 2 and not t.cancelable
-    c = M.decode_message(rec(C.MSG_SELECT_COUNTER, "BHHI", 0, 0x1, 2, 1) + struct.pack("<IBBBH", 7, 0, C.LOCATION_SZONE, 1, 3))
+    c = M.decode_message(
+        rec(C.MSG_SELECT_COUNTER, "BHHI", 0, 0x1, 2, 1) + struct.pack("<IBBBH", 7, 0, C.LOCATION_SZONE, 1, 3)
+    )
     assert c.count == 2 and c.cards[0].counters == 3
     s = M.decode_message(rec(C.MSG_SORT_CHAIN, "BI", 1, 1) + struct.pack("<IBII", 7, 1, C.LOCATION_MZONE, 0))
     assert isinstance(s, M.SortChain) and s.cards[0].loc.location == C.LOCATION_MZONE
     card = struct.pack("<I", 42) + struct.pack("<" + LOC[0], *LOC[1:])
-    u = M.decode_message(rec(C.MSG_SELECT_UNSELECT_CARD, "BBBIII", 0, 1, 0, 1, 3, 1) + card + struct.pack("<I", 1) + card)
+    u = M.decode_message(
+        rec(C.MSG_SELECT_UNSELECT_CARD, "BBBIII", 0, 1, 0, 1, 3, 1) + card + struct.pack("<I", 1) + card
+    )
     assert u.finishable and not u.cancelable and len(u.selectable) == len(u.unselectable) == 1
 
 
@@ -133,7 +141,9 @@ def test_events():
     assert M.decode_message(rec(C.MSG_WIN, "BB", 0, 1)) == M.Win(0, 1)
     assert M.decode_message(rec(C.MSG_TOSS_DICE, "BBBB", 0, 2, 3, 6)) == M.TossDice(0, (3, 6))
     assert M.decode_message(rec(C.MSG_HAND_RES, "B", 1 | (3 << 2))) == M.HandResult(1, 3)
-    b = M.decode_message(rec(C.MSG_BATTLE, "") + loc + struct.pack("<iiB", 3000, 2500, 0) + b"\0" * 10 + struct.pack("<iiB", 0, 0, 0))
+    b = M.decode_message(
+        rec(C.MSG_BATTLE, "") + loc + struct.pack("<iiB", 3000, 2500, 0) + b"\0" * 10 + struct.pack("<iiB", 0, 0, 0)
+    )
     assert b.attacker_atk == 3000 and b.target.location == 0
     assert M.decode_message(rec(C.MSG_SHOW_HINT, "H", 2) + b"hi\0") == M.ShowHint("hi")
     assert M.decode_message(rec(C.MSG_SUMMONED)) == M.Summoned()

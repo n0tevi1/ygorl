@@ -35,8 +35,19 @@ def check(game: int):
     same_outcome = (o.winner, o.reason, o.turns, o.lp) == (r.winner, r.reason, r.turns, r.lp)
     first_diff = None
     if not same_stream:
-        first_diff = next((i for i, (x, y) in enumerate(zip(o.message_log, r.message_log)) if x != y), min(len(o.message_log), len(r.message_log)))
-    return {"game": game, "a": a, "b": b, "same_stream": same_stream, "same_outcome": same_outcome, "first_diff": first_diff, "buffers": len(o.message_log)}
+        first_diff = next(
+            (i for i, (x, y) in enumerate(zip(o.message_log, r.message_log)) if x != y),
+            min(len(o.message_log), len(r.message_log)),
+        )
+    return {
+        "game": game,
+        "a": a,
+        "b": b,
+        "same_stream": same_stream,
+        "same_outcome": same_outcome,
+        "first_diff": first_diff,
+        "buffers": len(o.message_log),
+    }
 
 
 def main() -> int:

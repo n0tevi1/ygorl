@@ -143,8 +143,11 @@ def _policy_greedy(arg: str | None, seed: int) -> Agent:
 
 register_agent("random", _random, "uniformly random legal actions (seeded)")
 register_agent("greedy", _greedy, "one-ply heuristic baseline (docs/evaluation.md)")
-register_agent("policy", _policy,
-               "a policy checkpoint (PPO training or BC): policy:PATH[@greedy][@t=T] (docs/evaluation.md, docs/bc.md)")
+register_agent(
+    "policy",
+    _policy,
+    "a policy checkpoint (PPO training or BC): policy:PATH[@greedy][@t=T] (docs/evaluation.md, docs/bc.md)",
+)
 register_agent("policy-greedy", _policy_greedy, "shorthand for policy:PATH@greedy")
 
 

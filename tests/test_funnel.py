@@ -74,7 +74,11 @@ def test_mcnemar_exact_and_paired_table():
     assert mcnemar_exact(9, 1) == mcnemar_exact(1, 9) == pytest.approx(2 * 11 / 1024)
     t = paired_table([True, True, False, False, True], [True, False, True, False, True])
     assert (t["n"], t["both"], t["only_a"], t["only_b"], t["neither"]) == (5, 2, 1, 1, 1)
-    assert t["rate_a"] == t["rate_b"] == pytest.approx(0.6) and t["agreement"] == pytest.approx(0.6) and t["p_value"] == 1.0
+    assert (
+        t["rate_a"] == t["rate_b"] == pytest.approx(0.6)
+        and t["agreement"] == pytest.approx(0.6)
+        and t["p_value"] == 1.0
+    )
     with pytest.raises(ValueError):
         paired_table([True], [])
 
@@ -82,13 +86,19 @@ def test_mcnemar_exact_and_paired_table():
 def test_fire_survives():
     assert fire_survives({"status": "no_window", "solver": {"windows": 0}}) is True
     assert fire_survives({"status": "solved", "solver": {"windows": 3, "converted": 3}}) is True
-    assert fire_survives({"status": "solved", "solver": {"windows": 3, "converted": 1}}) is False  # the opponent picks the window
+    assert (
+        fire_survives({"status": "solved", "solver": {"windows": 3, "converted": 1}}) is False
+    )  # the opponent picks the window
     assert fire_survives({"status": "unsolved", "solver": {"windows": 2, "converted": 0}}) is False
     assert fire_survives({"status": "error", "solver": {}}) is None
 
 
 def _hand(i, status, actions=None, fire=None, solver_s=5.0):
-    fires = {} if fire is None else {ASH_BLOSSOM: {"status": "x", "windows": 2, "converted": 2 if fire else 1, "survives": fire}}
+    fires = (
+        {}
+        if fire is None
+        else {ASH_BLOSSOM: {"status": "x", "windows": 2, "converted": 2 if fire else 1, "survives": fire}}
+    )
     return HandOutcome(i, 100 + i, [1, 2, 3, 4, 5], status, 0 if status == "solved" else None, actions,
                        None if actions is None else 4 * actions, 1, fires, solver_s)  # fmt: skip
 
@@ -160,7 +170,9 @@ def test_evaluate_deck_bricks_stop_early_and_are_paired_across_decks(tmp_path):
     assert [h.status for h in full.hands] == ["brick"] * 6 and len(seen) == 6 and not full.stopped_early
     assert [h.hand for h in full.hands] == opening_hands(PURRELY, cfg)
     assert full.brick_rate == 1.0 and full.passed is None and full.hand_trap_survival == 0.0
-    assert full.targets == [["52645235@atk"]] and full.deck["name"] == "purrely" and full.config["fire"] == [ASH_BLOSSOM]
+    assert (
+        full.targets == [["52645235@atk"]] and full.deck["name"] == "purrely" and full.config["fire"] == [ASH_BLOSSOM]
+    )
     assert not (tmp_path / "a" / "hand0").exists()  # per-hand scratch is cleaned
 
     gated = evaluate_deck(PURRELY, ["52645235"], cfg, filter=FunnelFilter(max_brick_rate=0.5), scratch=tmp_path / "b")
@@ -185,7 +197,9 @@ def test_evaluate_deck_errors_and_bad_targets(tmp_path):
 
 def test_max_rollouts_reaches_the_solver(tmp_path):
     log = tmp_path / "args.txt"
-    recorder = _fake_solver(tmp_path, f'#!/bin/sh\necho "$@" >> {log}\necho "at best 0 of the 1 target cards"\nexit 0\n')
+    recorder = _fake_solver(
+        tmp_path, f'#!/bin/sh\necho "$@" >> {log}\necho "at best 0 of the 1 target cards"\nexit 0\n'
+    )
     r = evaluate_deck(PURRELY, ["52645235"], FunnelConfig(hands=1, solve_ms=100, max_rollouts=300, binary=recorder),
                       scratch=tmp_path / "m")  # fmt: skip
     assert r.config["max_rollouts"] == 300 and "--max-rollouts 300" in log.read_text()
@@ -283,7 +297,9 @@ def _pseudo_line(db, tmp_path, seed):
 def test_replay_line_follows_a_line_in_the_real_duel(db, tmp_path):
     seeds = FunnelConfig(hands=2).hand_seeds()
     demo = _pseudo_line(db, tmp_path, seeds[1])
-    assert demo.start["core_seed"] == list(first_turn_duel(PURRELY, seeds[1], cards=db).core_seed)  # the funnel's opening
+    assert demo.start["core_seed"] == list(
+        first_turn_duel(PURRELY, seeds[1], cards=db).core_seed
+    )  # the funnel's opening
     out = replay_line(demo, 0, cards=db)
     assert out.error == "" and out.steps > 0 and out.board["turn"] == 2
     assert out.reached  # the target is a monster the line left on the board
@@ -307,7 +323,9 @@ def test_end_to_end_funnel_on_a_real_deck(db, tmp_path):
         pytest.skip(f"combo solver binary not available ({exc}); build it with tools/build_combo_solver.sh")
     labrynth = load_ydk(DECKS / "labrynth.ydk")
     cfg = FunnelConfig(hands=2, solve_ms=4000, fire_ms=2000, binary=binary, keep_demos=True)
-    r = evaluate_deck(labrynth, ["1225009", "5380979@szone:fd"], cfg, filter=FunnelFilter(max_brick_rate=1.0), scratch=tmp_path)
+    r = evaluate_deck(
+        labrynth, ["1225009", "5380979@szone:fd"], cfg, filter=FunnelFilter(max_brick_rate=1.0), scratch=tmp_path
+    )
     assert len(r.hands) == 2 and r.errors == 0, [h.error for h in r.hands]
     assert r.passed is True and 0.0 <= r.brick_rate <= 1.0 and r.solver_s > 0
     for h in r.hands:

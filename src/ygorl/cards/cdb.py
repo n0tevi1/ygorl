@@ -238,7 +238,10 @@ class CardDB(Mapping[int, Card]):
     @classmethod
     def load_snapshot(cls, path: str | Path) -> CardDB:
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        return cls(Card(**{**row, "strings": tuple(row["strings"]), "setcodes": tuple(row["setcodes"])}) for row in data["cards"])
+        return cls(
+            Card(**{**row, "strings": tuple(row["strings"]), "setcodes": tuple(row["setcodes"])})
+            for row in data["cards"]
+        )
 
 
 class CardVocab:

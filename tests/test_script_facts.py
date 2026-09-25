@@ -138,7 +138,10 @@ function s.op(e,tp)
 	local h=Duel.SelectMatchingCard(tp,s.ef,tp,LOCATION_DECK,0,1,1,nil)
 end
 """
-    assert sorted((q.action, q.evidence) for q in analyze(src, K).queries) == [("equip", "hintmsg"), ("place", "hintmsg")]
+    assert sorted((q.action, q.evidence) for q in analyze(src, K).queries) == [
+        ("equip", "hintmsg"),
+        ("place", "hintmsg"),
+    ]
 
 
 def test_extra_call_arguments_reach_the_filter(K):
@@ -210,7 +213,10 @@ s.material_setcode={SET_FIENDSMITH}
     assert Pred("code", (K["CARD_ALBAZ"],)) in mats
     assert Pred("code", (11111111, 22222222)) in mats
     assert Pred("race", (K["RACE_DRAGON"],)) in mats
-    assert any(Pred("race", (K["RACE_FIEND"],)) in getattr(m, "items", ()) and Pred("level", ("eq", 4)) in m.items for m in mats)
+    assert any(
+        Pred("race", (K["RACE_FIEND"],)) in getattr(m, "items", ()) and Pred("level", ("eq", 4)) in m.items
+        for m in mats
+    )
     assert Pred("setcard", (K["SET_TENPAI_DRAGON"],)) in mats
     assert Pred("level", ("eq", 4)) in mats  # generic Rank-4 Xyz: kept here, dropped later by fan-out
     assert set(f.material_codes) == {K["CARD_ALBAZ"], 11111111, 22222222}
