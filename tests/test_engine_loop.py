@@ -75,13 +75,13 @@ class SilentEnv:
 
 def test_a_rollout_that_stops_receiving_events_raises():
     torch = pytest.importorskip("torch")
-    from ygorl.train.rollout import Assignment, RolloutCollector
+    from ygorl.train.rollout import Assignment, RolloutCollector, RolloutStalled
 
     class Model(torch.nn.Module):
         pass
 
     c = RolloutCollector(SilentEnv(), Model(), lambda: Assignment(spec=None, info={"deck_a": "x"}), 4,
                          stall_timeout=0.05)  # fmt: skip
-    with pytest.raises(RuntimeError, match="no environment event") as err:
+    with pytest.raises(RolloutStalled, match="no environment event") as err:
         c.collect()
     assert "env 0" in str(err.value) and "'deck_a': 'x'" in str(err.value)

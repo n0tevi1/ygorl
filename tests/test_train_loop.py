@@ -595,3 +595,21 @@ def test_engine_errors_are_logged_for_replay(tmp_path):
     rows = [json.loads(line) for line in (tmp_path / "errors.jsonl").read_text().splitlines()]
     assert len(rows) == 1 and rows[0]["seed"] == 42 and rows[0]["first"] == 1
     assert rows[0]["responses"] == ["0100", "02"] and "engine loop" in rows[0]["error"]
+
+
+def test_a_stalled_rollout_saves_a_checkpoint_and_propagates(tmp_path):
+    """Training cannot unwind past a stuck engine thread, so train() saves latest.pt and re-raises for the caller
+    to end the process (tools/train_ppo.py exits with os._exit(3))."""
+    from ygorl.train.rollout import RolloutStalled
+
+    trainer = Trainer(_small_cfg(), tmp_path, log=None)
+    trainer.step()
+
+    def stuck():
+        raise RolloutStalled("no environment event for 900s")
+
+    trainer.collector.collect = stuck
+    with pytest.raises(RolloutStalled):
+        trainer.train(max_updates=3)
+    state = load_checkpoint(tmp_path / "checkpoints" / "latest.pt")
+    assert state["counters"]["updates"] == 1

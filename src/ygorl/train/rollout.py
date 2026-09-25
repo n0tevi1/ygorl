@@ -36,6 +36,12 @@ from torch import Tensor, nn
 TRUNCATION_REASONS = frozenset({"turn_limit", "decision_limit", "error"})
 
 
+class RolloutStalled(RuntimeError):
+    """No environment produced an event for ``stall_timeout``: an engine is stuck inside a duel. Its worker thread
+    never returns, so destroying the environment pool (joining its threads) would hang too: the caller should save
+    what it needs and end the process with ``os._exit`` (tools/train_ppo.py does)."""
+
+
 @dataclass(frozen=True)
 class Assignment:
     """One game to play in an environment slot: the env spec and who plays the other seat."""
@@ -219,7 +225,7 @@ class RolloutCollector:
             if got:
                 return got
             if now - start >= self.stall_timeout:
-                raise RuntimeError(self._stall_report(now))
+                raise RolloutStalled(self._stall_report(now))
 
     def _stall_report(self, now: float) -> str:
         """Which environments owe events and how long they have been silent (the stuck duel is among them)."""
@@ -320,4 +326,4 @@ class RolloutCollector:
         )  # fmt: skip
 
 
-__all__ = ["Assignment", "FinishedGame", "Rollout", "RolloutCollector", "TRUNCATION_REASONS"]
+__all__ = ["Assignment", "FinishedGame", "Rollout", "RolloutCollector", "RolloutStalled", "TRUNCATION_REASONS"]

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -172,7 +173,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"run directory: {trainer.run_dir}")
     print(json.dumps(dataclasses.asdict(trainer.net_config)))
     print(trainer.model.actor.parameter_report())
-    trainer.train(max_updates=args.updates, max_minutes=args.minutes)
+    from ygorl.train.rollout import RolloutStalled
+
+    try:
+        trainer.train(max_updates=args.updates, max_minutes=args.minutes)
+    except RolloutStalled as exc:
+        # latest.pt is saved; a stuck engine thread would hang the normal shutdown (joining the env pool)
+        print(f"error: {exc}\nresume with --resume {trainer.run_dir / 'checkpoints' / 'latest.pt'}", file=sys.stderr)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(3)
     print(json.dumps(summarize_metrics(trainer.run_dir / "metrics.jsonl"), indent=2))
     return 0
 

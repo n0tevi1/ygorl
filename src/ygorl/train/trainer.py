@@ -47,7 +47,7 @@ from ygorl.train.checkpoint import (
     vocab_to_text,
 )
 from ygorl.train.ppo import PPOConfig, PPOLearner
-from ygorl.train.rollout import Rollout, RolloutCollector
+from ygorl.train.rollout import Rollout, RolloutCollector, RolloutStalled
 from ygorl.train.selfplay import DeckPool, SelfPlaySchedule, SnapshotPool
 
 SMALL_NET = {"d_model": 64, "n_heads": 4, "board_layers": 1, "history_layers": 1}
@@ -285,6 +285,12 @@ class Trainer:
                     self.save()
         except KeyboardInterrupt:
             self.log("interrupted: saving checkpoints/latest.pt")
+        except RolloutStalled as exc:
+            # save while the process still can; the stuck worker thread keeps the env pool from being destroyed,
+            # so the caller must end the process (os._exit) rather than unwind normally
+            self.log(f"rollout stalled, saving checkpoints/latest.pt: {exc}")
+            self.save()
+            raise
         self.save()
         return last
 

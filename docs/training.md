@@ -232,7 +232,7 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
 
 **卡死保护**：`RolloutCollector` 带超时等事件；连续 `TrainConfig.stall_timeout`（默认 900 秒）没有任何环境产生事件、而仍有环境欠着行时，
 抛 `RuntimeError`，列出沉默最久的环境及其对局（种子、先攻方、牌组），而不是永远等下去（环境 i 固定在第 i % T 个线程上，一个卡死的对局会连带卡住同线程的环境）。
-训练以非零退出，可从最近的 checkpoint 续训。引擎错误截断的每一局追加到运行目录的 `errors.jsonl`（种子、先攻方、牌组、错误、十六进制应答日志），可据此复现。
+`Trainer.train` 先存 `checkpoints/latest.pt` 再抛出 `RolloutStalled`；卡住的工作线程让环境池无法正常析构（析构要等所有线程结束），所以 `tools/train_ppo.py` 捕获后用 `os._exit(3)` 结束进程（直接调用 `Trainer` 的代码也应如此），之后可 `--resume` 续训。引擎错误截断的每一局追加到运行目录的 `errors.jsonl`（种子、先攻方、牌组、错误、十六进制应答日志），可据此复现。
 已知限制：若每一局都在第一个决策之前出错，收集器会不停开新局而凑不满一列（事件一直有，看门狗不触发）；只在引擎整体损坏时出现。
 
 ### 8.2 更新（`PPOLearner`）
