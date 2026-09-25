@@ -55,7 +55,7 @@ checkpoint / 日志）。需要 `uv sync --extra train`。
 - **终局奖励**：挂在这一局在本列里的最后一行上，从该行座位的视角给出（可用 `terminal_rewards(players, dones, winner)`，
   `winner` 为胜方座位或 −1 平局）。即使终局是对手的动作或主机代答触发的，也挂在最后一个 agent 行上。
 - **截断的对局**（T4b.4 起）：回合上限（`turn_limit`）、决策数上限（`decision_limit`）与引擎错误（`error`，含 C++ 池里
-  重开失败报回的错误事件）结束的局**不是胜负**，是截断：最后一个 agent 行 `done = True`、`truncated = True`、奖励 0。
+  重开失败报回的错误事件、引擎步数上限的「engine loop」，[engine.md](engine.md)）结束的局**不是胜负**，是截断：最后一个 agent 行 `done = True`、`truncated = True`、奖励 0。
   主机按 LP 判的「胜负」（[engine.md](engine.md)，上限的计分方式以后还可能改）一律不进训练目标。`estimate(..., truncated=...)`
   在截断行上用 critic 自举：Expected-SARSA 回报的奖励换成该行自己的 `Q(s_t, a_t)`、GAE 的换成 `V(s_t)`，于是截断行的
   TD 误差为 0，之前的行经 critic 回溯（等价于在该行把列切开、以同座位的 critic 估计自举；单测
@@ -229,6 +229,11 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
   不会中断训练。
 - 段尾：一列满 `T` 行后，其环境在下一个**学习方**决策上暂停（对手的决策继续推进），这个待答决策就是该列的自举状态
   （`bootstrap_*` 由它前向得到），下一次 `collect()` 从它继续。所有列都暂停时这一段结束；先满的列等其余列，代价是少量空转。
+
+**卡死保护**：`RolloutCollector` 带超时等事件；连续 `TrainConfig.stall_timeout`（默认 900 秒）没有任何环境产生事件、而仍有环境欠着行时，
+抛 `RuntimeError`，列出沉默最久的环境及其对局（种子、先攻方、牌组），而不是永远等下去（环境 i 固定在第 i % T 个线程上，一个卡死的对局会连带卡住同线程的环境）。
+训练以非零退出，可从最近的 checkpoint 续训。引擎错误截断的每一局追加到运行目录的 `errors.jsonl`（种子、先攻方、牌组、错误、十六进制应答日志），可据此复现。
+已知限制：若每一局都在第一个决策之前出错，收集器会不停开新局而凑不满一列（事件一直有，看门狗不触发）；只在引擎整体损坏时出现。
 
 ### 8.2 更新（`PPOLearner`）
 

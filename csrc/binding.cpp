@@ -205,6 +205,10 @@ PYBIND11_MODULE(_core, m) {
     m.doc() = "ygorl native core: bindings for edo9300/ygopro-core (C++17 + pybind11)";
     m.def("hello", []() { return "ygorl._core"; }, "Smoke-test function.");
     m.def(
+        "set_max_engine_steps",
+        [](uint32_t n) { return g_max_engine_steps.exchange(n); },
+        "Engine steps allowed between two decisions before a duel stops as an engine loop; returns the old value.");
+    m.def(
         "ocg_version",
         []() {
             int major = 0, minor = 0;

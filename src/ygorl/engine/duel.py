@@ -420,6 +420,10 @@ _MENUS = (C.MSG_SELECT_IDLECMD, C.MSG_SELECT_BATTLECMD)
 # a negated monster can activate an unlimited ignition effect for free forever (Expurrely Happiness); real play
 # rarely activates one effect from the menu more than 3 times a turn
 MAX_MENU_ACTIVATIONS = 8
+# engine steps (process() calls) allowed between two decisions: a core that keeps processing without ever asking a
+# player would hang the duel (the decision limit never fires); real chains take a few thousand at most (mirror of
+# the C++ g_max_engine_steps)
+MAX_ENGINE_STEPS = 100_000
 _INVERSE = {"select": "unselect", "unselect": "select"}
 
 
@@ -461,6 +465,7 @@ class DuelTracker:
         self._engine_winner: int | None = None
         self._last_decision: M.Decision | None = None
         self._consecutive_retries = 0
+        self._engine_steps = 0  # process() calls since the last decision
         self._buffers = 0
         self._point: DecisionPoint | None = None
         self._allowed: list[int] | None = None  # point.actions -> state.actions() indices when filtered
@@ -538,7 +543,11 @@ class DuelTracker:
             self.stop("end")
             return
         if status != _core.DUEL_STATUS_AWAITING:
+            self._engine_steps += 1
+            if self._engine_steps >= MAX_ENGINE_STEPS:
+                self.stop("error", f"engine loop: no decision after {MAX_ENGINE_STEPS} engine steps")
             return
+        self._engine_steps = 0
         if decision is None and retried:
             self._consecutive_retries += 1
             if self._consecutive_retries > MAX_CONSECUTIVE_RETRIES:

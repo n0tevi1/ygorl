@@ -95,6 +95,8 @@ class TrainConfig:
     checkpoint_every: int = 10
     eval_every: int = 25
     eval_pairs: int = 8  # paired seeds per deck pairing and baseline (2 games each)
+    # raise when no environment produces an event for this long (an engine stuck inside a duel); None = wait forever
+    stall_timeout: float | None = 900.0
     eval_pairings: int = 0  # evaluate on this many training pairings, a fixed sample (seeded); 0 = all of them
     eval_opponents: tuple[str, ...] = ("greedy", "random")
     keep_best_by: str = "greedy"
@@ -215,7 +217,7 @@ class Trainer:
         self._stream = torch.cuda.Stream(self.device) if cfg.overlap_collect and self.device.type == "cuda" else None
         self.collector = RolloutCollector(self.env, self.acting, self.schedule, cfg.steps, opponents=self.schedule.opponent,
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
-                                          device=self.device)  # fmt: skip
+                                          device=self.device, stall_timeout=cfg.stall_timeout)  # fmt: skip
         self.counters = {"updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0, "snapshots": 0, "snapshots_skipped": 0}  # fmt: skip
         self.league = {"games": 0, "points": 0.0}  # the learner's pool games since the last snapshot joined
@@ -340,6 +342,7 @@ class Trainer:
         c["seconds"] += step_s
         c["truncated"] += sum(g.truncated for g in ro.games)
         c["errors"] += sum(g.reason == "error" for g in ro.games)
+        self._log_errors(ro.games)
         for g in ro.games:
             if g.learner_score is not None and not g.truncated:
                 self.pool.record(g.assignment.opponent, g.learner_score)
@@ -356,6 +359,20 @@ class Trainer:
                  f"(truncated {record['truncated_games']}), entropy {stats['entropy']:.3f}, kl_ref {stats['kl_ref']:.4f}, "
                  f"q_loss {stats['q_loss']:.4f}, pool win {record['pool_win_rate']}")  # fmt: skip
         return record
+
+    def _log_errors(self, games) -> None:
+        """Append every game an engine error cut short to ``errors.jsonl``, with enough to replay it (seed, first
+        player, deck names, the error, the response log as hex)."""
+        errors = [g for g in games if g.reason == "error"]
+        if not errors:
+            return
+        with (self.run_dir / "errors.jsonl").open("a") as f:
+            for g in errors:
+                spec = g.assignment.spec
+                f.write(json.dumps({"update": self.learner.updates, "seed": getattr(spec, "seed", None),
+                                    "first": getattr(spec, "first", None), "info": dict(g.assignment.info),
+                                    "error": str(g.result.get("error", "")), "decisions": g.result.get("decisions"),
+                                    "responses": [bytes(r).hex() for r in g.result.get("responses", [])]}) + "\n")  # fmt: skip
 
     @staticmethod
     def _rollout_stats(ro: Rollout, update_s: float) -> dict:

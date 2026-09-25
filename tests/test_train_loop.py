@@ -580,3 +580,18 @@ def test_a_checkpoint_with_card_facts_reloads_them(tmp_path, vocab):
     path = trainer.save()
     pol = load_actor(path)  # the run's text_dir comes from its config
     assert pol.net_config.n_archetypes == 1 and pol.net.identity.archetype is not None
+
+
+def test_engine_errors_are_logged_for_replay(tmp_path):
+    from ygorl.train.rollout import Assignment, FinishedGame
+
+    trainer = Trainer(_small_cfg(), tmp_path, log=None)
+    spec = GameSpec(seed=42, deck_a=load_ydk(PAIR[0]), deck_b=load_ydk(PAIR[1]), first=1)
+    bad = FinishedGame(Assignment(spec, None, 0, {"deck_a": "snake_eye"}), None, "error", True, 3,
+                       {"error": "engine loop: no decision after 100000 engine steps", "decisions": 7,
+                        "responses": [b"\x01\x00", b"\x02"]})  # fmt: skip
+    ok = FinishedGame(Assignment(spec, None, 0, {}), 0, "win", False, 3, {})
+    trainer._log_errors([ok, bad])
+    rows = [json.loads(line) for line in (tmp_path / "errors.jsonl").read_text().splitlines()]
+    assert len(rows) == 1 and rows[0]["seed"] == 42 and rows[0]["first"] == 1
+    assert rows[0]["responses"] == ["0100", "02"] and "engine loop" in rows[0]["error"]
