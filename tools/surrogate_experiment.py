@@ -57,7 +57,10 @@ SPLITS = {"train": 0, "test": 1}
 
 def build_space(db, top_packages: int):
     meta = [load_ydk(p) for p in sorted((ROOT / "tests" / "decks").glob("*.ydk"))]
-    generic = {c["password"]: c["role"] for c in json.loads((ROOT / "tests" / "data" / "generic_pool.json").read_text())["cards"]}
+    generic = {
+        c["password"]: c["role"]
+        for c in json.loads((ROOT / "tests" / "data" / "generic_pool.json").read_text())["cards"]
+    }
     syn = enumerate_packages(load_or_build(), setcodes=setcodes_from_db(db))[:top_packages]
     deck_pkgs = [sorted(set(d.main) | set(d.extra)) for d in meta]
     return GenotypeSpace(db, deck_pkgs + list(syn), generic, max_packages=3), meta
@@ -218,7 +221,10 @@ def main() -> int:
         errs = [100 * mae(pred[:, j], y_te[:, j]) for j in range(len(targets))]
         rm = [100 * rmse(pred[:, j], y_te[:, j]) for j in range(len(targets))]
         # the test labels' own noise inflates the error; subtract it in quadrature for the RMSE vs truth
-        corr = [100 * float(np.sqrt(max(rmse(pred[:, j], y_te[:, j]) ** 2 - np.mean(se_te**2), 0))) for j in range(len(targets))]
+        corr = [
+            100 * float(np.sqrt(max(rmse(pred[:, j], y_te[:, j]) ** 2 - np.mean(se_te**2), 0)))
+            for j in range(len(targets))
+        ]
         sp_rho = spearman(pred[:, 0], y_te[:, 0]) if np.ptp(pred[:, 0]) > 0 else float("nan")
         rows.append({"model": name, "mae_pp": errs, "rmse_pp": rm, "rmse_vs_truth_pp": corr, "spearman": sp_rho})
         print(f"  {name:34s} MAE " + " / ".join(f"{e:5.2f}" for e in errs) + " pp   RMSE " + " / ".join(f"{e:5.2f}" for e in rm)
@@ -259,7 +265,10 @@ def main() -> int:
     for label, mask in (("random", te_rnd), ("mutant", ~te_rnd)):
         if mask.any():
             by_origin[label] = (int(mask.sum()), 100 * mae(mean[mask, 0], y_te[mask, 0]), float(y_te[mask, 0].mean()))
-    print("  win_rate MAE by origin: " + ", ".join(f"{k} {e:.2f}pp (n={n}, mean label {m:.3f})" for k, (n, e, m) in by_origin.items()))
+    print(
+        "  win_rate MAE by origin: "
+        + ", ".join(f"{k} {e:.2f}pp (n={n}, mean label {m:.3f})" for k, (n, e, m) in by_origin.items())
+    )
     res["by_origin"] = by_origin
 
     # -- learning curve
@@ -298,10 +307,12 @@ def main() -> int:
                 pick = rest[acquire(mp, sp_, 25, beta=1.0)]
             chosen += [int(i) for i in pick]
         sim[rule] = trace
-        print(f"  {rule:12s} " + "  ".join(f"n={n}: {e:.2f}pp (mean label {mw:.3f})" for n, e, mw in trace[:: 2]))
+        print(f"  {rule:12s} " + "  ".join(f"n={n}: {e:.2f}pp (mean label {mw:.3f})" for n, e, mw in trace[::2]))
     res["acquisition"] = sim
 
-    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=ROOT).stdout.strip()
+    commit = subprocess.run(
+        ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=ROOT
+    ).stdout.strip()
     res["meta"] = {"commit": commit, "date": date.today().isoformat(), "machine": f"{platform.machine()} {os.cpu_count()} cpus",
                    "args": {k: str(v) for k, v in vars(args).items()}}  # fmt: skip
     args.out.mkdir(parents=True, exist_ok=True)

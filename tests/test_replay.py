@@ -61,7 +61,12 @@ def test_roundtrip_and_replay_to_same_end(db, env, tmp_path, suffix):
     assert loaded.environment == {"version": env.version, "fingerprint": env.fingerprint}
     again = loaded.play(env=env, cards=db, record_messages=True)
     assert again.message_log == result.message_log
-    assert (again.winner, again.reason, again.turns, again.lp) == (result.winner, result.reason, result.turns, result.lp)
+    assert (again.winner, again.reason, again.turns, again.lp) == (
+        result.winner,
+        result.reason,
+        result.turns,
+        result.lp,
+    )
     assert loaded.result["winner"] == result.winner
 
 
@@ -119,8 +124,10 @@ def test_minimal_replay_json_loads():
         ({"shuffle_decks": "yes"}, "'shuffle_decks' must be true or false"),
         ({"decks": [1, 2]}, "'decks' must be an object with decks 'a' and 'b'"),
         ({"decks": {"a": {"main": [], "extra": []}}}, "'decks' must be an object with decks 'a' and 'b'"),
-        ({"decks": {"a": {"main": [1], "extra": []}, "b": {"main": "1", "extra": []}}},
-         r"'decks.b.main' must be a list"),
+        (
+            {"decks": {"a": {"main": [1], "extra": []}, "b": {"main": "1", "extra": []}}},
+            r"'decks.b.main' must be a list",
+        ),
         ({"decks": {"a": {"main": [2**32], "extra": []}, "b": {"main": [], "extra": []}}}, r"'decks.a.main\[0\]'"),
         ({"responses": "00"}, "'responses' must be a list"),
         ({"responses": ["zz"]}, r"'responses\[0\]' is not a hex string"),
@@ -492,13 +499,19 @@ def test_stream_carries_the_host_refresh_packets(db, env, tmp_path):
                 assert flags == sorted(flags) and (not card or flags[-1] == C.QUERY_END)
     assert turns == result.turns and draws and moves
     # the refreshes EDOPro's host sends before every idle/battle command: both monster, spell/trap zones and hands
-    idle = sum(r[0] in (C.MSG_SELECT_IDLECMD, C.MSG_SELECT_BATTLECMD) for buf in result.message_log for r in M.split_messages(buf))
+    idle = sum(
+        r[0] in (C.MSG_SELECT_IDLECMD, C.MSG_SELECT_BATTLECMD)
+        for buf in result.message_log
+        for r in M.split_messages(buf)
+    )
     six = field_before + [(C.MSG_UPDATE_DATA, 0, C.LOCATION_HAND), (C.MSG_UPDATE_DATA, 1, C.LOCATION_HAND)]
     runs = sum([data(j) for j in range(i, i + 6)] == six for i in range(len(packets) - 6))
     assert runs >= idle > 0
 
 
-@pytest.mark.parametrize(("limit", "reason"), [({"max_turns": 2}, "turn_limit"), ({"max_decisions": 40}, "decision_limit")])
+@pytest.mark.parametrize(
+    ("limit", "reason"), [({"max_turns": 2}, "turn_limit"), ({"max_decisions": 40}, "decision_limit")]
+)
 def test_limit_games_end_with_a_host_msg_win(db, env, tmp_path, limit, reason):
     duel, result = record(db, env, seed=37, config=DuelConfig.from_environment(env, **limit))
     assert result.reason == reason

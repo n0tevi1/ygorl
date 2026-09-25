@@ -258,7 +258,11 @@ class EventHistory:
             self._hand_delta(prev, -1)
             self._hand_delta(cur, +1)
             if self.solving and self.solving in self.links and prev.location == C.LOCATION_DECK:
-                trig = {C.LOCATION_HAND: "search", C.LOCATION_MZONE: "spsummon_deck", C.LOCATION_GRAVE: "send_deck_grave"}
+                trig = {
+                    C.LOCATION_HAND: "search",
+                    C.LOCATION_MZONE: "spsummon_deck",
+                    C.LOCATION_GRAVE: "send_deck_grave",
+                }
                 if cur.location in trig:
                     self.links[self.solving].triggers |= TRIGGERS[trig[cur.location]]
         elif t == C.MSG_POS_CHANGE:

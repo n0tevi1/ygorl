@@ -60,7 +60,9 @@ def allowed_actions(mode: str, decision: M.Decision, actions: Sequence[Action]) 
         kind = _ACTIVATION_KINDS.get(type(decision))
         if kind is None:
             return everything
-        return [i for i, a in enumerate(actions) if a.kind in PASSIVE_KINDS or (a.kind == kind and is_hand_activation(a))]
+        return [
+            i for i, a in enumerate(actions) if a.kind in PASSIVE_KINDS or (a.kind == kind and is_hand_activation(a))
+        ]
     raise ValueError(f"unknown curriculum mode {mode!r} (expected one of {MODES})")
 
 

@@ -60,6 +60,7 @@ def test_strict_mode_rejects_lines_that_use_hidden_information():
 def test_the_shadow_stays_in_lockstep_with_the_real_duel(db, seed, a, b):
     agent = make_agent("lethal:random", seed)
     result = Duel(seed, None, DECKS[a], DECKS[b], cards=db, config=DuelConfig(max_decisions=2000)).run(
-        agent, RandomAgent(seed + 1))
+        agent, RandomAgent(seed + 1)
+    )
     assert result.reason in ("win", "decision_limit", "turn_limit")
     assert agent.stats.desync == 0 and agent.stats.searches > 0

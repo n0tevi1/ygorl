@@ -51,7 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--train", type=Path, action="append", required=True, help="training demonstrations (JSONL)")
     parser.add_argument("--heldout", type=Path, action="append", default=[], help="held-out demonstrations (JSONL)")
     parser.add_argument("--out", type=Path, default=ROOT / "out" / "bc", help="output directory (default out/bc)")
-    parser.add_argument("--env", default=None, metavar="PATH|VERSION", help="environment the demonstrations are bound to")
+    parser.add_argument(
+        "--env", default=None, metavar="PATH|VERSION", help="environment the demonstrations are bound to"
+    )
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -63,23 +65,43 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--event-length", type=int, default=128, help="event tokens per observation (default 128)")
     parser.add_argument("--threads", type=int, default=2, help="torch threads (default 2)")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--text-dir", type=Path, default=None,
-                        help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)")
+    parser.add_argument(
+        "--text-dir",
+        type=Path,
+        default=None,
+        help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)",
+    )
     parser.add_argument("--card-facts", action="store_true", help="use card_facts.npz in --text-dir (experimental)")
     parser.add_argument("--no-text", action="store_true", help="ignore the text tables in --text-dir")
     parser.add_argument("--id-dropout", type=float, default=0.0, help="training: drop each card's ID embedding")
     parser.add_argument("--no-id-embedding", action="store_true", help="drop the per-card ID embedding")
     parser.add_argument("--baselines", action="store_true", help="also report RandomAgent and GreedyAgent openings")
-    parser.add_argument("--checkpoint", type=Path, default=None,
-                        help="checkpoint to evaluate (default <out>/policy.pt; with --no-train also a PPO checkpoint)")
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="checkpoint to evaluate (default <out>/policy.pt; with --no-train also a PPO checkpoint)",
+    )
     parser.add_argument("--no-train", action="store_true", help="evaluate --checkpoint without training")
     parser.add_argument("--report", type=Path, default=None, help="report file (default <out>/report.json)")
-    parser.add_argument("--openings", default="all", choices=("all", "heldout", "none"),
-                        help="free-running turn-1 reports on the training and held-out hands (default all)")
-    parser.add_argument("--sample-openings", action="store_true",
-                        help="play the free-running openings by sampling at temperature 1 (seed = hand number) instead of argmax")
-    parser.add_argument("--extra", type=Path, action="append", default=[],
-                        help="heuristic samples (.npz of tools/greedy_demos.py) added to the training set")
+    parser.add_argument(
+        "--openings",
+        default="all",
+        choices=("all", "heldout", "none"),
+        help="free-running turn-1 reports on the training and held-out hands (default all)",
+    )
+    parser.add_argument(
+        "--sample-openings",
+        action="store_true",
+        help="play the free-running openings by sampling at temperature 1 (seed = hand number) instead of argmax",
+    )
+    parser.add_argument(
+        "--extra",
+        type=Path,
+        action="append",
+        default=[],
+        help="heuristic samples (.npz of tools/greedy_demos.py) added to the training set",
+    )
     parser.add_argument("--extra-subset", default="all", help="subset of the --extra samples (all, battle)")
     parser.add_argument("--extra-max", type=int, default=None, help="at most this many --extra samples")
     parser.add_argument("--extra-heldout", type=Path, default=None, help="held-out heuristic samples (.npz)")

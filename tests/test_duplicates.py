@@ -145,7 +145,9 @@ def test_maxx_c_in_hand_is_one_choice_in_python_and_cpp(db):
     deck_a, deck_b = Deck(main=(CELTIC,) * 40), Deck(main=(MAXX,) * 40)
     cfg = DuelConfig(max_turns=2, shuffle_decks=False)
     duel = Duel(1, None, deck_a, deck_b, cards=db, config=cfg)
-    host = _core.HostDuel(db.to_core(), default_scripts(), [vocab.password(i) for i in range(vocab.FIRST_INDEX, len(vocab))])
+    host = _core.HostDuel(
+        db.to_core(), default_scripts(), [vocab.password(i) for i in range(vocab.FIRST_INDEX, len(vocab))]
+    )
     decks = [(list(m), list(e)) for m, e in duel.loaded_decks()]
     host.start(expand_seed(1), cfg.rule_flags, (8000, 5, 1), (8000, 5, 1), decks, cfg.max_turns, cfg.max_decisions)
     agent = Collect(ObservationEncoder(db, vocab), duel, host)

@@ -43,7 +43,12 @@ LOC = struct.Struct("<BBII")
 
 
 def loc_info(rng, con=None):
-    return LOC.pack(rng.randrange(2) if con is None else con, rng.choice([2, 4, 8, 16, 32]), rng.randrange(7), rng.choice([1, 4, 8, 10]))
+    return LOC.pack(
+        rng.randrange(2) if con is None else con,
+        rng.choice([2, 4, 8, 16, 32]),
+        rng.randrange(7),
+        rng.choice([1, 4, 8, 10]),
+    )
 
 
 def rand_record(rng, kind):
@@ -53,7 +58,9 @@ def rand_record(rng, kind):
         n = rng.randrange(1, 7)
         mx = rng.randrange(1, n + 1)
         mn = rng.randrange(0, mx + 1)
-        body = struct.pack("<BBIII", p, rng.randrange(2), mn, mx, n) + b"".join(struct.pack("<I", code()) + loc_info(rng) for _ in range(n))
+        body = struct.pack("<BBIII", p, rng.randrange(2), mn, mx, n) + b"".join(
+            struct.pack("<I", code()) + loc_info(rng) for _ in range(n)
+        )
     elif kind == C.MSG_SELECT_TRIBUTE:
         n = rng.randrange(1, 6)
         mx = rng.randrange(1, 4)
@@ -72,7 +79,9 @@ def rand_record(rng, kind):
 
         body = struct.pack("<BBIIII", p, 0 if exact else 1, rng.randrange(4, 17), mn, mx, must)
         body += b"".join(struct.pack("<I", code()) + loc_info(rng) + struct.pack("<I", param()) for _ in range(must))
-        body += struct.pack("<I", n) + b"".join(struct.pack("<I", code()) + loc_info(rng) + struct.pack("<I", param()) for _ in range(n))
+        body += struct.pack("<I", n) + b"".join(
+            struct.pack("<I", code()) + loc_info(rng) + struct.pack("<I", param()) for _ in range(n)
+        )
     elif kind == C.MSG_SELECT_UNSELECT_CARD:
         n, u = rng.randrange(0, 5), rng.randrange(0, 3)
         body = struct.pack("<BBBII", p, rng.randrange(2), rng.randrange(2), 1, 3) + struct.pack("<I", n)
@@ -107,7 +116,9 @@ def rand_record(rng, kind):
     elif kind == C.MSG_SELECT_CHAIN:
         n = rng.randrange(0, 4)
         body = struct.pack("<BBBIII", p, 0, rng.randrange(2) if n else 0, 0, 0, n)
-        body += b"".join(struct.pack("<I", code()) + loc_info(rng) + struct.pack("<QB", rng.getrandbits(40), 0) for _ in range(n))
+        body += b"".join(
+            struct.pack("<I", code()) + loc_info(rng) + struct.pack("<QB", rng.getrandbits(40), 0) for _ in range(n)
+        )
     elif kind in (C.MSG_SELECT_YESNO,):
         body = struct.pack("<BQ", p, rng.getrandbits(40))
     elif kind == C.MSG_SELECT_EFFECTYN:

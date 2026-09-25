@@ -83,7 +83,9 @@ def _may_match(state: DecisionState, action: Action, target: bytes) -> bool:
     if isinstance(state, SortState):  # response: position of every card
         if action.kind != "sort":
             return True
-        return len(target) == len(state.decision.cards) and struct.unpack_from("<b", target, action.index)[0] == len(picked)
+        return len(target) == len(state.decision.cards) and struct.unpack_from("<b", target, action.index)[0] == len(
+            picked
+        )
     if isinstance(state, PlaceState):  # response: 3 bytes per zone, in pick order
         k, z = 3 * len(picked), action.value
         return target[k : k + 3] == bytes((z >> 16, (z >> 8) & 0xFF, z & 0xFF))
@@ -175,7 +177,9 @@ class _RecordedSteps:
     def act(self, point: DecisionPoint) -> int:
         if point.state is not self._state:
             if self._plan:
-                raise BranchError(f"step {point.index}: the engine asked a new decision before the recorded one was complete")
+                raise BranchError(
+                    f"step {point.index}: the engine asked a new decision before the recorded one was complete"
+                )
             self._state = point.state
             self._plan = self._decide(point)
         if point.index == self.stop_at:
@@ -197,7 +201,9 @@ class _RecordedSteps:
         if hints:
             seq, out = _follow(point.state, hints)
             if out != target:
-                raise BranchError(f"step {point.index}: the recorded step choices do not reproduce recorded response {k}")
+                raise BranchError(
+                    f"step {point.index}: the recorded step choices do not reproduce recorded response {k}"
+                )
             return seq
         seq = actions_for_response(point.state, target)
         if seq is None:
@@ -305,7 +311,9 @@ class Branch:
             raise ValueError(f"action {action!r} out of range 0..{n - 1} at t={self.t}")
         if not (record_steps or record_messages) and _core.ARENA_AVAILABLE:
             return self._rollout_from_snapshot(action, (policy_a, policy_b))
-        duel = self.replay.duel(self.env, record_steps=record_steps, record_messages=record_messages, **self._duel_kwargs)
+        duel = self.replay.duel(
+            self.env, record_steps=record_steps, record_messages=record_messages, **self._duel_kwargs
+        )
         return duel.run(_BranchSeat(self, action, policy_a), _BranchSeat(self, action, policy_b))
 
     def _at_t(self) -> DuelSession:
@@ -405,4 +413,12 @@ def fork(replay: Replay, t: int, env: Environment | None = None, **duel_kwargs) 
     raise BranchError(f"t={t} is out of range: this replay reaches decision points 0..{last}")
 
 
-__all__ = ["Branch", "BranchError", "CandidateOutcome", "RecordedAgent", "actions_for_response", "fork", "recorded_actions"]
+__all__ = [
+    "Branch",
+    "BranchError",
+    "CandidateOutcome",
+    "RecordedAgent",
+    "actions_for_response",
+    "fork",
+    "recorded_actions",
+]

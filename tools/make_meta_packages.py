@@ -189,10 +189,16 @@ def derive(env: Environment, db: CardDB, *, min_size: int = MIN_SIZE, split: boo
         "description": "Engine packages derived from the environment's meta decks by tools/make_meta_packages.py "
         "(rule in its docstring and docs/synergy.md); an evaluation set for the synergy graph, never used to build it.",
         "environment": env.stamp(),
-        "rule": {"min_size": min_size, "split_by_declared_relation": split,
-                 "generic_lists": ["tests/data/generic_pool.json", "tools/make_proxy_packages.py:GENERIC"]},  # fmt: skip
+        "rule": {
+            "min_size": min_size,
+            "split_by_declared_relation": split,
+            "generic_lists": ["tests/data/generic_pool.json", "tools/make_proxy_packages.py:GENERIC"],
+        },  # fmt: skip
         "packages": {k: {"decks": v["decks"], "members": rows(v["members"])} for k, v in sorted(packages.items())},
-        "excluded": {reason: rows(p for p, r in excluded.items() if r == reason) for reason in ("generic_list", "shared", "unrelated")},
+        "excluded": {
+            reason: rows(p for p, r in excluded.items() if r == reason)
+            for reason in ("generic_list", "shared", "unrelated")
+        },
     }
 
 

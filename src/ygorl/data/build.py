@@ -155,7 +155,9 @@ def meta_since(opts: BuildOptions) -> str:
 # --------------------------------------------------------------------------- build
 
 
-def build(opts: BuildOptions, cards: Mapping[int, Any] | None = None, log: Callable[[str], None] = print) -> BuildResult:
+def build(
+    opts: BuildOptions, cards: Mapping[int, Any] | None = None, log: Callable[[str], None] = print
+) -> BuildResult:
     if not VERSION_RE.match(opts.version) or not MD_VERSION_RE.match(opts.version):
         raise BuildError(f"version {opts.version!r} must look like md-YYYY-MM[-revision] (only Master Duel "
                          "environments can be built so far)")  # fmt: skip
@@ -218,7 +220,9 @@ def build(opts: BuildOptions, cards: Mapping[int, Any] | None = None, log: Calla
     if opts.relations:
         parsed, rel_unmapped = {}, {}
         for key in yugipedia.PROPERTIES:
-            parsed[key], rel_unmapped[key] = yugipedia.parse_property(read_raw(raw / yugipedia.raw_file(key)), mapper, key)
+            parsed[key], rel_unmapped[key] = yugipedia.parse_property(
+                read_raw(raw / yugipedia.raw_file(key)), mapper, key
+            )
         rel_data = {"relations": yugipedia.relations(parsed, pool), "unmapped": rel_unmapped,
                     "cards": len({p for table in parsed.values() for p in table if p in pool})}  # fmt: skip
 
@@ -306,7 +310,8 @@ def build(opts: BuildOptions, cards: Mapping[int, Any] | None = None, log: Calla
     result.stats = stats
     (out / REVIEW_DIR).mkdir(exist_ok=True)
     (out / REVIEW_DIR / REPORT).write_text(
-        _report(opts, stats, summaries, chosen, banlist, ban_res, overrides, cards, pool, update, since), encoding="utf-8"
+        _report(opts, stats, summaries, chosen, banlist, ban_res, overrides, cards, pool, update, since),
+        encoding="utf-8",
     )
 
     # validate: format, then legality of every meta deck under the new pool / banlist
@@ -315,7 +320,9 @@ def build(opts: BuildOptions, cards: Mapping[int, Any] | None = None, log: Calla
     except ValueError as exc:
         raise BuildError(f"the built environment does not validate:\n{exc}") from None
     if stats["pool_unmapped"]:
-        result.warnings.append(f"{len(stats['pool_unmapped'])} pool card(s) not in BabelCDB (see {REVIEW_DIR}/{REPORT})")
+        result.warnings.append(
+            f"{len(stats['pool_unmapped'])} pool card(s) not in BabelCDB (see {REVIEW_DIR}/{REPORT})"
+        )
     if stats["banlist_unmapped"]:
         result.warnings.append(f"{len(stats['banlist_unmapped'])} banlist card(s) not in BabelCDB")
     late = _late_start(stats["meta_illegal_by_day"])
@@ -430,7 +437,9 @@ def _compact(prov: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _illegal_by_day(records: list[mdm.DeckRecord], problems: Callable[[mdm.DeckRecord], list[str]]) -> dict[str, list[int]]:
+def _illegal_by_day(
+    records: list[mdm.DeckRecord], problems: Callable[[mdm.DeckRecord], list[str]]
+) -> dict[str, list[int]]:
     """``{day: [lists, lists illegal under the new banlist]}``: shows when the banlist took effect."""
     out: dict[str, list[int]] = {}
     for r in records:
@@ -512,7 +521,9 @@ def _report(opts, stats, summaries, chosen, banlist: Banlist, ban_res, overrides
     for limit in (0, 1, 2):
         for p in sorted((p for p, n in banlist.limits.items() if n == limit), key=lambda p: _card_name(cards, p)):
             other = " | ".join(LIMIT_LABELS[lst.limit(p)] for lst in others.values())
-            L.append(f"| {p} | {_card_name(cards, p)} | {LIMIT_LABELS[limit]} | {other} | {'；'.join(notes.get(p, []))} |")
+            L.append(
+                f"| {p} | {_card_name(cards, p)} | {LIMIT_LABELS[limit]} | {other} | {'；'.join(notes.get(p, []))} |"
+            )
     L.append("")
     if ban_res.unmapped or ban_res.conflicts:
         L += ["无法对应到 BabelCDB 的禁限条目（未写入禁限表，需人工处理）：", ""]
@@ -543,7 +554,9 @@ def _report(opts, stats, summaries, chosen, banlist: Banlist, ban_res, overrides
         if s.share < opts.min_share / 2:
             continue
         why = "、".join(f"{k} {v}" for k, v in s.problems.most_common())
-        L.append(f"| {s.name} | {s.share:.1%} | {s.decks} | {s.legal} | {'是' if s.name in chosen_names else ''} | {why} |")
+        L.append(
+            f"| {s.name} | {s.share:.1%} | {s.decks} | {s.legal} | {'是' if s.name in chosen_names else ''} | {why} |"
+        )
     L.append("")
     by_day = stats["meta_illegal_by_day"]
     L += ["按日期统计的卡表数与在新禁限表下不合法的卡表数。新禁限表生效后仍有不合法卡表，说明禁限表可能有误（需校对）；"
@@ -565,7 +578,9 @@ def _report(opts, stats, summaries, chosen, banlist: Banlist, ban_res, overrides
 
 def _previous_banlist(opts: BuildOptions) -> tuple[str, Banlist] | None:
     """Banlist of the newest ``md-*`` environment older than this version under the same root."""
-    older = sorted(p for p in opts.root.glob("md-*") if p.is_dir() and p.name < opts.version and (p / BANLIST).is_file())
+    older = sorted(
+        p for p in opts.root.glob("md-*") if p.is_dir() and p.name < opts.version and (p / BANLIST).is_file()
+    )
     for path in reversed(older):
         try:
             manifest = _read_json(path / MANIFEST)
@@ -573,4 +588,3 @@ def _previous_banlist(opts: BuildOptions) -> tuple[str, Banlist] | None:
         except ValueError:
             continue
     return None
-

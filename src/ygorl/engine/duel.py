@@ -718,7 +718,13 @@ class DuelTracker:
 
 def _step_record(point: DecisionPoint, chosen: int, probs) -> dict:
     def action(a: Action) -> dict:
-        d = {"kind": a.kind, "index": a.index, "code": a.card.code if a.card else 0, "description": a.description, "value": a.value}
+        d = {
+            "kind": a.kind,
+            "index": a.index,
+            "code": a.card.code if a.card else 0,
+            "description": a.description,
+            "value": a.value,
+        }
         if a.card is not None:
             d["location"] = [a.card.loc.controller, a.card.loc.location, a.card.loc.sequence]
         return d
@@ -751,5 +757,14 @@ def run_duel(seed: int, deck_a: Deck, deck_b: Deck, agent_a, agent_b, env: Envir
     return Duel(seed, env, deck_a, deck_b, **kwargs).run(agent_a, agent_b)
 
 
-__all__ = ["DecisionPoint", "Duel", "DuelConfig", "DuelResult", "DuelTracker", "ScriptedAgent", "expand_seed", "run_duel",
-           "shuffle_deck"]
+__all__ = [
+    "DecisionPoint",
+    "Duel",
+    "DuelConfig",
+    "DuelResult",
+    "DuelTracker",
+    "ScriptedAgent",
+    "expand_seed",
+    "run_duel",
+    "shuffle_deck",
+]

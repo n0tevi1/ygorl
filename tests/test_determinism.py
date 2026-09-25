@@ -47,7 +47,9 @@ def test_response_log_replays_to_same_end(db, a, b, first):
 def test_action_log_replays_with_scripted_agent(db):
     original = play(db, 9, "voiceless_voice", "fiendsmith_ryzeal")
     agent = ScriptedAgent(original.actions)
-    again = Duel(9, None, DECKS["voiceless_voice"], DECKS["fiendsmith_ryzeal"], cards=db, record_messages=True).run(agent, agent)
+    again = Duel(9, None, DECKS["voiceless_voice"], DECKS["fiendsmith_ryzeal"], cards=db, record_messages=True).run(
+        agent, agent
+    )
     assert again.message_log == original.message_log and again.responses == original.responses
 
 
@@ -62,9 +64,13 @@ def test_partial_replay_stops_when_log_is_exhausted(db):
 def test_replay_detects_divergence(db):
     original = play(db, 4, "snake_eye", "yubel")
     with pytest.raises(ValueError, match="differs from the reference at message buffer 0"):
-        Duel(5, None, DECKS["snake_eye"], DECKS["yubel"], cards=db).replay(original.responses, reference_log=original.message_log)
+        Duel(5, None, DECKS["snake_eye"], DECKS["yubel"], cards=db).replay(
+            original.responses, reference_log=original.message_log
+        )
     # the right seed replays cleanly against its own reference
-    Duel(4, None, DECKS["snake_eye"], DECKS["yubel"], cards=db).replay(original.responses, reference_log=original.message_log)
+    Duel(4, None, DECKS["snake_eye"], DECKS["yubel"], cards=db).replay(
+        original.responses, reference_log=original.message_log
+    )
 
 
 def test_lua_string_keyed_pairs_order_is_stable(db, tmp_path):

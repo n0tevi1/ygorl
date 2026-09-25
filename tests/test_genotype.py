@@ -19,7 +19,25 @@ LINK = C.TYPE_MONSTER | C.TYPE_LINK | C.TYPE_EFFECT
 
 
 def mk(pw, name=None, type_=MONSTER, alias=0):
-    return Card(pw, name or f"Card {pw}", "", ("",) * 16, alias, 3, (), type_, 0, 0, 4, 0, 0, C.RACE_DRAGON, C.ATTRIBUTE_DARK, 0, 0)
+    return Card(
+        pw,
+        name or f"Card {pw}",
+        "",
+        ("",) * 16,
+        alias,
+        3,
+        (),
+        type_,
+        0,
+        0,
+        4,
+        0,
+        0,
+        C.RACE_DRAGON,
+        C.ATTRIBUTE_DARK,
+        0,
+        0,
+    )
 
 
 # main-deck cards 100..199, extra-deck monsters 300..339

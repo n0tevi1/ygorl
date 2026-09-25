@@ -48,12 +48,26 @@ def test_decoded_fields_match_official_data(db, expected):
 
 def test_decode_row_packed_fields():
     level = 7 | (5 << 16) | (3 << 24)  # level 7, right scale 5, left scale 3
-    row = (1, 3, 0, 0x10DD | (0x5 << 16) | (0x123 << 48), C.TYPE_MONSTER | C.TYPE_PENDULUM, 2500, 2000, level, C.RACE_DRAGON, C.ATTRIBUTE_DARK, 0)
+    row = (
+        1,
+        3,
+        0,
+        0x10DD | (0x5 << 16) | (0x123 << 48),
+        C.TYPE_MONSTER | C.TYPE_PENDULUM,
+        2500,
+        2000,
+        level,
+        C.RACE_DRAGON,
+        C.ATTRIBUTE_DARK,
+        0,
+    )
     card = decode_row(row, None)
     assert (card.level, card.lscale, card.rscale) == (7, 3, 5)
     assert card.setcodes == (0x10DD, 0x5, 0x123)
     assert card.name == "" and card.strings == ("",) * 16
-    link = decode_row((2, 3, 0, 0, C.TYPE_MONSTER | C.TYPE_LINK, 1000, C.LINK_MARKER_TOP | C.LINK_MARKER_BOTTOM, 2, 1, 1, 0), None)
+    link = decode_row(
+        (2, 3, 0, 0, C.TYPE_MONSTER | C.TYPE_LINK, 1000, C.LINK_MARKER_TOP | C.LINK_MARKER_BOTTOM, 2, 1, 1, 0), None
+    )
     assert link.defense == 0 and link.link_marker_names == ["bottom", "top"] and link.link == 2
 
 

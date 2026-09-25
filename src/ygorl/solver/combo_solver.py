@@ -208,7 +208,11 @@ class SolverRun:
 
     def problems(self, limit: int = 6) -> str:
         """The report's ``!!`` lines (the solver's error and warning channel), for error messages."""
-        lines = [ln.strip() for ln in self.stdout.splitlines() if ln.lstrip().startswith("!!") and "scripts not found" not in ln]
+        lines = [
+            ln.strip()
+            for ln in self.stdout.splitlines()
+            if ln.lstrip().startswith("!!") and "scripts not found" not in ln
+        ]
         return "; ".join(lines[:limit]) or (self.stdout.strip().splitlines() or ["no output"])[-1]
 
 
@@ -257,4 +261,3 @@ def solver_version() -> dict:
 
 __all__ = ["SOLVER_COMMIT", "SolutionFile", "SolveRequest", "SolverError", "SolverNotFound", "SolverRun", "Workdir",
            "find_solver", "parse_events", "parse_solution_name", "run_solver", "solver_version"]  # fmt: skip
-

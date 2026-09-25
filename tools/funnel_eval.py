@@ -64,24 +64,42 @@ def read_results(path: Path) -> list[FunnelResult]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("decks", nargs="+", type=Path, help=".ydk files or directories of them")
-    parser.add_argument("--targets", type=Path, default=DEFAULT_TARGETS, help="per-deck targets JSON (default: %(default)s)")
+    parser.add_argument(
+        "--targets", type=Path, default=DEFAULT_TARGETS, help="per-deck targets JSON (default: %(default)s)"
+    )
     parser.add_argument("--hands", type=int, default=FunnelConfig.hands, help="opening hands per deck")
     parser.add_argument("--seed", type=int, default=0, help="base seed of the hand shuffles")
     parser.add_argument("--solve-ms", type=int, default=FunnelConfig.solve_ms, help="solver budget per hand (ms)")
-    parser.add_argument("--fire", type=int, action="append", default=None, metavar="PASSWORD", help="hand trap (repeatable)")
+    parser.add_argument(
+        "--fire", type=int, action="append", default=None, metavar="PASSWORD", help="hand trap (repeatable)"
+    )
     parser.add_argument("--no-fire", action="store_true", help="skip the --fire variant")
-    parser.add_argument("--fire-ms", type=int, default=FunnelConfig.fire_ms, help="solver budget per --fire window (ms)")
+    parser.add_argument(
+        "--fire-ms", type=int, default=FunnelConfig.fire_ms, help="solver budget per --fire window (ms)"
+    )
     parser.add_argument("--workers", type=int, default=1, help="parallel solver processes per deck")
-    parser.add_argument("--max-rollouts", type=int, default=None,
-                        help="solver count budget per phase and worker (reproducible runs; set --solve-ms well above it)")
-    parser.add_argument("--budget", type=float, default=DEFAULT_BUDGET_S, help="stage-1 budget, solver process-seconds per deck")
+    parser.add_argument(
+        "--max-rollouts",
+        type=int,
+        default=None,
+        help="solver count budget per phase and worker (reproducible runs; set --solve-ms well above it)",
+    )
+    parser.add_argument(
+        "--budget", type=float, default=DEFAULT_BUDGET_S, help="stage-1 budget, solver process-seconds per deck"
+    )
     parser.add_argument("--max-brick-rate", type=float, default=FunnelFilter.max_brick_rate)
     parser.add_argument("--min-survival", type=float, default=FunnelFilter.min_hand_trap_survival)
-    parser.add_argument("--no-filter", action="store_true", help="no verdict and no early stopping: every hand is solved")
-    parser.add_argument("--keep-demos", action="store_true", help="keep the solver records in the output (for validation)")
+    parser.add_argument(
+        "--no-filter", action="store_true", help="no verdict and no early stopping: every hand is solved"
+    )
+    parser.add_argument(
+        "--keep-demos", action="store_true", help="keep the solver records in the output (for validation)"
+    )
     parser.add_argument("--env", default=None, metavar="PATH|VERSION", help="environment (rules; stamps the output)")
     parser.add_argument("--binary", type=Path, default=None, help="solver binary")
-    parser.add_argument("--out", type=Path, default=ROOT / "out" / "funnel" / "results.jsonl", help="output JSONL (appended)")
+    parser.add_argument(
+        "--out", type=Path, default=ROOT / "out" / "funnel" / "results.jsonl", help="output JSONL (appended)"
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -110,14 +128,19 @@ def main(argv: list[str] | None = None) -> int:
 
         def show(h, name=deck.name):
             extra = " ".join(f"fire {k}: {v['status']} {v['converted']}/{v['windows']}" for k, v in h.fire.items())
-            print(f"  {name} hand {h.index:3d}: {h.status:6} {h.combo_actions or '':>3} {h.solver_s:6.1f}s {extra}", flush=True)
+            print(
+                f"  {name} hand {h.index:3d}: {h.status:6} {h.combo_actions or '':>3} {h.solver_s:6.1f}s {extra}",
+                flush=True,
+            )
 
         result = evaluate_deck(deck, targets[deck.name], config, filter=gate, progress=show)
         with open(args.out, "a", encoding="utf-8") as f:
             f.write(json.dumps(result.to_json(), separators=(",", ":")) + "\n")
         s = result.summary()
         rows.append(s)
-        verdict = "" if result.passed is None else (" PASS" if result.passed else f" FAIL ({'; '.join(result.reasons)})")
+        verdict = (
+            "" if result.passed is None else (" PASS" if result.passed else f" FAIL ({'; '.join(result.reasons)})")
+        )
         print(f"{deck.name}: brick {s['bricks']}/{s['valid_hands']} = {s['brick_rate']:.2f} {s['brick_rate_ci95']}, "
               f"survival {s['hand_trap_survival']}, combo {s['combo_actions']['mean']}, solver {s['solver_s']} s "
               f"(budget {config.budget_s:.0f} s: {'ok' if s['within_budget'] else 'OVER'}), wall {s['wall_s']} s{verdict}",

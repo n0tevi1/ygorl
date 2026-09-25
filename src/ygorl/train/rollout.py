@@ -239,8 +239,10 @@ class RolloutCollector:
             lines.append(f"env {e}: silent {now - self._last_event.get(e, now):.0f}s, game rows {slot.rows if slot else 0}, "
                          f"seed {getattr(spec, 'seed', None)}, first {getattr(spec, 'first', None)}, "
                          f"{dict(a.info) if a is not None else {}}")  # fmt: skip
-        return (f"no environment event for {self.stall_timeout:.0f}s while {len(waiting)} environment(s) still owe "
-                "rows (an engine stuck inside a duel?); longest silent:\n  " + "\n  ".join(lines))
+        return (
+            f"no environment event for {self.stall_timeout:.0f}s while {len(waiting)} environment(s) still owe "
+            "rows (an engine stuck inside a duel?); longest silent:\n  " + "\n  ".join(lines)
+        )
 
     # -- game bookkeeping ---------------------------------------------------------------------------
     def _new_game(self, env_id: int) -> None:

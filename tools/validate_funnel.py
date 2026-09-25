@@ -123,7 +123,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("results", type=Path, help="tools/funnel_eval.py output (--no-filter --keep-demos)")
     parser.add_argument("--rollouts", type=int, default=1000, help="explorer rollouts per hand")
     parser.add_argument("--greedy-seeds", type=int, default=4, help="Greedy first turns per hand")
-    parser.add_argument("--reference-ms", type=int, default=30_000, help="solver budget of the reference re-solve (0: skip)")
+    parser.add_argument(
+        "--reference-ms", type=int, default=30_000, help="solver budget of the reference re-solve (0: skip)"
+    )
     parser.add_argument("--reference-seed", type=int, default=2, help="solver seed of the reference re-solve")
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--out", type=Path, default=None, help="summary JSON (default: next to the results)")
@@ -199,7 +201,13 @@ def main(argv: list[str] | None = None) -> int:
             real_ok = indep_ok or line_ok
             ref_ok = not f_brick or (refs.get((name, h.index), {}).get("status") == "solved")
             best_ok = real_ok or ref_ok
-            for lst, v in ((funnel, f_brick), (real, not real_ok), (indep, not indep_ok), (ref, not ref_ok), (best, not best_ok)):
+            for lst, v in (
+                (funnel, f_brick),
+                (real, not real_ok),
+                (indep, not indep_ok),
+                (ref, not ref_ok),
+                (best, not best_ok),
+            ):
                 lst.append(v)
             row["hands"] += 1
             row["funnel_brick"] += f_brick
@@ -236,7 +244,9 @@ def main(argv: list[str] | None = None) -> int:
     print("\nfunnel brick vs ...")
     for k, t in tables.items():
         print(f"  {k:12} {_fmt(t)}")
-    print("\nper deck (hands, funnel / real / independent / reference / best-known bricks, solver line ok in real duel):")
+    print(
+        "\nper deck (hands, funnel / real / independent / reference / best-known bricks, solver line ok in real duel):"
+    )
     for name, row in per_deck.items():
         print(f"  {name:18} {row['hands']:3d}  {row['funnel_brick']:3d} {row['real_brick']:3d} {row['indep_brick']:3d} "
               f"{row['ref_brick']:3d} {row['best_brick']:3d}   lines {row['line_ok']}/{row['lines']}")  # fmt: skip

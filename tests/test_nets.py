@@ -65,9 +65,19 @@ def random_obs(rng: np.random.Generator, length: int = L, vocab: int = V) -> dic
     cards[:n, 20:22] = rng.integers(0, 5, (n, 2))
     cards[:n, 22] = rng.integers(0, 2, n)
     glob = rng.integers(0, 2, G_GLOBAL).astype(np.int32)
-    glob[3], glob[4], glob[5], glob[6] = rng.integers(1, 30), rng.integers(0, 11), rng.integers(0, 9000), rng.integers(0, 9000)
+    glob[3], glob[4], glob[5], glob[6] = (
+        rng.integers(1, 30),
+        rng.integers(0, 11),
+        rng.integers(0, 9000),
+        rng.integers(0, 9000),
+    )
     glob[7:17] = rng.integers(0, 40, 10)
-    glob[17], glob[18], glob[19], glob[20] = rng.integers(0, 5), rng.integers(10, 144), rng.integers(0, 3), rng.integers(1, 300)
+    glob[17], glob[18], glob[19], glob[20] = (
+        rng.integers(0, 5),
+        rng.integers(10, 144),
+        rng.integers(0, 3),
+        rng.integers(1, 300),
+    )
     k = int(rng.integers(1, MAX_OPTIONS + 1))
     actions = np.zeros((MAX_OPTIONS, A_ACTION), dtype=np.int32)
     actions[:k, 0] = rng.integers(1, len(ACTION_KINDS) + 1, k)
@@ -594,7 +604,12 @@ def test_card_facts_load_share_one_archetype_table(tmp_path):
     # archetype part (low 12 bits): 0x0F2 (from 0x10F2, 0x0F2 and the sub-archetype reference 0x10F2), 0x001, 0x005
     assert t.n_archetypes == 3
     number = {0x001: 1, 0x005: 2, 0x0F2: 3}
-    assert list(t.archetypes[4]) == [number[0xF2], number[0x1], 0, 0] and list(t.archetypes[2]) == [number[0xF2], 0, 0, 0]
+    assert list(t.archetypes[4]) == [number[0xF2], number[0x1], 0, 0] and list(t.archetypes[2]) == [
+        number[0xF2],
+        0,
+        0,
+        0,
+    ]
     assert list(t.references[4]) == [number[0xF2], 0] and list(t.references[3]) == [number[0x5], number[0x1]]
     assert t.categories[4, 0] == 1 and t.categories[2, 63] == 1 and not t.categories[3].any()
     assert list(t.queries[3]) == [1, 1] and not t.archetypes[[0, 1]].any()  # padding / unknown: nothing

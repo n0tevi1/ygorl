@@ -24,8 +24,7 @@ def third_party() -> Path:
         if (c / "BabelCDB").is_dir() and (c / "CardScripts").is_dir():
             return c
     raise FileNotFoundError(
-        "third_party/ data not found; run `git submodule update --init --recursive` "
-        "or set YGORL_THIRD_PARTY"
+        "third_party/ data not found; run `git submodule update --init --recursive` or set YGORL_THIRD_PARTY"
     )
 
 

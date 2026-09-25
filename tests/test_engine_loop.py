@@ -59,7 +59,9 @@ def test_cpp_duel_pool_stops_an_engine_loop(db, one_step):
 def test_python_tracker_stops_an_engine_loop(db, monkeypatch):
     monkeypatch.setattr(duel_module, "MAX_ENGINE_STEPS", 1)
     s = specs()[0]
-    r = Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first).run(RandomAgent(0), RandomAgent(1))
+    r = Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first).run(
+        RandomAgent(0), RandomAgent(1)
+    )
     assert r.reason == "error" and "engine loop" in r.error and r.winner is None
 
 
@@ -83,7 +85,9 @@ def test_cpp_duel_pool_stops_a_script_past_its_budget(db, tiny_script_budget):
 
 def test_python_host_stops_a_script_past_its_budget(db, tiny_script_budget):
     s = specs()[0]
-    r = Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first).run(RandomAgent(0), RandomAgent(1))
+    r = Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first).run(
+        RandomAgent(0), RandomAgent(1)
+    )
     assert r.reason == "error" and "script budget" in r.error and r.winner is None
     assert issubclass(_core.ScriptBudgetExceeded, RuntimeError)
 

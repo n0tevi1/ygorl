@@ -60,7 +60,9 @@ def test_summarize_counts_sides_and_draws():
     assert rep.ci[0] < rep.win_rate < rep.ci[1]
     assert (rep.as_first.games, rep.as_first.wins, rep.as_first.losses) == (2, 1, 1)
     assert (rep.as_second.games, rep.as_second.wins, rep.as_second.draws) == (2, 1, 1)
-    assert rep.first_player_win_rate == pytest.approx(1.5 / 4)  # only game 1 went to the first player; the draw counts half
+    assert rep.first_player_win_rate == pytest.approx(
+        1.5 / 4
+    )  # only game 1 went to the first player; the draw counts half
     assert rep.reasons == {"win": 4}
     assert not rep.significant()
     json.dumps(rep.to_dict())

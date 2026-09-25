@@ -99,7 +99,9 @@ def test_feature_map_shapes_and_blocks(space, genotypes):
         )
     pk = x[:, fm.groups["packages"]]
     assert pk.shape[1] == len(space.packages)
-    assert np.array_equal(pk[0], [space.vector(genotypes[0])[space.package_indices(p)].sum() for p in range(len(space.packages))])
+    assert np.array_equal(
+        pk[0], [space.vector(genotypes[0])[space.package_indices(p)].sum() for p in range(len(space.packages))]
+    )
     st = x[:, fm.groups["structure"]]
     assert np.isfinite(st).all()
     # main-deck type fractions sum to 1 per deck

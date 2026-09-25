@@ -69,7 +69,9 @@ def test_enumerate_ranks_and_deduplicates():
 
 def test_cross_archetype_package():
     # 11 ("B") searches 1 ("A"), 1 special summons 11: an engine across two archetypes
-    g = graph(CLUSTER_A + CLUSTER_B + [(12, 1, "search", 1), (1, 12, "special_summon", 1), (2, 13, "special_summon", 1)])
+    g = graph(
+        CLUSTER_A + CLUSTER_B + [(12, 1, "search", 1), (1, 12, "special_summon", 1), (2, 13, "special_summon", 1)]
+    )
     pkgs = enumerate_packages(g, min_size=3, max_size=8, setcodes=SETCODES)
     top = pkgs[0]
     assert {1, 2, 12}.issubset(top.members)

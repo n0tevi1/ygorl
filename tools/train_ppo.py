@@ -41,8 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--env-threads", type=int, default=2, help="C++ worker threads (default 2)")
     g.add_argument("--steps", type=int, default=64, help="rows per column per rollout, T (default 64)")
     g.add_argument("--event-length", type=int, default=64, help="event tokens per observation (default 64)")
-    g.add_argument("--keep-forced", action="store_true",
-                   help="also make rows of decisions with a single legal action (default: played in C++, no rows)")
+    g.add_argument(
+        "--keep-forced",
+        action="store_true",
+        help="also make rows of decisions with a single legal action (default: played in C++, no rows)",
+    )
     g.add_argument("--max-turns", type=int, default=None)
     g.add_argument("--max-decisions", type=int, default=None)
     g = p.add_argument_group("network")
@@ -50,8 +53,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--layers", type=int, default=1, help="board and history Transformer layers (default 1)")
     g.add_argument("--history", default="transformer", choices=("transformer", "lstm", "none"))
     g.add_argument("--no-id-embedding", action="store_true", help="drop the per-card ID embedding")
-    g.add_argument("--text-dir", default=None,
-                   help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)")
+    g.add_argument(
+        "--text-dir",
+        default=None,
+        help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)",
+    )
     g.add_argument("--card-facts", action="store_true", help="use card_facts.npz in --text-dir (experimental)")
     g.add_argument("--no-text", action="store_true", help="ignore the text tables in --text-dir")
     g.add_argument("--id-dropout", type=float, default=0.0, help="training: drop each card's ID embedding")
@@ -66,40 +72,76 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--lr", type=float, default=1e-3)
     g.add_argument("--epochs", type=int, default=4)
     g.add_argument("--minibatch", type=int, default=256)
-    g.add_argument("--bc-prior", default=None, metavar="CKPT",
-                   help="policy (e.g. BC) or PPO checkpoint used as a KL prior; same card vocab")
+    g.add_argument(
+        "--bc-prior",
+        default=None,
+        metavar="CKPT",
+        help="policy (e.g. BC) or PPO checkpoint used as a KL prior; same card vocab",
+    )
     g.add_argument("--kl-prior", type=float, default=0.0, help="KL coefficient to the BC prior")
-    g.add_argument("--kl-prior-turns", type=int, default=0,
-                   help="apply the prior KL only to the turn player's decisions up to this turn (default 0: all)")
-    g.add_argument("--target-kl", type=float, default=0.01,
-                   help="stop an update's remaining minibatches once one exceeds 1.5x this approx_kl; 0 = off")
-    g.add_argument("--init-from", default=None, metavar="CKPT",
-                   help="initialize the actor from a policy (e.g. BC) or PPO checkpoint with the same network config")
+    g.add_argument(
+        "--kl-prior-turns",
+        type=int,
+        default=0,
+        help="apply the prior KL only to the turn player's decisions up to this turn (default 0: all)",
+    )
+    g.add_argument(
+        "--target-kl",
+        type=float,
+        default=0.01,
+        help="stop an update's remaining minibatches once one exceeds 1.5x this approx_kl; 0 = off",
+    )
+    g.add_argument(
+        "--init-from",
+        default=None,
+        metavar="CKPT",
+        help="initialize the actor from a policy (e.g. BC) or PPO checkpoint with the same network config",
+    )
     g = p.add_argument_group("league and evaluation")
     g.add_argument("--selfplay-fraction", type=float, default=0.75)
     g.add_argument("--pool-size", type=int, default=8)
-    g.add_argument("--pin", action="append", default=[], metavar="CKPT",
-                   help="keep this policy / PPO checkpoint in the opponent pool for the whole run (repeatable)")
+    g.add_argument(
+        "--pin",
+        action="append",
+        default=[],
+        metavar="CKPT",
+        help="keep this policy / PPO checkpoint in the opponent pool for the whole run (repeatable)",
+    )
     g.add_argument("--pinned-share", type=float, default=0.5, help="share of pool games against pinned opponents")
     g.add_argument("--snapshot-every", type=int, default=10)
-    g.add_argument("--pool-sampling", choices=("uniform", "pfsp"), default="pfsp",
-                   help="pfsp (default, design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power")
+    g.add_argument(
+        "--pool-sampling",
+        choices=("uniform", "pfsp"),
+        default="pfsp",
+        help="pfsp (default, design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power",
+    )
     g.add_argument("--pfsp-power", type=float, default=2.0)
-    g.add_argument("--snapshot-min-win-rate", type=float, default=None,
-                   help="a due snapshot joins the pool only if the learner scored above this against the pool")
+    g.add_argument(
+        "--snapshot-min-win-rate",
+        type=float,
+        default=None,
+        help="a due snapshot joins the pool only if the learner scored above this against the pool",
+    )
     g.add_argument("--snapshot-min-games", type=int, default=20)
     g.add_argument("--checkpoint-every", type=int, default=10)
     g.add_argument("--eval-every", type=int, default=25)
     g.add_argument("--eval-pairs", type=int, default=8, help="paired seeds per deck pairing and baseline")
-    g.add_argument("--eval-pairings", type=int, default=0,
-                   help="evaluate on a fixed sample of this many training pairings (0 = all; for large deck pools)")
+    g.add_argument(
+        "--eval-pairings",
+        type=int,
+        default=0,
+        help="evaluate on a fixed sample of this many training pairings (0 = all; for large deck pools)",
+    )
     g.add_argument("--eval-opponents", default="greedy,random")
     g.add_argument("--keep-best-by", default="greedy")
     g.add_argument("--eval-workers", type=int, default=2)
     g.add_argument("--seed", type=int, default=0)
     g.add_argument("--device", default="cpu", help="PyTorch device of the learner and acting network (cpu, cuda)")
-    g.add_argument("--overlap", action="store_true",
-                   help="experimental: collect the next rollout while updating (one update stale)")
+    g.add_argument(
+        "--overlap",
+        action="store_true",
+        help="experimental: collect the next rollout while updating (one update stale)",
+    )
     g.add_argument("--bf16", action="store_true", help="experimental: bf16 autocast on a GPU")
     g.add_argument("--torch-threads", type=int, default=4)
     g.add_argument("--collect-threads", type=int, default=2)

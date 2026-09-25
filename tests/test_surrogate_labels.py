@@ -23,7 +23,9 @@ def test_deck_fingerprint_ignores_order_name_and_side():
 
 def _report(results, name="opp"):
     """results: (first, winner) per game, from deck a's side."""
-    records = [GameRecord(pair=i // 2, seed=i // 2, first=f, winner=w, reason="win") for i, (f, w) in enumerate(results)]
+    records = [
+        GameRecord(pair=i // 2, seed=i // 2, first=f, winner=w, reason="win") for i, (f, w) in enumerate(results)
+    ]
     return summarize(records, agent_a="greedy", agent_b="greedy", deck_a="cand", deck_b=name, seed=0)
 
 

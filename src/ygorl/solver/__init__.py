@@ -4,7 +4,16 @@ See docs/solver.md. The solver binary is built by ``tools/build_combo_solver.sh`
 driver is ``tools/solve_openings.py``.
 """
 
-from ygorl.solver.batch import DEFAULT_FIRE_MS, PASSIVE_OPPONENT, HandJob, make_template, run_job, sample_hand, solve_fire, solve_hand
+from ygorl.solver.batch import (
+    DEFAULT_FIRE_MS,
+    PASSIVE_OPPONENT,
+    HandJob,
+    make_template,
+    run_job,
+    sample_hand,
+    solve_fire,
+    solve_hand,
+)
 from ygorl.solver.combo_solver import (
     SOLVER_COMMIT,
     SolutionFile,

@@ -112,7 +112,17 @@ HINTMSG_ACTIONS = {
     "HINTMSG_RELEASE": "release", "HINTMSG_TOFIELD": "place", "HINTMSG_EQUIP": "equip",
 }  # fmt: skip
 # hints that say nothing about what happens to the selected card
-GENERIC_HINTMSG = frozenset(("HINTMSG_TARGET", "HINTMSG_SELECT", "HINTMSG_FACEUP", "HINTMSG_FACEDOWN", "HINTMSG_CONFIRM", "HINTMSG_OPPO", "HINTMSG_SELF"))
+GENERIC_HINTMSG = frozenset(
+    (
+        "HINTMSG_TARGET",
+        "HINTMSG_SELECT",
+        "HINTMSG_FACEUP",
+        "HINTMSG_FACEDOWN",
+        "HINTMSG_CONFIRM",
+        "HINTMSG_OPPO",
+        "HINTMSG_SELF",
+    )
+)
 
 # action -> CATEGORY_* names that announce it
 ACTION_CATEGORIES = {
@@ -145,7 +155,14 @@ RITUAL_PROCS = {
 }  # fmt: skip
 RITUAL_CODE_PROCS = {"Ritual.AddProcGreaterCode": 3, "Ritual.AddProcEqualCode": 3, "Ritual.AddProcCode": 4}
 MATERIAL_PROCS = frozenset(
-    ("Link.AddProcedure", "Xyz.AddProcedure", "Synchro.AddProcedure", "Fusion.AddProcMix", "Fusion.AddProcMixN", "Fusion.AddProcMixRep")
+    (
+        "Link.AddProcedure",
+        "Xyz.AddProcedure",
+        "Synchro.AddProcedure",
+        "Fusion.AddProcMix",
+        "Fusion.AddProcMixN",
+        "Fusion.AddProcMixRep",
+    )
 )
 EFFECT_SETTERS = frozenset(("SetCategory", "SetTarget", "SetOperation", "SetCost"))
 _PROC_EFFECTS = frozenset(FUSION_PROCS) | frozenset(RITUAL_PROCS) | frozenset(RITUAL_CODE_PROCS)
@@ -259,7 +276,9 @@ class _Analyzer:
                             node, _ = lua.parse_expr(toks, j + 2)
                         except lua.LuaSyntaxError:
                             continue
-                        cats = self.cat("CATEGORY_SPECIAL_SUMMON") | (self.cat("CATEGORY_FUSION_SUMMON") if rhs[0][1] == "Fusion" else 0)
+                        cats = self.cat("CATEGORY_SPECIAL_SUMMON") | (
+                            self.cat("CATEGORY_FUSION_SUMMON") if rhs[0][1] == "Fusion" else 0
+                        )
                         bound[value] = len(effects)
                         effects.append({"categories": cats, "refs": self.expr_refs(node)})
             elif nxt == ("op", ":") and toks[j + 2][0] == "name" and toks[j + 2][1] in EFFECT_SETTERS:
@@ -399,7 +418,9 @@ class _Analyzer:
         for pos, name, args in calls:
             if name in FUSION_PROCS:
                 a = _named(args, FUSION_PROCS[name])
-                flt = make_and((Pred("type_all", (mon | K["TYPE_FUSION"],)), comp.compile_value(a.get("fusfilter", Const(None)))))
+                flt = make_and(
+                    (Pred("type_all", (mon | K["TYPE_FUSION"],)), comp.compile_value(a.get("fusfilter", Const(None))))
+                )
                 loc = lua.const_eval(a["location"], self.env) if "location" in a else None
                 cats = self.cat("CATEGORY_SPECIAL_SUMMON", "CATEGORY_FUSION_SUMMON")
                 self.categories |= cats
@@ -407,7 +428,9 @@ class _Analyzer:
             elif name in RITUAL_PROCS or name in RITUAL_CODE_PROCS:
                 if name in RITUAL_CODE_PROCS:
                     codes = [lua.const_eval(x, self.env) for x in args[RITUAL_CODE_PROCS[name] :]]
-                    target = Pred("code", tuple(c for c in codes if c is not None)) if codes and None not in codes else ANY
+                    target = (
+                        Pred("code", tuple(c for c in codes if c is not None)) if codes and None not in codes else ANY
+                    )
                     loc = None
                 else:
                     a = _named(args, RITUAL_PROCS[name])

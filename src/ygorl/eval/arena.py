@@ -107,7 +107,9 @@ class SideStats:
 
 def _side(records: Iterable[GameRecord]) -> SideStats:
     rs = list(records)
-    return SideStats(len(rs), sum(r.winner == 0 for r in rs), sum(r.winner == 1 for r in rs), sum(r.winner is None for r in rs))
+    return SideStats(
+        len(rs), sum(r.winner == 0 for r in rs), sum(r.winner == 1 for r in rs), sum(r.winner is None for r in rs)
+    )
 
 
 @dataclass(frozen=True)

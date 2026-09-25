@@ -206,7 +206,9 @@ def card_ids(cards: Any, source: str = str(CARDS_FILE)) -> dict[str, tuple[str |
     """masterduelmeta card ``_id`` -> (konamiID, name)."""
     if not isinstance(cards, list):
         raise ValueError(f"{source}: expected a JSON list of cards")
-    return {str(c["_id"]): (c.get("konamiID"), str(c.get("name", ""))) for c in cards if isinstance(c, dict) and "_id" in c}
+    return {
+        str(c["_id"]): (c.get("konamiID"), str(c.get("name", ""))) for c in cards if isinstance(c, dict) and "_id" in c
+    }
 
 
 def parse_top_decks(decks: Any, ids: Mapping[str, tuple[str | None, str]], mapper: CardMapper, since: str,

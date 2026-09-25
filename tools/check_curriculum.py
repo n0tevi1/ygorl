@@ -60,7 +60,9 @@ def main() -> int:
     parser.add_argument("--envs", type=int, default=8)
     parser.add_argument("--max-turns", type=int, default=200)
     parser.add_argument("--modes", nargs="*", default=list(MODES))
-    parser.add_argument("--compare", action="store_true", help="also check Duel.run and Duel.replay give the same games")
+    parser.add_argument(
+        "--compare", action="store_true", help="also check Duel.run and Duel.replay give the same games"
+    )
     args = parser.parse_args()
 
     decks = {p.stem: load_ydk(p) for p in sorted(DECK_DIR.glob("*.ydk"))}
@@ -103,7 +105,11 @@ def main() -> int:
         }
         breach = 0
         if mode == "solo":
-            breach = sum(v for k, v in tally.items() if k.startswith("opponent_") and not k.endswith("_forced") and k != "opponent_points")
+            breach = sum(
+                v
+                for k, v in tally.items()
+                if k.startswith("opponent_") and not k.endswith("_forced") and k != "opponent_points"
+            )
         elif mode == "handtrap":
             breach = sum(v for k, v in tally.items() if k.startswith("opponent_") and k.endswith("_other"))
         row["restriction_breaches"] = breach
@@ -112,7 +118,9 @@ def main() -> int:
             for i, (spec, r) in enumerate(zip(specs, results, strict=True)):
                 duel = Duel(spec.seed, None, spec.deck_a, spec.deck_b, first=spec.first, config=spec.config)
                 seq = duel.run(*agents(i, spec, collections.Counter()))
-                again = Duel(spec.seed, None, spec.deck_a, spec.deck_b, first=spec.first, config=spec.config).replay(r.responses)
+                again = Duel(spec.seed, None, spec.deck_a, spec.deck_b, first=spec.first, config=spec.config).replay(
+                    r.responses
+                )
                 same = (seq.responses == r.responses and seq.actions == r.actions and seq.auto_decisions == r.auto_decisions
                         and (seq.winner, seq.reason, seq.turns, seq.lp) == (r.winner, r.reason, r.turns, r.lp)
                         and (again.turns, again.lp) == (r.turns, r.lp) and (r.reason != "win" or again.winner == r.winner))  # fmt: skip
@@ -122,7 +130,9 @@ def main() -> int:
                        or breach or row.get("mismatches"))  # fmt: skip
         report[mode] = row
         print(mode, json.dumps(row), file=sys.stderr, flush=True)
-    print(json.dumps({"threads": args.threads, "envs": args.envs, "max_turns": args.max_turns, "modes": report}, indent=2))
+    print(
+        json.dumps({"threads": args.threads, "envs": args.envs, "max_turns": args.max_turns, "modes": report}, indent=2)
+    )
     return 1 if failed else 0
 
 

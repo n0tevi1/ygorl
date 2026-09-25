@@ -82,7 +82,9 @@ class TextFeatures:
         queries = np.asarray(facts["queries"], dtype=np.float32)
         qv = np.zeros((v, queries.shape[1]), np.float32)
         bits = np.arange(N_CATEGORIES, dtype=np.uint64)
-        cat_rows = ((np.asarray(facts["categories"], dtype=np.uint64)[:, None] >> bits) & np.uint64(1)).astype(np.float32)
+        cat_rows = ((np.asarray(facts["categories"], dtype=np.uint64)[:, None] >> bits) & np.uint64(1)).astype(
+            np.float32
+        )
         for row, pw in enumerate(pws):
             if int(pw) not in vocab:
                 continue
@@ -138,7 +140,10 @@ class TextFeatures:
         if has_card:
             arrays |= {"card_vectors": np.load(path / CARD_FILES[0]), "card_passwords": np.load(path / CARD_FILES[1])}
         if has_effect:
-            arrays |= {"effect_vectors": np.load(path / EFFECT_FILES[0]), "effect_keys": np.load(path / EFFECT_FILES[1])}
+            arrays |= {
+                "effect_vectors": np.load(path / EFFECT_FILES[0]),
+                "effect_keys": np.load(path / EFFECT_FILES[1]),
+            }
         out = cls.from_arrays(vocab, **arrays)
         if has_facts:
             with np.load(path / FACTS_FILE) as f:

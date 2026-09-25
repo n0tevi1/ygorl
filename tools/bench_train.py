@@ -65,8 +65,11 @@ def main() -> None:
     p.add_argument("--epochs", type=int, default=4)
     p.add_argument("--minibatch", type=int, default=256)
     p.add_argument("--no-target-kl", action="store_true", help="always run every epoch (fixed update cost)")
-    p.add_argument("--overlap", action="store_true",
-                   help="experimental: collect the next rollout while updating (one update stale)")
+    p.add_argument(
+        "--overlap",
+        action="store_true",
+        help="experimental: collect the next rollout while updating (one update stale)",
+    )
     p.add_argument("--bf16", action="store_true", help="experimental: bf16 autocast on a GPU")
     p.add_argument("--label", default="", help="free-form tag stored in the JSON line")
     p.add_argument("--json", type=Path, default=None, help="append the summary as one JSON line")
@@ -94,8 +97,10 @@ def main() -> None:
             r = trainer.step()
             r["step_s"] = time.perf_counter() - t0
             records.append(r)
-            print(f"step {i}: collect {r['collect_s']:.2f} s ({r['decisions_per_s']:.0f} decisions/s), "
-                  f"update {r['update_s']:.2f} s ({r['minibatches']} minibatches), {r['rows'] / r['step_s']:.0f} rows/s")
+            print(
+                f"step {i}: collect {r['collect_s']:.2f} s ({r['decisions_per_s']:.0f} decisions/s), "
+                f"update {r['update_s']:.2f} s ({r['minibatches']} minibatches), {r['rows'] / r['step_s']:.0f} rows/s"
+            )
     kept = records[1:] or records
 
     def mean(key):

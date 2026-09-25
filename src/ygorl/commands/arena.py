@@ -28,7 +28,9 @@ def add_parser(subparsers) -> None:
         "seed, first player swapped). Prints agent a's win rate with its Wilson interval (see docs/cli.md).",
     )
     p.add_argument("decks", type=Path, nargs="+", metavar="DECK", help=".ydk file or directory of .ydk files")
-    p.add_argument("--vs", type=Path, nargs="+", default=None, metavar="DECK", help="decks of agent b (default: DECK...)")
+    p.add_argument(
+        "--vs", type=Path, nargs="+", default=None, metavar="DECK", help="decks of agent b (default: DECK...)"
+    )
     p.add_argument("--agent-a", default="greedy", metavar="AGENT", help=f"agent a (default greedy): {agents_help()}")
     p.add_argument("--agent-b", default="random", metavar="AGENT", help="agent b (default random)")
     p.add_argument("--games", type=int, default=200, metavar="N", help="total games (default 200)")
@@ -37,7 +39,9 @@ def add_parser(subparsers) -> None:
     p.add_argument("--confidence", type=float, default=0.95, help="level of the Wilson interval (default 0.95)")
     add_env_option(p, "environment: rules, LP and hand size; stamped into the report (default: none)")
     add_max_turns_option(p)
-    p.add_argument("--out", type=Path, default=None, metavar="PATH", help="write the pooled report with every game as JSON")
+    p.add_argument(
+        "--out", type=Path, default=None, metavar="PATH", help="write the pooled report with every game as JSON"
+    )
     p.set_defaults(func=run)
 
 

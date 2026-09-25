@@ -308,7 +308,9 @@ class GenotypeSpace:
             out.append(f"Extra Deck has {extra} cards, expected {min(self.extra_size, capacity)}")
         return out
 
-    def repair(self, packages: Iterable[int], counts: Any, rng: RngLike = None, main_target: int | None = None) -> Genotype:
+    def repair(
+        self, packages: Iterable[int], counts: Any, rng: RngLike = None, main_target: int | None = None
+    ) -> Genotype:
         """Nearest valid genotype: clip to caps, drop disallowed cards, fit the deck sizes.
 
         The Main Deck is trimmed / filled (uniformly over copies / free copy slots of
@@ -345,7 +347,9 @@ class GenotypeSpace:
         self._fit(c, np.flatnonzero(allowed & self.is_extra), self.extra_size, rng, distinct_first=True)
         return Genotype(pk, c)
 
-    def _fit(self, c: np.ndarray, idx: np.ndarray, target: int, rng: np.random.Generator, distinct_first: bool = False) -> None:
+    def _fit(
+        self, c: np.ndarray, idx: np.ndarray, target: int, rng: np.random.Generator, distinct_first: bool = False
+    ) -> None:
         cur = int(c[idx].sum())
         if cur > target:
             copies = np.repeat(idx, c[idx])
