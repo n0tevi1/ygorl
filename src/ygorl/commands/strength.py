@@ -47,7 +47,7 @@ def add_parser(subparsers) -> None:
         help="seed of the pairing sample and the games (default 0; when extending, the matrix's own)",
     )
     p.add_argument(
-        "--confidence", type=float, default=0.95, help="level of the per-cell Wilson interval (default 0.95)"
+        "--confidence", type=float, default=None, help="level of the per-cell Wilson interval (default 0.95)"
     )
     p.add_argument("--alpha", type=float, default=None, help="alpha-rank selection intensity (default 10)")
     p.add_argument("--population", type=int, default=None, metavar="M", help="alpha-rank population size (default 50)")
@@ -78,7 +78,6 @@ def parse_agents(args: list[str]) -> dict[str, str]:
 
 def run(args: argparse.Namespace) -> int:
     from ygorl.commands import make_factory
-    from ygorl.data import EnvironmentConfigError
     from ygorl.eval.agent_matrix import ARTIFACT_DIR, AgentMatrix, build_agent_matrix, extend_agent_matrix
     from ygorl.eval.matchup import DEFAULT_ALPHA, DEFAULT_POPULATION
 
@@ -119,7 +118,9 @@ def run(args: argparse.Namespace) -> int:
         if extending:
             old = AgentMatrix.load(target, env=env)
             for flag, given, have in (("--pairings", args.pairings, len(old.pairings)), ("--seed", args.seed, old.seed),
-                                      ("--max-turns", args.max_turns, old.max_turns)):  # fmt: skip
+                                      ("--max-turns", args.max_turns, old.max_turns), ("--alpha", args.alpha, old.alpha),
+                                      ("--population", args.population, old.population_size),
+                                      ("--confidence", args.confidence, old.confidence)):  # fmt: skip
                 if given is not None and given != have:
                     raise CommandError(f"{flag} {given} differs from the matrix at {target} ({have}): "
                                        "extend it with its own settings or write a new matrix")  # fmt: skip
@@ -131,8 +132,8 @@ def run(args: argparse.Namespace) -> int:
                 raise CommandError("--pairings must be at least 1")
             matrix = build_agent_matrix(factories, decks, pairings=pairings, seed=args.seed or 0, env=env,
                                         config=duel_config(env, args.max_turns), workers=args.workers,
-                                        confidence=args.confidence, alpha=alpha, population_size=population)  # fmt: skip
-    except (ValueError, EnvironmentConfigError) as exc:
+                                        confidence=0.95 if args.confidence is None else args.confidence, alpha=alpha, population_size=population)  # fmt: skip
+    except (ValueError, OSError) as exc:  # EnvironmentConfigError is a ValueError
         raise CommandError(str(exc)) from None
     elapsed = time.time() - t0
 
@@ -146,7 +147,7 @@ def run(args: argparse.Namespace) -> int:
         f"{len(decks)} decks, {k} pairings, seed {matrix.seed} "
         f"(environment: {env.version if env is not None else 'none'})",
         "win rate of the row agent against the column agent (draws count half, errors left out); "
-        f"alpha-rank alpha {alpha:g}, population {population}",
+        f"alpha-rank alpha {matrix.alpha:g}, population {matrix.population_size}",
         "",
         "ranking: " + " > ".join(matrix.ranking()),
         "",

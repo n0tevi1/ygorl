@@ -218,7 +218,8 @@ AgentMatrix.load(path, env=env)
 
 **增量扩展**（#86）：`extend_agent_matrix(matrix, 新 agent, decks, env=..., config=...)`。
 - 只打含新 agent 的格子，用矩阵自己的配对、种子和规则；旧格子原样复制。结果与一次建出全部 agent 的矩阵逐格相同（测试检查，并数了实际开的局数）。
-- 旧 agent 按记录的规格用注册表重建；重建不了（例如当初传的是自定义函数）就报错，请把它和新 agent 一起传入。
+- 旧 agent 按记录的规格用注册表重建。只有 `AgentSpec`（命令行给的规格）才可重建；其它工厂（类、函数、`functools.partial`）
+  记作 `factory:<名字>`，扩展时必须和新 agent 一起重新传入，否则报错。这样一个带参数、恰好叫 `greedy` 的工厂不会被悄悄换成普通 Greedy。
 - `fingerprints` 记录每个策略 agent 的检查点内容哈希（`sha256:` 前 16 位，穿过 `lethal:` 包装）；规则 agent 为空串。
 - 以下情况报错，并给出原因：
   - 同名 agent 的规格或检查点内容不同（同名同内容则跳过）；
@@ -226,7 +227,9 @@ AgentMatrix.load(path, env=env)
   - 牌组池的名字、顺序或内容不同；
   - `max_turns` / `max_decisions` 不同；
   - 环境不同。
-- 不含 `fingerprints` 的旧文件照常加载（视为全空）。
+- 不含 `fingerprints` 的旧文件照常加载（视为全空）。扩展时空指纹不做校验，从这次起记下当前的指纹。
+- 检查点文件找不到时（例如相对路径换了工作目录）单独报错，不当作「已改动」。
+- 指纹在开打前计算。所以不要对正在训练、会被改写的 `best.pt` 建矩阵：先拷一份固定的检查点再加入。
 
 **尚未做**：
 - 策略对策略的格子走 GPU 批量路径（#87）。

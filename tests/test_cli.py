@@ -461,6 +461,10 @@ def test_strength_extends_an_existing_matrix(tmp_path, capsys):
                                                             config=DuelConfig(max_turns=4))  # fmt: skip
     assert main(["strength", "r3=random", *decks_args, "--pairings", "5", "--out", str(out_path)]) == 2
     assert "--pairings 5 differs" in capsys.readouterr().err
+    assert main(["strength", "r3=random", *decks_args, "--alpha", "3", "--out", str(out_path)]) == 2
+    assert "--alpha 3.0 differs" in capsys.readouterr().err
+    assert main(["strength", "random", "greedy", *decks_args, "--out", str(tmp_path)]) == 2  # a directory
+    assert capsys.readouterr().err.startswith("ygorl strength: error:")
 
 
 def test_strength_agent_names_and_specs():

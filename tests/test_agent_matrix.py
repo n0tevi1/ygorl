@@ -199,3 +199,24 @@ def test_files_without_fingerprints_still_load(matrix):
     d = matrix.to_dict()
     del d["fingerprints"]
     assert AgentMatrix.from_dict(d).fingerprints == ("", "", "")
+
+
+def test_only_agent_specs_are_rebuilt_from_the_registry(tmp_path):
+    """A partial or subclass named like a registered agent is stored as factory:<name>, so extending never swaps it
+    for the plain registered agent; missing checkpoints and non-object files give clear errors."""
+    import functools
+    from dataclasses import replace
+
+    from ygorl.agents import GreedyAgent
+    from ygorl.eval.agent_matrix import extend_agent_matrix, spec_of
+
+    tweaked = functools.partial(GreedyAgent)
+    assert spec_of(tweaked) == "factory:greedy" and spec_of(AgentSpec("greedy")) == "greedy"
+    m = build_agent_matrix({"g": tweaked, "random": AgentSpec("random")}, THREE, pairings=1, config=SHORT)
+    with pytest.raises(ValueError, match="cannot be rebuilt"):
+        extend_agent_matrix(m, {"r2": AgentSpec("random")}, THREE, config=SHORT)
+    gone = replace(m, specs=("policy:/no/such/best.pt", "random"), fingerprints=("sha256:0123456789abcdef", ""))
+    with pytest.raises(ValueError, match="not found from here"):
+        extend_agent_matrix(gone, {"r2": AgentSpec("random")}, THREE, config=SHORT)
+    with pytest.raises(ValueError, match="top level is a list"):
+        AgentMatrix.from_dict([])

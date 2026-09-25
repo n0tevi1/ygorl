@@ -29,7 +29,7 @@ from typing import Any
 import numpy as np
 
 from ygorl.agents.base import AgentFactory, agent_name
-from ygorl.agents.registry import agent_factory, policy_checkpoint_of
+from ygorl.agents.registry import AgentSpec, agent_factory, policy_checkpoint_of
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
 from ygorl.engine.duel import DuelConfig, shuffle_deck
@@ -147,6 +147,8 @@ class AgentMatrix:
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> AgentMatrix:
+        if not isinstance(d, Mapping):
+            raise ValueError(f"not a {FORMAT} file: the top level is a {type(d).__name__}, not an object")
         if d.get("format") != FORMAT or d.get("format_version") != FORMAT_VERSION:
             raise ValueError(f"not a {FORMAT} v{FORMAT_VERSION} file: {d.get('format')!r} v{d.get('format_version')!r}")
         kw = {k: d[k] for k in cls.__dataclass_fields__ if k in d}
@@ -278,8 +280,14 @@ def _play(old: AgentMatrix | None, rows: list[tuple[str, str, str, AgentFactory,
     )  # fmt: skip
 
 
+def spec_of(factory: AgentFactory) -> str:
+    """How an agent was built: the agent spec of an :class:`AgentSpec` (rebuildable from the registry), otherwise
+    ``factory:<name>`` (a class, function or partial whose settings the name does not capture: never rebuilt)."""
+    return factory.spec if isinstance(factory, AgentSpec) else f"factory:{agent_name(factory)}"
+
+
 def _row(name: str, factory: AgentFactory, new: bool) -> tuple[str, str, str, AgentFactory, bool]:
-    spec = agent_name(factory)
+    spec = spec_of(factory)
     return (name, spec, agent_fingerprint(spec), factory, new)
 
 
@@ -308,7 +316,7 @@ def extend_agent_matrix(matrix: AgentMatrix, agents: Mapping[str, AgentFactory] 
     if env is not None:
         env.check_stamp(matrix.environment or {})
     elif matrix.environment is not None:
-        raise ValueError(f"the matrix belongs to environment {matrix.environment.get('version')!r}: pass it")
+        raise ValueError(f"the matrix belongs to environment {matrix.environment.get('environment')!r}: pass it")
     pool = _named(decks)
     if tuple(n for n, _ in pool) != matrix.decks or tuple(_deck_hash(d) for _, d in pool) != matrix.deck_hashes:
         raise ValueError("the deck pool differs from the one the matrix was built on (names, order or contents)")
@@ -320,10 +328,17 @@ def extend_agent_matrix(matrix: AgentMatrix, agents: Mapping[str, AgentFactory] 
     rows = []
     for i, name in enumerate(matrix.agents):  # agents already in the matrix: rebuilt from their spec
         spec, fp = matrix.specs[i], matrix.fingerprints[i]
-        if agent_fingerprint(spec) != fp:
+        now = agent_fingerprint(spec)
+        if fp and not now:
+            raise ValueError(f"the checkpoint of agent {name!r} ({spec!r}) is not found from here "
+                             "(a relative path resolves against the current directory)")  # fmt: skip
+        if fp and now != fp:
             raise ValueError(f"the checkpoint of agent {name!r} ({spec!r}) changed since it entered the matrix")
+        fp = fp or now  # a file written before fingerprints existed: not checkable, recorded from now on
         if name in given:
-            if (agent_name(given[name]), agent_fingerprint(agent_name(given[name]))) != (spec, fp):
+            if spec_of(given[name]) != spec or (
+                matrix.fingerprints[i] and agent_fingerprint(spec_of(given[name])) != fp
+            ):
                 raise ValueError(f"agent {name!r} is already in the matrix as {spec!r} ({fp or 'no checkpoint'}): "
                                  "give the new one another name")  # fmt: skip
             factory = given.pop(name)
