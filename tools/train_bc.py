@@ -63,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--event-length", type=int, default=128, help="event tokens per observation (default 128)")
     parser.add_argument("--threads", type=int, default=2, help="torch threads (default 2)")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--text-dir", type=Path, default=None,
+                        help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)")
+    parser.add_argument("--card-facts", action="store_true", help="use card_facts.npz in --text-dir (experimental)")
+    parser.add_argument("--no-text", action="store_true", help="ignore the text tables in --text-dir")
+    parser.add_argument("--id-dropout", type=float, default=0.0, help="training: drop each card's ID embedding")
+    parser.add_argument("--no-id-embedding", action="store_true", help="drop the per-card ID embedding")
     parser.add_argument("--baselines", action="store_true", help="also report RandomAgent and GreedyAgent openings")
     parser.add_argument("--checkpoint", type=Path, default=None,
                         help="checkpoint to evaluate (default <out>/policy.pt; with --no-train also a PPO checkpoint)")
@@ -116,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_train:  # a BC policy checkpoint or a PPO training checkpoint
         from ygorl.train.checkpoint import load_actor
 
-        ckpt = load_actor(ckpt_path)
+        ckpt = load_actor(ckpt_path, args.text_dir)
         net, vocab, event_length = ckpt.net, ckpt.vocab, ckpt.event_length
     else:
         vocab = CardVocab.from_db(cards)
@@ -146,9 +152,14 @@ def main(argv: list[str] | None = None) -> int:
           f"({time.time() - t0:.1f}s)", flush=True)  # fmt: skip
 
     if not args.no_train:
+        from ygorl.nets.text import TextFeatures
+
+        text = TextFeatures.load(args.text_dir, vocab) if args.text_dir else None
         cfg = NetConfig(vocab_size=len(vocab), d_model=args.d_model, history=args.history, board_layers=args.layers,
-                        history_layers=args.layers)  # fmt: skip
-        net = PolicyNet(cfg)
+                        history_layers=args.layers, id_embedding=not args.no_id_embedding, card_facts=args.card_facts,
+                        card_text=not args.no_text, effect_text=not args.no_text,
+                        id_dropout=args.id_dropout).with_text(text)  # fmt: skip
+        net = PolicyNet(cfg, text)
         bc = BCConfig(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay,
                       label_smoothing=args.label_smoothing, seed=args.seed)  # fmt: skip
         torch.manual_seed(args.seed)

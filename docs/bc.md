@@ -98,6 +98,9 @@ OMP_NUM_THREADS=1 uv run ygorl arena tests/decks --agent-a policy:out/bc12/polic
     --games 200 --workers 2 --out out/bc12/arena_random.json
 ```
 
+卡片视角（[nets.md](nets.md)「卡片事实」）与 PPO 用同一组开关：`--text-dir DIR`（冻结文本表和 / 或 `card_facts.npz`）、`--card-facts`、`--no-text`、
+`--id-dropout P`、`--no-id-embedding`。检查点里存着这些网络宽度；PPO `--init-from` 它时要给同一个 `--text-dir`（及同样的开关）。
+
 求解器的搜索按墙钟预算、未固定 `--solver-seed`，重跑得到的线可能不同（数量与下表同一量级）。
 
 | 数据 | 训练集 | held-out |
