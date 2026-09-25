@@ -46,7 +46,7 @@ def _environment(demos) -> dict | None:
     return json.loads(stamps.pop()) if stamps else None
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--train", type=Path, action="append", required=True, help="training demonstrations (JSONL)")
     parser.add_argument("--heldout", type=Path, action="append", default=[], help="held-out demonstrations (JSONL)")
@@ -83,14 +83,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--extra-subset", default="all", help="subset of the --extra samples (all, battle)")
     parser.add_argument("--extra-max", type=int, default=None, help="at most this many --extra samples")
     parser.add_argument("--extra-heldout", type=Path, default=None, help="held-out heuristic samples (.npz)")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def net_config(args: argparse.Namespace, vocab, text):
+    """The network for ``args`` (the same card-view switches as tools/train_ppo.py, so PPO can --init-from it)."""
+    from ygorl.nets import NetConfig
+
+    return NetConfig(vocab_size=len(vocab), d_model=args.d_model, history=args.history, board_layers=args.layers,
+                     history_layers=args.layers, id_embedding=not args.no_id_embedding, card_facts=args.card_facts,
+                     card_text=not args.no_text, effect_text=not args.no_text,
+                     id_dropout=args.id_dropout).with_text(text)  # fmt: skip
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     import torch
 
     from ygorl.agents import GreedyAgent, PolicyAgent, RandomAgent
     from ygorl.cards.cdb import CardVocab
     from ygorl.engine.duel import default_cards
-    from ygorl.nets import NetConfig, PolicyNet
+    from ygorl.nets import PolicyNet
     from ygorl.nets.agent import NetPolicy, save_checkpoint
     from ygorl.train.bc import BCConfig, build_dataset, hand_overlap, opening_report, step_accuracy, train_bc
 
@@ -155,10 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         from ygorl.nets.text import TextFeatures
 
         text = TextFeatures.load(args.text_dir, vocab) if args.text_dir else None
-        cfg = NetConfig(vocab_size=len(vocab), d_model=args.d_model, history=args.history, board_layers=args.layers,
-                        history_layers=args.layers, id_embedding=not args.no_id_embedding, card_facts=args.card_facts,
-                        card_text=not args.no_text, effect_text=not args.no_text,
-                        id_dropout=args.id_dropout).with_text(text)  # fmt: skip
+        cfg = net_config(args, vocab, text)
         net = PolicyNet(cfg, text)
         bc = BCConfig(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay,
                       label_smoothing=args.label_smoothing, seed=args.seed)  # fmt: skip

@@ -541,15 +541,21 @@ def _facts_dir(tmp_path, vocab):
 
 
 def test_a_bc_checkpoint_with_card_views_warm_starts_ppo(tmp_path, vocab):
-    """tools/train_bc.py --text-dir --card-facts writes a policy checkpoint whose card views PPO picks up (init_from
-    with the same text_dir); loading it without the features is an error, not silently different weights."""
-    from ygorl.nets import NetConfig, PolicyNet
+    """tools/train_bc.py --text-dir --card-facts --id-dropout builds (from its own flags) the network PPO builds for
+    the same switches, so init_from with the same text_dir picks up every weight; loading the checkpoint without the
+    features is an error, not silently different weights."""
+    from ygorl.nets import PolicyNet
     from ygorl.nets.agent import load_checkpoint, save_checkpoint
     from ygorl.nets.text import TextFeatures
 
+    spec = importlib.util.spec_from_file_location("train_bc", Path(__file__).parents[1] / "tools" / "train_bc.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
     feat = _facts_dir(tmp_path, vocab)
     text = TextFeatures.load(feat, vocab)
-    cfg = NetConfig(**{**TINY, "vocab_size": len(vocab), "card_facts": True, "id_dropout": 0.3}).with_text(text)
+    args = tool.build_parser().parse_args(["--train", "x.jsonl", "--d-model", "16", "--layers", "1", "--text-dir",
+                                           str(feat), "--card-facts", "--id-dropout", "0.3"])  # fmt: skip
+    cfg = tool.net_config(args, vocab, text)
     net = PolicyNet(cfg, text)
     with torch.no_grad():
         for p in net.parameters():
@@ -557,9 +563,10 @@ def test_a_bc_checkpoint_with_card_views_warm_starts_ppo(tmp_path, vocab):
     ckpt = save_checkpoint(tmp_path / "bc.pt", net, vocab, event_length=_small_cfg().event_length)
     with pytest.raises(ValueError, match="card_facts"):
         load_checkpoint(ckpt)
-    trainer = Trainer(replace(_small_cfg(), init_from=str(ckpt), text_dir=str(feat),
-                              net={**TINY, "card_facts": True, "id_dropout": 0.3}), tmp_path / "run", log=None)  # fmt: skip
-    assert trainer.net_config.n_archetypes == 1
+    ppo_net = {"d_model": 16, "board_layers": 1, "history_layers": 1, "card_facts": True, "id_dropout": 0.3}
+    trainer = Trainer(replace(_small_cfg(), init_from=str(ckpt), text_dir=str(feat), net=ppo_net), tmp_path / "run",
+                      log=None)  # fmt: skip
+    assert trainer.net_config == cfg and cfg.n_archetypes == 1 and cfg.id_dropout == 0.3
     bc = dict(net.named_parameters())
     for name, p in trainer.model.actor.named_parameters():
         assert torch.equal(p.cpu(), bc[name]), name
