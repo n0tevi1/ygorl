@@ -3,9 +3,11 @@
 ``build_agent_matrix(agents, decks, pairings=...)`` plays every pair of agents over one fixed sample of ordered deck
 pairings ``(d1, d2)`` drawn from a deck pool. Each pairing is played with both deck assignments (x on d1 against y
 on d2, then x on d2 against y on d1), each with both players going first once: four games per pairing, so the
-pairing's deck and seat advantages cancel inside the cell. Every cell uses the same pairings and game seeds
-(common random numbers), so the matrix does not depend on the order of the agents, adding an agent never changes an
-existing cell, and two rows are compared on the same games.
+pairing's deck and seat advantages cancel inside the cell. Common random numbers: each pairing's two decks
+("slots") are shuffled by slot and whoever holds a slot gets that slot's agent seed, never keyed by the seat (which
+is set by name order), so an agent sees the same opening hands in every cell. The matrix therefore does not depend on
+the order or the names of the agents, adding an agent never changes an existing cell, and two rows are compared on
+the same games. All cells share one worker pool.
 
 ``win_rate[i][j]`` is agent i's win rate against agent j; draws count half. Games that raised (``exception``) or
 that the host stopped as an error (``error``: engine loop, script budget) are not wins, losses or draws: they are
@@ -19,7 +21,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +30,8 @@ import numpy as np
 from ygorl.agents.base import AgentFactory, agent_name
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
-from ygorl.engine.duel import DuelConfig
-from ygorl.eval.arena import Arena, GameRecord, derive_seed, wilson_interval
+from ygorl.engine.duel import DuelConfig, shuffle_deck
+from ygorl.eval.arena import Arena, GameRecord, GameSpec, derive_seed, wilson_interval
 from ygorl.eval.matchup import DEFAULT_ALPHA, DEFAULT_POPULATION, _deck_hash, _named, _tuples, alpha_rank, nash_mixture
 
 FORMAT = "ygorl-agent-matrix"
@@ -179,13 +181,33 @@ def _named_agents(agents: Mapping[str, AgentFactory] | Sequence[AgentFactory]) -
     return items
 
 
-def cell_games(decks: Sequence[Deck], pairings: Sequence[tuple[int, int]], seed: int) -> list[tuple[Deck, Deck, int]]:
-    """The matchups of one cell (agent a, agent b): both deck assignments of every pairing, shared by all cells."""
+def pairing_slots(decks: Sequence[Deck], pairings: Sequence[tuple[int, int]], seed: int,
+                  config: DuelConfig) -> list[tuple[int, tuple[Deck, Deck], tuple[int, int]]]:  # fmt: skip
+    """Per pairing ``k``: its game seed, its two decks (slot 0 = the pairing's first deck) already shuffled, and the
+    agent seed of whoever holds each slot. Everything is keyed by the slot, never by the seat, so an agent holding a
+    slot sees the same opening hand and gets the same seed in every cell (common random numbers)."""
     out = []
     for k, (i, j) in enumerate(pairings):
-        out.append((decks[i], decks[j], derive_seed(seed, k, 0)))
-        out.append((decks[j], decks[i], derive_seed(seed, k, 1)))
+        s = derive_seed(seed, k)
+        slots = (decks[i], decks[j])
+        if config.shuffle_decks:
+            slots = tuple(replace(d, main=tuple(shuffle_deck(d.main, s, slot))) for slot, d in enumerate(slots))
+        out.append((s, slots, (derive_seed(s, 0), derive_seed(s, 1))))
     return out
+
+
+def cell_specs(agent_a: AgentFactory, agent_b: AgentFactory, slots, env: Environment | None,
+               config: DuelConfig) -> list[GameSpec]:  # fmt: skip
+    """The 4 games per pairing of one cell: agent a holds slot ``m`` (0, 1) and slot ``g`` (0, 1) goes first."""
+    config = replace(config, shuffle_decks=False)  # decks come shuffled by slot
+    specs = []
+    for k, (s, decks, seeds) in enumerate(slots):
+        for m in (0, 1):
+            for g in (0, 1):
+                specs.append(GameSpec(pair=k, first=0 if g == m else 1, seed=s, agent_seeds=(seeds[m], seeds[1 - m]),
+                                      deck_a=decks[m], deck_b=decks[1 - m], agent_a=agent_a, agent_b=agent_b, env=env,
+                                      config=config))  # fmt: skip
+    return specs
 
 
 def build_agent_matrix(agents: Mapping[str, AgentFactory] | Sequence[AgentFactory],
@@ -198,21 +220,23 @@ def build_agent_matrix(agents: Mapping[str, AgentFactory] | Sequence[AgentFactor
     pool = _named(decks)
     deck_list = [d for _, d in pool]
     sample = sample_pairings(len(pool), pairings, seed)
-    games = cell_games(deck_list, sample, seed)
     config = config or (DuelConfig.from_environment(env) if env is not None else DuelConfig())
+    slots = pairing_slots(deck_list, sample, seed, config)
 
     n = len(items)
+    cells = [(i, j) for i in range(n) for j in range(i + 1, n)]
+    specs = [spec for i, j in cells for spec in cell_specs(items[i][1], items[j][1], slots, env, config)]
+    records = Arena(items[0][1], items[1][1], env=env, config=config, workers=workers).play(specs)  # one pool
+    per_cell = 4 * len(sample)
     rate, count, errs = np.full((n, n), 0.5), np.zeros((n, n), dtype=int), np.zeros((n, n), dtype=int)
     lo, hi = np.full((n, n), 0.5), np.full((n, n), 0.5)
-    for i in range(n):
-        for j in range(i + 1, n):
-            arena = Arena(items[i][1], items[j][1], env=env, config=config, workers=workers, confidence=confidence)
-            cell = score([r for rep in arena.run_many(games, 1) for r in rep.records])
-            rate[i, j], rate[j, i] = cell.win_rate, 1.0 - cell.win_rate
-            count[i, j] = count[j, i] = cell.games
-            errs[i, j] = errs[j, i] = cell.errors
-            lo[i, j], hi[i, j] = wilson_interval(cell.wins + 0.5 * cell.draws, cell.games, confidence)
-            lo[j, i], hi[j, i] = 1.0 - hi[i, j], 1.0 - lo[i, j]
+    for c, (i, j) in enumerate(cells):
+        cell = score(records[c * per_cell : (c + 1) * per_cell])
+        rate[i, j], rate[j, i] = cell.win_rate, 1.0 - cell.win_rate
+        count[i, j] = count[j, i] = cell.games
+        errs[i, j] = errs[j, i] = cell.errors
+        lo[i, j], hi[i, j] = wilson_interval(cell.wins + 0.5 * cell.draws, cell.games, confidence)
+        lo[j, i], hi[j, i] = 1.0 - hi[i, j], 1.0 - lo[i, j]
     return AgentMatrix(
         agents=tuple(n for n, _ in items), specs=tuple(agent_name(f) for _, f in items),
         win_rate=_tuples(rate.tolist()), games=_tuples(count.tolist()), errors=_tuples(errs.tolist()),
@@ -226,4 +250,4 @@ def build_agent_matrix(agents: Mapping[str, AgentFactory] | Sequence[AgentFactor
     )  # fmt: skip
 
 
-__all__ = ["AgentMatrix", "CellResult", "build_agent_matrix", "cell_games", "sample_pairings", "score"]
+__all__ = ["AgentMatrix", "CellResult", "build_agent_matrix", "cell_specs", "pairing_slots", "sample_pairings", "score"]

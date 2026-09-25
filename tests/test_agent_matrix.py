@@ -10,7 +10,7 @@ from ygorl.agents import AgentSpec
 from ygorl.cards.ydk import load_ydk
 from ygorl.data import EnvironmentConfigError, load_environment
 from ygorl.engine.duel import DuelConfig
-from ygorl.eval.agent_matrix import AgentMatrix, build_agent_matrix, cell_games, sample_pairings, score
+from ygorl.eval.agent_matrix import AgentMatrix, build_agent_matrix, cell_specs, pairing_slots, sample_pairings, score
 from ygorl.eval.arena import GameRecord
 from tests.test_environment import make_env
 
@@ -62,14 +62,27 @@ def test_every_cell_plays_the_same_games_so_a_smaller_matrix_is_a_sub_matrix(mat
     assert two.win_rate[0][1] == matrix.win_rate[g][r] and two.games[0][1] == matrix.games[g][r]
 
 
-def test_both_deck_assignments_of_each_pairing_are_played():
+def test_each_pairing_is_played_with_both_deck_slots_and_both_first_players():
     pairs = sample_pairings(3, 4, seed=1)
-    games = cell_games(THREE, pairs, seed=1)
-    assert len(games) == 8
+    slots = pairing_slots(THREE, pairs, 1, SHORT)
+    specs = cell_specs(AGENTS["greedy"], AGENTS["random"], slots, None, SHORT)
+    assert len(specs) == 16 and not any(sp.config.shuffle_decks for sp in specs)
     for k, (i, j) in enumerate(pairs):
-        (a1, b1, s1), (a2, b2, s2) = games[2 * k], games[2 * k + 1]
-        assert (a1, b1) == (THREE[i], THREE[j]) and (a2, b2) == (THREE[j], THREE[i]) and s1 != s2
+        four = specs[4 * k : 4 * k + 4]
+        held = {(sp.deck_a.name, sp.deck_b.name) for sp in four}
+        assert held == {(THREE[i].name, THREE[j].name), (THREE[j].name, THREE[i].name)}
+        assert sorted(sp.first for sp in four) == [0, 0, 1, 1] and len({sp.seed for sp in four}) == 1
     assert sample_pairings(3, 4, seed=1) == pairs and sample_pairings(3, 4, seed=2) != pairs
+
+
+def test_common_random_numbers_do_not_depend_on_the_seat():
+    """The seat (a / b) follows name order; hands and agent seeds follow the deck slot. So two copies of a
+    deterministic agent named before and after their opponent play exactly the same games against it."""
+    m = build_agent_matrix({"a": AgentSpec("greedy"), "m": AgentSpec("random"), "z": AgentSpec("greedy")}, THREE,
+                           pairings=4, seed=2, config=SHORT)  # fmt: skip
+    a, mid, z = m.index("a"), m.index("m"), m.index("z")
+    assert m.win_rate[a][mid] == m.win_rate[z][mid] and m.games[a][mid] == m.games[z][mid]
+    assert m.win_rate[a][z] == 0.5  # the same agent in both seats of every game: every result mirrored
 
 
 def test_error_games_are_counted_apart():
