@@ -156,7 +156,8 @@ def test_a_long_selection_can_only_move_forward(db):
 
     class Probe:
         def act(self, point):
-            if point.decision.TYPE == C.MSG_SELECT_UNSELECT_CARD and any(a.kind == "unselect" for a in point.actions):
+            kinds = {a.kind for a in point.actions}
+            if point.decision.TYPE == C.MSG_SELECT_UNSELECT_CARD and {"unselect", "select"} <= kinds:
                 seen.append(point)
             return rng.act(point)
 
@@ -165,7 +166,7 @@ def test_a_long_selection_can_only_move_forward(db):
         duel.run(Probe(), Probe())
         if seen:
             break
-    assert seen, "random play should reach a selection with an unselect row"
+    assert seen, "random play should reach a selection with select and unselect rows"
     point = seen[0]
     unselect = [i for i, a in enumerate(point.actions) if a.kind == "unselect"]
     tracker = duel.tracker()
@@ -174,5 +175,5 @@ def test_a_long_selection_can_only_move_forward(db):
     assert not set(unselect) & set(tracker._undo(point.decision, point.actions))
     tracker._note_undo(point.decision, point.actions[0])
     masked = set(tracker._undo(point.decision, point.actions))
-    if len(unselect) < len(point.actions):
-        assert set(unselect) <= masked  # every unselect row, nothing else from rule 5
+    assert set(unselect) <= masked  # every unselect row is masked; the select rows keep the selection moving
+    assert any(point.actions[i].kind == "select" and i not in masked for i in range(len(point.actions)))
