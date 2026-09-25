@@ -869,6 +869,7 @@ void Tracker::on_buffer(const std::string& buf, int status) {
         if (is_game_event(type, decoded)) {
             inside_ = -1;
             toggle_.reset();
+            selection_steps_ = 0;
         }
         if (!is_decision_type(type)) {
             switch (type) {
@@ -943,6 +944,10 @@ void Tracker::on_buffer(const std::string& buf, int status) {
     }
     if (decision->player != inside_ || is_menu(decision->type)) inside_ = -1;
     if (toggle_ && toggle_->player != decision->player) toggle_.reset();
+    if (decision->type != MSG_SELECT_UNSELECT_CARD || decision->player != selection_player_) {
+        selection_steps_ = 0;  // not the same selection any more
+        selection_player_ = decision->player;
+    }
     state_ = std::make_unique<DecisionState>(*decision, cards_);
 }
 
@@ -964,6 +969,8 @@ std::vector<size_t> Tracker::undo() const {
                    ((a.kind == SELECT && toggle_->kind == UNSELECT) || (a.kind == UNSELECT && toggle_->kind == SELECT)) &&
                    same_card(a.card, toggle_->code, toggle_->loc)) {
             out.push_back(i);  // reverses the previous select / unselect
+        } else if (d.type == MSG_SELECT_UNSELECT_CARD && a.kind == UNSELECT && selection_steps_ >= MAX_SELECTION_STEPS) {
+            out.push_back(i);  // a long selection only moves forward from here (rule 5)
         } else if (is_menu(d.type) && a.kind == SHUFFLE) {
             out.push_back(i);  // reorders the hand, changes nothing else
         } else if (is_menu(d.type) && a.kind == ACTIVATE && activations_turn_ == turn_) {
@@ -1008,8 +1015,10 @@ const std::string* Tracker::act(size_t index) {
         }
     }
     toggle_.reset();
-    if (d.type == MSG_SELECT_UNSELECT_CARD && (a.kind == SELECT || a.kind == UNSELECT) && a.has_card)
+    if (d.type == MSG_SELECT_UNSELECT_CARD && (a.kind == SELECT || a.kind == UNSELECT) && a.has_card) {
         toggle_ = Toggle{d.player, a.kind, a.card.code, a.card.loc};
+    }
+    if (d.type == MSG_SELECT_UNSELECT_CARD) ++selection_steps_;
     if (state_->done()) {
         responses_.push_back(state_->response());
         state_.reset();
