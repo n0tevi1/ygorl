@@ -29,7 +29,7 @@ from typing import Any
 import numpy as np
 
 from ygorl.agents.base import AgentFactory, agent_name
-from ygorl.agents.registry import AgentSpec, agent_factory, policy_checkpoint_of
+from ygorl.agents.registry import AgentSpec, agent_factory, parse_policy_arg, policy_checkpoint_of
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
 from ygorl.engine.duel import DuelConfig, shuffle_deck
@@ -106,6 +106,7 @@ class AgentMatrix:
     confidence: float = 0.95
     environment: dict[str, str] | None = None
     fingerprints: tuple[str, ...] = ()  # checkpoint content hash of each agent ("" for rule agents)
+    batched: bool = False  # policy-vs-policy cells played on the batched C++ path (ygorl.eval.batched), not the arena
 
     def __post_init__(self) -> None:
         if not self.fingerprints:  # files written before fingerprints existed
@@ -240,7 +241,8 @@ def agent_fingerprint(spec: str) -> str:
 
 def _play(old: AgentMatrix | None, rows: list[tuple[str, str, str, AgentFactory, bool]],
           pool: list[tuple[str, Deck]], sample: list[tuple[int, int]], seed: int, env: Environment | None,
-          config: DuelConfig, workers: int, confidence: float, alpha: float, population_size: int) -> AgentMatrix:  # fmt: skip
+          config: DuelConfig, workers: int, confidence: float, alpha: float, population_size: int,
+          device: str | None = None) -> AgentMatrix:  # fmt: skip
     """The matrix of ``rows`` = (name, spec, fingerprint, factory, is new), in name order: cells between two agents of
     ``old`` are copied from it, every cell with a new agent is played."""
     names = [r[0] for r in rows]
@@ -248,8 +250,15 @@ def _play(old: AgentMatrix | None, rows: list[tuple[str, str, str, AgentFactory,
     deck_list = [d for _, d in pool]
     slots = pairing_slots(deck_list, sample, seed, config)
     cells = [(i, j) for i in range(n) for j in range(i + 1, n) if rows[i][4] or rows[j][4]]
-    specs = [sp for i, j in cells for sp in cell_specs(rows[i][3], rows[j][3], slots, env, config)]
+    per_cell = 4 * len(sample)
+    played: dict[tuple[int, int], list[GameRecord]] = {}
+    if device is not None:
+        played.update(_play_batched(cells, rows, slots, config, device))
+    rest = [c for c in cells if c not in played]
+    specs = [sp for i, j in rest for sp in cell_specs(rows[i][3], rows[j][3], slots, env, config)]
     records = Arena(rows[0][3], rows[1][3], env=env, config=config, workers=workers).play(specs)  # one pool
+    for c, cell in enumerate(rest):
+        played[cell] = records[c * per_cell : (c + 1) * per_cell]
 
     rate, count, errs = np.full((n, n), 0.5), np.zeros((n, n), dtype=int), np.zeros((n, n), dtype=int)
     lo, hi = np.full((n, n), 0.5), np.full((n, n), 0.5)
@@ -259,9 +268,8 @@ def _play(old: AgentMatrix | None, rows: list[tuple[str, str, str, AgentFactory,
                 i, j, oi, oj = names.index(a), names.index(b), old.index(a), old.index(b)
                 rate[i, j], count[i, j], errs[i, j] = old.win_rate[oi][oj], old.games[oi][oj], old.errors[oi][oj]
                 lo[i, j], hi[i, j] = old.ci_low[oi][oj], old.ci_high[oi][oj]
-    per_cell = 4 * len(sample)
-    for c, (i, j) in enumerate(cells):
-        cell = score(records[c * per_cell : (c + 1) * per_cell])
+    for i, j in cells:
+        cell = score(played[i, j])
         rate[i, j], rate[j, i] = cell.win_rate, 1.0 - cell.win_rate
         count[i, j] = count[j, i] = cell.games
         errs[i, j] = errs[j, i] = cell.errors
@@ -276,8 +284,67 @@ def _play(old: AgentMatrix | None, rows: list[tuple[str, str, str, AgentFactory,
         max_decisions=config.max_decisions, nash=tuple(float(v) for v in nash_mixture(rate)),
         alpha_rank=tuple(float(v) for v in alpha_rank(rate, alpha=alpha, population_size=population_size)),
         alpha=alpha, population_size=population_size, confidence=confidence,
-        environment=env.stamp() if env is not None else None,
+        environment=env.stamp() if env is not None else None, batched=device is not None,
     )  # fmt: skip
+
+
+def policy_setting(spec: str) -> tuple[str, bool, float] | None:
+    """``(checkpoint, greedy, temperature)`` of a plain ``policy`` / ``policy-greedy`` spec (no wrapper), else None."""
+    name, _, arg = spec.partition(":")
+    if name not in ("policy", "policy-greedy") or not arg:
+        return None
+    return parse_policy_arg(arg if name == "policy" else f"{arg}@greedy")
+
+
+def _play_batched(cells, rows, slots, config: DuelConfig, device: str, envs: int = 128,
+                  threads: int = 4) -> dict[tuple[int, int], list[GameRecord]]:  # fmt: skip
+    """The cells whose two agents are plain policy checkpoints with the same card vocab and event length, played on
+    the batched C++ path (``play_policies``): the arena's games (slots, seeds, first players), decisions sampled from
+    each agent's slot seed, statistics counted the same way. Other cells are left to the arena."""
+    import torch
+
+    from ygorl.env import GameSpec as EnvSpec
+    from ygorl.env.encoded import EncodedVecEnv
+    from ygorl.eval.batched import play_policies
+    from ygorl.train.checkpoint import load_actor, vocab_passwords
+
+    loaded: dict[str, Any] = {}
+
+    def policy(spec: str):
+        setting = policy_setting(spec)
+        if setting is None:
+            return None
+        if setting[0] not in loaded:
+            pol = load_actor(setting[0])
+            loaded[setting[0]] = (pol, pol.net.to(torch.device(device)), tuple(vocab_passwords(pol.vocab)))
+        return loaded[setting[0]], setting
+
+    groups: dict[tuple, list] = {}
+    for i, j in cells:
+        a, b = policy(rows[i][1]), policy(rows[j][1])
+        if a is None or b is None:
+            continue
+        (pa, _, va), (pb, _, vb) = a[0], b[0]
+        if va != vb or pa.event_length != pb.event_length:
+            continue
+        groups.setdefault((va, pa.event_length), []).append((i, j, a, b))
+    base = replace(config, shuffle_decks=False)
+    out: dict[tuple[int, int], list[GameRecord]] = {}
+    for (_, event_length), group in groups.items():
+        env = EncodedVecEnv(min(envs, 4 * len(slots)), threads, vocab=group[0][2][0][0].vocab,
+                            event_length=event_length, skip_forced=True)  # fmt: skip
+        for i, j, (ca, sa), (cb, sb) in group:
+            specs, seeds = [], []
+            for s, decks, slot_seeds in slots:
+                for m in (0, 1):
+                    for g in (0, 1):
+                        specs.append(EnvSpec(seed=s, deck_a=decks[m], deck_b=decks[1 - m], first=0 if g == m else 1,
+                                             config=base))  # fmt: skip
+                        seeds.append((slot_seeds[m], slot_seeds[1 - m]))
+            records, _ = play_policies(env, specs, ca[1], cb[1], device=device, pairs_per_spec=4, sample_seeds=seeds,
+                                       sampling=((sa[1], sa[2]), (sb[1], sb[2])))  # fmt: skip
+            out[i, j] = records
+    return out
 
 
 def spec_of(factory: AgentFactory) -> str:
@@ -295,8 +362,11 @@ def build_agent_matrix(agents: Mapping[str, AgentFactory] | Sequence[AgentFactor
                        decks: Sequence[Deck] | Mapping[str, Deck], *, pairings: int, seed: int = 0,
                        env: Environment | None = None, config: DuelConfig | None = None, workers: int = 1,
                        confidence: float = 0.95, alpha: float = DEFAULT_ALPHA,
-                       population_size: int = DEFAULT_POPULATION) -> AgentMatrix:  # fmt: skip
-    """Play every pair of ``agents`` on ``pairings`` sampled deck pairings (4 games each) and solve the meta game."""
+                       population_size: int = DEFAULT_POPULATION, device: str | None = None) -> AgentMatrix:  # fmt: skip
+    """Play every pair of ``agents`` on ``pairings`` sampled deck pairings (4 games each) and solve the meta game.
+
+    With ``device`` (e.g. "cuda"), cells between two plain policy checkpoints of the same vocab and event length are
+    played on the batched C++ path with the networks on that device; everything else goes through the arena."""
     items = _named_agents(agents)
     if len(items) < 2:
         raise ValueError("an agent matrix needs at least two agents")
@@ -304,14 +374,16 @@ def build_agent_matrix(agents: Mapping[str, AgentFactory] | Sequence[AgentFactor
     sample = sample_pairings(len(pool), pairings, seed)
     config = config or (DuelConfig.from_environment(env) if env is not None else DuelConfig())
     rows = sorted((_row(name, f, True) for name, f in items), key=lambda r: r[0])
-    return _play(None, rows, pool, sample, seed, env, config, workers, confidence, alpha, population_size)
+    return _play(None, rows, pool, sample, seed, env, config, workers, confidence, alpha, population_size, device)
 
 
 def extend_agent_matrix(matrix: AgentMatrix, agents: Mapping[str, AgentFactory] | Sequence[AgentFactory],
                         decks: Sequence[Deck] | Mapping[str, Deck], *, env: Environment | None = None,
-                        config: DuelConfig | None = None, workers: int = 1) -> AgentMatrix:  # fmt: skip
+                        config: DuelConfig | None = None, workers: int = 1,
+                        device: str | None = None) -> AgentMatrix:  # fmt: skip
     """``matrix`` plus the agents not in it yet: only their cells are played, on the matrix's own deck pairings,
-    seed and rules, so the result equals building all agents at once. An agent already in the matrix under the
+    seed and rules, so the result equals building all agents at once. A matrix built with the batched path is
+    extended with it too (``device`` defaults to "cpu" then; the arena is never used for its policy cells). An agent already in the matrix under the
     same name is skipped if its spec and checkpoint content are the same, an error otherwise."""
     if env is not None:
         env.check_stamp(matrix.environment or {})
@@ -352,8 +424,12 @@ def extend_agent_matrix(matrix: AgentMatrix, agents: Mapping[str, AgentFactory] 
     if not given:
         return matrix
     rows = sorted(rows + [_row(name, f, True) for name, f in given.items()], key=lambda r: r[0])
+    if matrix.batched:
+        device = device or "cpu"
+    elif device is not None:
+        raise ValueError("the matrix was played without the batched path: extend it without a device")
     return _play(matrix, rows, pool, [tuple(p) for p in matrix.pairings], matrix.seed, env, config, workers,
-                 matrix.confidence, matrix.alpha, matrix.population_size)  # fmt: skip
+                 matrix.confidence, matrix.alpha, matrix.population_size, device)  # fmt: skip
 
 
 __all__ = [

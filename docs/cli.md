@@ -176,6 +176,9 @@ uv run ygorl strength greedy random best=policy:out/run/best.pt --decks out/corp
   每对 agent 在每个配对上打 4 局：两种牌组分配 × 先后攻各一次。
 - **输出**：排名（`ranking: a > b > ...`，按 alpha-rank、Nash、平均胜率排序；完全打平时次序无意义），以及行 agent 对列 agent 的胜率矩阵，末两列是 Nash 权重与 alpha-rank。
   出错的局（抛异常、引擎步数上限、脚本预算）不计入胜率，单独报告。
+- **`--device`**：两边都是策略检查点的格子，在 C++ 批量路径上打，网络放在该设备上（`cuda`、`cpu`），其余格子走 Arena。
+  - 默认 `auto`：有 CUDA 就用 `cuda`，否则全部走 Arena；`none` 强制全部走 Arena。
+  - 扩展已有矩阵时沿用它当初的路径（见 [evaluation.md](evaluation.md)「批量路径」）。
 - **保存**：`--out PATH` 写 JSON；带 `--env` 时写到 `environments/<版本>/artifacts/agent-matrix/<名字>.json`（`--name`，默认 `agents`）。
 - **扩展已有矩阵**：
   - 如果输出目标（`--out` 或上面的环境产物）已经存在，就把给出的 agent 加进去：只打新 agent 的对局，用矩阵自己的配对、种子和回合上限。

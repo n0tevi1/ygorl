@@ -40,6 +40,10 @@ def add_parser(subparsers) -> None:
                    help="deck pairings sampled from the pool; 4 games each per agent pair (default 50; when "
                         "extending, the matrix's own)")  # fmt: skip
     p.add_argument("--workers", type=int, default=1, metavar="N", help="worker processes (default 1)")
+    p.add_argument("--device", default="auto", metavar="DEV",
+                   help="play policy-vs-policy cells on the batched C++ path with the networks on DEV (cuda, cpu); "
+                        "'none' plays everything in the arena; default auto: cuda if available, else none. An "
+                        "existing matrix is extended on the path it was built with")  # fmt: skip
     p.add_argument(
         "--seed",
         type=int,
@@ -74,6 +78,19 @@ def parse_agents(args: list[str]) -> dict[str, str]:
             raise CommandError(f"duplicate agent name {name!r}: give each agent a NAME= prefix")
         out[name] = spec
     return out
+
+
+def resolve_device(spec: str) -> str | None:
+    """--device: None for the arena, else a torch device string."""
+    if spec == "none":
+        return None
+    if spec != "auto":
+        return spec
+    try:
+        import torch
+    except ImportError:
+        return None
+    return "cuda" if torch.cuda.is_available() else None
 
 
 def run(args: argparse.Namespace) -> int:
@@ -112,6 +129,7 @@ def run(args: argparse.Namespace) -> int:
     alpha = DEFAULT_ALPHA if args.alpha is None else args.alpha
     population = DEFAULT_POPULATION if args.population is None else args.population
 
+    device = resolve_device(args.device)
     t0 = time.time()
     old = None
     try:
@@ -125,14 +143,23 @@ def run(args: argparse.Namespace) -> int:
                     raise CommandError(f"{flag} {given} differs from the matrix at {target} ({have}): "
                                        "extend it with its own settings or write a new matrix")  # fmt: skip
             config = replace(duel_config(env, old.max_turns), max_decisions=old.max_decisions)
-            matrix = extend_agent_matrix(old, factories, decks, env=env, config=config, workers=args.workers)
+            matrix = extend_agent_matrix(
+                old,
+                factories,
+                decks,
+                env=env,
+                config=config,
+                workers=args.workers,
+                device=(device or "cpu") if old.batched else None,
+            )
         else:
             pairings = 50 if args.pairings is None else args.pairings
             if pairings < 1:
                 raise CommandError("--pairings must be at least 1")
             matrix = build_agent_matrix(factories, decks, pairings=pairings, seed=args.seed or 0, env=env,
                                         config=duel_config(env, args.max_turns), workers=args.workers,
-                                        confidence=0.95 if args.confidence is None else args.confidence, alpha=alpha, population_size=population)  # fmt: skip
+                                        confidence=0.95 if args.confidence is None else args.confidence, alpha=alpha, population_size=population,
+                                        device=device)  # fmt: skip
     except (ValueError, OSError) as exc:  # EnvironmentConfigError is a ValueError
         raise CommandError(str(exc)) from None
     elapsed = time.time() - t0

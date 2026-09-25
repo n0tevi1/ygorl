@@ -55,13 +55,21 @@ def _uniform(seed: int, first: int, seat: int, step: int) -> float:
 @torch.no_grad()
 def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Module, policy_b: nn.Module | None = None,
                   *, device: torch.device | str = "cpu", min_batch: int | None = None, greedy: bool = False,
-                  temperature: float = 1.0, pairs_per_spec: int = 2) -> tuple[list[GameRecord], dict]:  # fmt: skip
+                  temperature: float = 1.0, pairs_per_spec: int = 2,
+                  sample_seeds: Sequence[tuple[int, int]] | None = None,
+                  sampling: tuple[tuple[bool, float], tuple[bool, float]] | None = None) -> tuple[list[GameRecord], dict]:  # fmt: skip
     """Play ``specs`` with ``policy_a`` on deck a and ``policy_b`` (default: the same module) on deck b.
 
     Returns one record per spec (spec order; ``pair`` = spec index // ``pairs_per_spec``) and timing stats. The
     policies must share the environment's card vocab and event length (they are not checked here).
+
+    ``sample_seeds[i]`` (optional) seeds the decisions of deck a's and deck b's player in spec ``i`` instead of
+    ``(game seed, first player, seat)``, e.g. to key them by something other than the seat (the agent matrix keys
+    them by deck slot). ``sampling`` (optional) gives deck a's and deck b's player their own ``(greedy,
+    temperature)`` instead of the shared ``greedy`` / ``temperature``.
     """
     policy_b = policy_a if policy_b is None else policy_b
+    side_sampling = sampling if sampling is not None else ((greedy, temperature), (greedy, temperature))
     device = torch.device(device)
     for m in {id(policy_a): policy_a, id(policy_b): policy_b}.values():
         m.eval()
@@ -108,22 +116,28 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
                 if not launch(ev.env_id):
                     active -= 1
                 continue
-            module = policy_a if (spec.first + ev.player) % 2 == 0 else policy_b
-            groups.setdefault(id(module), [module, []])[1].append(ev)
-        for module, events in groups.values():
+            side = (spec.first + ev.player) % 2  # 0: the player holding deck a
+            module = policy_a if side == 0 else policy_b
+            greedy_s, temp_s = side_sampling[side]
+            groups.setdefault((id(module), greedy_s, temp_s), [module, [], greedy_s, temp_s])[1].append(ev)
+        for module, events, greedy_s, temp_s in groups.values():
             f0 = time.perf_counter()
             batch = collate([ev.obs for ev in events], device)
             fn = getattr(module, "policy_logits", None)
             logits = (fn(batch) if fn is not None else module(batch).logits).float()
-            if greedy:
+            if greedy_s:
                 actions = logits.argmax(-1).cpu().numpy()
             else:
-                probs = torch.softmax(logits / temperature, -1).cpu().numpy().astype(np.float64)
+                probs = torch.softmax(logits / temp_s, -1).cpu().numpy().astype(np.float64)
                 cdf = np.cumsum(probs, -1)
                 actions = np.empty(len(events), dtype=np.int64)
                 for k, ev in enumerate(events):
                     slot = running[ev.env_id]
-                    u = _uniform(specs[slot[0]].seed, specs[slot[0]].first, ev.player, slot[1 + ev.player])
+                    sp, n = specs[slot[0]], slot[1 + ev.player]
+                    if sample_seeds is not None:
+                        u = _uniform(sample_seeds[slot[0]][(sp.first + ev.player) % 2], 0, 0, n)
+                    else:
+                        u = _uniform(sp.seed, sp.first, ev.player, n)
                     actions[k] = min(int(np.searchsorted(cdf[k], u * cdf[k, -1], side="right")), probs.shape[1] - 1)
             forward_s += time.perf_counter() - f0
             forwards += 1

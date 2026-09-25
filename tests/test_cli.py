@@ -405,7 +405,7 @@ def test_strength_matches_the_library(tmp_path, capsys):
 
     names = ("snake_eye", "kashtira", "yubel")
     out_path = tmp_path / "s.json"
-    code = main(["strength", "random", "g=greedy", "--decks", *(str(DECKS / f"{n}.ydk") for n in names),
+    code = main(["strength", "--device", "none", "random", "g=greedy", "--decks", *(str(DECKS / f"{n}.ydk") for n in names),
                  "--pairings", "2", "--max-turns", "4", "--seed", "5", "--out", str(out_path)])  # fmt: skip
     out = capsys.readouterr().out
     assert code == 0, out
@@ -424,7 +424,7 @@ def test_strength_of_environment_meta_decks(tmp_path, capsys):
     from ygorl.eval.agent_matrix import AgentMatrix
 
     d = make_env(tmp_path, meta=("snake_eye", "kashtira"))
-    assert main(["strength", "random", "greedy", "--env", str(d), "--pairings", "1", "--max-turns", "2",
+    assert main(["strength", "--device", "none", "random", "greedy", "--env", str(d), "--pairings", "1", "--max-turns", "2",
                  "--name", "smoke"]) == 0  # fmt: skip
     path = d / "artifacts" / "agent-matrix" / "smoke.json"
     assert AgentMatrix.load(path, env=load_environment(d)).decks == ("snake_eye", "kashtira")
@@ -433,13 +433,13 @@ def test_strength_of_environment_meta_decks(tmp_path, capsys):
 
 def test_strength_errors(capsys):
     deck = str(DECKS / "kashtira.ydk")
-    assert main(["strength", "random"]) == 2
+    assert main(["strength", "--device", "none", "random"]) == 2
     assert "at least two agents" in capsys.readouterr().err
-    assert main(["strength", "greedy", "greedy", "--decks", deck, str(DECKS / "yubel.ydk")]) == 2
+    assert main(["strength", "--device", "none", "greedy", "greedy", "--decks", deck, str(DECKS / "yubel.ydk")]) == 2
     assert "duplicate agent name" in capsys.readouterr().err
-    assert main(["strength", "random", "greedy"]) == 2
+    assert main(["strength", "--device", "none", "random", "greedy"]) == 2
     assert "no deck pool" in capsys.readouterr().err
-    assert main(["strength", "random", "nope", "--decks", deck, str(DECKS / "yubel.ydk")]) == 2
+    assert main(["strength", "--device", "none", "random", "nope", "--decks", deck, str(DECKS / "yubel.ydk")]) == 2
     assert "unknown agent 'nope'" in capsys.readouterr().err
 
 
@@ -450,20 +450,29 @@ def test_strength_extends_an_existing_matrix(tmp_path, capsys):
     decks_args = ["--decks", *(str(DECKS / f"{n}.ydk") for n in names)]
     out_path = tmp_path / "s.json"
     base = ["--max-turns", "4", "--out", str(out_path)]
-    assert main(["strength", "random", "greedy", *decks_args, "--pairings", "2", "--seed", "3", *base]) == 0
+    assert (
+        main(["strength", "--device", "none", "random", "greedy", *decks_args, "--pairings", "2", "--seed", "3", *base])
+        == 0
+    )
     capsys.readouterr()
-    assert main(["strength", "g2=greedy", *decks_args, "--out", str(out_path)]) == 0  # settings come from the file
+    assert (
+        main(["strength", "--device", "none", "g2=greedy", *decks_args, "--out", str(out_path)]) == 0
+    )  # settings come from the file
     out = capsys.readouterr().out
     assert out.startswith(f"added g2 to {out_path}") and "2 agent pairs played" in out
     decks = [load_ydk(DECKS / f"{n}.ydk") for n in names]
     agents = {"random": agent_factory("random"), "greedy": agent_factory("greedy"), "g2": agent_factory("greedy")}
     assert AgentMatrix.load(out_path) == build_agent_matrix(agents, decks, pairings=2, seed=3,
                                                             config=DuelConfig(max_turns=4))  # fmt: skip
-    assert main(["strength", "r3=random", *decks_args, "--pairings", "5", "--out", str(out_path)]) == 2
+    assert (
+        main(["strength", "--device", "none", "r3=random", *decks_args, "--pairings", "5", "--out", str(out_path)]) == 2
+    )
     assert "--pairings 5 differs" in capsys.readouterr().err
-    assert main(["strength", "r3=random", *decks_args, "--alpha", "3", "--out", str(out_path)]) == 2
+    assert main(["strength", "--device", "none", "r3=random", *decks_args, "--alpha", "3", "--out", str(out_path)]) == 2
     assert "--alpha 3.0 differs" in capsys.readouterr().err
-    assert main(["strength", "random", "greedy", *decks_args, "--out", str(tmp_path)]) == 2  # a directory
+    assert (
+        main(["strength", "--device", "none", "random", "greedy", *decks_args, "--out", str(tmp_path)]) == 2
+    )  # a directory
     assert capsys.readouterr().err.startswith("ygorl strength: error:")
 
 
