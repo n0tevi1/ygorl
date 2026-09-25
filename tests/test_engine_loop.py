@@ -1,5 +1,6 @@
 """A core that keeps processing without asking for a decision stops as an engine loop instead of hanging, on every
-host (C++ HostDuel / HostPool, the C++ DuelPool, the Python tracker); a rollout that stops receiving events raises."""
+host (C++ HostDuel / HostPool, the C++ DuelPool, the Python tracker); so does a single core call whose scripts run
+past their instruction budget; a rollout that stops receiving events raises."""
 
 from pathlib import Path
 
@@ -30,6 +31,14 @@ def one_step():
     _core.set_max_engine_steps(old)
 
 
+@pytest.fixture
+def tiny_script_budget():
+    """Loading a deck runs thousands of script instructions: a budget of 1000 always runs out in the first call."""
+    old = _core.set_max_script_steps(1)
+    yield
+    _core.set_max_script_steps(old)
+
+
 def specs():
     a, b = load_ydk(DECKS / "snake_eye.ydk"), load_ydk(DECKS / "kashtira.ydk")
     return [GameSpec(seed=s, deck_a=a, deck_b=b, first=s % 2, config=DuelConfig(max_decisions=200)) for s in (1, 2)]
@@ -52,10 +61,29 @@ def test_python_tracker_stops_an_engine_loop(db, monkeypatch):
     assert r.reason == "error" and "engine loop" in r.error and r.winner is None
 
 
-def test_the_default_limit_leaves_real_games_alone(db):
+def test_the_default_limits_leave_real_games_alone(db):
     assert _core.set_max_engine_steps(100_000) == 100_000 and duel_module.MAX_ENGINE_STEPS == 100_000
+    assert _core.set_max_script_steps(100_000) == 100_000
     for res in EncodedVecEnv(2, 1, cards=db).play(specs(), chooser):
         assert res["reason"] != "error"
+    assert 0 < _core.script_steps_peak() <= 100_000
+
+
+def test_cpp_host_stops_a_script_past_its_budget(db, tiny_script_budget):
+    for res in EncodedVecEnv(2, 1, cards=db).play(specs(), chooser):
+        assert res["reason"] == "error" and "script budget" in res["error"] and res["winner"] is None
+
+
+def test_cpp_duel_pool_stops_a_script_past_its_budget(db, tiny_script_budget):
+    results = run_games(specs(), lambda i, s: (RandomAgent(0), RandomAgent(1)), num_envs=2, num_threads=1, cards=db)
+    assert all(r.reason == "error" and "script budget" in r.error for r in results)
+
+
+def test_python_host_stops_a_script_past_its_budget(db, tiny_script_budget):
+    s = specs()[0]
+    r = Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first).run(RandomAgent(0), RandomAgent(1))
+    assert r.reason == "error" and "script budget" in r.error and r.winner is None
+    assert issubclass(_core.ScriptBudgetExceeded, RuntimeError)
 
 
 class SilentEnv:

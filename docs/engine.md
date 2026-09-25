@@ -138,7 +138,15 @@ print(result.summary())
 - **引擎步数上限**：两次决策之间最多 `MAX_ENGINE_STEPS`（100,000）次 `process()`；超过时对局以 `error`（「engine loop」）结束。
   没有它，一个一直处理、却不再向玩家要决策的核心会让所在的工作线程永远不返回（决策数上限管不到），训练就此挂住（2026-09-24 在语料训练中遇到一次）。
   C++ 的 `HostDuel` / `HostPool` 与 `DuelPool` 和 Python 的 `DuelTracker` 各自检查；`_core.set_max_engine_steps(n)` 只供测试调整。
-  已知限制：若死循环发生在**单次** `process()` 调用内部（例如脚本里的无限循环），这一层抓不到，由训练的收集器看门狗兜底（[training.md](training.md)）。
+- **脚本指令预算**：步数上限管不到**单次** `process()` 调用内部（核心的 `OCG_DuelProcess` 自己会循环到产出消息为止）。
+  2026-09-25 的评估卡死就在这里：融合素材检查（`proc_fusion.lua` 的 `Fusion.CheckSelectMixRep`，「X + 2 只以上」类素材）
+  在候选素材多、又凑不出合法组合时，会无记忆地穷举有序子集，一次调用跑几个小时。补丁
+  `patches/ygopro-core/0004-lua-instruction-budget.patch` 给 Lua 装计数钩子（每 1,000 条指令问一次主机）；一次 `process()`
+  超过 `_core.set_max_script_steps` 的预算（默认 100,000 千条，约 1 亿条指令，约一秒）后，钩子让之后的脚本都报错，调用很快退出，
+  `Duel.process` 抛 `_core.ScriptBudgetExceeded`，三种主机都把对局记为 `error`（「script budget」）。计数只看指令数，与时钟无关，
+  所以同一局重放结果不变。装载脚本等其它核心调用不计预算。实测（2,000 局随机对打，语料卡组）：单次调用超过 30 万条指令的局占 8%，
+  超过 300 万条的占 0.55%，超过 3,000 万条的占 0.1%，超过 1 亿条的占 0.05%（即被截断的比例）；`_core.script_steps_peak()`
+  报告本进程见过的最大值。剩下的兜底仍是训练收集器的看门狗（[training.md](training.md)）。
 - 课程模式（`DuelConfig.curriculum / learner`）让主机在学习方回合替对手作答「放弃」类决策，并过滤对手的非手牌发动；增广开局标志 `augmented_start` 随 `DecisionPoint` 下发。见 [curriculum.md](curriculum.md)。
 - **洗牌在主机侧**：核心开局不洗卡组（EDOPro 由主机洗好再加卡）。`shuffle_deck(cards, seed, player)` 是 splitmix64 + 无偏 Fisher–Yates，有黄金向量测试锁定，供 M2 的 C++ 实现逐位复现。
 

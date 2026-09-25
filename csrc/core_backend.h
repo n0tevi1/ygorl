@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <exception>
 #include <memory>
+#include <stdexcept>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -33,6 +34,30 @@ namespace ygorl {
 // limit never fires). Real chains take a few thousand steps at most. Mirror of engine.duel.MAX_ENGINE_STEPS;
 // settable for tests (_core.set_max_engine_steps).
 inline std::atomic<uint32_t> g_max_engine_steps{100000};
+
+// Script instructions (in thousands) one process call may run before its scripts start failing and the duel is stopped
+// as an error (patches/ygopro-core/0004): a search that would take hours, e.g. a Fusion material check over many
+// candidates when no combination works, otherwise hangs its worker inside a single OCG_DuelProcess call, where
+// the engine step limit cannot see it. Shared by every host (the Python one too); settable (_core.set_max_script_steps).
+inline std::atomic<uint32_t> g_max_script_steps{100000};
+// Largest number of script instruction thousands one engine call (Duel::process) has used in this process (_core.script_steps_peak).
+inline std::atomic<uint32_t> g_script_steps_peak{0};
+
+// Thrown by Duel::process when the call ran out of its script budget; hosts stop the duel with reason "error".
+class ScriptBudgetExceeded : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+// The budget of this thread's current Duel::process call (other core calls, e.g. loading scripts, are not limited).
+class ScriptBudget {
+public:
+    ScriptBudget();
+    ~ScriptBudget();
+    ScriptBudget(const ScriptBudget&) = delete;
+    ScriptBudget& operator=(const ScriptBudget&) = delete;
+    bool exceeded() const;  // also records g_script_steps_peak
+};
 
 class CardSource {
 public:

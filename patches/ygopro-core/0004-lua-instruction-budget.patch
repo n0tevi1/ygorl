@@ -1,0 +1,26 @@
+ygorl: give every engine call (Duel::process) a budget of Lua instructions (csrc/core_backend.cpp).
+
+A count hook asks the host every 1000 instructions; once the budget is spent it raises a script
+error, so a search that would run for hours unwinds and the host stops the duel as an error.
+
+--- a/interpreter.cpp
++++ b/interpreter.cpp
+@@ -57,8 +57,18 @@
+ 	return flag == 0xFFFFFFFF;
+ }
+ 
++// ygorl: the host gives each engine call a budget of script instructions (csrc/core_backend.cpp): a script
++// search that would take hours (e.g. a Fusion material check over many candidates) is stopped by raising a
++// script error every 1000 instructions once the budget is spent. Coroutines inherit the hook.
++bool ygorl_lua_budget_tick();
++static void ygorl_lua_count_hook(lua_State* L, lua_Debug* /*ar*/) {
++	if(!ygorl_lua_budget_tick())
++		luaL_error(L, "ygorl: script instruction budget exceeded");
++}
++
+ interpreter::interpreter(duel* pd, const OCG_DuelOptions& options, bool& valid_lua_lib): coroutines(256), deleted(pd) {
+ 	lua_state = luaL_newstate();
++	lua_sethook(lua_state, ygorl_lua_count_hook, LUA_MASKCOUNT, 1000);
+ 	if(!check_lua_stack_unwinding(lua_state)) {
+ 		valid_lua_lib = false;
+ 		pd->handle_message("The lua library linked with this ocgcore does not support c++'s stack unwinding", OCG_LOG_TYPE_ERROR);

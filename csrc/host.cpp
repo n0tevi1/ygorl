@@ -1069,7 +1069,13 @@ void HostDuel::advance() {
             tracker_->stop("error", "engine loop: no decision after " + std::to_string(limit) + " engine steps");
             return;
         }
-        int status = core_->process();
+        int status;
+        try {
+            status = core_->process();
+        } catch (const ScriptBudgetExceeded& e) {
+            tracker_->stop("error", e.what());
+            return;
+        }
         std::string buf = core_->get_message();
         core_->pop_logs();
         tracker_->on_buffer(buf, status);

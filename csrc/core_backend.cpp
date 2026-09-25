@@ -12,6 +12,35 @@ namespace fs = std::filesystem;
 
 namespace ygorl {
 
+// Thousands of script instructions this thread's current Duel::process call has run; counted only inside one.
+thread_local uint32_t t_script_steps = 0;
+thread_local bool t_script_budget = false;
+
+ScriptBudget::ScriptBudget() {
+    t_script_steps = 0;
+    t_script_budget = true;
+}
+
+ScriptBudget::~ScriptBudget() { t_script_budget = false; }
+
+bool ScriptBudget::exceeded() const {
+    const uint32_t used = t_script_steps;
+    for (uint32_t peak = g_script_steps_peak.load(std::memory_order_relaxed);
+         used > peak && !g_script_steps_peak.compare_exchange_weak(peak, used, std::memory_order_relaxed);) {
+    }
+    return used > g_max_script_steps.load(std::memory_order_relaxed);
+}
+
+}  // namespace ygorl
+
+// Called by the core's Lua count hook every 1000 instructions (patches/ygopro-core/0004); false = out of budget.
+bool ygorl_lua_budget_tick() {
+    return !ygorl::t_script_budget ||
+           ++ygorl::t_script_steps <= ygorl::g_max_script_steps.load(std::memory_order_relaxed);
+}
+
+namespace ygorl {
+
 // ---------------------------------------------------------------- CardDatabase
 
 void CardDatabase::add(uint32_t code, uint32_t alias, const std::vector<uint16_t>& setcodes,
@@ -291,11 +320,17 @@ int Duel::process() {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     ensure_open();
     int status;
+    bool over_budget;
     {
         CoreCall in_core(*this);
+        ScriptBudget budget;
         status = OCG_DuelProcess(handle_);
+        over_budget = budget.exceeded();
     }
     rethrow_pending();
+    if (over_budget)
+        throw ScriptBudgetExceeded("script budget: one engine call ran more than " +
+                                   std::to_string(g_max_script_steps.load()) + " thousand script instructions");
     return status;
 }
 
