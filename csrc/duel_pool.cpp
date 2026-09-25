@@ -100,7 +100,10 @@ void DuelPool::close_env(int env) {
 }
 
 void DuelPool::advance(Duel& duel, PoolResult& out) {
-    while (true) {
+    const uint32_t limit = g_max_engine_steps.load();
+    for (uint32_t steps = 1;; ++steps) {
+        if (steps > limit)
+            throw std::runtime_error("engine loop: no decision after " + std::to_string(limit) + " engine steps");
         int status = duel.process();
         std::string buf = duel.get_message();
         for (auto& entry : duel.pop_logs()) out.logs.push_back(std::move(entry));

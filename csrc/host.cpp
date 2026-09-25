@@ -1054,7 +1054,12 @@ void HostDuel::start(const std::array<uint64_t, 4>& seed, uint64_t flags, const 
 }
 
 void HostDuel::advance() {
-    while (true) {
+    const uint32_t limit = g_max_engine_steps.load();
+    for (uint32_t steps = 1;; ++steps) {
+        if (steps > limit) {
+            tracker_->stop("error", "engine loop: no decision after " + std::to_string(limit) + " engine steps");
+            return;
+        }
         int status = core_->process();
         std::string buf = core_->get_message();
         core_->pop_logs();

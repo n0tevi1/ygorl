@@ -36,6 +36,12 @@ from torch import Tensor, nn
 TRUNCATION_REASONS = frozenset({"turn_limit", "decision_limit", "error"})
 
 
+class RolloutStalled(RuntimeError):
+    """No environment produced an event for ``stall_timeout``: an engine is stuck inside a duel. Its worker thread
+    never returns, so destroying the environment pool (joining its threads) would hang too: the caller should save
+    what it needs and end the process with ``os._exit`` (tools/train_ppo.py does)."""
+
+
 @dataclass(frozen=True)
 class Assignment:
     """One game to play in an environment slot: the env spec and who plays the other seat."""
@@ -140,7 +146,7 @@ class RolloutCollector:
 
     def __init__(self, env, model: nn.Module, next_game: Callable[[], Assignment], num_steps: int, *,
                  opponents: Callable[[int], nn.Module] | None = None, seed: int = 0, min_batch: int | None = None,
-                 device: torch.device | str = "cpu") -> None:  # fmt: skip
+                 device: torch.device | str = "cpu", stall_timeout: float | None = 900.0) -> None:  # fmt: skip
         if num_steps < 1:
             raise ValueError("num_steps must be at least 1")
         self.env = env
@@ -150,6 +156,10 @@ class RolloutCollector:
         self.opponents = opponents
         self.min_batch = max(1, min_batch if min_batch is not None else env.num_envs // 2)
         self.device = torch.device(device)
+        # no event from any environment for this long while some are still owed rows: an engine stuck inside one
+        # duel (its worker thread never returns) -- raise instead of waiting forever; None = wait forever
+        self.stall_timeout = stall_timeout
+        self._last_event: dict[int, float] = {}
         self.generator = torch.Generator().manual_seed(seed)
         self._slots: list[_Slot | None] = [None] * env.num_envs
         self._held: dict[int, Any] = {}  # env -> pending learner decision (the bootstrap state)
@@ -200,8 +210,37 @@ class RolloutCollector:
                 opponent_decisions += len(evs)
             if len(self._held) == B:
                 break
-            ready = self.env.recv(min(self.min_batch, B - len(self._held)))
+            ready = self._recv(min(self.min_batch, B - len(self._held)))
         return self._assemble(cols, games, opponent_decisions, time.perf_counter() - t0)
+
+    def _recv(self, n: int) -> list:
+        if self.stall_timeout is None:
+            return self.env.recv(n)
+        start = time.monotonic()
+        while True:
+            got = self.env.recv(n, timeout=min(60.0, self.stall_timeout))
+            now = time.monotonic()
+            for ev in got:
+                self._last_event[ev.env_id] = now
+            if got:
+                return got
+            if now - start >= self.stall_timeout:
+                raise RolloutStalled(self._stall_report(now))
+
+    def _stall_report(self, now: float) -> str:
+        """Which environments owe events and how long they have been silent (the stuck duel is among them)."""
+        waiting = [e for e in range(self.env.num_envs) if e not in self._held]
+        waiting.sort(key=lambda e: self._last_event.get(e, 0.0))
+        lines = []
+        for e in waiting[:8]:
+            slot = self._slots[e]
+            a = slot.assignment if slot is not None else None
+            spec = getattr(a, "spec", None)
+            lines.append(f"env {e}: silent {now - self._last_event.get(e, now):.0f}s, game rows {slot.rows if slot else 0}, "
+                         f"seed {getattr(spec, 'seed', None)}, first {getattr(spec, 'first', None)}, "
+                         f"{dict(a.info) if a is not None else {}}")  # fmt: skip
+        return (f"no environment event for {self.stall_timeout:.0f}s while {len(waiting)} environment(s) still owe "
+                "rows (an engine stuck inside a duel?); longest silent:\n  " + "\n  ".join(lines))
 
     # -- game bookkeeping ---------------------------------------------------------------------------
     def _new_game(self, env_id: int) -> None:
@@ -212,6 +251,7 @@ class RolloutCollector:
                 raise RuntimeError("a pool game needs opponents(snapshot_id)")
             opponent = self.opponents(assignment.opponent)
         self._slots[env_id] = _Slot(assignment, opponent)
+        self._last_event[env_id] = time.monotonic()
         self.games_started += 1
         self.env.reset(env_id, assignment.spec)
 
@@ -286,4 +326,4 @@ class RolloutCollector:
         )  # fmt: skip
 
 
-__all__ = ["Assignment", "FinishedGame", "Rollout", "RolloutCollector", "TRUNCATION_REASONS"]
+__all__ = ["Assignment", "FinishedGame", "Rollout", "RolloutCollector", "RolloutStalled", "TRUNCATION_REASONS"]
