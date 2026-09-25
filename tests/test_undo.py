@@ -13,7 +13,7 @@ from ygorl.agents import RandomAgent
 from ygorl.cards.cdb import CardDB, CardVocab
 from ygorl.cards.ydk import Deck, load_ydk
 from ygorl.engine import constants as C
-from ygorl.engine.duel import MAX_MENU_ACTIVATIONS, Duel, DuelConfig, default_scripts, expand_seed
+from ygorl.engine.duel import MAX_MENU_ACTIVATIONS, MAX_SELECTION_STEPS, Duel, DuelConfig, default_scripts, expand_seed
 from ygorl.env.encoding import ObservationEncoder
 
 CELTIC = 91152256  # Celtic Guardian: a plain Level 4 monster
@@ -97,6 +97,11 @@ def test_a_masked_undo_really_returns_to_the_same_decision(db, seed, a, b):
     for k, (point, i) in enumerate(history):
         if i not in point.undo or point.actions[i].kind in ("shuffle", "activate"):
             continue  # rules 3-4 (shuffle, repeated activation) are no-ops, not undos: no round trip to check
+        if point.actions[i].kind == "unselect":
+            prev_point, prev_i = next(((p, j) for p, j in reversed(history[:k]) if p.player == point.player), (None, None))
+            prev = prev_point.actions[prev_i] if prev_point is not None else None
+            if prev is None or prev.kind != "select" or prev.card != point.actions[i].card:
+                continue  # rule 5 (a long selection moves forward only), not the reversal of the previous step
         taken += 1
         nxt = next((p for p, _ in history[k + 1:] if p.player == point.player), None)
         if nxt is None:
@@ -141,3 +146,33 @@ def test_shuffle_and_the_repeated_activation_limit_are_masked_in_the_menus(db):
     assert first in masked and other not in masked
     tracker.turn = 6
     assert first not in tracker._undo(point.decision, point.actions)
+
+
+def test_a_long_selection_can_only_move_forward(db):
+    """Rule 5: after MAX_SELECTION_STEPS steps in one SELECT_UNSELECT_CARD selection, unselecting is masked (a policy
+    that never picks the card a finish needs would otherwise toggle the rest forever)."""
+    seen = []
+    rng = RandomAgent(5)
+
+    class Probe:
+        def act(self, point):
+            if point.decision.TYPE == C.MSG_SELECT_UNSELECT_CARD and any(a.kind == "unselect" for a in point.actions):
+                seen.append(point)
+            return rng.act(point)
+
+    for seed, a, b in ((3, "snake_eye", "kashtira"), (5, "labrynth", "tenpai"), (7, "branded_despia", "purrely")):
+        duel = Duel(seed, None, DECKS[a], DECKS[b], cards=db, config=DuelConfig(max_decisions=3000))
+        duel.run(Probe(), Probe())
+        if seen:
+            break
+    assert seen, "random play should reach a selection with an unselect row"
+    point = seen[0]
+    unselect = [i for i, a in enumerate(point.actions) if a.kind == "unselect"]
+    tracker = duel.tracker()
+    tracker._selection_player = point.decision.player
+    tracker._selection_steps = MAX_SELECTION_STEPS - 1
+    assert not set(unselect) & set(tracker._undo(point.decision, point.actions))
+    tracker._note_undo(point.decision, point.actions[0])
+    masked = set(tracker._undo(point.decision, point.actions))
+    if len(unselect) < len(point.actions):
+        assert set(unselect) <= masked  # every unselect row, nothing else from rule 5
