@@ -86,6 +86,7 @@ M2 遗留事项（验收之外发现、需要在后续任务前解决）：
 | T4b.6 | 训练信号与探索：按 KL 提前停、熵、固定对手 / 入池门槛 / PFSP、批大小与轮数、快赢压力与塑形（与设计 C3 冲突）、UPGO（与 I2 冲突）、中局开局、第 1 回合 GRPO、求解器数据上的 DPO；诊断指标 `adv/<kind>` | T4b.5, T4a.2 | 每项相对同一 b2s 起点、同一批 200 局的配对差入 `docs/benchmarks.md`；采用的项先改设计 | [#61](https://github.com/n0tevi1/ygorl/issues/61) |
 | T4b.7 | 扩规模：GPU 学习器与批量推理、更多 CPU 核、actor / learner 解耦、多机 actor、ID 嵌入提速（见 [scaling.md](scaling.md)） | T4b.4 | 每个选项的实测吞吐与固定时间内对 Greedy 的胜率 | [#60](https://github.com/n0tevi1/ygorl/issues/60) |
 | T4e.1 | 致死搜索：对局时兜底原型 → 搜索作老师蒸馏进策略（C++ 路径快照 / 分支）→ 用信念头采样的 PIMC | T2.8, T2.9, T4b.5, T4c.1 | 兜底原型在同一批 200 局上的配对差；漏掉的斩杀数 | [#62](https://github.com/n0tevi1/ygorl/issues/62) |
+| T4b.8 | 对局强度：策略对局矩阵（agent 对 agent，Nash / alpha-rank，可增量加入检查点）+ 扩规模训练（#72–#77 提速、更大网络、≥ 2 万次更新）+ 可恢复多机执行 | T3.3, T4b.7 | 矩阵可复现且增量扩展与一次构建逐格相同；强度曲线与吞吐入 `docs/benchmarks.md` | [#83](https://github.com/n0tevi1/ygorl/issues/83) |
 | T4c.1 | 信念头：牌组类型、剩余构成（0–3 份数多头）、手牌（≥1 + 角色位）、盖卡、被响应概率；损失掩码（已公开置 1、已现份数扣除）；meta 先验初始化 + HDT 式过滤特征 | T4b.2, T2.5 | 各头准确率/AUC 高于 HDT 过滤基线；ECE 报告 | [#34](https://github.com/n0tevi1/ygorl/issues/34) |
 | T4c.2 | 三通道消费（detach 输入 / 辅助损失 / 特权 critic）消融；「放弃响应」场景后验 vs 朴素规则 | T4c.1, T4b.5 | 消融胜率差与校准报告入 `docs/experiments/` | [#35](https://github.com/n0tevi1/ygorl/issues/35) |
 | T4d.1 | 多牌组池：10 套 MD meta + off-meta 噪声采样；课程三阶段调度；中局开局（带标志位） | T4b.5, T2.6, T2.8, T2.9 | 每套牌胜率不塌陷（对 Greedy ≥ 基线） | [#36](https://github.com/n0tevi1/ygorl/issues/36) |
@@ -140,6 +141,11 @@ M4 待议的消融（不改变主线设计，结果先入 `docs/experiments/`）
 5. **第四阶段（M5 后半 + M6）**。
 
 不在首期范围：人类/EDOPro 客户端联机、决策时 PIMC 搜索、多机 actor/learner、Rush/Speed 格式实测。
+
+**2026-09-25 优先级调整（设计方确认）**：M4 的 P0 是**对局强度**（agent 打得聪明），见 [#83](https://github.com/n0tevi1/ygorl/issues/83)：
+策略对局矩阵作强度尺子 → 更新阶段提速（#72–#77）→ 更大网络与长训练 → 可恢复的多机执行。新卡泛化不是 P0：约 1.5 万张卡的卡池可以全部学到，
+新卡以后增量学习；卡片视角（文本 / 事实 / ID 丢弃）在当前规模下没有测出强度收益（[benchmarks.md](benchmarks.md)「卡片视角消融」），
+进行中的实验跑完后不再扩展。
 
 ## 4. 验证方式
 
