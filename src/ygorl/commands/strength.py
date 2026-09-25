@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -80,8 +81,13 @@ def parse_agents(args: list[str]) -> dict[str, str]:
     return out
 
 
+DEVICE_RE = re.compile(r"^(auto|none|cpu|cuda(:[0-9]+)?)$")
+
+
 def resolve_device(spec: str) -> str | None:
     """--device: None for the arena, else a torch device string."""
+    if not DEVICE_RE.match(spec):
+        raise CommandError(f"--device {spec!r}: auto, none, cpu, cuda or cuda:N")
     if spec == "none":
         return None
     if spec != "auto":
@@ -143,6 +149,9 @@ def run(args: argparse.Namespace) -> int:
                     raise CommandError(f"{flag} {given} differs from the matrix at {target} ({have}): "
                                        "extend it with its own settings or write a new matrix")  # fmt: skip
             config = replace(duel_config(env, old.max_turns), max_decisions=old.max_decisions)
+            if old.batched and device is None:
+                print("note: the matrix was built on the batched path, so it is extended on it (on the CPU)",
+                      file=sys.stderr)  # fmt: skip
             matrix = extend_agent_matrix(
                 old,
                 factories,
@@ -160,8 +169,8 @@ def run(args: argparse.Namespace) -> int:
                                         config=duel_config(env, args.max_turns), workers=args.workers,
                                         confidence=0.95 if args.confidence is None else args.confidence, alpha=alpha, population_size=population,
                                         device=device)  # fmt: skip
-    except (ValueError, OSError) as exc:  # EnvironmentConfigError is a ValueError
-        raise CommandError(str(exc)) from None
+    except (ValueError, OSError, RuntimeError, ImportError) as exc:  # EnvironmentConfigError is a ValueError
+        raise CommandError(str(exc)) from None  # e.g. no CUDA device, or no PyTorch for --device cpu
     elapsed = time.time() - t0
 
     n, k = len(matrix.agents), len(matrix.pairings)
@@ -174,7 +183,8 @@ def run(args: argparse.Namespace) -> int:
         f"{len(decks)} decks, {k} pairings, seed {matrix.seed} "
         f"(environment: {env.version if env is not None else 'none'})",
         "win rate of the row agent against the column agent (draws count half, errors left out); "
-        f"alpha-rank alpha {matrix.alpha:g}, population {matrix.population_size}",
+        f"alpha-rank alpha {matrix.alpha:g}, population {matrix.population_size}; policy-vs-policy cells: "
+        + ("batched C++ path" if matrix.batched else "arena"),
         "",
         "ranking: " + " > ".join(matrix.ranking()),
         "",

@@ -301,6 +301,8 @@ def _play_batched(cells, rows, slots, config: DuelConfig, device: str, envs: int
     """The cells whose two agents are plain policy checkpoints with the same card vocab and event length, played on
     the batched C++ path (``play_policies``): the arena's games (slots, seeds, first players), decisions sampled from
     each agent's slot seed, statistics counted the same way. Other cells are left to the arena."""
+    if not any(policy_setting(rows[i][1]) and policy_setting(rows[j][1]) for i, j in cells):
+        return {}
     import torch
 
     from ygorl.env import GameSpec as EnvSpec
