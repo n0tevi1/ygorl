@@ -70,7 +70,9 @@ AMD GPU（ROCm，例如 Ryzen AI Max+ 395 的 Radeon 8060S 核显）：`uv sync 
 之后用 `uv run --no-sync` 运行，否则 `uv run` 会按锁文件换回 PyPI 版；训练加 `--device cuda`（ROCm 也叫 `cuda`，见 [docs/training.md](docs/training.md)）。
 卡文本 / 效果文本嵌入的离线生成（`tools/build_text_embeddings.py`，T5.2）另需 sentence-transformers，在可选依赖组 `text` 里：`uv sync --extra train --extra text`
 （ROCm 机器上先按上面装好 ROCm 版 torch，再 `uv pip install "sentence-transformers>=3"`，以免换回 PyPI 的 torch）；首次运行从 Hugging Face 下载所选模型。训练与推理只读生成好的 `.npy`，不需要它。
-开发工具在 `dev` 依赖组（`uv sync` 默认安装）：pytest（单测）、ruff（lint，`uv run ruff check src tests tools`）。
+开发工具在 `dev` 依赖组（`uv sync` 默认安装）：pytest（单测）、ruff（格式化与 lint）。
+提交前跑 `tools/presubmit.sh`：原地格式化（`ruff format`）并 lint（`ruff check`），加 `--test` 再跑单测。CI 跑的是只检查、不改动的 `tools/presubmit.sh --check`。
+可以装成 git pre-commit 钩子（只检查，不改动暂存的内容，装法见脚本开头注释）。
 个别工具另有系统依赖：`tools/tsan/check.sh` 需要 ninja、GCC 的 libtsan 与 `setarch`（util-linux）；`tools/check_ygoprodeck.py` 需要能访问
 YGOPRODECK API 的网络；`tools/crosscheck_banlist.py` 需要能访问 YGOPRODECK 与 Yugipedia 的网络（`--from` 离线重跑）。CI 与云端会话 hook 另装 ccache 以加速重编。
 新增依赖用 `uv add <包名>`（可选组用 `uv add --optional <组> <包名>`）。
@@ -202,7 +204,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── README.md
 ├── CLAUDE.md                # 给 AI 协作工具的项目约定
 ├── .claude/                 # Claude Code 配置：settings.json + hooks/session-start.sh（每个云端会话的初始化）+ cloud-setup.sh（云环境 setup script）
-├── .github/workflows/       # CI：ruff lint；构建扩展 + pytest（另一 job 装 `train` 可选依赖跑依赖 torch 的测试）
+├── .github/workflows/       # CI：ruff 格式与 lint（tools/presubmit.sh --check）；构建扩展 + pytest（另一 job 装 `train` 可选依赖跑依赖 torch 的测试）
 ├── pyproject.toml           # uv 项目 + scikit-build-core 构建配置
 ├── uv.lock
 ├── .python-version         # uv 使用的 Python 版本（3.11）
@@ -227,7 +229,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
 │   ├── solver/              # combo 求解器封装（combo_solver.py）、目标场面（targets.py）、线的重放验证与示范集格式（demo.py）、起手批量求解（batch.py）
 │   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）、rollout.py（EncodedVecEnv 上的 rollout 收集）、ppo.py（PPO 更新与可插拔策略目标）、selfplay.py（快照池 + keep-best、牌组池、配对发局）、trainer.py（训练循环、评估、续训、日志）、checkpoint.py、toy.py（玩具博弈 Nim）、bc.py（求解器示范的行为克隆预热与评估）、heuristic_demos.py（启发式 agent 第 2 回合起的决策 → BC 样本）
-├── tools/                   # 开发脚本：PPO 自博弈训练（train_ppo.py）、combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、代理模型实验（surrogate_experiment：标注 + 留出集误差）、漏斗第一层评估与验收实验（funnel_eval.py、validate_funnel.py）、预算研究（funnel_budget.py）、压力测试、确定性扫描、YGOPRODECK 核对、MD 禁限表交叉核对（crosscheck_banlist.py）、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、行为克隆训练与评估（train_bc.py）、Greedy 示范录制（greedy_demos.py）、BC 对 Random 失败的根因诊断（diagnose_bc.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
+├── tools/                   # 开发脚本：提交前检查（presubmit.sh：ruff 格式化 + lint）、PPO 自博弈训练（train_ppo.py）、combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、代理模型实验（surrogate_experiment：标注 + 留出集误差）、漏斗第一层评估与验收实验（funnel_eval.py、validate_funnel.py）、预算研究（funnel_budget.py）、压力测试、确定性扫描、YGOPRODECK 核对、MD 禁限表交叉核对（crosscheck_banlist.py）、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、行为克隆训练与评估（train_bc.py）、Greedy 示范录制（greedy_demos.py）、BC 对 Random 失败的根因诊断（diagnose_bc.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验；tsan/ 为 ThreadSanitizer 检查
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组及其求解目标（solver_targets.json），data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
