@@ -11,13 +11,14 @@
 | `ygorl branch` | 从回放的某一步分叉，比较候选动作 | `fork`（[branching.md](branching.md)） |
 | `ygorl arena` | 配对种子对局，agent a 对 agent b 的胜率与 Wilson 区间 | `Arena`、`merge`（[evaluation.md](evaluation.md)） |
 | `ygorl matrix` | 牌组两两对局的胜率矩阵 + Nash 混合 + alpha-rank | `build_matrix`、`analyze`、`MetaGame.save` |
+| `ygorl strength` | agent 两两对局的策略对局矩阵，按 alpha-rank / Nash 排出强度 | `build_agent_matrix`、`AgentMatrix.save`（[evaluation.md](evaluation.md)） |
 | `ygorl env` | `build`：抓取数据并生成 MD 环境；`check`：校验环境并打印摘要 | `ygorl.data.build.build`、`load_environment`（[data.md](data.md)） |
 
 ## 通用约定
 
 - **牌组**：`.ydk` 文件，或目录（取其中全部 `*.ydk`，按文件名排序）。牌组名是文件名去掉扩展名，卡片以 8 位 `password` 标识
   （`.ydk` 里的 `password` 必须是 1 到 99999999 的整数，文件必须是 UTF-8，否则报错并指出文件与行号）。
-- **牌组合法性检查**（`duel` / `arena` / `matrix`）：开局前检查每套牌，任何一套不合法就一局不打，退出码 2，
+- **牌组合法性检查**（`duel` / `arena` / `matrix` / `strength`）：开局前检查每套牌，任何一套不合法就一局不打，退出码 2，
   打印 `ygorl <命令>: error: <文件>: deck '<名字>' is illegal ...` 并逐条列出违反的规则（`ygorl.cards.legality.validate_deck`）。
   - 给 `--env` 时按该环境检查：卡池（`pool.json`）、禁限卡表、`deck` 规则（主卡组张数上下限、额外 / 副卡组上限、同名卡上限），
     外加下面的结构规则。
@@ -33,7 +34,7 @@
   `replay` / `branch` 不给 `--env` 时按回放记录的版本去环境根目录找，找不到报错并提示 `--env PATH`。
   命令行加载环境时一并用卡片数据库检查它的全部 meta 卡组（`load_environment(..., cards=...)`），不合法的 meta 卡组让任何命令以退出码 2
   拒绝该环境，错误里带 meta 卡组文件路径与违反的规则；环境清单的其它校验（LP、起手、类型等）见 [environments.md](environments.md)。
-- **`--max-turns N`**（`duel` / `arena` / `matrix`）：回合上限，到达时 LP 高者胜、相等为平局（`reason=turn_limit`），默认 200。
+- **`--max-turns N`**（`duel` / `arena` / `matrix` / `strength`）：回合上限，到达时 LP 高者胜、相等为平局（`reason=turn_limit`），默认 200。
   决策数上限（`DuelConfig.max_decisions`，`reason=decision_limit`）只用来截断死循环，**记为平局**、不按 LP 判胜（2026-09-24 起；此前按 LP，循环中领先的一方会被判胜）。
   `ygorl replay --verify` 对记录为 `decision_limit` 的回放不比较胜者与终局原因（应答日志只有完整应答，重放以 `log_exhausted` 结束；旧回放按 LP 记的胜者也照样通过），应答、回合、LP 照常比较。
 - **输出文件**的父目录自动创建。
@@ -160,6 +161,23 @@ written to out/matrix.json
 ```
 
 每格 10 局时区间很宽，上例只演示格式；比较牌组强弱需要足够的局数（看 JSON 里每格的 `ci_low` / `ci_high`）。
+
+## `ygorl strength`
+
+```bash
+uv run ygorl strength greedy random best=policy:out/run/best.pt --decks out/corpus/train --pairings 50 --workers 8 \
+    --env md-2026-09 --name baseline
+```
+
+- **agent**：至少两个，每个写 `[名字=]规格`。规格见 `ygorl arena` 的 agent 列表（`policy:PATH[@greedy][@t=T]`、`greedy`、`random`、`lethal:<agent>` 等）。
+  不写名字时名字就是规格；名字只能含字母、数字、`.`、`_`、`-`，必须互不相同（同一规格出现两次就给其中一个起名字）。
+  `名字=` 前缀里不能有 `:`，所以 `policy:P@t=1` 这样的规格不会被误拆。
+- **牌组池**：`--decks` 给文件或目录；不给时用 `--env` 的 meta 牌组。按固定种子从池里抽 `--pairings` 个有序牌组配对（默认 50）。
+  每对 agent 在每个配对上打 4 局：两种牌组分配 × 先后攻各一次。
+- **输出**：排名（`ranking: a > b > ...`，按 alpha-rank、Nash、平均胜率排序；完全打平时次序无意义），以及行 agent 对列 agent 的胜率矩阵，末两列是 Nash 权重与 alpha-rank。
+  出错的局（抛异常、引擎步数上限、脚本预算）不计入胜率，单独报告。
+- **保存**：`--out PATH` 写 JSON；带 `--env` 时写到 `environments/<版本>/artifacts/agent-matrix/<名字>.json`（`--name`，默认 `agents`）。
+- **退出码**：有出错的局时为 1（结果照常输出）。
 
 ## `ygorl env`
 

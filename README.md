@@ -35,7 +35,7 @@
 - [回放](docs/replays.md)：回放文件格式、环境绑定、`.yrpX` 导出与 `.yrp` / `.yrpX` 读取。
 - [调研：ygo-combo-solver](docs/spikes/combo-solver.md)：与本仓库核心的兼容性、封装方案、arena 快照移植评估（T1.7）。
 - [基线与评估](docs/evaluation.md)：Agent 协议、Random / Greedy / PolicyAgent、配对种子 Arena、对局矩阵与 Nash / alpha-rank。
-- [命令行](docs/cli.md)：`ygorl duel`、`ygorl replay`、`ygorl branch`、`ygorl arena`、`ygorl matrix`、`ygorl env` 的参数、输出与退出码。
+- [命令行](docs/cli.md)：`ygorl duel`、`ygorl replay`、`ygorl branch`、`ygorl arena`、`ygorl matrix`、`ygorl strength`、`ygorl env` 的参数、输出与退出码。
 - [分支探索](docs/branching.md)：`fork(replay, t)` 从任意决策点分叉、候选 rollout 比较、`ygorl branch` 命令行、限制。
 - [课程与开局配平](docs/curriculum.md)：单人展开 / 仅手坑 / 完整三种课程模式、先后攻配平、增广开局标志位。
 - [信念校准评估](docs/belief-eval.md)：信念头的 ECE / AUC / top-k 等指标定义、掩码约定、随机与先验预测器基线数字。
@@ -100,6 +100,8 @@ uv run ygorl branch out/game.json.gz --at 12 --try 0,1,2 --rollouts 20
 uv run ygorl arena tests/decks/snake_eye.ydk --vs tests/decks/kashtira.ydk --games 20 --workers 2
 # 对局矩阵：3 套牌两两各 10 局（greedy 驾驶双方），输出胜率矩阵、Nash 混合与 alpha-rank
 uv run ygorl matrix tests/decks/snake_eye.ydk tests/decks/kashtira.ydk tests/decks/yubel.ydk --games 10 --workers 2 --out out/matrix.json
+# 策略对局矩阵：random 与 greedy 在 3 套牌的 4 个牌组配对上对局（每个配对 4 局），输出强度排名、胜率矩阵、Nash 与 alpha-rank
+uv run ygorl strength random greedy --decks tests/decks/snake_eye.ydk tests/decks/kashtira.ydk tests/decks/yubel.ydk --pairings 4 --workers 2 --out out/strength.json
 # 环境：校验仓库里的 Master Duel 快照（卡池、禁限表、meta 卡组合法性），打印卡池大小、禁限张数与 meta 份额
 uv run ygorl env check md-2026-09
 ```

@@ -12,7 +12,7 @@ from pathlib import Path
 from ygorl.cli import COMMANDS, main
 
 ROOT = Path(__file__).resolve().parents[1]
-CAPS = {"--games": 2, "--rollouts": 1}  # flag -> largest value used here
+CAPS = {"--games": 2, "--rollouts": 1, "--pairings": 1}  # flag -> largest value used here
 
 
 def quickstart_examples() -> list[str]:

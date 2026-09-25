@@ -397,6 +397,60 @@ def test_matrix_errors(capsys):
     assert "duplicate deck name" in capsys.readouterr().err
 
 
+# ------------------------------------------------------------------ strength
+
+
+def test_strength_matches_the_library(tmp_path, capsys):
+    from ygorl.eval.agent_matrix import AgentMatrix, build_agent_matrix
+
+    names = ("snake_eye", "kashtira", "yubel")
+    out_path = tmp_path / "s.json"
+    code = main(["strength", "random", "g=greedy", "--decks", *(str(DECKS / f"{n}.ydk") for n in names),
+                 "--pairings", "2", "--max-turns", "4", "--seed", "5", "--out", str(out_path)])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 0, out
+    decks = [load_ydk(DECKS / f"{n}.ydk") for n in names]
+    want = build_agent_matrix({"random": agent_factory("random"), "g": agent_factory("greedy")}, decks, pairings=2,
+                              seed=5, config=DuelConfig(max_turns=4))  # fmt: skip
+    got = AgentMatrix.load(out_path)
+    assert got == want and got.specs == ("greedy", "random")
+    assert "ranking: " in out and str(out_path) in out
+    for n in ("g", "random"):
+        row = next(line for line in out.splitlines() if line.split()[:1] == [n])
+        assert len(row.split()) == 1 + 2 + 2  # name, one win rate per agent, nash, alpha-rank
+
+
+def test_strength_of_environment_meta_decks(tmp_path, capsys):
+    from ygorl.eval.agent_matrix import AgentMatrix
+
+    d = make_env(tmp_path, meta=("snake_eye", "kashtira"))
+    assert main(["strength", "random", "greedy", "--env", str(d), "--pairings", "1", "--max-turns", "2",
+                 "--name", "smoke"]) == 0  # fmt: skip
+    path = d / "artifacts" / "agent-matrix" / "smoke.json"
+    assert AgentMatrix.load(path, env=load_environment(d)).decks == ("snake_eye", "kashtira")
+    assert str(path) in capsys.readouterr().out
+
+
+def test_strength_errors(capsys):
+    deck = str(DECKS / "kashtira.ydk")
+    assert main(["strength", "random"]) == 2
+    assert "at least two agents" in capsys.readouterr().err
+    assert main(["strength", "greedy", "greedy", "--decks", deck, str(DECKS / "yubel.ydk")]) == 2
+    assert "duplicate agent name" in capsys.readouterr().err
+    assert main(["strength", "random", "greedy"]) == 2
+    assert "no deck pool" in capsys.readouterr().err
+    assert main(["strength", "random", "nope", "--decks", deck, str(DECKS / "yubel.ydk")]) == 2
+    assert "unknown agent 'nope'" in capsys.readouterr().err
+
+
+def test_strength_agent_names_and_specs():
+    from ygorl.commands.strength import parse_agents
+
+    assert parse_agents(["greedy", "g2=greedy", "policy:out/p.pt@t=0.5"]) == {
+        "greedy": "greedy", "g2": "greedy", "policy:out/p.pt@t=0.5": "policy:out/p.pt@t=0.5"}  # fmt: skip
+    assert parse_agents(["best=policy:out/p.pt@t=1", "random"])["best"] == "policy:out/p.pt@t=1"
+
+
 @pytest.mark.parametrize("name", ["../escape", "a/b", "..", ".hidden", "a\\b", ""])
 def test_matrix_rejects_an_artifact_name_with_a_path(tmp_path, capsys, name):
     d = make_env(tmp_path, meta=("snake_eye", "kashtira"))

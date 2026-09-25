@@ -122,10 +122,10 @@ def default_name(agent: str) -> str:
     return name if ARTIFACT_NAME_RE.match(name) else "matrix"
 
 
-def _table(names, win_rate, nash, alpha_rank) -> list[str]:
-    first = max(len("deck"), *map(len, names))
+def _table(names, win_rate, nash, alpha_rank, label: str = "deck") -> list[str]:
+    first = max(len(label), *map(len, names))
     widths = [max(5, len(x)) for x in names]
-    head = f"{'deck':<{first}}  " + "  ".join(f"{x:>{w}}" for x, w in zip(names, widths)) + "   nash  alpha_rank"
+    head = f"{label:<{first}}  " + "  ".join(f"{x:>{w}}" for x, w in zip(names, widths)) + "   nash  alpha_rank"
     rows = [head]
     for i, name in enumerate(names):
         cells = ("-" if i == j else f"{win_rate[i][j]:.3f}" for j in range(len(names)))

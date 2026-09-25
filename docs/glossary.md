@@ -106,4 +106,4 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `arena` | 竞技场评估 | 配对种子对局（与内存 arena 同名，按上下文区分） |
 | win rate / Wilson CI | 胜率 / Wilson 区间 | 平局算半胜 |
 | matchup matrix | 牌组对局矩阵 | 同一 agent 驾驶双方，牌组对牌组的胜率矩阵，配 Nash 混合与 alpha-rank（evaluation.md，T3.3） |
-| agent matchup matrix | 策略对局矩阵 | agent 对 agent、在一批固定牌组配对上（双方轮流先攻）的胜率矩阵；衡量对局强度的尺子，可增量加入检查点（#83，设计中） |
+| agent matchup matrix | 策略对局矩阵 | agent 对 agent、在一批固定牌组配对上（双方轮流先攻）的胜率矩阵；衡量对局强度的尺子，`ygorl strength`，`ygorl.eval.agent_matrix`（evaluation.md，#83 / #85） |

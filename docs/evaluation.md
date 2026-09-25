@@ -167,6 +167,60 @@ MetaGame.load(path, env=env)                     # 环境不符时抛 Environmen
 `agent`、`seed`、`pairs`、`confidence`、`errors`、`win_rate`、`games`、`ci_low`、`ci_high`、`nash`、`alpha_rank`、`alpha`、`population_size`。
 传入 `env` 保存时，矩阵必须是在同一环境（版本与指纹）下构建的，否则抛 `EnvironmentConfigError`。
 
+## 策略对局矩阵：谁打得更好（`ygorl/eval/agent_matrix.py`，T4b.8，#85）
+
+牌组对局矩阵问「哪套牌强」（同一 agent 驾驶所有牌组）。策略对局矩阵问「哪个 agent 强」：agent 对 agent，在同一批牌组配对上比。
+它是对局强度的尺子（[eng-plan.md](eng-plan.md) T4b.8）：Greedy 已接近被打饱和，所以之后的强度比较都在这张矩阵里做。
+按设计 C7，排名用 Nash / alpha-rank，而不是单一 Elo，因为克制关系不一定可传递。
+
+```python
+from ygorl.agents import AgentSpec
+from ygorl.eval.agent_matrix import AgentMatrix, build_agent_matrix
+
+m = build_agent_matrix({"greedy": AgentSpec("greedy"), "best": AgentSpec("policy:out/run/best.pt")}, decks,
+                       pairings=50, seed=0, env=env, workers=8)
+m.ranking(), m.against("greedy"), m.nash, m.alpha_rank
+m.save(env=env, name="baseline")      # -> environments/<v>/artifacts/agent-matrix/baseline.json
+AgentMatrix.load(path, env=env)
+```
+
+命令行：`ygorl strength`（见 [cli.md](cli.md)）。
+
+**对局**：
+- 按 `seed` 从牌组池抽 `pairings` 个有序配对 `(d1, d2)`。
+- 每对 agent `(x, y)`（按名字排序，x 坐 a 位）在每个配对上打两种牌组分配：x 用 d1 对 y 用 d2，再 x 用 d2 对 y 用 d1。
+- 每种分配先后攻各一局，共 4 局。所以配对内的牌组强弱和先后攻优势互相抵消。
+
+**公共随机数**：
+- 每个配对的两套牌是两个「槽位」。洗牌、以及拿着某个槽位的 agent 的随机种子，都按槽位派生（`derive_seed(seed, k)` 与槽位号），与座位无关。
+  座位（a / b）只按名字顺序决定，不影响局面。
+- 所以同一个 agent 在每一格里拿同一个槽位时，看到的起手完全相同。
+- 结果：矩阵与 agent 的顺序、名字、进程数都无关；加一个 agent 不改变已有的格子（小矩阵是大矩阵的子矩阵）；不同行在同一批局面上比较。
+  测试检查：两个名字排在对手前后的 Greedy 副本，对同一个对手的结果逐局相同。
+- 所有格子的对局交给同一个进程池。
+
+**统计口径**：
+- `win_rate[i][j]` 是 agent i 对 agent j 的胜率，平局算半胜；`win_rate[j][i] = 1 - win_rate[i][j]`，对角线 0.5。
+- 抛异常（`exception`）或主机以错误结束（`error`：引擎步数上限、脚本预算）的局不算胜负平：计入 `errors`，不进 `games` 与胜率。
+  这与 `Arena` 的报告不同，后者把它们记作平局。
+- 每格给 Wilson 区间（`ci_low` / `ci_high`）。
+
+**排名**：
+- `ranking()` 按 alpha-rank 质量、Nash 权重、平均胜率排序；完全打平时次序无意义。
+- Nash 混合与 alpha-rank 用 `ygorl.eval.matchup` 的同一套求解器（收益矩阵 `win_rate - 0.5`）。
+
+**产物格式**（JSON，`format = "ygorl-agent-matrix"`，`format_version = 1`）：
+- `agents`、`specs`（每个 agent 的构造方式，即 agent 规格）；
+- `win_rate`、`games`、`errors`、`ci_low`、`ci_high`；
+- `decks`、`deck_hashes`、`pairings`（牌组下标对）、`seed`、`max_turns`、`max_decisions`；
+- `nash`、`alpha_rank`、`alpha`、`population_size`、`confidence`、`environment`。
+- 带 `env` 保存时必须是同一环境下构建的。
+
+**尚未做**：
+- 增量加入 agent（只打新的一行，并校验检查点内容与抽样参数一致，#86）；
+- 策略对策略的格子走 GPU 批量路径（#87）。
+- 目前全部走 `Arena`，策略 agent 在 CPU 工作进程里推理。
+
 ## 批量评估（策略对策略，`ygorl.eval.batched`）
 
 `Arena` 每局是一个 Python `Duel`，策略 agent 在 CPU 上一次只答一个决策。调卡组要在很多牌组上打很多局网络策略之间的对局，
