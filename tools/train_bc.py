@@ -46,7 +46,7 @@ def _environment(demos) -> dict | None:
     return json.loads(stamps.pop()) if stamps else None
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--train", type=Path, action="append", required=True, help="training demonstrations (JSONL)")
     parser.add_argument("--heldout", type=Path, action="append", default=[], help="held-out demonstrations (JSONL)")
@@ -63,6 +63,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--event-length", type=int, default=128, help="event tokens per observation (default 128)")
     parser.add_argument("--threads", type=int, default=2, help="torch threads (default 2)")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--text-dir", type=Path, default=None,
+                        help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)")
+    parser.add_argument("--card-facts", action="store_true", help="use card_facts.npz in --text-dir (experimental)")
+    parser.add_argument("--no-text", action="store_true", help="ignore the text tables in --text-dir")
+    parser.add_argument("--id-dropout", type=float, default=0.0, help="training: drop each card's ID embedding")
+    parser.add_argument("--no-id-embedding", action="store_true", help="drop the per-card ID embedding")
     parser.add_argument("--baselines", action="store_true", help="also report RandomAgent and GreedyAgent openings")
     parser.add_argument("--checkpoint", type=Path, default=None,
                         help="checkpoint to evaluate (default <out>/policy.pt; with --no-train also a PPO checkpoint)")
@@ -77,14 +83,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--extra-subset", default="all", help="subset of the --extra samples (all, battle)")
     parser.add_argument("--extra-max", type=int, default=None, help="at most this many --extra samples")
     parser.add_argument("--extra-heldout", type=Path, default=None, help="held-out heuristic samples (.npz)")
-    args = parser.parse_args(argv)
+    return parser
+
+
+def net_config(args: argparse.Namespace, vocab, text):
+    """The network for ``args`` (the same card-view switches as tools/train_ppo.py, so PPO can --init-from it)."""
+    from ygorl.nets import NetConfig
+
+    return NetConfig(vocab_size=len(vocab), d_model=args.d_model, history=args.history, board_layers=args.layers,
+                     history_layers=args.layers, id_embedding=not args.no_id_embedding, card_facts=args.card_facts,
+                     card_text=not args.no_text, effect_text=not args.no_text,
+                     id_dropout=args.id_dropout).with_text(text)  # fmt: skip
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     import torch
 
     from ygorl.agents import GreedyAgent, PolicyAgent, RandomAgent
     from ygorl.cards.cdb import CardVocab
     from ygorl.engine.duel import default_cards
-    from ygorl.nets import NetConfig, PolicyNet
+    from ygorl.nets import PolicyNet
     from ygorl.nets.agent import NetPolicy, save_checkpoint
     from ygorl.train.bc import BCConfig, build_dataset, hand_overlap, opening_report, step_accuracy, train_bc
 
@@ -116,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_train:  # a BC policy checkpoint or a PPO training checkpoint
         from ygorl.train.checkpoint import load_actor
 
-        ckpt = load_actor(ckpt_path)
+        ckpt = load_actor(ckpt_path, args.text_dir)
         net, vocab, event_length = ckpt.net, ckpt.vocab, ckpt.event_length
     else:
         vocab = CardVocab.from_db(cards)
@@ -146,9 +166,11 @@ def main(argv: list[str] | None = None) -> int:
           f"({time.time() - t0:.1f}s)", flush=True)  # fmt: skip
 
     if not args.no_train:
-        cfg = NetConfig(vocab_size=len(vocab), d_model=args.d_model, history=args.history, board_layers=args.layers,
-                        history_layers=args.layers)  # fmt: skip
-        net = PolicyNet(cfg)
+        from ygorl.nets.text import TextFeatures
+
+        text = TextFeatures.load(args.text_dir, vocab) if args.text_dir else None
+        cfg = net_config(args, vocab, text)
+        net = PolicyNet(cfg, text)
         bc = BCConfig(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay,
                       label_smoothing=args.label_smoothing, seed=args.seed)  # fmt: skip
         torch.manual_seed(args.seed)

@@ -527,14 +527,8 @@ def test_eval_pairings_is_a_fixed_sample_of_the_training_pairings(tmp_path):
     assert everything.eval_pairings() == list(everything.schedule.decks.pairs)
 
 
-def test_warm_start_may_add_card_views(tmp_path, vocab):
-    """init_from a checkpoint without card facts / ID dropout: the old weights load, the new view modules start
-    fresh; any other network difference is still an error."""
-    from ygorl.nets.text import TextFeatures
-
-    base = Trainer(_small_cfg(), tmp_path / "base", log=None)
-    base.step()
-    ckpt = base.save()
+def _facts_dir(tmp_path, vocab):
+    """A card-feature directory with only card facts (every card in archetype 0x1)."""
     feat = tmp_path / "features"
     feat.mkdir()
     pws = [vocab.password(i) for i in range(2, len(vocab))]
@@ -543,6 +537,50 @@ def test_warm_start_may_add_card_views(tmp_path, vocab):
                         setcodes=np.tile([[0x1, 0, 0, 0]], (n, 1)), references=np.zeros((n, 2), np.int64),
                         categories=np.zeros(n, np.uint64), queries=np.zeros((n, 3), np.uint8),
                         query_names=np.array(["a", "b", "c"]))  # fmt: skip
+    return feat
+
+
+def test_a_bc_checkpoint_with_card_views_warm_starts_ppo(tmp_path, vocab):
+    """tools/train_bc.py --text-dir --card-facts --id-dropout builds (from its own flags) the network PPO builds for
+    the same switches, so init_from with the same text_dir picks up every weight; loading the checkpoint without the
+    features is an error, not silently different weights."""
+    from ygorl.nets import PolicyNet
+    from ygorl.nets.agent import load_checkpoint, save_checkpoint
+    from ygorl.nets.text import TextFeatures
+
+    spec = importlib.util.spec_from_file_location("train_bc", Path(__file__).parents[1] / "tools" / "train_bc.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    feat = _facts_dir(tmp_path, vocab)
+    text = TextFeatures.load(feat, vocab)
+    args = tool.build_parser().parse_args(["--train", "x.jsonl", "--d-model", "16", "--layers", "1", "--text-dir",
+                                           str(feat), "--card-facts", "--id-dropout", "0.3"])  # fmt: skip
+    cfg = tool.net_config(args, vocab, text)
+    net = PolicyNet(cfg, text)
+    with torch.no_grad():
+        for p in net.parameters():
+            p.add_(0.01)  # the view modules start at zero: make them non-zero so the copy is visible
+    ckpt = save_checkpoint(tmp_path / "bc.pt", net, vocab, event_length=_small_cfg().event_length)
+    with pytest.raises(ValueError, match="card_facts"):
+        load_checkpoint(ckpt)
+    ppo_net = {"d_model": 16, "board_layers": 1, "history_layers": 1, "card_facts": True, "id_dropout": 0.3}
+    trainer = Trainer(replace(_small_cfg(), init_from=str(ckpt), text_dir=str(feat), net=ppo_net), tmp_path / "run",
+                      log=None)  # fmt: skip
+    assert trainer.net_config == cfg and cfg.n_archetypes == 1 and cfg.id_dropout == 0.3
+    bc = dict(net.named_parameters())
+    for name, p in trainer.model.actor.named_parameters():
+        assert torch.equal(p.cpu(), bc[name]), name
+
+
+def test_warm_start_may_add_card_views(tmp_path, vocab):
+    """init_from a checkpoint without card facts / ID dropout: the old weights load, the new view modules start
+    fresh; any other network difference is still an error."""
+    from ygorl.nets.text import TextFeatures
+
+    base = Trainer(_small_cfg(), tmp_path / "base", log=None)
+    base.step()
+    ckpt = base.save()
+    feat = _facts_dir(tmp_path, vocab)
     assert TextFeatures.load(feat, vocab).has_facts
     grown = replace(_small_cfg(), init_from=str(ckpt), text_dir=str(feat),
                     net={**TINY, "id_dropout": 0.2, "card_facts": True})
