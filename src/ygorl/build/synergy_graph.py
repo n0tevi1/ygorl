@@ -192,7 +192,10 @@ class SynergyGraph:
             "meta": self.meta,
             "edge_types": types,
             "evidence": evidences,
-            "nodes": [[p, info.get("categories", 0), int(bool(info.get("has_script")))] for p, info in sorted(self.nodes.items())],
+            "nodes": [
+                [p, info.get("categories", 0), int(bool(info.get("has_script")))]
+                for p, info in sorted(self.nodes.items())
+            ],
             "edges": [
                 [e.src, e.dst, tix[e.type], e.locations, e.fanout, eix[e.evidence]]
                 for e in sorted(self._edges.values(), key=lambda e: (e.src, e.dst, tix[e.type]))
@@ -251,7 +254,9 @@ def _analyze_file(item: tuple[int, str]) -> ScriptFacts:
     return analyze_script(Path(path).read_text(encoding="utf-8", errors="replace"), password, _WORKER_CONSTS)
 
 
-def analyze_scripts(scripts_dir: str | Path, consts: dict[str, int] | None = None, workers: int = 1) -> dict[int, ScriptFacts]:
+def analyze_scripts(
+    scripts_dir: str | Path, consts: dict[str, int] | None = None, workers: int = 1
+) -> dict[int, ScriptFacts]:
     """Analyze every ``c<password>.lua`` script of ``scripts_dir``."""
     consts = consts if consts is not None else load_constants()
     items = [(pw, str(p)) for pw, p in script_files(scripts_dir).items()]
@@ -307,7 +312,15 @@ def edges_from_facts(
 ) -> list[Edge]:
     scopes = _scopes(index, K)
     stats = stats if stats is not None else {}
-    for key in ("queries", "queries_unconstrained", "queries_over_fanout", "queries_no_target", "queries_untracked", "queries_with_edges", "scripts_with_edges"):
+    for key in (
+        "queries",
+        "queries_unconstrained",
+        "queries_over_fanout",
+        "queries_no_target",
+        "queries_untracked",
+        "queries_with_edges",
+        "scripts_with_edges",
+    ):
         stats.setdefault(key, 0)
     edges: list[Edge] = []
     db = index.db
@@ -384,7 +397,9 @@ def build_graph(
     def table(attr: str) -> dict[int, tuple[int, ...]]:
         return {pw: getattr(f, attr) for pw, f in in_db.items() if getattr(f, attr)}
 
-    index.set_listings(table("listed_names"), table("listed_series"), table("material_codes"), table("material_setcodes"))
+    index.set_listings(
+        table("listed_names"), table("listed_series"), table("material_codes"), table("material_setcodes")
+    )
     stats: dict[str, int] = {
         "scripts": len(facts),
         "scripts_in_db": len(in_db),
@@ -404,7 +419,9 @@ def build_graph(
     meta = {
         "max_fanout": max_fanout,
         "sources": {
-            "card_scripts": _git_head(paths.card_scripts()) if scripts_dir.is_relative_to(paths.card_scripts()) else str(scripts_dir),
+            "card_scripts": _git_head(paths.card_scripts())
+            if scripts_dir.is_relative_to(paths.card_scripts())
+            else str(scripts_dir),
             "babel_cdb": _git_head(paths.cards_cdb().parent),
         },
         "stats": stats,

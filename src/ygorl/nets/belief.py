@@ -247,7 +247,9 @@ def belief_losses(out: BeliefOutput, targets: Mapping[str, Tensor], weights: Map
         if name in targets:
             t = targets[name].float()
             logit = getattr(out, name)
-            losses[name] = _masked_mean(F.binary_cross_entropy_with_logits(logit, t, reduction="none"), mask_of(name, t))
+            losses[name] = _masked_mean(
+                F.binary_cross_entropy_with_logits(logit, t, reduction="none"), mask_of(name, t)
+            )
     if "set_cards" in targets:
         t = targets["set_cards"].long()
         m = mask_of("set_cards", t) & (t >= 0)
@@ -257,7 +259,9 @@ def belief_losses(out: BeliefOutput, targets: Mapping[str, Tensor], weights: Map
         t = targets["responded"].float()
         logit = chosen_responded(out.responded, targets.get("responded_action"))
         m = mask_of("responded", t) & (t >= 0)
-        losses["responded"] = _masked_mean(F.binary_cross_entropy_with_logits(logit, t.clamp(min=0), reduction="none"), m)
+        losses["responded"] = _masked_mean(
+            F.binary_cross_entropy_with_logits(logit, t.clamp(min=0), reduction="none"), m
+        )
     losses["total"] = sum(w[k] * v for k, v in losses.items())
     return losses
 
@@ -268,7 +272,9 @@ def loss_weights(progress: float, late: float = 2.0) -> dict[str, float]:
     return {h: 1.0 + (late - 1.0) * p if h in LATE_HEADS else 1.0 for h in HEADS}
 
 
-def evaluation_batch(probs: Mapping[str, np.ndarray | Tensor], targets: Mapping[str, np.ndarray | Tensor]) -> BeliefBatch:
+def evaluation_batch(
+    probs: Mapping[str, np.ndarray | Tensor], targets: Mapping[str, np.ndarray | Tensor]
+) -> BeliefBatch:
     """Predicted probabilities + targets -> ``ygorl.eval.beliefs.BeliefBatch`` (heads missing in either are left out).
 
     An action-level ``responded`` ``[N, A]`` is reduced to the chosen row (``responded_action``).
@@ -287,7 +293,9 @@ def evaluation_batch(probs: Mapping[str, np.ndarray | Tensor], targets: Mapping[
         if name in ("deck_type", "set_cards", "responded"):
             m = m & (t >= 0)
         if name == "responded" and p.ndim == 2:
-            p = np.take_along_axis(p, np.clip(np_(targets["responded_action"]), 0, None)[:, None].astype(np.int64), 1)[:, 0]
+            p = np.take_along_axis(p, np.clip(np_(targets["responded_action"]), 0, None)[:, None].astype(np.int64), 1)[
+                :, 0
+            ]
         heads[name] = Head(p, np.where(m, t, 0), m)
     return BeliefBatch(**heads)
 

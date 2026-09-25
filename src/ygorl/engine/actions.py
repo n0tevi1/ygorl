@@ -120,8 +120,14 @@ class IdleCmdState(_Single):
         for kind, cards in (("summon", d.summonable), ("spsummon", d.spsummonable), ("reposition", d.repositionable),
                             ("mset", d.msetable), ("sset", d.ssetable)):  # fmt: skip
             acts.extend(Action(kind, i, c) for i, c in enumerate(cards))
-        acts.extend(Action("activate", i, M.CardInfo(o.code, o.loc), o.description) for i, o in enumerate(d.activatable))
-        for kind, ok in (("battle_phase", d.can_battle_phase), ("end_phase", d.can_end_phase), ("shuffle", d.can_shuffle)):
+        acts.extend(
+            Action("activate", i, M.CardInfo(o.code, o.loc), o.description) for i, o in enumerate(d.activatable)
+        )
+        for kind, ok in (
+            ("battle_phase", d.can_battle_phase),
+            ("end_phase", d.can_end_phase),
+            ("shuffle", d.can_shuffle),
+        ):
             if ok:
                 acts.append(Action(kind))
         return acts
@@ -136,7 +142,10 @@ class BattleCmdState(_Single):
     def _legal(self) -> list[Action]:
         d: M.SelectBattleCmd = self.decision
         acts = [Action("activate", i, M.CardInfo(o.code, o.loc), o.description) for i, o in enumerate(d.activatable)]
-        acts += [Action("attack", i, M.CardInfo(o.code, o.loc), value=int(o.direct_attackable)) for i, o in enumerate(d.attackable)]
+        acts += [
+            Action("attack", i, M.CardInfo(o.code, o.loc), value=int(o.direct_attackable))
+            for i, o in enumerate(d.attackable)
+        ]
         if d.can_main2:
             acts.append(Action("main2"))
         if d.can_end_phase:
@@ -151,7 +160,10 @@ class YesNoState(_Single):
     def _legal(self) -> list[Action]:
         d = self.decision
         card = d.card if isinstance(d, M.SelectEffectYn) else None
-        return [Action("yes", card=card, description=d.description, value=1), Action("no", card=card, description=d.description, value=0)]
+        return [
+            Action("yes", card=card, description=d.description, value=1),
+            Action("no", card=card, description=d.description, value=0),
+        ]
 
 
 class OptionState(_Single):
@@ -273,7 +285,9 @@ def is_declarable(card, opcodes: Sequence[int]) -> bool:
             if stack:
                 set_code = stack.pop() & 0xFFFFFFFF
                 settype, subtype = set_code & 0xFFF, set_code & 0xF000
-                stack.append(int(any((sc & 0xFFF) == settype and (sc & 0xF000 & subtype) == subtype for sc in card.setcodes)))
+                stack.append(
+                    int(any((sc & 0xFFF) == settype and (sc & 0xF000 & subtype) == subtype for sc in card.setcodes))
+                )
         elif op == C.OPCODE_ALLOW_ALIASES:
             alias = True
         elif op == C.OPCODE_ALLOW_TOKENS:
@@ -341,7 +355,7 @@ class TributeState(_Picks):
         d: M.SelectTribute = self.decision
         slots = d.max - len(chosen)
         rest = sorted((c.release_param for i, c in enumerate(d.cards) if i not in chosen), reverse=True)
-        return self._sum(chosen) + sum(rest[:max(slots, 0)]) >= d.min
+        return self._sum(chosen) + sum(rest[: max(slots, 0)]) >= d.min
 
     def _legal(self) -> list[Action]:
         d: M.SelectTribute = self.decision
@@ -400,7 +414,9 @@ class SelectSumState(_Picks):
 
     def _exact_complete(self, chosen: list[int]) -> bool:
         d: M.SelectSum = self.decision
-        return d.min <= len(chosen) <= max(d.max, d.min) and d.target in self._sums(list(d.must) + [d.cards[i] for i in chosen])
+        return d.min <= len(chosen) <= max(d.max, d.min) and d.target in self._sums(
+            list(d.must) + [d.cards[i] for i in chosen]
+        )
 
     # at-least mode ------------------------------------------------------
     def _lo_hi(self, o: M.SumOption) -> tuple[int, int]:
@@ -464,7 +480,11 @@ class CounterState(_Picks):
 
     def _legal(self) -> list[Action]:
         d: M.SelectCounter = self.decision
-        return [Action("counter", i, M.CardInfo(c.code, c.loc), value=self._remaining(i)) for i, c in enumerate(d.cards) if self._remaining(i) > 0]
+        return [
+            Action("counter", i, M.CardInfo(c.code, c.loc), value=self._remaining(i))
+            for i, c in enumerate(d.cards)
+            if self._remaining(i) > 0
+        ]
 
     def _apply(self, action: Action) -> bytes | None:
         d: M.SelectCounter = self.decision

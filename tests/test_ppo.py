@@ -220,7 +220,9 @@ def test_prior_kl_can_be_restricted_to_first_turn_rows():
     assert "kl_prior_rows" not in stats_all and stats5["kl_prior"] == pytest.approx(stats_all["kl_prior"])
     for a, b in zip(every.parameters(), upto5.parameters()):
         torch.testing.assert_close(a, b)
-    assert stats1["kl_prior"] > 0 and any(not torch.equal(a, b) for a, b in zip(turn1.parameters(), no_prior.parameters()))
+    assert stats1["kl_prior"] > 0 and any(
+        not torch.equal(a, b) for a, b in zip(turn1.parameters(), no_prior.parameters())
+    )
     assert any(not torch.equal(a, b) for a, b in zip(turn1.parameters(), every.parameters()))
 
 
@@ -373,7 +375,9 @@ def test_target_kl_stops_an_update_once_the_policy_moved_enough():
     assert PPOConfig().target_kl == 0.01  # the default (docs/benchmarks.md 「BC 热启动 + PPO」)
     full = PPOLearner(copy.deepcopy(model), PPOConfig(epochs=6, minibatch_size=16, lr=5e-2, target_kl=None)).update(ro)
     assert full["minibatches"] == 6 * 4 and full["early_stop"] == 0
-    capped = PPOLearner(copy.deepcopy(model), PPOConfig(epochs=6, minibatch_size=16, lr=5e-2, target_kl=1e-4)).update(ro)
+    capped = PPOLearner(copy.deepcopy(model), PPOConfig(epochs=6, minibatch_size=16, lr=5e-2, target_kl=1e-4)).update(
+        ro
+    )
     assert 1 <= capped["minibatches"] < full["minibatches"] and capped["early_stop"] == 1
     with pytest.raises(ValueError):
         PPOConfig(target_kl=0.0)

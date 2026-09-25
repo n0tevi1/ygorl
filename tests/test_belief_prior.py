@@ -74,7 +74,9 @@ def test_meta_table_shapes_and_classes(meta):
     assert meta.shares.sum() == pytest.approx(1) and meta.shares[-1] == pytest.approx(0.2)
     assert meta.shares[0] > meta.shares[7]
     union = {p for n in META for p in DECKS[n].counts()}
-    assert set(meta.candidates.passwords) == union | {c["password"] for c in GENERIC}  # class count = meta union + generic
+    assert set(meta.candidates.passwords) == union | {
+        c["password"] for c in GENERIC
+    }  # class count = meta union + generic
     for i, n in enumerate(META):
         assert {p: int(m) for p, m in zip(meta.candidates.passwords, meta.counts[i]) if m} == dict(DECKS[n].counts())
         assert meta.deck_type(DECKS[n]) == i

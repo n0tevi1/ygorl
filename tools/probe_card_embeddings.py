@@ -142,9 +142,13 @@ def main() -> int:
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--split", choices=("card", "archetype"), default="archetype",
-                    help="archetype: whole archetypes go to train or test (a new archetype is what generalization "
-                         "needs; the card split lets siblings leak); cards without an archetype split at random")
+    ap.add_argument(
+        "--split",
+        choices=("card", "archetype"),
+        default="archetype",
+        help="archetype: whole archetypes go to train or test (a new archetype is what generalization "
+        "needs; the card split lets siblings leak); cards without an archetype split at random",
+    )
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
@@ -174,7 +178,11 @@ def main() -> int:
         views[d.name] = t
         views[f"structured+{d.name}"] = np.concatenate([base, t], 1)
     arche_y = tasks["archetype"][0]
-    print(f"{len(pws)} cards ({args.split} split, {int(train.sum())} train); labels: " + ", ".join(f"{k} {v[0].shape[1]}" for k, v in tasks.items()), flush=True)
+    print(
+        f"{len(pws)} cards ({args.split} split, {int(train.sum())} train); labels: "
+        + ", ".join(f"{k} {v[0].shape[1]}" for k, v in tasks.items()),
+        flush=True,
+    )
     header = f"{'representation':40s} {'dim':>5s} " + " ".join(f"{k:>10s}" for k in tasks) + f" {'arch@10':>8s}"
     print(header, flush=True)
     rows = {}

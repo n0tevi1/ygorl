@@ -20,8 +20,9 @@ def add_parser(subparsers) -> None:
     p.add_argument("replay", type=Path, help="replay file (.json or .json.gz)")
     p.add_argument("--verify", action="store_true", help="re-simulate and compare with the recorded result")
     p.add_argument("--export-yrpx", type=Path, default=None, metavar="OUT", help="write an EDOPro replay (.yrpX)")
-    p.add_argument("--yrpx-uncompressed", action="store_true",
-                   help="write the .yrpX without LZMA compression (EDOPro reads both)")
+    p.add_argument(
+        "--yrpx-uncompressed", action="store_true", help="write the .yrpX without LZMA compression (EDOPro reads both)"
+    )
     add_env_option(p, "environment of the replay (default: its recorded version under the environments root)")
     p.set_defaults(func=run)
 

@@ -80,7 +80,7 @@ def test_no_candidates_and_fresh_validation():
     edits = neighbors(BASE, [50, 52], lambda pw: pw in EXTRA, legal)
     edits = [e for e in edits if e[0].out == 10]
     base, finals = successive_halving(BASE, edits, ev, first_pairs=50, finalists=1)
-    (cand, fresh, base_fresh), = validate(BASE, finals, ev, 300, offset=10_000)
+    ((cand, fresh, base_fresh),) = validate(BASE, finals, ev, 300, offset=10_000)
     assert cand is finals[0] and len(fresh) == len(base_fresh) == 300
     assert ev.calls[-1] == (2, 10_000, 10_300)  # the base deck and the finalist, on pairs the search never used
     assert paired_difference(fresh, base_fresh)[1] > 0

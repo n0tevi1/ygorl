@@ -37,6 +37,10 @@ def test_generator_is_reproducible(tmp_path):
     import sys
 
     root = Path(__file__).resolve().parents[1]
-    subprocess.run([sys.executable, str(root / "tools" / "make_test_decks.py"), "--out", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(
+        [sys.executable, str(root / "tools" / "make_test_decks.py"), "--out", str(tmp_path)],
+        check=True,
+        capture_output=True,
+    )
     for path in DECKS:
         assert (tmp_path / path.name).read_text() == path.read_text()

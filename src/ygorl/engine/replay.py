@@ -112,12 +112,20 @@ class Replay:
             shuffle_decks=cfg.shuffle_decks,
             decks={"a": _deck_to_dict(duel.decks[0]), "b": _deck_to_dict(duel.decks[1])},
             responses=list(result.responses),
-            environment={"version": duel.env.version, "fingerprint": duel.env.fingerprint} if duel.env is not None else None,
+            environment={"version": duel.env.version, "fingerprint": duel.env.fingerprint}
+            if duel.env is not None
+            else None,
             engine={"ocgcore": [major, minor]},
             max_turns=cfg.max_turns,
             max_decisions=cfg.max_decisions,
-            result={"winner": result.winner, "reason": result.reason, "win_reason": result.win_reason,
-                    "turns": result.turns, "lp": list(result.lp), "decisions": result.decisions},  # fmt: skip
+            result={
+                "winner": result.winner,
+                "reason": result.reason,
+                "win_reason": result.win_reason,
+                "turns": result.turns,
+                "lp": list(result.lp),
+                "decisions": result.decisions,
+            },  # fmt: skip
             steps=list(result.steps),
             curriculum=cfg.curriculum,
             learner=cfg.learner,
@@ -138,7 +146,11 @@ class Replay:
         recording date (``recorded_at``); the seed words are explicit, so
         ``seed`` is 0.
         """
-        yrp = source if isinstance(source, YrpFile) else (parse_yrp(source) if isinstance(source, bytes) else load_yrp(source))
+        yrp = (
+            source
+            if isinstance(source, YrpFile)
+            else (parse_yrp(source) if isinstance(source, bytes) else load_yrp(source))
+        )
         yrp = yrp.replayable()
         if yrp.seed is None:
             raise YrpError("replay without the extended header (four core seed words) is not supported")
@@ -204,7 +216,9 @@ class Replay:
         if data.get("format") != FORMAT:
             raise ValueError(f"not a ygorl replay (format={data.get('format')!r})")
         if data.get("format_version") != FORMAT_VERSION:
-            raise ValueError(f"unsupported replay format_version {data.get('format_version')} (expected {FORMAT_VERSION})")
+            raise ValueError(
+                f"unsupported replay format_version {data.get('format_version')} (expected {FORMAT_VERSION})"
+            )
         values = {k: v for k, v in data.items() if k not in ("format", "format_version")}
         _check_replay_fields(values)
         values["responses"] = [bytes.fromhex(r) for r in values["responses"]]
@@ -259,7 +273,9 @@ class Replay:
         if not host.won and self.result.get("reason") in _LIMIT_REASONS:
             winner = self.result.get("winner")
             seat = 2 if winner is None else (winner - duel.first) % 2
-            host.packets += _packet(C.MSG_WIN, bytes([seat, WIN_REASON_LIMIT]))  # the host's own [player, reason] packet
+            host.packets += _packet(
+                C.MSG_WIN, bytes([seat, WIN_REASON_LIMIT])
+            )  # the host's own [player, reason] packet
 
         timestamp = self.recorded_at or 0
         body = bytearray(_names_block(seat_names))

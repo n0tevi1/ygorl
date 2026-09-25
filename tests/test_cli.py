@@ -42,7 +42,9 @@ def make_env(tmp_path, meta=()):
     ``meta`` names test decks to copy in as meta decks."""
     d = tmp_path / "envs" / "env-2026-09"
     (d / "meta").mkdir(parents=True)
-    (d / "environment.json").write_text(json.dumps({"version": "env-2026-09", "format": "md", "rules": {"mode": "MR5"}}))
+    (d / "environment.json").write_text(
+        json.dumps({"version": "env-2026-09", "format": "md", "rules": {"mode": "MR5"}})
+    )
     decks = [A, B] + [load_ydk(DECKS / f"{n}.ydk") for n in meta]
     (d / "pool.json").write_text(json.dumps({"cards": sorted({c for x in decks for c in x.main + x.extra})}))
     (d / "banlist.lflist.conf").write_text("!none\n")
@@ -95,7 +97,11 @@ def test_branch_prints_one_row_per_candidate(replay_file, capsys):
         assert cells[0].lstrip("*") == str(o.index) or cells[1] == str(o.index)
         assert row.startswith("*") == o.recorded
         assert [cells[-5], cells[-4], cells[-3], cells[-2], cells[-1]] == [
-            {0: "a", 1: "b", None: "draw"}[r.winner], r.reason, str(r.turns), str(r.lp[0]), str(r.lp[1])
+            {0: "a", 1: "b", None: "draw"}[r.winner],
+            r.reason,
+            str(r.turns),
+            str(r.lp[0]),
+            str(r.lp[1]),
         ]
     assert f"t={t}" in out
     assert f"recorded: action {branch.recorded_action}" in out

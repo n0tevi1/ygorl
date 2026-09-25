@@ -174,7 +174,9 @@ def load_run(path: Path) -> dict:
     decks, config = {}, results[0].config
     for r in results:
         if r.stopped_early:
-            raise SystemExit(f"funnel_budget: error: {path}: deck {r.deck['name']} stopped early (run with --no-filter)")
+            raise SystemExit(
+                f"funnel_budget: error: {path}: deck {r.deck['name']} stopped early (run with --no-filter)"
+            )
         hands = {}
         for h in r.hands:
             if h.status == "error":
@@ -370,13 +372,17 @@ def analyze(args) -> int:
     # -- 5. hand-trap survival and combo length (reference solve time, --fire at the reference fire_ms)
     if ref["fire"]:
         surv_ref = {d: statistics.fmean([bool(h["survives"]) for h in ref["decks"][d].values()]) for d in names}
-        combo_ref = {d: statistics.fmean([h["combo"] for h in ref["decks"][d].values() if h["combo"] is not None]) for d in names}
+        combo_ref = {
+            d: statistics.fmean([h["combo"] for h in ref["decks"][d].values() if h["combo"] is not None]) for d in names
+        }
         desc = []
         for n in HANDS:
             if n > ref_n:
                 continue
-            s_first = {d: statistics.fmean([bool(ref["decks"][d][i]["survives"]) for i in range(n) if i in ref["decks"][d]])
-                       for d in names}
+            s_first = {
+                d: statistics.fmean([bool(ref["decks"][d][i]["survives"]) for i in range(n) if i in ref["decks"][d]])
+                for d in names
+            }
             c_first = {d: statistics.fmean([ref["decks"][d][i]["combo"] for i in range(n)
                                             if i in ref["decks"][d] and ref["decks"][d][i]["combo"] is not None]
                                            or [math.nan]) for d in names}  # fmt: skip
@@ -400,14 +406,22 @@ def analyze(args) -> int:
             tv = [bool(top["decks"][d][i]["survives"]) for d, i in common]
             per_deck = {d: statistics.fmean([bool(f["decks"][d][i]["survives"]) for dd, i in common if dd == d]) for d in names
                         if any(dd == d for dd, _ in common)}  # fmt: skip
-            top_deck = {d: statistics.fmean([bool(top["decks"][d][i]["survives"]) for dd, i in common if dd == d]) for d in per_deck}
+            top_deck = {
+                d: statistics.fmean([bool(top["decks"][d][i]["survives"]) for dd, i in common if dd == d])
+                for d in per_deck
+            }
             frows.append({"fire_s": f["fire_ms"] / 1000, "lines": len(common), "survive_rate": statistics.fmean(sv),
                           "only_here": sum(a and not b for a, b in zip(sv, tv)), "only_top": sum(b and not a for a, b in zip(sv, tv)),
                           "spearman_vs_top": spearman(list(per_deck.values()), list(top_deck.values())),
                           "fire_s_per_line": statistics.fmean([f["decks"][d][i]["wall_s"] for d, i in common])})  # fmt: skip
         report["fire"] = frows
         print(f"\n## --fire time (same lines; top = {top['fire_ms'] / 1000:.0f} s)\n")
-        print(_table(frows, ["fire_s", "lines", "survive_rate", "only_here", "only_top", "spearman_vs_top", "fire_s_per_line"]))
+        print(
+            _table(
+                frows,
+                ["fire_s", "lines", "survive_rate", "only_here", "only_top", "spearman_vs_top", "fire_s_per_line"],
+            )
+        )
 
     # -- 7. throughput with early stopping (sequential hands; a brick costs the full solve time)
     stop = []

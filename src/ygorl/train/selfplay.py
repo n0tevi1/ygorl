@@ -163,8 +163,15 @@ class SnapshotPool:
         for s in state["snapshots"]:
             model = factory()
             model.load_state_dict(s["state"])
-            self._snaps[int(s["id"])] = Snapshot(int(s["id"]), int(s["update"]), self._freeze(model), s["tag"], s["score"],
-                                                 int(s.get("games", 0)), float(s.get("learner_points", 0.0)))
+            self._snaps[int(s["id"])] = Snapshot(
+                int(s["id"]),
+                int(s["update"]),
+                self._freeze(model),
+                s["tag"],
+                s["score"],
+                int(s.get("games", 0)),
+                float(s.get("learner_points", 0.0)),
+            )
         self._next_id = int(state["next_id"])
         self.best_id = state["best_id"]
 

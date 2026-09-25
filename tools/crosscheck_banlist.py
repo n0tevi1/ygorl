@@ -127,8 +127,9 @@ def fetch(page: str, save: Path | None) -> dict[str, Any]:
     raw = {
         "ygoprodeck": http.get_json(YGOPRODECK_LIST, {"list": "Master Duel"}),
         "dates": http.get_json(YGOPRODECK_DATES),
-        "yugipedia": http.get_json(YUGIPEDIA_API, {"action": "parse", "page": page, "prop": "wikitext",
-                                                   "format": "json", "formatversion": "2"}),  # fmt: skip
+        "yugipedia": http.get_json(
+            YUGIPEDIA_API, {"action": "parse", "page": page, "prop": "wikitext", "format": "json", "formatversion": "2"}
+        ),  # fmt: skip
     }
     if save is not None:
         for (key, data), url in zip(raw.items(), http.urls, strict=True):

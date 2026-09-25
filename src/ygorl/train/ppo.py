@@ -131,7 +131,10 @@ class ClippedSurrogate(PolicyObjective):
         ratio = log_ratio.exp()
         surrogate = torch.minimum(ratio * x.advantages, ratio.clamp(1 - self.clip, 1 + self.clip) * x.advantages)
         with torch.no_grad():
-            stats = {"approx_kl": ((ratio - 1) - log_ratio).mean(), "clip_frac": ((ratio - 1).abs() > self.clip).float().mean()}
+            stats = {
+                "approx_kl": ((ratio - 1) - log_ratio).mean(),
+                "clip_frac": ((ratio - 1).abs() > self.clip).float().mean(),
+            }
         return -surrogate.mean(), stats
 
 

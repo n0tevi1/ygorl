@@ -41,7 +41,9 @@ class TrackingAgent(RandomAgent):
 
 
 def record(a, b, seed, *, first=0, max_turns=4, record_steps=False, env=None):
-    duel = Duel(seed, env, DECKS[a], DECKS[b], first=first, config=DuelConfig(max_turns=max_turns), record_steps=record_steps)
+    duel = Duel(
+        seed, env, DECKS[a], DECKS[b], first=first, config=DuelConfig(max_turns=max_turns), record_steps=record_steps
+    )
     log = {"mid": []}
     result = duel.run(TrackingAgent(seed, log), TrackingAgent(seed + 1, log))
     result.mid_steps = log["mid"]
@@ -116,11 +118,20 @@ def _sum_opt(i, lo, hi=0):
 
 MULTI_STEP = [
     M.SelectCard(0, True, 1, 3, tuple(card(i, seq=i) for i in range(5))),
-    M.SelectTribute(0, False, 2, 3, tuple(M.TributeOption(i, M.Location(0, C.LOCATION_MZONE, i), 1 + i % 2) for i in range(4))),
+    M.SelectTribute(
+        0, False, 2, 3, tuple(M.TributeOption(i, M.Location(0, C.LOCATION_MZONE, i), 1 + i % 2) for i in range(4))
+    ),
     M.SelectSum(0, True, 8, 1, 3, (), tuple(_sum_opt(i, 1 + i, 2 * i) for i in range(5))),
     M.SelectSum(0, False, 8, 0, 0, (), tuple(_sum_opt(i, 2 + i) for i in range(5))),
-    M.SelectCounter(0, 0x1, 3, (M.CounterOption(1, M.Location(0, C.LOCATION_SZONE, 0), 3),
-                                M.CounterOption(2, M.Location(0, C.LOCATION_SZONE, 1), 2))),  # fmt: skip
+    M.SelectCounter(
+        0,
+        0x1,
+        3,
+        (
+            M.CounterOption(1, M.Location(0, C.LOCATION_SZONE, 0), 3),
+            M.CounterOption(2, M.Location(0, C.LOCATION_SZONE, 1), 2),
+        ),
+    ),  # fmt: skip
     M.SortCard(0, tuple(card(i, seq=i) for i in range(4))),
     M.SortChain(0, tuple(card(i, seq=i) for i in range(3))),
     M.SelectPlace(0, 2, 0xFFFFFFFF & ~0b1011),
@@ -242,7 +253,9 @@ def test_truncated_replay_can_be_forked_at_its_first_unanswered_decision(short_g
 def test_fork_needs_the_recorded_environment(tmp_path):
     root = tmp_path / "env-2026-09"
     (root / "meta").mkdir(parents=True)
-    (root / "environment.json").write_text(json.dumps({"version": "env-2026-09", "format": "md", "rules": {"mode": "MR5"}}))
+    (root / "environment.json").write_text(
+        json.dumps({"version": "env-2026-09", "format": "md", "rules": {"mode": "MR5"}})
+    )
     pool = sorted({c for name in ("kashtira", "labrynth") for c in DECKS[name].main + DECKS[name].extra})
     (root / "pool.json").write_text(json.dumps({"cards": pool}))
     (root / "banlist.lflist.conf").write_text("!none\n")

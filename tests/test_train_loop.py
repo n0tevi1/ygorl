@@ -582,8 +582,9 @@ def test_warm_start_may_add_card_views(tmp_path, vocab):
     ckpt = base.save()
     feat = _facts_dir(tmp_path, vocab)
     assert TextFeatures.load(feat, vocab).has_facts
-    grown = replace(_small_cfg(), init_from=str(ckpt), text_dir=str(feat),
-                    net={**TINY, "id_dropout": 0.2, "card_facts": True})
+    grown = replace(
+        _small_cfg(), init_from=str(ckpt), text_dir=str(feat), net={**TINY, "id_dropout": 0.2, "card_facts": True}
+    )
     trainer = Trainer(grown, tmp_path / "grown", log=None)
     assert trainer.net_config.n_archetypes == 1 and trainer.net_config.id_dropout == 0.2
     old = dict(base.model.actor.named_parameters())

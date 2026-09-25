@@ -8,6 +8,7 @@ import pytest
 from ygorl.eval import beliefs as B
 from ygorl.eval import calibration as cal
 
+
 def tiny_batch():
     """N=3 samples, K=3 deck types, C=2 candidate cards, S=2 set zones, R=2 role bits."""
     return B.BeliefBatch(
@@ -87,7 +88,10 @@ def test_batch_size_property():
         ({"hand": B.Head(np.full((3, 2), 0.5), np.zeros(3, dtype=int))}, r"hand.*targets"),
         ({"set_cards": B.Head(np.full((3, 2, 4), 0.25), np.zeros((3, 4), dtype=int))}, r"set_cards.*targets"),
         ({"responded": B.Head(np.full((3, 1), 0.5), np.zeros((3, 1), dtype=int))}, r"responded.*\[N\]"),
-        ({"hand": B.Head(np.full((3, 2), 0.5), np.zeros((3, 2), dtype=int), mask=np.ones(3, dtype=bool))}, r"hand.*mask"),
+        (
+            {"hand": B.Head(np.full((3, 2), 0.5), np.zeros((3, 2), dtype=int), mask=np.ones(3, dtype=bool))},
+            r"hand.*mask",
+        ),
     ],
 )
 def test_shape_validation(kwargs, match):

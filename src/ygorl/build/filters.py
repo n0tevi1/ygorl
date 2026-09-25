@@ -308,7 +308,9 @@ class CardIndex:
             return _bits((i for v in a for i in inv.get(v, ())), n)
         if k == "lists_archetype_as_material":
             inv = self._listings.get(k, {})
-            return _bits((i for q in a for listed, ix in inv.items() if _material_setcode_matches(q, listed) for i in ix), n)
+            return _bits(
+                (i for q in a for listed, ix in inv.items() if _material_setcode_matches(q, listed) for i in ix), n
+            )
         if k == "any":
             return self.universe
         if k == "none":
@@ -391,7 +393,14 @@ _SETCARD = {"IsSetCard", "IsOriginalSetCard", "IsLinkSetCard", "IsFusionSetCard"
 _CODE = {"IsCode", "IsOriginalCode", "IsOriginalCodeRule", "IsCodeRule", "IsFusionCode", "IsLinkCode"}
 _TYPE_METHODS = {"IsType", "IsOriginalType", "IsLinkType", "IsFusionType", "IsXyzType", "IsSynchroType"}
 _RACE = {"IsRace", "IsOriginalRace", "IsLinkRace", "IsFusionRace", "IsXyzRace", "IsSynchroRace"}
-_ATTRIBUTE = {"IsAttribute", "IsOriginalAttribute", "IsLinkAttribute", "IsFusionAttribute", "IsXyzAttribute", "IsSynchroAttribute"}
+_ATTRIBUTE = {
+    "IsAttribute",
+    "IsOriginalAttribute",
+    "IsLinkAttribute",
+    "IsFusionAttribute",
+    "IsXyzAttribute",
+    "IsSynchroAttribute",
+}
 _STAT = {  # method -> (field, op); op None = equality with varargs
     "IsLevel": ("level", None), "IsOriginalLevel": ("level", None),
     "IsLevelBelow": ("level", "le"), "IsLevelAbove": ("level", "ge"),
@@ -488,7 +497,12 @@ class FilterCompiler:
         if name == "IsNormalSpellTrap":
             return make_or((Pred("type_eq", (C.TYPE_SPELL,)), Pred("type_eq", (C.TYPE_TRAP,))))
         if name == "IsContinuousSpellTrap":
-            return make_or((Pred("type_all", (_TYPE_ALL["IsContinuousSpell"],)), Pred("type_all", (_TYPE_ALL["IsContinuousTrap"],))))
+            return make_or(
+                (
+                    Pred("type_all", (_TYPE_ALL["IsContinuousSpell"],)),
+                    Pred("type_all", (_TYPE_ALL["IsContinuousTrap"],)),
+                )
+            )
         if name == "IsNonEffectMonster":
             return make_and((Pred("type_any", (C.TYPE_MONSTER,)), Not(Pred("type_any", (C.TYPE_EFFECT,)))))
         if name in ("HasLevel",):
@@ -513,7 +527,9 @@ class FilterCompiler:
         if isinstance(node, FuncExpr):
             if not node.params:
                 return UNKNOWN
-            return self._with_params(node.params, extra, lambda: self._returns(lua.returns(self.script.tokens, node.body), node.params[0]))
+            return self._with_params(
+                node.params, extra, lambda: self._returns(lua.returns(self.script.tokens, node.body), node.params[0])
+            )
         name = lua.dotted(node) if isinstance(node, (Name, Index)) else None
         if name is not None:
             if name in self.script.functions:

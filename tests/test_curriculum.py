@@ -111,7 +111,13 @@ def test_other_passive_prompts():
 
 @pytest.mark.parametrize("mode", MODES)
 def test_decisions_without_a_passive_answer_are_never_restricted(mode):
-    must_pick = M.SelectCard(1, False, 1, 1, (M.CardInfo(1, M.Location(1, C.LOCATION_HAND, 0)), M.CardInfo(2, M.Location(1, C.LOCATION_HAND, 1))))
+    must_pick = M.SelectCard(
+        1,
+        False,
+        1,
+        1,
+        (M.CardInfo(1, M.Location(1, C.LOCATION_HAND, 0)), M.CardInfo(2, M.Location(1, C.LOCATION_HAND, 1))),
+    )
     place = M.SelectPlace(1, 1, 0xFFFFFF00)
     for d in (must_pick, place, M.SelectOption(1, (5, 6))):
         a = acts(d)

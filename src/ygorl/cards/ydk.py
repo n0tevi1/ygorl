@@ -44,7 +44,15 @@ class Deck:
         return c
 
     def to_ydk(self) -> str:
-        lines = ["#created by ygorl", "#main", *map(str, self.main), "#extra", *map(str, self.extra), "!side", *map(str, self.side)]
+        lines = [
+            "#created by ygorl",
+            "#main",
+            *map(str, self.main),
+            "#extra",
+            *map(str, self.extra),
+            "!side",
+            *map(str, self.side),
+        ]
         return "\n".join(lines) + "\n"
 
 

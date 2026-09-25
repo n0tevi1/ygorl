@@ -294,7 +294,11 @@ def explore(scenario: Scenario, native) -> Report:
             )
             report.checked[type(msg).__name__] = report.checked.get(type(msg).__name__, 0) + 1
         for r in sorted(py):
-            nxt = ctx if isinstance(msg, M.SelectUnselectCard) else frozenset({*(e for e in ctx if e[0] != record), (record, r)})
+            nxt = (
+                ctx
+                if isinstance(msg, M.SelectUnselectCard)
+                else frozenset({*(e for e in ctx if e[0] != record), (record, r)})
+            )
             visit([*prefix, r], nxt)
 
     visit([*opening, state.step(lead)])
@@ -344,7 +348,9 @@ def test_select_card_min_max(native):
                      P("pot_of_greed", SZ, 0, 1, C.POS_FACEDOWN), P("monster_reborn", SZ, 1, 1, C.POS_FACEDOWN),
                      P("raigeki", SZ, 2, 1, C.POS_FACEDOWN), *filler()))  # fmt: skip
     targets = ("pot_of_greed", "monster_reborn", "raigeki")
-    expected = {frozenset((d, *t)) for d in ("warwolf", "alexandrite") for k in (1, 2) for t in combinations(targets, k)}
+    expected = {
+        frozenset((d, *t)) for d in ("warwolf", "alexandrite") for k in (1, 2) for t in combinations(targets, k)
+    }
     report = explore(Scenario(puzzle, ("activate", "twin_twisters"), frozenset({"twin_twisters"})), native)
     assert report.outcomes == expected
     assert report.checked["SelectCard"] == 3  # the discard, then the targets after each discard
@@ -412,7 +418,9 @@ def test_ritual_exact_mode(native):
     puzzle = Puzzle((P("contract_abyss", H), P("demise", H, 1), P("ritual_raven", H, 2), P("heliotrope", H, 3),
                      P("frostosaurus", H, 4), P("archfiend", MZ, 0), P("mountain_warrior", MZ, 1),
                      P("dark_plant", MZ, 2), P("orion", MZ, 3), *filler()))  # fmt: skip
-    pool = {n: LEVELS[n] for n in ("heliotrope", "frostosaurus", "archfiend", "mountain_warrior", "dark_plant", "orion")}
+    pool = {
+        n: LEVELS[n] for n in ("heliotrope", "frostosaurus", "archfiend", "mountain_warrior", "dark_plant", "orion")
+    }
     pool["ritual_raven"] = (1, 8)
     expected = ritual_sets(pool, 8, exact=True)
     report = explore(Scenario(puzzle, ("activate", "contract_abyss"), frozenset({"contract_abyss"})), native)
@@ -509,5 +517,7 @@ def test_random_decisions_match_core_checks(native, kind):
         py = env_responses(lambda: make_decision(msg))
         assert py == env_responses(lambda: _core.DecisionState(record, native))
         env = {normalize(r) for r in py}
-        assert env == accepted, f"{msg}: env-only {sorted(env - accepted, key=str)}, core-only {sorted(accepted - env, key=str)}"
+        assert env == accepted, (
+            f"{msg}: env-only {sorted(env - accepted, key=str)}, core-only {sorted(accepted - env, key=str)}"
+        )
     assert checked > 150

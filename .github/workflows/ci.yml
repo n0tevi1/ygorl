@@ -27,8 +27,8 @@ jobs:
       - name: Install dev tools
         run: uv sync --locked --only-group dev
 
-      - name: Ruff
-        run: uv run --no-sync ruff check src tests tools
+      - name: Ruff (format + lint, same as tools/presubmit.sh --check)
+        run: tools/presubmit.sh --check
 
   # core: the full suite without torch (the torch-dependent test files skip themselves).
   # train: the same build plus the `train` extra (PyPI torch, ~5 GB installed), running only the

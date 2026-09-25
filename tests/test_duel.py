@@ -82,7 +82,9 @@ def test_decision_limit_is_a_draw_whatever_the_lp(db):
         if r.reason == "decision_limit":
             assert r.winner is None and r.decisions <= 400
     assert any(r.reason == "decision_limit" and r.lp[0] != r.lp[1] for r in results)
-    specs = [GameSpec(seed=s, deck_a=DECKS["branded_despia"], deck_b=DECKS["tearlaments"], config=cfg) for s in range(8, 14)]
+    specs = [
+        GameSpec(seed=s, deck_a=DECKS["branded_despia"], deck_b=DECKS["tearlaments"], config=cfg) for s in range(8, 14)
+    ]
     for res in EncodedVecEnv(2, 1, cards=db).play(specs, chooser):
         if res["reason"] == "decision_limit":
             assert res["winner"] is None

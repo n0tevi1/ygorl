@@ -51,25 +51,43 @@ def deck_files(paths: list[Path]) -> list[Path]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("decks", nargs="+", type=Path, help=".ydk files or directories of them")
-    parser.add_argument("--targets", type=Path, default=DEFAULT_TARGETS, help="per-deck targets JSON (default: %(default)s)")
+    parser.add_argument(
+        "--targets", type=Path, default=DEFAULT_TARGETS, help="per-deck targets JSON (default: %(default)s)"
+    )
     parser.add_argument("--hands", type=int, default=10, help="opening hands per deck (default 10)")
     parser.add_argument("--first-hand", type=int, default=0, help="index of the first hand (default 0)")
     parser.add_argument("--seed", type=int, default=0, help="base seed of the hand shuffles (default 0)")
-    parser.add_argument("--solve-ms", type=int, default=60_000, help="solver search budget per hand in ms (default 60000)")
-    parser.add_argument("--fire", type=int, action="append", default=None, metavar="PASSWORD",
-                        help="hand trap for the --fire variant (repeatable; default: the targets file's list per deck)")
-    parser.add_argument("--no-fire", action="store_true", help="skip the --fire variant even if the targets file lists one")
+    parser.add_argument(
+        "--solve-ms", type=int, default=60_000, help="solver search budget per hand in ms (default 60000)"
+    )
+    parser.add_argument(
+        "--fire",
+        type=int,
+        action="append",
+        default=None,
+        metavar="PASSWORD",
+        help="hand trap for the --fire variant (repeatable; default: the targets file's list per deck)",
+    )
+    parser.add_argument(
+        "--no-fire", action="store_true", help="skip the --fire variant even if the targets file lists one"
+    )
     parser.add_argument("--fire-ms", type=int, default=DEFAULT_FIRE_MS, help="solver budget per --fire window in ms")
-    parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2), help="parallel solver processes")
+    parser.add_argument(
+        "--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2), help="parallel solver processes"
+    )
     parser.add_argument("--threads", type=int, default=1, help="solver threads per process (default 1)")
     parser.add_argument("--lines", type=int, default=1, help="verified lines kept per hand (default 1)")
     parser.add_argument("--env", default=None, metavar="PATH|VERSION", help="environment (rules; binds the output)")
     parser.add_argument("--out", type=Path, default=None, help="demonstration file (JSONL, appended)")
     parser.add_argument("--summary", type=Path, default=None, help="also write the per-deck summary as JSON")
-    parser.add_argument("--binary", type=Path, default=None, help="solver binary (default: build/combo-solver/bin/combosolver)")
+    parser.add_argument(
+        "--binary", type=Path, default=None, help="solver binary (default: build/combo-solver/bin/combosolver)"
+    )
     parser.add_argument("--timeout", type=float, default=None, help="wall-clock limit per solver run in seconds")
     parser.add_argument("--solver-seed", type=int, default=None, help="fixed solver seed (default: the solver's clock)")
-    parser.add_argument("--keep-files", action="store_true", help="keep per-hand solver files under the scratch directory")
+    parser.add_argument(
+        "--keep-files", action="store_true", help="keep per-hand solver files under the scratch directory"
+    )
     parser.add_argument("--scratch", type=Path, default=None, help="scratch directory (default: a temporary one)")
     args = parser.parse_args(argv)
 
@@ -86,7 +104,9 @@ def main(argv: list[str] | None = None) -> int:
         env = load_environment(args.env)
         env_stamp = {"version": env.version, "fingerprint": env.fingerprint}
         env_dir = env.root
-    out = args.out or (env_dir / "artifacts" / "demos" / "solver.jsonl" if args.env else ROOT / "out" / "demos" / "solver.jsonl")
+    out = args.out or (
+        env_dir / "artifacts" / "demos" / "solver.jsonl" if args.env else ROOT / "out" / "demos" / "solver.jsonl"
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     cut = repair_jsonl(out)
     if cut:

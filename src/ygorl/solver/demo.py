@@ -206,7 +206,10 @@ class Demonstration:
         if self.start is None:
             raise ValueError("this record has no start position (no line was solved)")
         s = self.start
-        decks = {side: {"name": self.deck["name"] if side == "a" else "opponent", **s["decks"][side], "side": []} for side in "ab"}
+        decks = {
+            side: {"name": self.deck["name"] if side == "a" else "opponent", **s["decks"][side], "side": []}
+            for side in "ab"
+        }
         return Replay(seed=0, first=0, rule_flags=s["rule_flags"], player=dict(s["player"]), shuffle_decks=False,
                       decks=decks, responses=list(self.lines[line].responses), environment=self.environment,
                       engine=dict(self.engine), seed_words=list(s["core_seed"]))  # fmt: skip
@@ -287,7 +290,9 @@ def verify_line(demo: Demonstration, line: int = 0, *, env: Environment | None =
             if point is None:
                 raise DemoError(f"step {i}: the duel stopped ({tracker.result.reason}) before the line ended")
             if not 0 <= idx < len(point.actions):
-                raise DemoError(f"step {i}: action {idx} out of range for {point.decision.name} ({len(point.actions)} actions)")
+                raise DemoError(
+                    f"step {i}: action {idx} out of range for {point.decision.name} ({len(point.actions)} actions)"
+                )
             session.act(idx)
             if tracker.result.retries:
                 raise DemoError(f"step {i}: the engine answered MSG_RETRY")

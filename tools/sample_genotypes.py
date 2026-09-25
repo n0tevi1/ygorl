@@ -51,7 +51,9 @@ def main() -> int:
     parser.add_argument("--chain", type=int, default=10_000, help="crossover + mutation children to generate")
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--environment", help="use this environment's pool, banlist and deck rules")
-    parser.add_argument("--top-packages", type=int, default=60, help="test format: pool = members of the top-N packages")
+    parser.add_argument(
+        "--top-packages", type=int, default=60, help="test format: pool = members of the top-N packages"
+    )
     parser.add_argument("--generic", type=Path, default=ROOT / "tests" / "data" / "generic_pool.json")
     parser.add_argument("--max-packages", type=int, default=3)
     args = parser.parse_args()
@@ -88,7 +90,9 @@ def main() -> int:
         for g in samples:
             roles.update(sp.role_counts(g))
         print(f"  Main Deck size {dict(sorted(Counter(main.tolist()).items()))}")
-        print(f"  Extra Deck size min {extra.min()} mean {extra.mean():.1f}; packages per genotype {dict(sorted(n_pk.items()))}")
+        print(
+            f"  Extra Deck size min {extra.min()} mean {extra.mean():.1f}; packages per genotype {dict(sorted(n_pk.items()))}"
+        )
         print(f"  generic share of the Main Deck mean {share.mean():.2f}; mean copies per role "
               + ", ".join(f"{r} {n / len(samples):.1f}" for r, n in sorted(roles.items())))  # fmt: skip
         print(f"  distinct genotypes {len(set(samples))}, distinct decks {len({sp.decode(g) for g in samples})}")
@@ -102,7 +106,9 @@ def main() -> int:
         chain_bad += bool(env.validate_deck(sp.decode(child), db))
         pop[int(rng.integers(len(pop)))] = child
     t_chain = time.perf_counter() - t0
-    print(f"\n{args.chain} crossover + mutation children in {t_chain:.2f}s: {args.chain - chain_bad} legal, {chain_bad} illegal")
+    print(
+        f"\n{args.chain} crossover + mutation children in {t_chain:.2f}s: {args.chain - chain_bad} legal, {chain_bad} illegal"
+    )
 
     for n, vs in bad[:5]:
         print(f"sample {n}: " + "; ".join(v.message for v in vs))

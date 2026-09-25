@@ -41,8 +41,13 @@ def proxy_packages() -> dict[str, list[int]]:
     return _tool("make_proxy_packages").load_packages()
 
 
-def print_recall(title: str, graph, packages: dict[str, list[int]], threshold: float, extra_types: tuple[str, ...] = ()) -> None:
-    for label, types in (("all edge types", None), ("search + special_summon" + "".join(f" + {t}" for t in extra_types), REACH_TYPES + extra_types)):
+def print_recall(
+    title: str, graph, packages: dict[str, list[int]], threshold: float, extra_types: tuple[str, ...] = ()
+) -> None:
+    for label, types in (
+        ("all edge types", None),
+        ("search + special_summon" + "".join(f" + {t}" for t in extra_types), REACH_TYPES + extra_types),
+    ):
         report = evaluate_recall(graph, packages, threshold=threshold, types=types)
         print(f"\n{title} ({label}, coverage >= {threshold}): {report.recall:.3f} "
               f"({len(report.recovered)}/{len(report.coverage)}), mean coverage {report.mean_coverage:.3f}")  # fmt: skip
@@ -53,7 +58,9 @@ def print_recall(title: str, graph, packages: dict[str, list[int]], threshold: f
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out", type=Path, help="write the graph here (.json or .json.gz)")
-    parser.add_argument("--workers", type=int, default=1, help="script-analysis processes (keep <= 2 on shared machines)")
+    parser.add_argument(
+        "--workers", type=int, default=1, help="script-analysis processes (keep <= 2 on shared machines)"
+    )
     parser.add_argument("--max-fanout", type=int, default=DEFAULT_MAX_FANOUT)
     parser.add_argument("--environment", help="restrict to an environment's card pool and stamp the graph")
     parser.add_argument("--threshold", type=float, default=0.8, help="package coverage needed to count as recovered")

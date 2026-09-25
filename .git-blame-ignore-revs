@@ -1,0 +1,3 @@
+# Mechanical reformatting commits, skipped by `git blame` (git config blame.ignoreRevsFile .git-blame-ignore-revs; GitHub reads it itself).
+# ruff format over src, tests and tools
+3e65322aa48ee3161b23d5b20638526c1ceb26f9

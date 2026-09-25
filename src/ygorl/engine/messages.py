@@ -46,7 +46,9 @@ class Reader:
 
     def _take(self, fmt: str, size: int):
         if self.pos + size > len(self.buf):
-            raise MessageDecodeError(f"truncated payload: need {size} bytes at offset {self.pos}, have {len(self.buf) - self.pos}")
+            raise MessageDecodeError(
+                f"truncated payload: need {size} bytes at offset {self.pos}, have {len(self.buf) - self.pos}"
+            )
         (v,) = struct.unpack_from(fmt, self.buf, self.pos)
         self.pos += size
         return v
@@ -1111,7 +1113,9 @@ class TossDice(Toss):
 
 
 for _cls in (TossCoin, TossDice):
-    _DECODERS[_cls.TYPE] = (lambda cls: lambda r: (lambda p: cls(p, tuple(r.u8() for _ in range(r.u8()))))(r.u8()))(_cls)
+    _DECODERS[_cls.TYPE] = (lambda cls: lambda r: (lambda p: cls(p, tuple(r.u8() for _ in range(r.u8()))))(r.u8()))(
+        _cls
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1197,7 +1201,14 @@ def _(r: Reader) -> Message:
             p[key] = r.u32()
         players.append(p)
     chain = tuple(
-        {"code": r.u32(), "loc": r.loc_info(), "controller": r.u8(), "location": r.u8(), "sequence": r.u32(), "description": r.u64()}
+        {
+            "code": r.u32(),
+            "loc": r.loc_info(),
+            "controller": r.u8(),
+            "location": r.u8(),
+            "sequence": r.u32(),
+            "description": r.u64(),
+        }
         for _ in range(r.u32())
     )
     return ReloadField(opts, (players[0], players[1]), chain)
@@ -1345,4 +1356,3 @@ __all__ = [name for name, obj in list(globals().items()) if isinstance(obj, type
     "decode_buffer",
     "decoded_types",
 ]
-

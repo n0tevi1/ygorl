@@ -22,10 +22,14 @@ def add_parser(subparsers) -> None:
         "with a policy; prints one row per candidate (see docs/branching.md).",
     )
     p.add_argument("replay", type=Path, help="replay file (.json or .json.gz)")
-    p.add_argument("--at", dest="t", type=int, required=True, metavar="T", help="decision point: agent step index, from 0")
+    p.add_argument(
+        "--at", dest="t", type=int, required=True, metavar="T", help="decision point: agent step index, from 0"
+    )
     p.add_argument("--try", dest="candidates", type=_candidates, default=None, metavar="all|I,J,...",
                    help="candidate action indices at T (default: all legal actions)")  # fmt: skip
-    p.add_argument("--policy", default="random", metavar="AGENT", help=f"rollout policy for both sides: {agents_help()}")
+    p.add_argument(
+        "--policy", default="random", metavar="AGENT", help=f"rollout policy for both sides: {agents_help()}"
+    )
     p.add_argument("--seed", type=int, default=0, help="policy seed of the first rollout (default 0)")
     p.add_argument("--rollouts", type=int, default=1, metavar="N", help="rollouts per candidate (default 1)")
     add_env_option(p, "environment of the replay (default: its recorded version under the environments root)")
@@ -101,7 +105,9 @@ def _report(args, replay, env, branch, outcomes, cards) -> str:
                      f"turns={rec.get('turns')} lp={lp[0]}/{lp[1]}")  # fmt: skip
     lines.append(f"recorded: {recorded}")
     per = "rollout" if args.rollouts == 1 else "rollouts"
-    lines.append(f"rollouts  policy {args.policy}, seed {args.seed}, {args.rollouts} {per} per candidate; * = recorded action")
+    lines.append(
+        f"rollouts  policy {args.policy}, seed {args.seed}, {args.rollouts} {per} per candidate; * = recorded action"
+    )
     if args.rollouts > 1:
         lines.append(f"          wins/draws/losses for side {_SIDES[branch.side]}; turns and lp are means")
     lines.append("")

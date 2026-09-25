@@ -29,8 +29,12 @@ def main() -> int:
     ap.add_argument("--candidates", type=int, default=64)
     ap.add_argument("--first-pairs", type=int, default=25)
     ap.add_argument("--finalists", type=int, default=3)
-    ap.add_argument("--validation-pairs", type=int, default=200,
-                    help="fresh pairs replayed by the finalists and the base deck; only they decide significance")
+    ap.add_argument(
+        "--validation-pairs",
+        type=int,
+        default=200,
+        help="fresh pairs replayed by the finalists and the base deck; only they decide significance",
+    )
     ap.add_argument("--meta-top", type=int, default=60)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cpu")
@@ -70,8 +74,11 @@ def main() -> int:
     edits = neighbors(base, pool, lambda pw: cards[pw].is_extra_deck if pw in cards else False,
                       lambda d: not env.validate_deck(d, cards), limit=args.candidates, rng=rng)  # fmt: skip
     names = {pw: cards[pw].name for pw in pool + list(base.main) + list(base.extra) if pw in cards}
-    print(f"{args.base.name}: type {dtype!r} ({len(same)} other lists), {len(pool)} candidate cards, "
-          f"{len(edits)} legal swaps sampled", flush=True)
+    print(
+        f"{args.base.name}: type {dtype!r} ({len(same)} other lists), {len(pool)} candidate cards, "
+        f"{len(edits)} legal swaps sampled",
+        flush=True,
+    )
 
     pol = load_actor(args.checkpoint)
     opp = load_actor(args.opponent_checkpoint) if args.opponent_checkpoint else pol
@@ -99,10 +106,14 @@ def main() -> int:
                      "deck": c.deck})  # fmt: skip
     rows.sort(key=lambda r: r["diff"], reverse=True)
     for r in rows:
-        print(f"  {r['edit']:60s} search {r['search_diff']:+.3f} | fresh {r['diff']:+.3f} ({r['ci'][0]:+.3f}, "
-              f"{r['ci'][1]:+.3f}) over {r['validation_pairs']} pairs")
-    print(f"base win rate {np.nanmean(base_cand.scores):.3f} over {len(base_cand.scores)} search pairs; "
-          f"{evaluator.games} games ({evaluator.errors} engine errors) in {evaluator.seconds:.0f}s")
+        print(
+            f"  {r['edit']:60s} search {r['search_diff']:+.3f} | fresh {r['diff']:+.3f} ({r['ci'][0]:+.3f}, "
+            f"{r['ci'][1]:+.3f}) over {r['validation_pairs']} pairs"
+        )
+    print(
+        f"base win rate {np.nanmean(base_cand.scores):.3f} over {len(base_cand.scores)} search pairs; "
+        f"{evaluator.games} games ({evaluator.errors} engine errors) in {evaluator.seconds:.0f}s"
+    )
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
         report = {"base": str(args.base), "env": env.stamp(), "checkpoint": args.checkpoint, "type": dtype,
