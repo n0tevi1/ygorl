@@ -213,7 +213,7 @@ AgentMatrix.load(path, env=env)
 - `agents`、`specs`（每个 agent 的构造方式，即 agent 规格）、`fingerprints`（检查点内容哈希）；
 - `win_rate`、`games`、`errors`、`ci_low`、`ci_high`；
 - `decks`、`deck_hashes`、`pairings`（牌组下标对）、`seed`、`max_turns`、`max_decisions`；
-- `nash`、`alpha_rank`、`alpha`、`population_size`、`confidence`、`environment`。
+- `nash`、`alpha_rank`、`alpha`、`population_size`、`confidence`、`environment`、`batched`。
 - 带 `env` 保存时必须是同一环境下构建的。
 
 **增量扩展**（#86）：`extend_agent_matrix(matrix, 新 agent, decks, env=..., config=...)`。
@@ -231,9 +231,21 @@ AgentMatrix.load(path, env=env)
 - 检查点文件找不到时（例如相对路径换了工作目录）单独报错，不当作「已改动」。
 - 指纹在开打前计算。所以不要对正在训练、会被改写的 `best.pt` 建矩阵：先拷一份固定的检查点再加入。
 
-**尚未做**：
-- 策略对策略的格子走 GPU 批量路径（#87）。
-- 目前全部走 `Arena`，策略 agent 在 CPU 工作进程里推理，所有格子共用一个进程池。
+**批量路径**（#87）：`build_agent_matrix(..., device="cuda")`。
+- 两边都是普通 `policy:` / `policy-greedy:` 检查点（没有 `lethal:` 包装）、词表和事件窗口相同的格子，走「批量评估」的 C++ 步进路径，网络放在 `device` 上；
+  其余格子仍走 `Arena`，所有 Arena 格子共用一个进程池。
+- 两条路径打的是同一批局面：槽位、种子、先攻方都相同。
+  - 采样：批量路径用 `play_policies(..., sample_seeds=, sampling=)`，按拿着槽位的 agent 的槽位种子采样，每边各自的 greedy / temperature。
+  - 统计口径相同（错误局单独计数）。
+- 采样流不同：Arena 里是 agent 自己的随机数流，批量路径里是按决策序号派生的均匀数。所以带温度采样的格子两条路径分布相同、样本不同；
+  argmax（`@greedy`）策略两条路径逐局相同（测试检查）。
+- 矩阵记下 `batched`。扩展时沿用同一条路径（批量矩阵不给 device 时用 CPU），避免同一张矩阵里混着两种采样。
+  逐位复现还要求同一种设备：GPU 与 CPU 的前向数值可能有细微差别。
+- 吞吐（2026-09-25，本机 Radeon 8060S，同时有训练与其它 GPU 负载）：两个 PPO 检查点、语料训练池 50 个配对 = 200 局，
+  Arena 8 进程 4.1 局/秒，批量路径 8.6 局/秒（2.1 倍）；每格只有 40 局时两者持平（2.4 / 2.5 局/秒，批量路径的加载与预热摊不开）。
+- `ygorl strength --device auto` 在有 GPU 的机器上走批量路径、在纯 CPU 机器上走 Arena。所以同一个种子在两台机器上，带温度采样的格子数值不同（分布相同）。
+  输出写明用的是哪条路径；要跨机器逐位复现，请显式给 `--device`。
+- 尚可提速：现在每格调用一次 `play_policies`，一格只有 4 × 配对数局，每格末尾环境会部分空转；把同一组（词表 + 事件窗口）的格子合进一次调用会更快。
 
 ## 批量评估（策略对策略，`ygorl.eval.batched`）
 
