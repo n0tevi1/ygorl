@@ -443,6 +443,30 @@ def test_strength_errors(capsys):
     assert "unknown agent 'nope'" in capsys.readouterr().err
 
 
+def test_strength_extends_an_existing_matrix(tmp_path, capsys):
+    from ygorl.eval.agent_matrix import AgentMatrix, build_agent_matrix
+
+    names = ("snake_eye", "kashtira", "yubel")
+    decks_args = ["--decks", *(str(DECKS / f"{n}.ydk") for n in names)]
+    out_path = tmp_path / "s.json"
+    base = ["--max-turns", "4", "--out", str(out_path)]
+    assert main(["strength", "random", "greedy", *decks_args, "--pairings", "2", "--seed", "3", *base]) == 0
+    capsys.readouterr()
+    assert main(["strength", "g2=greedy", *decks_args, "--out", str(out_path)]) == 0  # settings come from the file
+    out = capsys.readouterr().out
+    assert out.startswith(f"added g2 to {out_path}") and "2 agent pairs played" in out
+    decks = [load_ydk(DECKS / f"{n}.ydk") for n in names]
+    agents = {"random": agent_factory("random"), "greedy": agent_factory("greedy"), "g2": agent_factory("greedy")}
+    assert AgentMatrix.load(out_path) == build_agent_matrix(agents, decks, pairings=2, seed=3,
+                                                            config=DuelConfig(max_turns=4))  # fmt: skip
+    assert main(["strength", "r3=random", *decks_args, "--pairings", "5", "--out", str(out_path)]) == 2
+    assert "--pairings 5 differs" in capsys.readouterr().err
+    assert main(["strength", "r3=random", *decks_args, "--alpha", "3", "--out", str(out_path)]) == 2
+    assert "--alpha 3.0 differs" in capsys.readouterr().err
+    assert main(["strength", "random", "greedy", *decks_args, "--out", str(tmp_path)]) == 2  # a directory
+    assert capsys.readouterr().err.startswith("ygorl strength: error:")
+
+
 def test_strength_agent_names_and_specs():
     from ygorl.commands.strength import parse_agents
 
