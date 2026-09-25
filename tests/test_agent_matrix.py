@@ -119,3 +119,83 @@ def test_save_and_load_round_trip_bound_to_the_environment(matrix, tmp_path):
     other = load_environment(make_env(tmp_path / "o", version="other-2026-10"))
     with pytest.raises(EnvironmentConfigError, match="belongs to environment"):
         AgentMatrix.load(saved, env=other)
+
+
+# ------------------------------------------------------------------ extending a matrix (#86)
+
+
+def test_extending_equals_building_everything_at_once(monkeypatch):
+    from ygorl.eval import agent_matrix as am
+
+    small = build_agent_matrix({"greedy": AgentSpec("greedy"), "random": AgentSpec("random")}, THREE, pairings=3,
+                               seed=4, config=SHORT)  # fmt: skip
+    played = []
+    real = am.Arena.play
+    monkeypatch.setattr(am.Arena, "play", lambda self, specs: played.append(len(specs)) or real(self, specs))
+    grown = am.extend_agent_matrix(small, {"random2": AgentSpec("random")}, THREE, config=SHORT)
+    assert played == [2 * 4 * 3]  # only the new agent's two cells, 4 games per pairing
+    at_once = build_agent_matrix(AGENTS, THREE, pairings=3, seed=4, config=SHORT)
+    assert grown == at_once
+
+
+def test_an_agent_already_in_the_matrix_is_skipped_or_rejected():
+    from ygorl.eval.agent_matrix import extend_agent_matrix
+
+    m = build_agent_matrix({"greedy": AgentSpec("greedy"), "random": AgentSpec("random")}, THREE, pairings=1,
+                           config=SHORT)  # fmt: skip
+    assert extend_agent_matrix(m, {"greedy": AgentSpec("greedy")}, THREE, config=SHORT) is m
+    with pytest.raises(ValueError, match="already in the matrix"):
+        extend_agent_matrix(m, {"greedy": AgentSpec("random")}, THREE, config=SHORT)
+
+
+def test_extending_checks_the_deck_pool_the_rules_and_the_environment(tmp_path):
+    from ygorl.eval.agent_matrix import extend_agent_matrix
+
+    m = build_agent_matrix({"greedy": AgentSpec("greedy"), "random": AgentSpec("random")}, THREE, pairings=1,
+                           config=SHORT)  # fmt: skip
+    new = {"r2": AgentSpec("random")}
+    with pytest.raises(ValueError, match="deck pool differs"):
+        extend_agent_matrix(m, new, THREE[::-1], config=SHORT)
+    with pytest.raises(ValueError, match="rules differ"):
+        extend_agent_matrix(m, new, THREE, config=DuelConfig(max_turns=5))
+    env = load_environment(make_env(tmp_path))
+    with pytest.raises(EnvironmentConfigError):
+        extend_agent_matrix(m, new, THREE, env=env, config=SHORT)
+
+
+def test_checkpoint_fingerprints(tmp_path):
+    from dataclasses import replace
+
+    from ygorl.eval.agent_matrix import agent_fingerprint, extend_agent_matrix
+
+    ckpt = tmp_path / "p.pt"
+    ckpt.write_bytes(b"weights v1")
+    fp = agent_fingerprint(f"policy:{ckpt}")
+    assert fp.startswith("sha256:") and agent_fingerprint(f"lethal:policy:{ckpt}@t=0.5") == fp
+    assert agent_fingerprint("greedy") == "" and agent_fingerprint("policy:/no/such/file.pt") == ""
+    m = build_agent_matrix({"greedy": AgentSpec("greedy"), "random": AgentSpec("random")}, THREE, pairings=1,
+                           config=SHORT)  # fmt: skip
+    m = replace(m, specs=(f"policy:{ckpt}", "random"), fingerprints=(fp, ""))  # as if 'greedy' were that checkpoint
+    ckpt.write_bytes(b"weights v2")
+    with pytest.raises(ValueError, match="changed since it entered"):
+        extend_agent_matrix(m, {"r2": AgentSpec("random")}, THREE, config=SHORT)
+
+
+def test_an_agent_that_cannot_be_rebuilt_must_be_passed_again():
+    from ygorl.agents import RandomAgent
+    from ygorl.eval.agent_matrix import extend_agent_matrix
+
+    def mine(seed):
+        return RandomAgent(seed)
+
+    m = build_agent_matrix({"mine": mine, "greedy": AgentSpec("greedy")}, THREE, pairings=1, config=SHORT)
+    with pytest.raises(ValueError, match="cannot be rebuilt"):
+        extend_agent_matrix(m, {"r2": AgentSpec("random")}, THREE, config=SHORT)
+    grown = extend_agent_matrix(m, {"mine": mine, "r2": AgentSpec("random")}, THREE, config=SHORT)
+    assert grown.agents == ("greedy", "mine", "r2")
+
+
+def test_files_without_fingerprints_still_load(matrix):
+    d = matrix.to_dict()
+    del d["fingerprints"]
+    assert AgentMatrix.from_dict(d).fingerprints == ("", "", "")

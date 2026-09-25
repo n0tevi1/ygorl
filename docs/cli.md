@@ -177,6 +177,12 @@ uv run ygorl strength greedy random best=policy:out/run/best.pt --decks out/corp
 - **输出**：排名（`ranking: a > b > ...`，按 alpha-rank、Nash、平均胜率排序；完全打平时次序无意义），以及行 agent 对列 agent 的胜率矩阵，末两列是 Nash 权重与 alpha-rank。
   出错的局（抛异常、引擎步数上限、脚本预算）不计入胜率，单独报告。
 - **保存**：`--out PATH` 写 JSON；带 `--env` 时写到 `environments/<版本>/artifacts/agent-matrix/<名字>.json`（`--name`，默认 `agents`）。
+- **扩展已有矩阵**：
+  - 如果输出目标（`--out` 或上面的环境产物）已经存在，就把给出的 agent 加进去：只打新 agent 的对局，用矩阵自己的配对、种子和回合上限。
+  - 这时只给一个新 agent 也可以；已在矩阵里、同名同内容的 agent 会被跳过。
+  - 显式给出的 `--pairings` / `--seed` / `--max-turns` 与矩阵不一致时报错（退出码 2）。
+  - 同名但规格或检查点内容不同、检查点已被改写、牌组池不同，也都报错（见 [evaluation.md](evaluation.md)）。
+  - 输出第一行写明加入了哪些 agent、打了几格。
 - **退出码**：有出错的局时为 1（结果照常输出）。
 
 ## `ygorl env`

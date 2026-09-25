@@ -210,16 +210,27 @@ AgentMatrix.load(path, env=env)
 - Nash 混合与 alpha-rank 用 `ygorl.eval.matchup` 的同一套求解器（收益矩阵 `win_rate - 0.5`）。
 
 **产物格式**（JSON，`format = "ygorl-agent-matrix"`，`format_version = 1`）：
-- `agents`、`specs`（每个 agent 的构造方式，即 agent 规格）；
+- `agents`、`specs`（每个 agent 的构造方式，即 agent 规格）、`fingerprints`（检查点内容哈希）；
 - `win_rate`、`games`、`errors`、`ci_low`、`ci_high`；
 - `decks`、`deck_hashes`、`pairings`（牌组下标对）、`seed`、`max_turns`、`max_decisions`；
 - `nash`、`alpha_rank`、`alpha`、`population_size`、`confidence`、`environment`。
 - 带 `env` 保存时必须是同一环境下构建的。
 
+**增量扩展**（#86）：`extend_agent_matrix(matrix, 新 agent, decks, env=..., config=...)`。
+- 只打含新 agent 的格子，用矩阵自己的配对、种子和规则；旧格子原样复制。结果与一次建出全部 agent 的矩阵逐格相同（测试检查，并数了实际开的局数）。
+- 旧 agent 按记录的规格用注册表重建；重建不了（例如当初传的是自定义函数）就报错，请把它和新 agent 一起传入。
+- `fingerprints` 记录每个策略 agent 的检查点内容哈希（`sha256:` 前 16 位，穿过 `lethal:` 包装）；规则 agent 为空串。
+- 以下情况报错，并给出原因：
+  - 同名 agent 的规格或检查点内容不同（同名同内容则跳过）；
+  - 旧 agent 的检查点文件已被改写；
+  - 牌组池的名字、顺序或内容不同；
+  - `max_turns` / `max_decisions` 不同；
+  - 环境不同。
+- 不含 `fingerprints` 的旧文件照常加载（视为全空）。
+
 **尚未做**：
-- 增量加入 agent（只打新的一行，并校验检查点内容与抽样参数一致，#86）；
 - 策略对策略的格子走 GPU 批量路径（#87）。
-- 目前全部走 `Arena`，策略 agent 在 CPU 工作进程里推理。
+- 目前全部走 `Arena`，策略 agent 在 CPU 工作进程里推理，所有格子共用一个进程池。
 
 ## 批量评估（策略对策略，`ygorl.eval.batched`）
 

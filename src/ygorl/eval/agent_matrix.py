@@ -19,6 +19,7 @@ and alpha-rank rank the agents without assuming strength is transitive (design C
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -28,6 +29,7 @@ from typing import Any
 import numpy as np
 
 from ygorl.agents.base import AgentFactory, agent_name
+from ygorl.agents.registry import agent_factory, policy_checkpoint_of
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
 from ygorl.engine.duel import DuelConfig, shuffle_deck
@@ -103,6 +105,11 @@ class AgentMatrix:
     population_size: int = DEFAULT_POPULATION
     confidence: float = 0.95
     environment: dict[str, str] | None = None
+    fingerprints: tuple[str, ...] = ()  # checkpoint content hash of each agent ("" for rule agents)
+
+    def __post_init__(self) -> None:
+        if not self.fingerprints:  # files written before fingerprints existed
+            object.__setattr__(self, "fingerprints", ("",) * len(self.agents))
 
     def array(self) -> np.ndarray:
         return np.array(self.win_rate, dtype=float)
@@ -145,8 +152,8 @@ class AgentMatrix:
         kw = {k: d[k] for k in cls.__dataclass_fields__ if k in d}
         for k in ("win_rate", "games", "errors", "ci_low", "ci_high", "pairings"):
             kw[k] = _tuples(kw[k])
-        for k in ("agents", "specs", "decks", "deck_hashes", "nash", "alpha_rank"):
-            kw[k] = tuple(kw[k])
+        for k in ("agents", "specs", "decks", "deck_hashes", "nash", "alpha_rank", "fingerprints"):
+            kw[k] = tuple(kw.get(k, ()))
         return cls(**kw)
 
     def save(self, path: str | Path | None = None, *, env: Environment | None = None, name: str = "agents") -> Path:
@@ -176,8 +183,6 @@ class AgentMatrix:
 def _named_agents(agents: Mapping[str, AgentFactory] | Sequence[AgentFactory]) -> list[tuple[str, AgentFactory]]:
     items = list(agents.items()) if isinstance(agents, Mapping) else [(agent_name(a), a) for a in agents]
     names = [n for n, _ in items]
-    if len(items) < 2:
-        raise ValueError("an agent matrix needs at least two agents")
     if any(not n for n in names) or len(set(names)) != len(names):
         raise ValueError(f"agent names must be non-empty and unique: {names}")
     return items
@@ -212,26 +217,47 @@ def cell_specs(agent_a: AgentFactory, agent_b: AgentFactory, slots, env: Environ
     return specs
 
 
-def build_agent_matrix(agents: Mapping[str, AgentFactory] | Sequence[AgentFactory],
-                       decks: Sequence[Deck] | Mapping[str, Deck], *, pairings: int, seed: int = 0,
-                       env: Environment | None = None, config: DuelConfig | None = None, workers: int = 1,
-                       confidence: float = 0.95, alpha: float = DEFAULT_ALPHA,
-                       population_size: int = DEFAULT_POPULATION) -> AgentMatrix:  # fmt: skip
-    """Play every pair of ``agents`` on ``pairings`` sampled deck pairings (4 games each) and solve the meta game."""
-    items = sorted(_named_agents(agents), key=lambda it: it[0])
-    pool = _named(decks)
-    deck_list = [d for _, d in pool]
-    sample = sample_pairings(len(pool), pairings, seed)
-    config = config or (DuelConfig.from_environment(env) if env is not None else DuelConfig())
-    slots = pairing_slots(deck_list, sample, seed, config)
+def agent_fingerprint(spec: str) -> str:
+    """Content hash of the checkpoint a ``policy`` agent spec plays (through any ``lethal:`` wrapper), "" otherwise:
+    the same name with other weights must not be mistaken for an agent already in a matrix."""
+    inner = spec
+    while inner.startswith("lethal:"):
+        inner = inner[len("lethal:") :]
+    try:
+        path = policy_checkpoint_of(inner)
+    except ValueError:
+        return ""
+    if path is None or not Path(path).is_file():
+        return ""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return "sha256:" + h.hexdigest()[:16]
 
-    n = len(items)
-    cells = [(i, j) for i in range(n) for j in range(i + 1, n)]
-    specs = [spec for i, j in cells for spec in cell_specs(items[i][1], items[j][1], slots, env, config)]
-    records = Arena(items[0][1], items[1][1], env=env, config=config, workers=workers).play(specs)  # one pool
-    per_cell = 4 * len(sample)
+
+def _play(old: AgentMatrix | None, rows: list[tuple[str, str, str, AgentFactory, bool]],
+          pool: list[tuple[str, Deck]], sample: list[tuple[int, int]], seed: int, env: Environment | None,
+          config: DuelConfig, workers: int, confidence: float, alpha: float, population_size: int) -> AgentMatrix:  # fmt: skip
+    """The matrix of ``rows`` = (name, spec, fingerprint, factory, is new), in name order: cells between two agents of
+    ``old`` are copied from it, every cell with a new agent is played."""
+    names = [r[0] for r in rows]
+    n = len(rows)
+    deck_list = [d for _, d in pool]
+    slots = pairing_slots(deck_list, sample, seed, config)
+    cells = [(i, j) for i in range(n) for j in range(i + 1, n) if rows[i][4] or rows[j][4]]
+    specs = [sp for i, j in cells for sp in cell_specs(rows[i][3], rows[j][3], slots, env, config)]
+    records = Arena(rows[0][3], rows[1][3], env=env, config=config, workers=workers).play(specs)  # one pool
+
     rate, count, errs = np.full((n, n), 0.5), np.zeros((n, n), dtype=int), np.zeros((n, n), dtype=int)
     lo, hi = np.full((n, n), 0.5), np.full((n, n), 0.5)
+    if old is not None:
+        for a in old.agents:
+            for b in old.agents:
+                i, j, oi, oj = names.index(a), names.index(b), old.index(a), old.index(b)
+                rate[i, j], count[i, j], errs[i, j] = old.win_rate[oi][oj], old.games[oi][oj], old.errors[oi][oj]
+                lo[i, j], hi[i, j] = old.ci_low[oi][oj], old.ci_high[oi][oj]
+    per_cell = 4 * len(sample)
     for c, (i, j) in enumerate(cells):
         cell = score(records[c * per_cell : (c + 1) * per_cell])
         rate[i, j], rate[j, i] = cell.win_rate, 1.0 - cell.win_rate
@@ -240,16 +266,89 @@ def build_agent_matrix(agents: Mapping[str, AgentFactory] | Sequence[AgentFactor
         lo[i, j], hi[i, j] = wilson_interval(cell.wins + 0.5 * cell.draws, cell.games, confidence)
         lo[j, i], hi[j, i] = 1.0 - hi[i, j], 1.0 - lo[i, j]
     return AgentMatrix(
-        agents=tuple(n for n, _ in items), specs=tuple(agent_name(f) for _, f in items),
+        agents=tuple(names), specs=tuple(r[1] for r in rows), fingerprints=tuple(r[2] for r in rows),
         win_rate=_tuples(rate.tolist()), games=_tuples(count.tolist()), errors=_tuples(errs.tolist()),
         ci_low=_tuples(lo.tolist()), ci_high=_tuples(hi.tolist()),
         decks=tuple(name for name, _ in pool), deck_hashes=tuple(_deck_hash(d) for d in deck_list),
-        pairings=tuple(sample), seed=seed, max_turns=config.max_turns, max_decisions=config.max_decisions,
-        nash=tuple(float(v) for v in nash_mixture(rate)),
+        pairings=tuple(tuple(p) for p in sample), seed=seed, max_turns=config.max_turns,
+        max_decisions=config.max_decisions, nash=tuple(float(v) for v in nash_mixture(rate)),
         alpha_rank=tuple(float(v) for v in alpha_rank(rate, alpha=alpha, population_size=population_size)),
         alpha=alpha, population_size=population_size, confidence=confidence,
         environment=env.stamp() if env is not None else None,
     )  # fmt: skip
 
 
-__all__ = ["AgentMatrix", "CellResult", "build_agent_matrix", "cell_specs", "pairing_slots", "sample_pairings", "score"]
+def _row(name: str, factory: AgentFactory, new: bool) -> tuple[str, str, str, AgentFactory, bool]:
+    spec = agent_name(factory)
+    return (name, spec, agent_fingerprint(spec), factory, new)
+
+
+def build_agent_matrix(agents: Mapping[str, AgentFactory] | Sequence[AgentFactory],
+                       decks: Sequence[Deck] | Mapping[str, Deck], *, pairings: int, seed: int = 0,
+                       env: Environment | None = None, config: DuelConfig | None = None, workers: int = 1,
+                       confidence: float = 0.95, alpha: float = DEFAULT_ALPHA,
+                       population_size: int = DEFAULT_POPULATION) -> AgentMatrix:  # fmt: skip
+    """Play every pair of ``agents`` on ``pairings`` sampled deck pairings (4 games each) and solve the meta game."""
+    items = _named_agents(agents)
+    if len(items) < 2:
+        raise ValueError("an agent matrix needs at least two agents")
+    pool = _named(decks)
+    sample = sample_pairings(len(pool), pairings, seed)
+    config = config or (DuelConfig.from_environment(env) if env is not None else DuelConfig())
+    rows = sorted((_row(name, f, True) for name, f in items), key=lambda r: r[0])
+    return _play(None, rows, pool, sample, seed, env, config, workers, confidence, alpha, population_size)
+
+
+def extend_agent_matrix(matrix: AgentMatrix, agents: Mapping[str, AgentFactory] | Sequence[AgentFactory],
+                        decks: Sequence[Deck] | Mapping[str, Deck], *, env: Environment | None = None,
+                        config: DuelConfig | None = None, workers: int = 1) -> AgentMatrix:  # fmt: skip
+    """``matrix`` plus the agents not in it yet: only their cells are played, on the matrix's own deck pairings,
+    seed and rules, so the result equals building all agents at once. An agent already in the matrix under the
+    same name is skipped if its spec and checkpoint content are the same, an error otherwise."""
+    if env is not None:
+        env.check_stamp(matrix.environment or {})
+    elif matrix.environment is not None:
+        raise ValueError(f"the matrix belongs to environment {matrix.environment.get('version')!r}: pass it")
+    pool = _named(decks)
+    if tuple(n for n, _ in pool) != matrix.decks or tuple(_deck_hash(d) for _, d in pool) != matrix.deck_hashes:
+        raise ValueError("the deck pool differs from the one the matrix was built on (names, order or contents)")
+    config = config or (DuelConfig.from_environment(env) if env is not None else DuelConfig())
+    if (config.max_turns, config.max_decisions) != (matrix.max_turns, matrix.max_decisions):
+        raise ValueError(f"rules differ from the matrix's: max_turns {config.max_turns} vs {matrix.max_turns}, "
+                         f"max_decisions {config.max_decisions} vs {matrix.max_decisions}")  # fmt: skip
+    given = dict(_named_agents(agents))
+    rows = []
+    for i, name in enumerate(matrix.agents):  # agents already in the matrix: rebuilt from their spec
+        spec, fp = matrix.specs[i], matrix.fingerprints[i]
+        if agent_fingerprint(spec) != fp:
+            raise ValueError(f"the checkpoint of agent {name!r} ({spec!r}) changed since it entered the matrix")
+        if name in given:
+            if (agent_name(given[name]), agent_fingerprint(agent_name(given[name]))) != (spec, fp):
+                raise ValueError(f"agent {name!r} is already in the matrix as {spec!r} ({fp or 'no checkpoint'}): "
+                                 "give the new one another name")  # fmt: skip
+            factory = given.pop(name)
+        else:
+            try:
+                factory = agent_factory(spec)
+            except ValueError as exc:
+                raise ValueError(f"agent {name!r} ({spec!r}) cannot be rebuilt from its spec ({exc}): "
+                                 "pass it with the new agents") from None  # fmt: skip
+        rows.append((name, spec, fp, factory, False))
+    if not given:
+        return matrix
+    rows = sorted(rows + [_row(name, f, True) for name, f in given.items()], key=lambda r: r[0])
+    return _play(matrix, rows, pool, [tuple(p) for p in matrix.pairings], matrix.seed, env, config, workers,
+                 matrix.confidence, matrix.alpha, matrix.population_size)  # fmt: skip
+
+
+__all__ = [
+    "AgentMatrix",
+    "CellResult",
+    "agent_fingerprint",
+    "build_agent_matrix",
+    "cell_specs",
+    "extend_agent_matrix",
+    "pairing_slots",
+    "sample_pairings",
+    "score",
+]
