@@ -57,6 +57,9 @@ public:
     ScriptBudget(const ScriptBudget&) = delete;
     ScriptBudget& operator=(const ScriptBudget&) = delete;
     bool exceeded() const;  // also records g_script_steps_peak
+
+private:
+    bool outer_;
 };
 
 class CardSource {

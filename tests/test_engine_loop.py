@@ -2,16 +2,18 @@
 host (C++ HostDuel / HostPool, the C++ DuelPool, the Python tracker); so does a single core call whose scripts run
 past their instruction budget; a rollout that stops receiving events raises."""
 
+import time
 from pathlib import Path
 
 import pytest
 
-from ygorl import _core
+from ygorl import _core, paths
 from ygorl.agents import RandomAgent
 from ygorl.cards.cdb import CardDB
 from ygorl.cards.ydk import load_ydk
+from ygorl.engine import constants as C
 from ygorl.engine import duel as duel_module
-from ygorl.engine.duel import Duel, DuelConfig
+from ygorl.engine.duel import Duel, DuelConfig, default_cards, expand_seed
 from ygorl.env import GameSpec, run_games
 from ygorl.env.encoded import EncodedVecEnv, chooser
 
@@ -84,6 +86,55 @@ def test_python_host_stops_a_script_past_its_budget(db, tiny_script_budget):
     r = Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first).run(RandomAgent(0), RandomAgent(1))
     assert r.reason == "error" and "script budget" in r.error and r.winner is None
     assert issubclass(_core.ScriptBudgetExceeded, RuntimeError)
+
+
+NESTED = 46986414  # a card whose script is replaced by a nested search (IsExists -> filter -> IsExists ...)
+NESTED_LUA = """
+local s,id=GetID()
+function s.f(c,g,d)
+  if d==0 then local x=0 for i=1,40 do x=x+i end return false end
+  return g:IsExists(s.f,1,nil,g,d-1)
+end
+function s.initial_effect(c)
+  local e=Effect.CreateEffect(c)
+  e:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_CONTINUOUS)
+  e:SetCode(EVENT_ADJUST)
+  e:SetRange(LOCATION_MZONE)
+  e:SetCountLimit(1)
+  e:SetCondition(function() local g=Duel.GetFieldGroup(0,LOCATION_DECK,0) return g:IsExists(s.f,1,nil,g,7) end)
+  e:SetOperation(function() end)
+  c:RegisterEffect(e)
+end
+"""
+
+
+def test_a_nested_script_search_stops_at_once_past_its_budget(tiny_script_budget):
+    """Each filter runs in its own pcall and a failed one only returns false: past the budget every instruction must
+    fail, or the search goes on through the whole tree (8^7 leaves here), just slower and logging every failure."""
+    dirs = [Path(p) for p in paths.script_directories()]
+
+    def scripts(name):
+        if name == f"c{NESTED}.lua":
+            return NESTED_LUA
+        for d in dirs:
+            for p in (d / name, *d.glob(f"*/{name}")):
+                if p.exists():
+                    return p.read_text(errors="replace")
+        return None
+
+    core = _core.Duel(expand_seed(1), C.DUEL_MODE_MR5, (8000, 0, 0), (8000, 0, 0), default_cards().to_core(), scripts)
+    assert core.load_script("constant.lua") and core.load_script("utility.lua")
+    core.new_card(0, 0, NESTED, 0, C.LOCATION_MZONE, 0, C.POS_FACEUP_ATTACK)
+    for _ in range(8):
+        core.new_card(0, 0, NESTED, 0, C.LOCATION_DECK, 0, C.POS_FACEDOWN_DEFENSE)
+    core.new_card(1, 0, NESTED, 1, C.LOCATION_DECK, 0, C.POS_FACEDOWN_DEFENSE)
+    core.start()
+    t = time.time()
+    with pytest.raises(_core.ScriptBudgetExceeded):
+        for _ in range(50):
+            core.process()
+    assert time.time() - t < 5 and len(core.pop_logs()) < 1000
+    core.close()
 
 
 class SilentEnv:

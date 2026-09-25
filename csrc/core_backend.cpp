@@ -16,12 +16,12 @@ namespace ygorl {
 thread_local uint32_t t_script_steps = 0;
 thread_local bool t_script_budget = false;
 
-ScriptBudget::ScriptBudget() {
+ScriptBudget::ScriptBudget() : outer_(t_script_budget) {
     t_script_steps = 0;
     t_script_budget = true;
 }
 
-ScriptBudget::~ScriptBudget() { t_script_budget = false; }
+ScriptBudget::~ScriptBudget() { t_script_budget = outer_; }
 
 bool ScriptBudget::exceeded() const {
     const uint32_t used = t_script_steps;

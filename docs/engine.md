@@ -142,7 +142,9 @@ print(result.summary())
   2026-09-25 的评估卡死就在这里：融合素材检查（`proc_fusion.lua` 的 `Fusion.CheckSelectMixRep`，「X + 2 只以上」类素材）
   在候选素材多、又凑不出合法组合时，会无记忆地穷举有序子集，一次调用跑几个小时。补丁
   `patches/ygopro-core/0004-lua-instruction-budget.patch` 给 Lua 装计数钩子（每 1,000 条指令问一次主机）；一次 `process()`
-  超过 `_core.set_max_script_steps` 的预算（默认 100,000 千条，约 1 亿条指令，约一秒）后，钩子让之后的脚本都报错，调用很快退出，
+  超过 `_core.set_max_script_steps` 的预算（默认 100,000 千条，约 1 亿条指令，约一秒）后，钩子改为每条指令都报错：
+  每个过滤器各自在 pcall 里、失败只返回 false，若只打断最深一层，外层循环会接着把整棵搜索树走完；每条指令都报错则每一层一进去就失败，
+  展开只需约「深度 × 候选数」步（测试 `test_a_nested_script_search_stops_at_once_past_its_budget`）。调用很快退出后，
   `Duel.process` 抛 `_core.ScriptBudgetExceeded`，三种主机都把对局记为 `error`（「script budget」）。计数只看指令数，与时钟无关，
   所以同一局重放结果不变。装载脚本等其它核心调用不计预算。实测（2,000 局随机对打，语料卡组）：单次调用超过 30 万条指令的局占 8%，
   超过 300 万条的占 0.55%，超过 3,000 万条的占 0.1%，超过 1 亿条的占 0.05%（即被截断的比例）；`_core.script_steps_peak()`
