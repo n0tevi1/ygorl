@@ -209,6 +209,16 @@ PYBIND11_MODULE(_core, m) {
         [](uint32_t n) { return g_max_engine_steps.exchange(n); },
         "Engine steps allowed between two decisions before a duel stops as an engine loop; returns the old value.");
     m.def(
+        "set_max_script_steps",
+        [](uint32_t n) { return g_max_script_steps.exchange(n); },
+        "Script instructions (thousands) one engine call (process) may run before the duel stops as an error; returns the old "
+        "value.");
+    m.def(
+        "script_steps_peak",
+        [](bool reset) { return reset ? g_script_steps_peak.exchange(0) : g_script_steps_peak.load(); },
+        py::arg("reset") = false, "Most script instructions (thousands) one engine call has run in this process.");
+    py::register_exception<ScriptBudgetExceeded>(m, "ScriptBudgetExceeded", PyExc_RuntimeError);
+    m.def(
         "ocg_version",
         []() {
             int major = 0, minor = 0;

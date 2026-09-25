@@ -289,7 +289,11 @@ class Duel:
             if observer is not None:
                 observer.on_start(core)
             while True:
-                status = core.process()
+                try:
+                    status = core.process()
+                except _core.ScriptBudgetExceeded as e:  # a script search that would not end (_core budget)
+                    tracker.stop("error", str(e))
+                    break
                 buf = core.get_message()
                 if observer is not None:
                     observer.on_buffer(core, buf)
@@ -379,7 +383,11 @@ class DuelSession:
             if response is not None:
                 core.set_response(response)
                 response = None
-            status = core.process()
+            try:
+                status = core.process()
+            except _core.ScriptBudgetExceeded as e:
+                tracker.stop("error", str(e))
+                return
             tracker.on_buffer(core.get_message(), status, core.pop_logs())
             if tracker.done:
                 return

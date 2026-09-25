@@ -55,7 +55,7 @@ checkpoint / 日志）。需要 `uv sync --extra train`。
 - **终局奖励**：挂在这一局在本列里的最后一行上，从该行座位的视角给出（可用 `terminal_rewards(players, dones, winner)`，
   `winner` 为胜方座位或 −1 平局）。即使终局是对手的动作或主机代答触发的，也挂在最后一个 agent 行上。
 - **截断的对局**（T4b.4 起）：回合上限（`turn_limit`）、决策数上限（`decision_limit`）与引擎错误（`error`，含 C++ 池里
-  重开失败报回的错误事件、引擎步数上限的「engine loop」，[engine.md](engine.md)）结束的局**不是胜负**，是截断：最后一个 agent 行 `done = True`、`truncated = True`、奖励 0。
+  重开失败报回的错误事件、引擎步数上限的「engine loop」、脚本指令预算的「script budget」，[engine.md](engine.md)）结束的局**不是胜负**，是截断：最后一个 agent 行 `done = True`、`truncated = True`、奖励 0。
   主机按 LP 判的「胜负」（[engine.md](engine.md)，上限的计分方式以后还可能改）一律不进训练目标。`estimate(..., truncated=...)`
   在截断行上用 critic 自举：Expected-SARSA 回报的奖励换成该行自己的 `Q(s_t, a_t)`、GAE 的换成 `V(s_t)`，于是截断行的
   TD 误差为 0，之前的行经 critic 回溯（等价于在该行把列切开、以同座位的 critic 估计自举；单测
