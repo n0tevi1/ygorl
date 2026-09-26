@@ -220,3 +220,14 @@ def test_only_agent_specs_are_rebuilt_from_the_registry(tmp_path):
         extend_agent_matrix(gone, {"r2": AgentSpec("random")}, THREE, config=SHORT)
     with pytest.raises(ValueError, match="top level is a list"):
         AgentMatrix.from_dict([])
+
+
+def test_ranking_ignores_float_noise_outside_the_support(matrix):
+    """alpha-rank puts all its mass on one agent; the others get ~1e-17 noise, which must not order them: a random
+    agent that loses to everyone ranks last."""
+    from dataclasses import replace
+
+    m = replace(matrix, agents=("a", "b", "r"), alpha_rank=(1.0, 1e-18, 3e-17), nash=(1.0, 0.0, 2e-17),
+                win_rate=((0.5, 0.6, 0.9), (0.4, 0.5, 0.8), (0.1, 0.2, 0.5)))  # fmt: skip
+    assert m.ranking() == ["a", "b", "r"]
+    assert m.mean_win_rate()["b"] == pytest.approx(0.6)

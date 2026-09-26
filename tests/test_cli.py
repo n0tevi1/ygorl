@@ -414,7 +414,7 @@ def test_strength_matches_the_library(tmp_path, capsys):
                               seed=5, config=DuelConfig(max_turns=4))  # fmt: skip
     got = AgentMatrix.load(out_path)
     assert got == want and got.specs == ("greedy", "random")
-    assert "ranking: " in out and str(out_path) in out
+    assert "ranking (" in out and str(out_path) in out
     for n in ("g", "random"):
         row = next(line for line in out.splitlines() if line.split()[:1] == [n])
         assert len(row.split()) == 1 + 2 + 2  # name, one win rate per agent, nash, alpha-rank

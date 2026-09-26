@@ -174,7 +174,7 @@ uv run ygorl strength greedy random best=policy:out/run/best.pt --decks out/corp
   `名字=` 前缀里不能有 `:`，所以 `policy:P@t=1` 这样的规格不会被误拆。
 - **牌组池**：`--decks` 给文件或目录；不给时用 `--env` 的 meta 牌组。按固定种子从池里抽 `--pairings` 个有序牌组配对（默认 50）。
   每对 agent 在每个配对上打 4 局：两种牌组分配 × 先后攻各一次。
-- **输出**：排名（`ranking: a > b > ...`，按 alpha-rank、Nash、平均胜率排序；完全打平时次序无意义），以及行 agent 对列 agent 的胜率矩阵，末两列是 Nash 权重与 alpha-rank。
+- **输出**：排名（`ranking (...): a (0.61) > b (0.58) > ...`，按 alpha-rank、Nash、平均胜率排序，括号里是对其余所有 agent 的平均胜率；完全打平时次序无意义），以及行 agent 对列 agent 的胜率矩阵，末两列是 Nash 权重与 alpha-rank。
   出错的局（抛异常、引擎步数上限、脚本预算）不计入胜率，单独报告。
 - **`--device`**：两边都是策略检查点的格子，在 C++ 批量路径上打，网络放在该设备上（`cuda`、`cpu`），其余格子走 Arena。
   - 默认 `auto`：有 CUDA 就用 `cuda`，否则全部走 Arena；`none` 强制全部走 Arena。
