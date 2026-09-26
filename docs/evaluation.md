@@ -206,7 +206,8 @@ AgentMatrix.load(path, env=env)
 - 每格给 Wilson 区间（`ci_low` / `ci_high`）。
 
 **排名**：
-- `ranking()` 按 alpha-rank 质量、Nash 权重、平均胜率排序；完全打平时次序无意义。
+- `ranking()` 按 alpha-rank 质量、Nash 权重、平均胜率（`mean_win_rate()`，对其余所有 agent 的平均）排序；完全打平时次序无意义。
+  质量先四舍五入到 1e-6：支撑集外的 agent 只剩 1e-17 量级的浮点噪声，不能拿它排序（否则一个输给所有人的 Random 可能排到前面）。
 - Nash 混合与 alpha-rank 用 `ygorl.eval.matchup` 的同一套求解器（收益矩阵 `win_rate - 0.5`）。
 
 **产物格式**（JSON，`format = "ygorl-agent-matrix"`，`format_version = 1`）：

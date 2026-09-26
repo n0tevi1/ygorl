@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -126,13 +127,17 @@ class AgentMatrix:
         j = self.index(opponent)
         return {a: self.win_rate[i][j] for i, a in enumerate(self.agents) if i != j}
 
-    def ranking(self) -> list[str]:
-        """Agents by alpha-rank mass, then Nash weight, then mean win rate (strongest first)."""
+    def mean_win_rate(self) -> dict[str, float]:
+        """Each agent's win rate averaged over all the other agents."""
         m = self.array()
-        mean = [(m[i].sum() - 0.5) / max(1, len(self.agents) - 1) for i in range(len(self.agents))]
-        order = sorted(
-            range(len(self.agents)), key=lambda i: (-self.alpha_rank[i], -self.nash[i], -mean[i], self.agents[i])
-        )
+        return {a: float((m[i].sum() - 0.5) / max(1, len(self.agents) - 1)) for i, a in enumerate(self.agents)}
+
+    def ranking(self) -> list[str]:
+        """Agents by alpha-rank mass, then Nash weight, then mean win rate (strongest first). The masses are rounded
+        to 1e-6 first: agents outside the support get float noise (1e-17) that must not order them."""
+        mean = self.mean_win_rate()
+        order = sorted(range(len(self.agents)), key=lambda i: (-round(self.alpha_rank[i], 6), -round(self.nash[i], 6),
+                                                                  -mean[self.agents[i]], self.agents[i]))  # fmt: skip
         return [self.agents[i] for i in order]
 
     def total_errors(self) -> int:
@@ -305,6 +310,8 @@ def _play_batched(cells, rows, slots, config: DuelConfig, device: str, envs: int
         return {}
     import torch
 
+    if torch.version.hip:  # fused attention with a mask on ROCm (docs/benchmarks.md), as the trainer sets it
+        os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
     from ygorl.env import GameSpec as EnvSpec
     from ygorl.env.encoded import EncodedVecEnv
     from ygorl.eval.batched import play_policies

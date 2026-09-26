@@ -186,7 +186,8 @@ def run(args: argparse.Namespace) -> int:
         f"alpha-rank alpha {matrix.alpha:g}, population {matrix.population_size}; policy-vs-policy cells: "
         + ("batched C++ path" if matrix.batched else "arena"),
         "",
-        "ranking: " + " > ".join(matrix.ranking()),
+        "ranking (alpha-rank, then Nash, then mean win rate in brackets): "
+        + " > ".join(f"{a} ({matrix.mean_win_rate()[a]:.3f})" for a in matrix.ranking()),
         "",
     ]
     lines += _table(matrix.agents, matrix.win_rate, matrix.nash, matrix.alpha_rank, label="agent")
