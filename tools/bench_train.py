@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import os
 import statistics
 import tempfile
 import threading
@@ -48,6 +50,18 @@ class GpuBusy:
         return round(statistics.fmean(self.samples), 1) if self.samples else None
 
 
+def _commit() -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
+        )
+        dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT, capture_output=True,
+                               text=True).stdout.strip()  # fmt: skip
+        return out.stdout.strip() + ("-dirty" if dirty else "")
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("decks", nargs="*", type=Path, help=".ydk files (default: tests/decks/*.ydk)")
@@ -77,6 +91,7 @@ def main() -> None:
 
     from ygorl.train.ppo import PPOConfig
     from ygorl.train.trainer import TrainConfig, Trainer
+    import torch
 
     decks = [str(d) for d in (args.decks or sorted((ROOT / "tests" / "decks").glob("*.ydk")))]
     net = {"d_model": args.d_model, "n_heads": 4, "board_layers": args.layers, "history_layers": args.layers}
@@ -90,6 +105,7 @@ def main() -> None:
     records = []
     with tempfile.TemporaryDirectory() as tmp:
         trainer = Trainer(cfg, tmp, log=None)
+        trainer.learner.timing = True  # time/<section> of each update (#72)
         for i in range(args.updates):
             if i == 1:
                 busy.start()  # after the warm-up step
@@ -114,6 +130,14 @@ def main() -> None:
                "minibatches": mean("minibatches"), "decisions_per_s": round(mean("decisions_per_s")),
                "rows_per_s": round(sum(r["rows"] for r in kept) / sum(r["step_s"] for r in kept)),
                "gpu_busy": busy.stop()}  # fmt: skip
+    sections = sorted({k for r in kept for k in r if k.startswith("time/")})
+    summary["update_breakdown"] = {k[5:]: mean(k) for k in sections}
+    summary["commit"] = _commit()
+    summary["rocm"] = {"hip": torch.version.hip, "aotriton_experimental": os.environ.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"),
+                       "hsa_override_gfx_version": os.environ.get("HSA_OVERRIDE_GFX_VERSION")} if torch.version.hip else None  # fmt: skip
+    total = summary["update_breakdown"].get("total") or 1.0
+    print("update breakdown: " + ", ".join(f"{k} {v:.3f} s ({v / total:.0%})" for k, v in summary["update_breakdown"].items()
+                                           if k != "total") + f"; total {total:.3f} s")  # fmt: skip
     print(json.dumps(summary))
     if args.json is not None:
         with args.json.open("a") as f:

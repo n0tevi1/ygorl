@@ -152,6 +152,30 @@ def test_update_reports_losses_and_moves_the_reference_slowly():
             torch.testing.assert_close(p, expect)
 
 
+def test_update_timing_breaks_the_update_down_without_changing_it():
+    """PPOLearner.timing (#72): time/<section> sums to time/total, and the parameters come out the same."""
+
+    def run(timing: bool):
+        torch.manual_seed(0)
+        env = NimEnv(num_envs=4, max_pile=15)
+        model = NimModel(max_pile=15)
+        learner = PPOLearner(model, PPOConfig(epochs=2, minibatch_size=32))
+        learner.timing = timing
+        ro = RolloutCollector(env, model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0).collect()
+        return model, learner.update(ro)
+
+    plain, s0 = run(False)
+    timed, s1 = run(True)
+    for (name, a), (_, b) in zip(plain.state_dict().items(), timed.state_dict().items()):
+        assert torch.equal(a, b), name
+    assert not any(k.startswith("time/") for k in s0)
+    parts = [k for k in s1 if k.startswith("time/") and k != "time/total"]
+    assert {"time/targets", "time/setup", "time/reference", "time/forward", "time/backward", "time/optimizer",
+            "time/bookkeeping", "time/ema", "time/other"} <= set(parts)  # fmt: skip
+    assert sum(s1[k] for k in parts) == pytest.approx(s1["time/total"])
+    assert all(s1[k] >= 0 for k in parts if k != "time/other") and s1["time/total"] > 0
+
+
 def test_kl_to_the_reference_is_zero_for_an_identical_policy_and_pulls_towards_it():
     torch.manual_seed(0)
     model = NimModel(max_pile=15)

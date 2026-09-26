@@ -24,6 +24,7 @@ league and the critic losses do not change.
 from __future__ import annotations
 
 import copy
+import time
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields
@@ -205,6 +206,36 @@ def _advantage_by_kind(obs, actions: Tensor, adv: Tensor) -> dict[str, float]:
     return out
 
 
+class _Laps:
+    """Update timing (``PPOLearner.timing``): ``lap(name)`` waits for the device, then adds the time since the last
+    lap to ``name``. Waiting only moves when the clock is read, never what is computed. Off: every lap is a no-op."""
+
+    def __init__(self, device: torch.device | None) -> None:
+        self.on = device is not None
+        self.sync = device is not None and device.type == "cuda"
+        self.times: dict[str, float] = defaultdict(float)
+        self.t0 = self.last = time.perf_counter() if self.on else 0.0
+
+    def lap(self, name: str) -> None:
+        if not self.on:
+            return
+        if self.sync:
+            torch.cuda.synchronize()
+        now = time.perf_counter()
+        self.times[name] += now - self.last
+        self.last = now
+
+    def stats(self) -> dict[str, float]:
+        """``time/<section>`` seconds plus ``time/total``; ``time/other`` is whatever no lap covered."""
+        if not self.on:
+            return {}
+        total = self.last - self.t0
+        out = {f"time/{k}": v for k, v in self.times.items()}
+        out["time/total"] = total
+        out["time/other"] = total - sum(self.times.values())
+        return out
+
+
 class PPOLearner:
     """Owns the model's optimizer, the EMA reference policy and the optional BC prior."""
 
@@ -216,6 +247,7 @@ class PPOLearner:
         self.prior = None if prior is None else self._frozen(prior)
         self.optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, eps=cfg.adam_eps)
         self.updates = 0
+        self.timing = False  # add time/<section> of each update to its stats (tools/bench_train.py)
 
     @staticmethod
     def _frozen(module: nn.Module) -> nn.Module:
@@ -271,8 +303,10 @@ class PPOLearner:
 
     def update(self, ro: Rollout) -> dict[str, float]:
         cfg, model = self.cfg, self.model
-        est = self.targets(ro)  # on the CPU with the rollout's per-row data; the batch tensors go to the model
         dev = next(model.parameters()).device
+        laps = _Laps(dev if self.timing else None)
+        est = self.targets(ro)  # on the CPU with the rollout's per-row data; the batch tensors go to the model
+        laps.lap("targets")
         adv = self.objective.prepare(ro, est).reshape(-1).float().to(dev)
         q_targets = est.q_targets.reshape(-1).float().to(dev)
         v_targets = est.v_targets.reshape(-1).float().to(dev)
@@ -283,9 +317,11 @@ class PPOLearner:
         obs = trim_padding(ro.obs)
         mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]].to(dev)
         n = actions.shape[0]
+        laps.lap("setup")
         ref_logits = self._score(self.reference, obs, n) if cfg.kl_ref_coef > 0 else None
         prior_logits = self._score(self.prior, obs, n) if self.prior is not None and cfg.kl_prior_coef > 0 else None
         prior_rows = self.prior_rows(obs, cfg.kl_prior_turns) if prior_logits is not None else None
+        laps.lap("reference")
 
         model.train()
         sums: dict[str, float] = defaultdict(float)
@@ -295,6 +331,7 @@ class PPOLearner:
             if stopped:
                 break
             perm = torch.randperm(n, device=dev)
+            laps.lap("setup")
             for start in range(0, n, cfg.minibatch_size):
                 idx = perm[start : start + cfg.minibatch_size]
                 out = model(_index(obs, idx), _index(ro.privileged, idx))
@@ -312,21 +349,26 @@ class PPOLearner:
                 ql = q_loss(out.q.float(), actions[idx], q_targets[idx])
                 vl = v_loss(out.v.float(), v_targets[idx])
                 loss = loss + cfg.q_coef * ql + cfg.v_coef * vl
+                laps.lap("forward")
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                laps.lap("backward")
                 grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
                 self.optimizer.step()
+                laps.lap("optimizer")
                 for key, val in (("loss", loss), ("policy_loss", policy_loss), ("entropy", ent), ("kl_ref", kl_ref),
                                  ("kl_prior", kl_prior), ("q_loss", ql), ("v_loss", vl), ("grad_norm", grad_norm),
                                  *extra.items()):  # fmt: skip
                     sums[key] += float(val.detach()) if isinstance(val, Tensor) else float(val)
                 steps += 1
+                laps.lap("bookkeeping")
                 kl_now = extra.get("approx_kl")
                 if cfg.target_kl is not None and kl_now is not None and float(kl_now) > 1.5 * cfg.target_kl:
                     stopped = True  # the policy moved enough for this batch of data
                     break
         self.updates += 1
         self.update_reference()
+        laps.lap("ema")
         stats = {k: v / steps for k, v in sums.items()}
         taken_q = ro.q.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1).reshape(-1)
         stats["q_explained_var"] = _explained_variance(taken_q, q_targets)
@@ -336,6 +378,7 @@ class PPOLearner:
         stats.update(_advantage_by_kind(obs, actions, adv))
         if prior_rows is not None:
             stats["kl_prior_rows"] = int(prior_rows.sum())
+        stats.update(laps.stats())
         return stats
 
     @torch.no_grad()

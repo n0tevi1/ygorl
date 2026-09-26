@@ -338,6 +338,13 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 - `bf16`（`--bf16`）：行动与更新都在 bf16 autocast 下跑；GPU 上更新约快 10–20%，CPU 上更慢。
 
 `tools/bench_train.py` 测 `Trainer.step()` 的收集 / 更新耗时、行/秒与（AMD GPU 上的）忙碌率。
+另外输出一次更新内部的细分（#72）：
+- 各段：`targets`（优势估计）、`setup`（数据搬运、裁剪填充、打乱）、`reference`（参考策略与 BC 先验的前向，设计 I8 的 KL 项）、
+  `forward`（模型前向与损失）、`backward`、`optimizer`（清梯度、梯度裁剪、步进）、`bookkeeping`（逐 minibatch 取统计值）、`ema`（参考策略的 EMA 更新）；
+  剩下的记为 `other`，各项之和等于 `total`。
+- 输出位置：命令行的 `update breakdown:` 一行，以及 JSON 的 `update_breakdown`。JSON 还附带 `commit` 与 `rocm`（HIP 版本、`TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL`、`HSA_OVERRIDE_GFX_VERSION`）。
+- 实现：`PPOLearner.timing = True` 时，每段结束前等设备同步再读时钟。同步只改变读表的时机，不改变计算：同种子下参数逐位相同（`tests/test_ppo.py`）。
+  默认关闭，关闭时不做任何同步。
 
 ### 8.7 测试
 
