@@ -66,6 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
     g = p.add_argument_group("PPO")
     g.add_argument("--objective", default="ppo_clip")
     g.add_argument("--estimator", default="vrpo", choices=("vrpo", "gae"))
+    g.add_argument("--lam", type=float, default=None, help="lambda of the advantage estimate (default: PPOConfig's)")
+    g.add_argument(
+        "--vrpo-mode",
+        default=None,
+        choices=("return", "critic"),
+        help="VRPO advantage: 'return' (Q-boosted with lambda returns) or 'critic' (default: PPOConfig's)",
+    )
     g.add_argument("--entropy", type=float, default=0.05, help="entropy coefficient (design: 0.05-0.2)")
     g.add_argument("--kl-ref", type=float, default=0.05, help="KL coefficient to the EMA reference")
     g.add_argument("--ema", type=float, default=0.02, help="reference EMA rate per update")
@@ -108,6 +115,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="EV",
         help="Q explained variance that ends the critic warm-up (default 0.6)",
     )
+    g.add_argument("--turn-discount", type=float, default=1.0, metavar="G",
+                   help="speed pressure: a decided game's terminal reward is +/- G ** turns (default 1.0 = off; a "
+                        "diagnostic arm, design T6 vs C3)")  # fmt: skip
     g = p.add_argument_group("league and evaluation")
     g.add_argument("--selfplay-fraction", type=float, default=0.75)
     g.add_argument("--pool-size", type=int, default=8)
@@ -169,7 +179,8 @@ def config_from_args(args, decks: list[str]):
     ppo = PPOConfig(objective=args.objective, estimator=args.estimator, entropy_coef=args.entropy,
                     kl_ref_coef=args.kl_ref, reference_ema=args.ema, lr=args.lr, epochs=args.epochs,
                     minibatch_size=args.minibatch, kl_prior_coef=args.kl_prior,
-                    kl_prior_turns=args.kl_prior_turns, target_kl=args.target_kl or None)  # fmt: skip
+                    kl_prior_turns=args.kl_prior_turns, target_kl=args.target_kl or None,
+                    **{k: v for k, v in (('lam', args.lam), ('vrpo_mode', args.vrpo_mode)) if v is not None})  # fmt: skip
     return TrainConfig(decks=tuple(decks), pairings=args.pairings, env=args.env, max_turns=args.max_turns,
                        max_decisions=args.max_decisions, num_envs=args.envs, env_threads=args.env_threads,
                        steps=args.steps, event_length=args.event_length, skip_forced=not args.keep_forced, net=net,
@@ -185,7 +196,7 @@ def config_from_args(args, decks: list[str]):
                        keep_best_by=args.keep_best_by, eval_workers=args.eval_workers, seed=args.seed, device=args.device,
                        torch_threads=args.torch_threads, collect_threads=args.collect_threads,
                        bc_prior=args.bc_prior, init_from=args.init_from, critic_warmup=args.critic_warmup,
-                       critic_warmup_ev=args.critic_warmup_ev)  # fmt: skip
+                       critic_warmup_ev=args.critic_warmup_ev, turn_discount=args.turn_discount)  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:

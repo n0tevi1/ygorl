@@ -675,3 +675,21 @@ def test_critic_warmup_ends_early_once_the_critic_explains_enough(tmp_path):
     for _ in range(5):
         t.step()
     assert t.counters["critic_warmup_done"] == 5  # the 5-update average is reached at the 5th update
+
+
+def test_turn_discount_scales_the_terminal_reward_by_game_length(tmp_path):
+    """--turn-discount G (design T6, a diagnostic arm): a decided game ends in +/- G ** turns instead of +/- 1."""
+    t = Trainer(replace(_small_cfg(), turn_discount=0.9, steps=400, max_decisions=3000), tmp_path / "d", log=None)
+    seen = []
+    for _ in range(20):
+        ro = t._collect()
+        for g in ro.games:
+            if g.winner is not None and not g.truncated:
+                seen.append(0.9 ** int(g.result["turns"]))
+        rewards = ro.rewards[ro.rewards != 0].abs().tolist()
+        assert all(any(abs(r - v) < 1e-6 for v in (0.9**k for k in range(1, 200))) for r in rewards)
+        if len(seen) >= 2:
+            break
+    assert seen and all(v < 1 for v in seen)
+    with pytest.raises(ValueError, match="turn_discount"):
+        Trainer(replace(_small_cfg(), turn_discount=0.0), tmp_path / "bad", log=None)
