@@ -195,7 +195,7 @@ def config_from_args(args, decks: list[str]):
                     minibatch_size=args.minibatch, kl_prior_coef=args.kl_prior,
                     kl_prior_turns=args.kl_prior_turns, target_kl=args.target_kl or None,
                     **{k: v for k, v in (('lam', args.lam), ('vrpo_mode', args.vrpo_mode)) if v is not None})  # fmt: skip
-    return TrainConfig(decks=tuple(decks), pairings=args.pairings, deck_pool=args.deck_pool,
+    return TrainConfig(decks=tuple(decks), pairings=args.pairings, deck_pool=args.deck_pool and str(Path(args.deck_pool).resolve()),
                        deck_pool_every=args.deck_pool_every, evolved_share=args.evolved_share,
                        evolved_power=args.evolved_power, env=args.env, max_turns=args.max_turns,
                        max_decisions=args.max_decisions, num_envs=args.envs, env_threads=args.env_threads,

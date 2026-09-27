@@ -30,7 +30,7 @@ from pathlib import Path
 import numpy as np
 from torch import nn
 
-from ygorl.cards.ydk import Deck, load_ydk
+from ygorl.cards.ydk import Deck, parse_ydk
 from ygorl.engine.duel import DuelConfig
 from ygorl.env.pool import GameSpec
 from ygorl.eval.arena import derive_seed
@@ -222,63 +222,99 @@ class EvolvedDecks:
                     "parent": "...", ...}]}
 
     ``file`` is relative to the manifest; ``status`` is ``probation`` / ``active`` (dealt as the evolved side of a
-    pairing) or ``history`` (a superseded elite: only an opponent deck); ``weight`` (default 1) scales the sampling
-    weight; other fields (lineage, descriptors) are the evolution process's and ignored here. Deck ids are unique
-    and name the deck in the logs. ``validate(deck) -> problems`` (e.g. the environment's legality check) drops an
-    illegal deck with a note in ``problems`` instead of failing the run. The learner's scores piloting each deck
-    (``record``) survive reloads and checkpoints."""
+    pairing) or ``history`` (a superseded elite: only an opponent deck); ``weight`` (>= 0, default 1) scales the
+    sampling weight; other fields (lineage, descriptors) are the evolution process's and ignored here. Deck ids name
+    the decks in the logs. The manifest is written by another process while training runs, so nothing in it stops
+    training: an unreadable manifest keeps the previous pool, and an entry that is illegal (``validate(deck) ->
+    problems``, e.g. the environment's legality check), unreadable, duplicated or malformed is left out; both with a
+    note in ``problems``. The learner's scores piloting each deck (``record``) are discounted by ``decay`` per game
+    (about the last 1 / (1 - decay) games count), so they follow the current policy; they survive reloads and, with
+    the decks' card lists, checkpoints (a resume needs neither the manifest nor the deck files)."""
 
-    def __init__(self, path: str | Path, *, share: float = 0.3, power: float = 1.0,
+    def __init__(self, path: str | Path, *, share: float = 0.3, power: float = 1.0, decay: float = 0.99,
                  validate: Callable[[Deck], Sequence[str]] | None = None) -> None:  # fmt: skip
         if not 0 <= share <= 1:
             raise ValueError("the evolved share must be in [0, 1]")
         if power < 0:
             raise ValueError("the evolved power must be >= 0")
+        if not 0 < decay <= 1:
+            raise ValueError("the score decay must be in (0, 1]")
         self.path = Path(path)
         self.share = share
         self.power = power
+        self.decay = decay
         self.validate = validate
         self.entries: list[dict] = []
         self.decks: dict[str, Deck] = {}
-        self.stats: dict[str, list[float]] = {}  # id -> [games, points] of the learner piloting it
+        self.stats: dict[
+            str, list[float]
+        ] = {}  # id -> [discounted games, discounted points] of the learner piloting it
         self.problems: list[str] = []
-        self.text = ""
+        self.signature = ""
+
+    def _read(self) -> tuple[str, dict[str, str]]:
+        """The manifest text and the text of every deck file it names (unreadable ones left out)."""
+        text = self.path.read_text() if self.path.exists() else ""
+        files = {}
+        try:
+            for e in json.loads(text).get("decks", []) if text.strip() else []:
+                f = self.path.parent / str(e.get("file", ""))
+                if f.is_file():
+                    files[str(e.get("file"))] = f.read_text()
+        except (ValueError, AttributeError, TypeError):
+            pass  # _parse reports it
+        return text, files
 
     def reload(self) -> bool:
-        """Re-read the manifest; returns whether it changed. A missing manifest is an empty pool."""
-        text = self.path.read_text() if self.path.exists() else ""
-        if text == self.text:
+        """Re-read the manifest and its deck files; returns whether the pool changed. A missing manifest is an empty
+        pool; a manifest that cannot be read keeps the previous pool (with a note in ``problems``)."""
+        text, files = self._read()
+        signature = json.dumps([text, sorted(files.items())])
+        if signature == self.signature:
             return False
-        self._parse(text)
+        self.signature = signature
+        try:
+            entries, decks, problems = self._parse(text, files)
+        except (ValueError, AttributeError, TypeError, KeyError) as exc:
+            self.problems = [f"{self.path}: kept the previous pool: {exc}"]
+            return True
+        self.entries, self.decks, self.problems = entries, decks, problems
         return True
 
-    def _parse(self, text: str) -> None:
-        self.text, self.entries, self.decks, self.problems = text, [], {}, []
+    def _parse(self, text: str, files: dict[str, str]) -> tuple[list[dict], dict[str, Deck], list[str]]:
+        entries, decks, problems = [], {}, []
         if not text.strip():
-            return
+            return entries, decks, problems
         data = json.loads(text)
         if data.get("format") != MANIFEST_FORMAT:
-            raise ValueError(f"{self.path}: not a {MANIFEST_FORMAT} manifest")
+            raise ValueError(f"not a {MANIFEST_FORMAT} manifest")
         for e in data.get("decks", []):
-            did, status = str(e["id"]), e.get("status", "probation")
-            if status not in DECK_STATUSES:
-                raise ValueError(f"{self.path}: deck {did}: status must be one of {DECK_STATUSES}")
-            if did in self.decks:
-                raise ValueError(f"{self.path}: duplicate deck id {did}")
-            deck = replace(load_ydk(self.path.parent / e["file"]), name=did)
-            bad = list(self.validate(deck)) if self.validate is not None else []
+            did = str(e.get("id", ""))
+            status, file = e.get("status", "probation"), str(e.get("file", ""))
+            try:
+                weight = float(e.get("weight", 1.0))
+            except (TypeError, ValueError):
+                weight = -1.0
+            bad = ([] if did else ["no id"]) + (["duplicate id"] if did in decks else [])
+            bad += [] if status in DECK_STATUSES else [f"status must be one of {DECK_STATUSES}"]
+            bad += [] if weight >= 0 else ["weight must be a number >= 0"]
+            bad += [] if file in files else [f"cannot read {file}"]
+            if not bad:
+                deck = replace(parse_ydk(files[file]), name=did)
+                bad = list(self.validate(deck)) if self.validate is not None else []
             if bad:
-                self.problems.append(f"{did}: {'; '.join(bad)}")
+                problems.append(f"{did or '?'}: {'; '.join(bad)}")
                 continue
-            self.entries.append({**e, "id": did, "status": status, "weight": float(e.get("weight", 1.0))})
-            self.decks[did] = deck
+            entries.append({**e, "id": did, "status": status, "weight": weight})
+            decks[did] = deck
+        return entries, decks, problems
 
     def ids(self, *statuses: str) -> list[str]:
         return [e["id"] for e in self.entries if e["status"] in statuses]
 
     def win_rate(self, did: str) -> float:
-        """The learner's score piloting deck ``did``, with a prior of one game at 0.5."""
-        games, points = self.stats.get(did, (0, 0.0))
+        """The learner's recent score piloting deck ``did``, with a prior of one game at 0.5."""
+        games, points = self.stats.get(did, (0.0, 0.0))
         return (points + 0.5) / (games + 1)
 
     def weights(self) -> tuple[list[str], np.ndarray]:
@@ -288,15 +324,22 @@ class EvolvedDecks:
         return [e["id"] for e in live], w / w.sum()
 
     def record(self, did: str, score: float) -> None:
-        games, points = self.stats.get(did, (0, 0.0))
-        self.stats[did] = [games + 1, points + score]
+        games, points = self.stats.get(did, (0.0, 0.0))
+        self.stats[did] = [games * self.decay + 1, points * self.decay + score]
 
     def state_dict(self) -> dict:
-        return {"text": self.text, "stats": {k: list(v) for k, v in self.stats.items()}}
+        return {"signature": self.signature, "entries": [dict(e) for e in self.entries],
+                "decks": {k: {"main": list(d.main), "extra": list(d.extra), "side": list(d.side)}
+                          for k, d in self.decks.items()},
+                "stats": {k: list(v) for k, v in self.stats.items()}}  # fmt: skip
 
     def load_state_dict(self, state: dict) -> None:
-        self._parse(state["text"])
-        self.stats = {k: [int(v[0]), float(v[1])] for k, v in state["stats"].items()}
+        self.signature = state["signature"]
+        self.entries = [dict(e) for e in state["entries"]]
+        self.decks = {k: Deck(main=tuple(d["main"]), extra=tuple(d["extra"]), side=tuple(d["side"]), name=k)
+                      for k, d in state["decks"].items()}  # fmt: skip
+        self.stats = {k: [float(v[0]), float(v[1])] for k, v in state["stats"].items()}
+        self.problems = []
 
 
 class SelfPlaySchedule:
@@ -329,7 +372,7 @@ class SelfPlaySchedule:
         """A deck pairing, and which of the two (0 = a, 1 = b) is an evolved deck (None: a corpus pairing).
         Draws nothing beyond the corpus pairing while no evolved deck is live."""
         ev = self.evolved
-        if ev is not None and ev.ids("probation", "active") and self.rng.random() < ev.share:
+        if ev is not None and ev.share > 0 and ev.ids("probation", "active") and self.rng.random() < ev.share:
             ids, p = ev.weights()
             deck = ev.decks[ids[int(self.rng.choice(len(ids), p=p))]]
             others = self.decks.decks + [ev.decks[i] for i in ev.ids("history")]

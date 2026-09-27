@@ -54,6 +54,9 @@ def deals(s, n):
 
 def test_without_live_evolved_decks_the_deals_are_those_of_the_fixed_pool(tmp_path):
     fixed = deals(schedule(), 400)
+    off = EvolvedDecks(manifest(tmp_path, {"e1": ("labrynth", "active")}), share=0.0)
+    off.reload()
+    assert deals(schedule(off), 400) == fixed
     missing = EvolvedDecks(tmp_path / "none.json")
     missing.reload()
     assert deals(schedule(missing), 400) == fixed
@@ -109,16 +112,32 @@ def test_after_a_reload_only_the_current_decks_are_dealt(tmp_path):
     assert {g[4] for g in deals(s, 200)} == {"e3"}
 
 
-def test_an_illegal_deck_is_left_out_with_a_note(tmp_path):
+def test_bad_entries_are_left_out_and_a_bad_manifest_keeps_the_pool(tmp_path):
     path = manifest(tmp_path, {"ok": ("labrynth", "active"), "bad": ("purrely", "active")})
     ev = EvolvedDecks(path, validate=lambda d: ["too many copies"] if d.name == "bad" else [])
     ev.reload()
     assert ev.ids("active") == ["ok"] and ev.problems == ["bad: too many copies"]
-    with pytest.raises(ValueError, match="status"):
-        broken = json.loads(path.read_text())
-        broken["decks"][0]["status"] = "retired"
-        path.write_text(json.dumps(broken))
-        ev.reload()
+    data = json.loads(path.read_text())
+    data["decks"] += [
+        {"id": "ok", "file": "decks/ok.ydk"},
+        {"id": "odd", "file": "decks/ok.ydk", "status": "retired"},
+        {"id": "neg", "file": "decks/ok.ydk", "weight": -1},
+        {"id": "gone", "file": "decks/gone.ydk"},
+    ]
+    path.write_text(json.dumps(data))
+    assert ev.reload() and ev.ids("active") == ["ok"] and ev.ids("probation") == []
+    assert [p.split(":")[0] for p in ev.problems] == ["bad", "ok", "odd", "neg", "gone"]
+    path.write_text(path.read_text()[:40])  # caught mid-write by the evolution process
+    assert ev.reload() and ev.ids("active") == ["ok"] and "kept the previous pool" in ev.problems[0]
+
+
+def test_a_deck_file_rewritten_in_place_is_picked_up(tmp_path):
+    path = manifest(tmp_path, {"e1": ("labrynth", "active")})
+    ev = EvolvedDecks(path)
+    ev.reload()
+    shutil.copy(DECK_DIR / "purrely.ydk", tmp_path / "decks" / "e1.ydk")
+    assert ev.reload()
+    assert ev.decks["e1"].main == load_ydk(DECK_DIR / "purrely.ydk").main
 
 
 def test_the_pool_state_round_trips(tmp_path):
@@ -130,16 +149,19 @@ def test_the_pool_state_round_trips(tmp_path):
     deals(s, 50)
     saved_ev, saved_s = json.loads(json.dumps(ev.state_dict())), s.state_dict()
     rest = deals(s, 200)
-    ev2 = EvolvedDecks(tmp_path / "moved-away.json", share=0.5)  # the state, not the file, restores the pool
+    shutil.rmtree(tmp_path / "decks")  # the state alone restores the pool: no manifest, no deck files
+    ev2 = EvolvedDecks(tmp_path / "moved-away.json", share=0.5)
     ev2.load_state_dict(saved_ev)
     s2 = schedule(ev2)
     s2.load_state_dict(saved_s)
-    assert ev2.ids("active", "probation") == ["e1", "e2"] and ev2.stats == {"e1": [1, 1.0], "e2": [1, 0.5]}
+    assert ev2.ids("active", "probation") == ["e1", "e2"] and ev2.stats == {"e1": [1.0, 1.0], "e2": [1.0, 0.5]}
+    assert ev2.decks == ev.decks
     assert deals(s2, 200) == rest
 
 
 def small_cfg(**kw):
-    return TrainConfig(decks=tuple(str(DECK_DIR / f"{s}.ydk") for s in CORPUS), num_envs=2, env_threads=1, steps=256,
+    kw = {"steps": 256, **kw}
+    return TrainConfig(decks=tuple(str(DECK_DIR / f"{s}.ydk") for s in CORPUS), num_envs=2, env_threads=1,
                        event_length=16, net=TINY, privileged_dim=8, critic_hidden=16,
                        ppo=PPOConfig(epochs=1, minibatch_size=64), eval_every=0, checkpoint_every=0, snapshot_every=0,
                        torch_threads=1, collect_threads=1, seed=4, **kw)  # fmt: skip
@@ -152,7 +174,8 @@ def test_the_trainer_deals_records_and_checkpoints_the_evolved_pool(tmp_path):
     trainer.train(max_updates=2)
     games, _ = trainer.evolved.stats["e1"]
     metrics = [json.loads(line) for line in (tmp_path / "run" / "metrics.jsonl").read_text().splitlines()]
-    assert games > 0 and sum(m["evolved_games"] for m in metrics) == games  # self-play: the learner pilots it
+    n = sum(m["evolved_games"] for m in metrics)
+    assert n > 0 and games == pytest.approx((1 - 0.99**n) / 0.01)  # self-play: the learner pilots it; discounted
     ckpt = trainer.save()
     resumed = Trainer.resume(ckpt, log=None)
     assert resumed.evolved.state_dict() == trainer.evolved.state_dict()
@@ -161,6 +184,16 @@ def test_the_trainer_deals_records_and_checkpoints_the_evolved_pool(tmp_path):
     resumed.train(max_updates=1)  # re-read after the update
     assert resumed.evolved.ids("probation", "active") == ["e2"]
     assert resumed.schedule.evolved is resumed.evolved
+
+
+def test_a_trainer_with_no_live_evolved_deck_trains_like_the_fixed_pool(tmp_path):
+    fixed = Trainer(small_cfg(steps=32), tmp_path / "fixed", log=None)
+    fixed.train(max_updates=1)
+    path = manifest(tmp_path, {"old": ("labrynth", "history")})
+    pooled = Trainer(small_cfg(steps=32, deck_pool=str(path), deck_pool_every=1), tmp_path / "pooled", log=None)
+    pooled.train(max_updates=1)
+    a, b = fixed.model.state_dict(), pooled.model.state_dict()
+    assert all(torch.equal(a[k], b[k]) for k in a)
 
 
 def test_the_evolved_pool_defaults_follow_the_spec():
