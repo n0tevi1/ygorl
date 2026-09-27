@@ -652,3 +652,26 @@ def test_a_stalled_rollout_saves_a_checkpoint_and_propagates(tmp_path):
         trainer.train(max_updates=3)
     state = load_checkpoint(tmp_path / "checkpoints" / "latest.pt")
     assert state["counters"]["updates"] == 1
+
+
+def test_critic_warmup_freezes_the_policy_then_lets_it_train(tmp_path):
+    """--critic-warmup: the first updates train the critic only; the actor, shared trunk included, does not move."""
+    t = Trainer(replace(_small_cfg(), critic_warmup=2, critic_warmup_ev=2.0), tmp_path / "w", log=None)  # EV never met
+    actor0 = {k: v.clone() for k, v in t.model.actor.state_dict().items()}
+    critic0 = {k: v.clone() for k, v in t.model.critic.state_dict().items()}
+    t.step()
+    assert all(torch.equal(v, actor0[k]) for k, v in t.model.actor.state_dict().items())
+    assert any(not torch.equal(v, critic0[k]) for k, v in t.model.critic.state_dict().items())
+    assert t.counters["critic_warmup_done"] == 0
+    t.step()
+    assert t.counters["critic_warmup_done"] == 2  # the cap
+    assert all(torch.equal(v, actor0[k]) for k, v in t.model.actor.state_dict().items())
+    t.step()  # the policy trains now
+    assert any(not torch.equal(v, actor0[k]) for k, v in t.model.actor.state_dict().items())
+
+
+def test_critic_warmup_ends_early_once_the_critic_explains_enough(tmp_path):
+    t = Trainer(replace(_small_cfg(), critic_warmup=50, critic_warmup_ev=-1e9), tmp_path / "w", log=None)
+    for _ in range(5):
+        t.step()
+    assert t.counters["critic_warmup_done"] == 5  # the 5-update average is reached at the 5th update

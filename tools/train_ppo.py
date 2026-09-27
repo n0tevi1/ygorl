@@ -97,6 +97,17 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="CKPT",
         help="initialize the actor from a policy (e.g. BC) or PPO checkpoint with the same network config",
     )
+    g.add_argument("--critic-warmup", type=int, default=0, metavar="N",
+                   help="train only the critic (policy frozen) for up to N updates at the start, until its Q explained "
+                        "variance averages --critic-warmup-ev over 5 updates; for warm starts whose critic is fresh "
+                        "(default 0 = off)")  # fmt: skip
+    g.add_argument(
+        "--critic-warmup-ev",
+        type=float,
+        default=0.6,
+        metavar="EV",
+        help="Q explained variance that ends the critic warm-up (default 0.6)",
+    )
     g = p.add_argument_group("league and evaluation")
     g.add_argument("--selfplay-fraction", type=float, default=0.75)
     g.add_argument("--pool-size", type=int, default=8)
@@ -173,7 +184,8 @@ def config_from_args(args, decks: list[str]):
                        eval_opponents=tuple(s for s in args.eval_opponents.split(",") if s),
                        keep_best_by=args.keep_best_by, eval_workers=args.eval_workers, seed=args.seed, device=args.device,
                        torch_threads=args.torch_threads, collect_threads=args.collect_threads,
-                       bc_prior=args.bc_prior, init_from=args.init_from)  # fmt: skip
+                       bc_prior=args.bc_prior, init_from=args.init_from, critic_warmup=args.critic_warmup,
+                       critic_warmup_ev=args.critic_warmup_ev)  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:
