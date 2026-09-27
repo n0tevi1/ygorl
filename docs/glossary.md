@@ -107,3 +107,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | win rate / Wilson CI | 胜率 / Wilson 区间 | 平局算半胜 |
 | matchup matrix | 牌组对局矩阵 | 同一 agent 驾驶双方，牌组对牌组的胜率矩阵，配 Nash 混合与 alpha-rank（evaluation.md，T3.3） |
 | agent matchup matrix | 策略对局矩阵 | agent 对 agent、在一批固定牌组配对上（双方轮流先攻）的胜率矩阵；衡量对局强度的尺子，`ygorl strength`，`ygorl.eval.agent_matrix`（evaluation.md，#83 / #85） |
+| evolved deck | 进化卡组 | 进化进程（#105）产生、训练中加入牌组池的卡组；状态 `probation`（试用）/ `active`（正式）/ `history`（历史，只作对手卡组） |
+| deck-pool manifest | 牌组池清单 | 列出进化卡组的 `ygorl-deck-pool` JSON，训练器每隔几次更新重读（`ygorl.train.selfplay.EvolvedDecks`，training.md §8.3） |
+| opening-hand effect | 起手效应 | 同一牌组内，某卡在起手与不在起手的对局胜率差（`ygorl.build.diagnose`，spikes/deck-evolution.md §3） |
+| leave-one-out value | 留一值 | 把一份某卡换成空白通常怪兽后，亲本与子代配对胜率差；逐卡边际价值的真值（M2） |

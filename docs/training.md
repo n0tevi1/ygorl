@@ -301,6 +301,21 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
   **默认** `pool_sampling="pfsp"`（设计 I1；`--pool-sampling uniform` 为旧的均匀抽样）按 `(1 − p) ** pfsp_power`（默认 2，AlphaStar 的 hard 权重）抽快照，学习方打不过的对手更常出现；
   `snapshot_min_win_rate`（`--snapshot-min-win-rate 0.55`，ygo-agent 的 OSFP；默认关闭，消融里没有帮助）让到期的快照只在「上次入池以来学习方在池局里的得分 > 门槛、且至少
   `snapshot_min_games` 局」时入池，否则跳过并计入 `snapshots_skipped`；池空时总是入池。入池以来的窗口（`league`）随 checkpoint 保存。
+- **进化牌组池**（`EvolvedDecks`，#108，spec #105）：`--deck-pool MANIFEST`（`TrainConfig.deck_pool`）指向进化进程维护的牌组池清单：
+
+  ```json
+  {"format": "ygorl-deck-pool", "version": 1,
+   "decks": [{"id": "evo-0001", "file": "decks/evo-0001.ydk", "status": "probation", "weight": 1.0, "parent": "..."}]}
+  ```
+
+  `file` 相对清单所在目录，`id` 唯一、同时作为日志里的牌组名；`status` 为 `probation` / `active`（作为进化一方发出）或 `history`（被取代的精英，只作对手卡组）；
+  `weight` 默认 1；其余字段（谱系、描述符）归进化进程所有，训练器不读。训练器每 `deck_pool_every`（默认 10）次更新在两次更新之间重读清单，
+  变了才重建，并在环境下逐套检查合法性，不合法的卡组留在外面、记入日志，不中断训练。
+  发局时以 `evolved_share`（默认 0.3）的概率抽一套 probation / active 卡组，权重 = `weight × (1 − p) ** evolved_power`（默认 1），
+  `p` 是当前策略驾驶它的得分（带一局 0.5 的先验；自博弈局双方都算学习方，池局只计学习方那一侧），它与一套语料或历史卡组均匀配对、随机坐 a / b 一侧；
+  否则照常从 `DeckPool` 抽。**没有 probation / active 卡组时不多抽一个随机数**，所以与固定牌组池逐位相同。
+  每局 `info` 带 `evolved` 与 `evolved_seat`；`metrics.jsonl` 多一列 `evolved_games`。清单原文与逐卡组得分随 checkpoint 保存（`evolved`），
+  续训先恢复保存时的池，到下一个重读点再读当前文件。
 - **固定对手**（`TrainConfig.pin_opponents` / `--pin CKPT`，可重复）：把策略检查点（例如 BC 热启动用的那份）或 PPO checkpoint 整局钉在池里，
   不被逐出、不进 checkpoint（续训时按配置重新钉上，id 为 −1、−2……）；池局里固定对手合占 `pinned_share`（默认 0.5），其余均分给快照。
   词表与事件窗口长度必须与本次运行相同。用意：自博弈早期的历史快照都接近随机，固定一个会进战斗、会展开的对手让信号更有用
@@ -318,7 +333,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 一个 checkpoint 是一个自包含的 `.pt`（`torch.save` 普通容器，`weights_only=True` 可读）：`config`（`TrainConfig`，含
 `PPOConfig`）、`net_config`、`vocab`（`CardVocab.save` 写出的 JSON 原文——词表下标是模型的一部分）、`environment`
 （训练环境的 `stamp()`，没有环境时为 None）、`learner`（模型、EMA 参考、优化器、更新数）、`pool`（全部快照含 keep-best）、
-`schedule`（发局计数与 RNG）、`counters`、`best`、`rng`。`load_policy(path)` 只重建 actor（`PolicyNet`）。
+`schedule`（发局计数与 RNG）、`counters`、`best`、`rng`、`evolved`（进化牌组池清单原文与逐卡组得分，没有时为 None）。`load_policy(path)` 只重建 actor（`PolicyNet`）。
 续训恢复以上全部状态；进行中的对局不保存，续训时各槽位开新局。
 
 运行目录（`tools/train_ppo.py` 默认 `out/train/<时间戳>`；给 `--env` 时是 `environments/<版本>/artifacts/train/<名字>`，
@@ -369,6 +384,9 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
   KL 为 0 与梯度方向；先验 KL 只在第 1 回合（`kl_prior_turns`）时的行选择、权重与更新结果；学习器状态往返；快照池逐出与 keep-best；策略目标可插拔（注册自定义目标，`prepare` / `loss` 被调用）。
 - `tests/test_advantages.py::test_truncated_rows_bootstrap_from_the_critic`：截断行的目标等于 critic 自身估计、与「切列 + 同座位自举」一致、
   截断行的奖励被忽略。
+- `tests/test_deck_pool.py`（约 10 秒）：没有 probation / active 卡组（清单缺失或只有 history）时发局与固定牌组池逐位相同；进化占比、只发 probation / active、
+  对手来自语料或历史、坐两侧；打得差的卡组更常出现、`weight` 生效；重读后只发当前卡组；不合法卡组被跳过并记录；池状态往返后发局相同；
+  `Trainer` 记录进化卡组得分、续训后池与发局状态一致、训练中重读清单。
 - `tests/test_train_loop.py`（真实对局，约 15 秒）：`EncodedVecEnv` 上自博弈布局（双方交替、决策上限截断在第 30 行、特权真值只进
   critic 批）、快照局只留学习方的行；`Trainer` 写出指标 / 评估 / checkpoint / `best.pt`，词表随 checkpoint 保存；
   checkpoint 往返与续训（模型、参考、优化器、快照池、计数一致，续训后更新号接续）；`load_policy` 的 actor 与训练模型打分一致；

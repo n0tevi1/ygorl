@@ -48,7 +48,7 @@ from ygorl.train.checkpoint import (
 )
 from ygorl.train.ppo import PPOConfig, PPOLearner
 from ygorl.train.rollout import Rollout, RolloutCollector, RolloutStalled
-from ygorl.train.selfplay import DeckPool, SelfPlaySchedule, SnapshotPool
+from ygorl.train.selfplay import DeckPool, EvolvedDecks, SelfPlaySchedule, SnapshotPool
 
 SMALL_NET = {"d_model": 64, "n_heads": 4, "board_layers": 1, "history_layers": 1}
 # A warm start may add card views (text tables, card facts, ID dropout) to the checkpoint's network: those modules
@@ -63,6 +63,12 @@ CARD_VIEW_MODULES = ("text_proj", "archetype", "reference_proj", "category_proj"
 class TrainConfig:
     decks: tuple[str, ...] = ()  # .ydk files of the deck pool
     pairings: str = "cross"  # DeckPool pairings: "all", "cross" or "mirror"
+    # an evolution process's deck-pool manifest (selfplay.EvolvedDecks, #108), re-read every deck_pool_every updates;
+    # evolved_share of the deals pair one of its probation / active decks, weighted by (1 - p) ** evolved_power
+    deck_pool: str | None = None
+    deck_pool_every: int = 10
+    evolved_share: float = 0.3
+    evolved_power: float = 1.0
     env: str | None = None  # environment version / directory (rules, stamped into checkpoints)
     max_turns: int | None = None  # DuelConfig overrides (None = the environment's / default)
     max_decisions: int | None = None
@@ -215,8 +221,16 @@ class Trainer:
                 raise ValueError(f"{path}: trained with {pinned.event_length} event tokens, the run uses "
                                  f"{cfg.event_length} (pinned opponent)")  # fmt: skip
             self.pool.pin(pinned.net.to(self.device), tag=f"pinned:{Path(path).name}")
+        self.evolved = None
+        if cfg.deck_pool is not None:
+            env = self.environment
+            self.evolved = EvolvedDecks(cfg.deck_pool, share=cfg.evolved_share, power=cfg.evolved_power,
+                                        validate=None if env is None else lambda d: [str(v) for v in env.validate_deck(d, self.cards)])  # fmt: skip
+            if state is None:
+                self._reload_deck_pool()
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
-                                         selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed)  # fmt: skip
+                                         selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed,
+                                         evolved=self.evolved)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced)  # fmt: skip
@@ -260,7 +274,8 @@ class Trainer:
                 "environment": self.environment.stamp() if self.environment is not None else None,
                 "learner": self.learner.state_dict(), "pool": self.pool.state_dict(),
                 "schedule": self.schedule.state_dict(), "counters": dict(self.counters), "best": dict(self.best), "league": dict(self.league),
-                "rng": {"torch": torch.get_rng_state(), "collector": self.collector.generator.get_state()}}  # fmt: skip
+                "rng": {"torch": torch.get_rng_state(), "collector": self.collector.generator.get_state()},
+                "evolved": self.evolved.state_dict() if self.evolved is not None else None}  # fmt: skip
 
     def _restore(self, state: dict) -> None:
         if state["net_config"] != self.net_config.to_dict():
@@ -271,6 +286,8 @@ class Trainer:
         self.counters.update(state["counters"])
         self.best.update(state["best"])
         self.league.update(state.get("league", {}))
+        if self.evolved is not None and state.get("evolved") is not None:
+            self.evolved.load_state_dict(state["evolved"])
         torch.set_rng_state(state["rng"]["torch"])
         self.collector.generator.set_state(state["rng"]["collector"])
 
@@ -289,6 +306,8 @@ class Trainer:
                 last = self.step()
                 done += 1
                 u = self.counters["updates"]
+                if self.evolved is not None and cfg.deck_pool_every and u % cfg.deck_pool_every == 0:
+                    self._reload_deck_pool()
                 if cfg.snapshot_every and u % cfg.snapshot_every == 0:
                     self.maybe_snapshot(u)
                 if cfg.eval_every and u % cfg.eval_every == 0:
@@ -305,6 +324,13 @@ class Trainer:
             raise
         self.save()
         return last
+
+    def _reload_deck_pool(self) -> None:
+        ev = self.evolved
+        if ev.reload():
+            live, hist = ev.ids("probation", "active"), ev.ids("history")
+            self.log(f"deck pool {ev.path}: {len(live)} evolved decks dealt, {len(hist)} history"
+                     + "".join(f"; left out {p}" for p in ev.problems))  # fmt: skip
 
     def _autocast(self):
         return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.cfg.bf16)
@@ -375,10 +401,20 @@ class Trainer:
                 self.pool.record(g.assignment.opponent, g.learner_score)
                 self.league["games"] += 1
                 self.league["points"] += g.learner_score
+        evolved_games = 0
+        for g in ro.games:
+            did = g.assignment.info.get("evolved")
+            if did is None or g.truncated or g.reason == "error":
+                continue
+            seat = g.assignment.info["evolved_seat"]
+            evolved_games += 1
+            if self.evolved is not None and g.assignment.is_learner(seat):
+                self.evolved.record(did, 0.5 if g.winner is None else float(g.winner == seat))
         record = {"update": c["updates"], "time": round(time.time(), 1), **self._rollout_stats(ro, update_s),
                   "step_s": round(step_s, 2), "rows_per_s": ro.players.numel() / max(step_s, 1e-9),
                   **{k: round(v, 5) if isinstance(v, float) else v for k, v in stats.items()},
-                  "total": dict(c), "pool": len(self.pool)}  # fmt: skip
+                  "total": dict(c), "pool": len(self.pool),
+                  **({"evolved_games": evolved_games} if self.evolved is not None else {})}  # fmt: skip
         with (self.run_dir / "metrics.jsonl").open("a") as f:
             f.write(json.dumps(record) + "\n")
         self.log(f"update {c['updates']}: {record['decisions_per_s']:.0f} decisions/s collect, "

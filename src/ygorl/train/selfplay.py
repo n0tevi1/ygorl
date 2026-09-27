@@ -11,19 +11,26 @@ deck-pool sampling with paired first / second games.
   (先后攻配平). A deal is self-play with probability ``selfplay_fraction``, else against a pool snapshot with
   the learner on a random side. The snapshot is resolved when the pair is dealt and held until the next deal
   (``opponent(sid)``), so an eviction between the pair's two games cannot lose it.
+- :class:`EvolvedDecks` (#108): the decks an evolution process adds to the pool while training runs, read from a
+  deck-pool manifest (``ygorl-deck-pool`` JSON) that the trainer re-reads every few updates. With probability
+  ``share`` a deal pairs one probation / active evolved deck (weight x ``(1 - p) ** power``, ``p`` the current
+  policy's score piloting it) with a corpus or history deck; with no probation / active deck the schedule draws
+  nothing extra, so training is bit-identical to the fixed pool.
 """
 
 from __future__ import annotations
 
 import copy
+import json
 from collections import OrderedDict, deque
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from pathlib import Path
 
 import numpy as np
 from torch import nn
 
-from ygorl.cards.ydk import Deck
+from ygorl.cards.ydk import Deck, load_ydk
 from ygorl.engine.duel import DuelConfig
 from ygorl.env.pool import GameSpec
 from ygorl.eval.arena import derive_seed
@@ -203,12 +210,102 @@ class DeckPool:
         return self.decks[i], self.decks[j]
 
 
+MANIFEST_FORMAT = "ygorl-deck-pool"
+DECK_STATUSES = ("probation", "active", "history")
+
+
+class EvolvedDecks:
+    """The evolved part of the deck pool, from a manifest::
+
+        {"format": "ygorl-deck-pool", "version": 1,
+         "decks": [{"id": "evo-0001", "file": "decks/evo-0001.ydk", "status": "probation", "weight": 1.0,
+                    "parent": "...", ...}]}
+
+    ``file`` is relative to the manifest; ``status`` is ``probation`` / ``active`` (dealt as the evolved side of a
+    pairing) or ``history`` (a superseded elite: only an opponent deck); ``weight`` (default 1) scales the sampling
+    weight; other fields (lineage, descriptors) are the evolution process's and ignored here. Deck ids are unique
+    and name the deck in the logs. ``validate(deck) -> problems`` (e.g. the environment's legality check) drops an
+    illegal deck with a note in ``problems`` instead of failing the run. The learner's scores piloting each deck
+    (``record``) survive reloads and checkpoints."""
+
+    def __init__(self, path: str | Path, *, share: float = 0.3, power: float = 1.0,
+                 validate: Callable[[Deck], Sequence[str]] | None = None) -> None:  # fmt: skip
+        if not 0 <= share <= 1:
+            raise ValueError("the evolved share must be in [0, 1]")
+        if power < 0:
+            raise ValueError("the evolved power must be >= 0")
+        self.path = Path(path)
+        self.share = share
+        self.power = power
+        self.validate = validate
+        self.entries: list[dict] = []
+        self.decks: dict[str, Deck] = {}
+        self.stats: dict[str, list[float]] = {}  # id -> [games, points] of the learner piloting it
+        self.problems: list[str] = []
+        self.text = ""
+
+    def reload(self) -> bool:
+        """Re-read the manifest; returns whether it changed. A missing manifest is an empty pool."""
+        text = self.path.read_text() if self.path.exists() else ""
+        if text == self.text:
+            return False
+        self._parse(text)
+        return True
+
+    def _parse(self, text: str) -> None:
+        self.text, self.entries, self.decks, self.problems = text, [], {}, []
+        if not text.strip():
+            return
+        data = json.loads(text)
+        if data.get("format") != MANIFEST_FORMAT:
+            raise ValueError(f"{self.path}: not a {MANIFEST_FORMAT} manifest")
+        for e in data.get("decks", []):
+            did, status = str(e["id"]), e.get("status", "probation")
+            if status not in DECK_STATUSES:
+                raise ValueError(f"{self.path}: deck {did}: status must be one of {DECK_STATUSES}")
+            if did in self.decks:
+                raise ValueError(f"{self.path}: duplicate deck id {did}")
+            deck = replace(load_ydk(self.path.parent / e["file"]), name=did)
+            bad = list(self.validate(deck)) if self.validate is not None else []
+            if bad:
+                self.problems.append(f"{did}: {'; '.join(bad)}")
+                continue
+            self.entries.append({**e, "id": did, "status": status, "weight": float(e.get("weight", 1.0))})
+            self.decks[did] = deck
+
+    def ids(self, *statuses: str) -> list[str]:
+        return [e["id"] for e in self.entries if e["status"] in statuses]
+
+    def win_rate(self, did: str) -> float:
+        """The learner's score piloting deck ``did``, with a prior of one game at 0.5."""
+        games, points = self.stats.get(did, (0, 0.0))
+        return (points + 0.5) / (games + 1)
+
+    def weights(self) -> tuple[list[str], np.ndarray]:
+        """The dealt (probation / active) decks and their sampling probabilities."""
+        live = [e for e in self.entries if e["status"] != "history"]
+        w = np.array([e["weight"] * (1.0 - self.win_rate(e["id"])) ** self.power for e in live]) + 1e-9
+        return [e["id"] for e in live], w / w.sum()
+
+    def record(self, did: str, score: float) -> None:
+        games, points = self.stats.get(did, (0, 0.0))
+        self.stats[did] = [games + 1, points + score]
+
+    def state_dict(self) -> dict:
+        return {"text": self.text, "stats": {k: list(v) for k, v in self.stats.items()}}
+
+    def load_state_dict(self, state: dict) -> None:
+        self._parse(state["text"])
+        self.stats = {k: [int(v[0]), float(v[1])] for k, v in state["stats"].items()}
+
+
 class SelfPlaySchedule:
     def __init__(self, decks: DeckPool, pool: SnapshotPool, config: DuelConfig | None = None, *,
-                 selfplay_fraction: float = 0.75, seed: int = 0) -> None:  # fmt: skip
+                 selfplay_fraction: float = 0.75, seed: int = 0, evolved: EvolvedDecks | None = None) -> None:  # fmt: skip
         if not 0 <= selfplay_fraction <= 1:
             raise ValueError("selfplay_fraction must be in [0, 1]")
         self.decks = decks
+        self.evolved = evolved
         self.pool = pool
         self.config = config or DuelConfig()
         self.selfplay_fraction = selfplay_fraction
@@ -228,8 +325,22 @@ class SelfPlaySchedule:
         held = self._held.get(sid)
         return held if held is not None else self.pool.get(sid)
 
-    def _deal(self) -> None:
+    def _sample_decks(self) -> tuple[Deck, Deck, int | None]:
+        """A deck pairing, and which of the two (0 = a, 1 = b) is an evolved deck (None: a corpus pairing).
+        Draws nothing beyond the corpus pairing while no evolved deck is live."""
+        ev = self.evolved
+        if ev is not None and ev.ids("probation", "active") and self.rng.random() < ev.share:
+            ids, p = ev.weights()
+            deck = ev.decks[ids[int(self.rng.choice(len(ids), p=p))]]
+            others = self.decks.decks + [ev.decks[i] for i in ev.ids("history")]
+            other = others[int(self.rng.integers(len(others)))]
+            side = int(self.rng.integers(2))
+            return (deck, other, 0) if side == 0 else (other, deck, 1)
         deck_a, deck_b = self.decks.sample(self.rng)
+        return deck_a, deck_b, None
+
+    def _deal(self) -> None:
+        deck_a, deck_b, evolved = self._sample_decks()
         seed = derive_seed(self.seed, 2, self.deals)
         self.deals += 1
         # Only called with an empty queue, and the collector resolves each game's opponent as it starts it,
@@ -246,6 +357,9 @@ class SelfPlaySchedule:
             info = {"deck_a": deck_a.name, "deck_b": deck_b.name, "first": first}
             if opponent is not None:
                 info["learner_deck"] = (deck_a, deck_b)[side].name
+            if evolved is not None:
+                info["evolved"] = (deck_a, deck_b)[evolved].name
+                info["evolved_seat"] = (evolved + first) % 2
             # engine seat p holds deck (first + p) % 2, so deck `side` sits at seat (side + first) % 2
             self._queue.append(Assignment(spec, opponent, (side + first) % 2, info))
 
@@ -259,4 +373,5 @@ class SelfPlaySchedule:
         self._held.clear()
 
 
-__all__ = ["DeckPool", "PAIRINGS", "SelfPlaySchedule", "Snapshot", "SnapshotPool"]
+__all__ = ["DECK_STATUSES", "MANIFEST_FORMAT", "DeckPool", "EvolvedDecks", "PAIRINGS", "SelfPlaySchedule", "Snapshot",
+           "SnapshotPool"]  # fmt: skip
