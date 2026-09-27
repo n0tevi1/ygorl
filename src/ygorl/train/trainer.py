@@ -119,6 +119,9 @@ class TrainConfig:
     # its Q explained variance averages critic_warmup_ev over 5 updates, or for critic_warmup updates at most. 0 = off
     critic_warmup: int = 0
     critic_warmup_ev: float = 0.6
+    # speed pressure, a diagnostic arm for now (design T6 conflicts with C3): won / lost games end in
+    # +/- turn_discount ** turns instead of +/- 1; 1.0 = off (docs/spikes/reward-signal.md R5)
+    turn_discount: float = 1.0
 
     def __post_init__(self) -> None:
         if self.keep_best_by and self.keep_best_by not in self.eval_opponents:
@@ -224,7 +227,8 @@ class Trainer:
         self._stream = torch.cuda.Stream(self.device) if cfg.overlap_collect and self.device.type == "cuda" else None
         self.collector = RolloutCollector(self.env, self.acting, self.schedule, cfg.steps, opponents=self.schedule.opponent,
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
-                                          device=self.device, stall_timeout=cfg.stall_timeout)  # fmt: skip
+                                          device=self.device, stall_timeout=cfg.stall_timeout,
+                                          turn_discount=cfg.turn_discount)  # fmt: skip
         self._warmup_ev: list[float] = []
         self.counters = {"critic_warmup_done": 0, "updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0, "snapshots": 0, "snapshots_skipped": 0}  # fmt: skip

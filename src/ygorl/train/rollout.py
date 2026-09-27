@@ -146,7 +146,8 @@ class RolloutCollector:
 
     def __init__(self, env, model: nn.Module, next_game: Callable[[], Assignment], num_steps: int, *,
                  opponents: Callable[[int], nn.Module] | None = None, seed: int = 0, min_batch: int | None = None,
-                 device: torch.device | str = "cpu", stall_timeout: float | None = 900.0) -> None:  # fmt: skip
+                 device: torch.device | str = "cpu", stall_timeout: float | None = 900.0,
+                 turn_discount: float = 1.0) -> None:  # fmt: skip
         if num_steps < 1:
             raise ValueError("num_steps must be at least 1")
         self.env = env
@@ -154,6 +155,11 @@ class RolloutCollector:
         self.next_game = next_game
         self.num_steps = num_steps
         self.opponents = opponents
+        # speed pressure (design T6, docs/spikes/reward-signal.md): a won / lost game's terminal reward is
+        # +/- turn_discount ** turns, so an earlier win is worth more and a later loss costs less; 1.0 = off
+        if not 0 < turn_discount <= 1:
+            raise ValueError("turn_discount must be in (0, 1]")
+        self.turn_discount = turn_discount
         self.min_batch = max(1, min_batch if min_batch is not None else env.num_envs // 2)
         self.device = torch.device(device)
         # no event from any environment for this long while some are still owed rows: an engine stuck inside one
@@ -267,7 +273,8 @@ class RolloutCollector:
             row = col[-1]
             row.done, row.truncated = True, truncated
             if not truncated and winner is not None:
-                row.reward = 1.0 if winner == row.player else -1.0
+                scale = self.turn_discount ** int(res.get("turns", 0)) if self.turn_discount < 1 else 1.0
+                row.reward = scale if winner == row.player else -scale
         return FinishedGame(slot.assignment, winner, reason, truncated, slot.rows, dict(res))
 
     # -- acting ---------------------------------------------------------------------------------------
