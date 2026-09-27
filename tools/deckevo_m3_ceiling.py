@@ -1,5 +1,6 @@
 """M3 noise ceiling: how well can ANY signal rank cards when the LOO truth itself has 1000-pair noise? Split the pairs
-in random halves: spearman(LOO half A, LOO half B) is the truth's own reliability; spearman(opening half A, LOO half B)
+in random halves: spearman(LOO half A, LOO half B) is the half truth's reliability r; a noiseless signal would reach
+about sqrt(r) against a half, sqrt(2r / (1 + r)) (Spearman-Brown) against the full 1000-pair truth; spearman(opening half A, LOO half B)
 is the signal on independent games. Averaged over 200 random splits.
 
 Usage: tools/deckevo_m3_ceiling.py M2.npz"""
@@ -13,9 +14,20 @@ import numpy as np
 from ygorl.build.diagnose import opening_effects
 
 
+def ranks(x):
+    """Average ranks (ties share the mean of their positions)."""
+    x = np.asarray(x, dtype=float)
+    order = np.argsort(x, kind="stable")
+    r = np.empty(len(x))
+    r[order] = np.arange(len(x))
+    for v in np.unique(x):
+        tie = x == v
+        r[tie] = r[tie].mean()
+    return r
+
+
 def spearman(a, b):
-    ra, rb = np.argsort(np.argsort(a)), np.argsort(np.argsort(b))
-    return float(np.corrcoef(ra, rb)[0, 1])
+    return float(np.corrcoef(ranks(a), ranks(b))[0, 1])
 
 
 def z(x):
@@ -56,9 +68,17 @@ for _ in range(200):
             tgt["st"][1].extend(z(lb))
     pooled.append([spearman(np.array(pl[k][0]), np.array(pl[k][1])) for k in ("tt", "st")])
     pooled_ex.append([spearman(np.array(ple[k][0]), np.array(ple[k][1])) for k in ("tt", "st")])
-print("half-split spearman (1000 pairs -> 500/500):   LOO vs LOO | opening vs LOO")
+
+
+def line(t, r, s):
+    c = np.sqrt(max(r, 0))
+    full = np.sqrt(max(2 * r / (1 + r), 0))
+    print(f"  {t:28s} r {r:+.2f}  ceiling half {c:.2f} / full {full:.2f}  | opening vs LOO half {s:+.2f}")
+
+
+print("half-split spearman (1000 pairs -> 500/500)")
 for t, r in rows.items():
     r = np.array(r)
-    print(f"  {t:28s} {r[:, 0].mean():+.2f}        | {r[:, 1].mean():+.2f}")
-print(f"  pooled                       {np.mean(pooled, 0)[0]:+.2f}        | {np.mean(pooled, 0)[1]:+.2f}")
-print(f"  pooled without Exodia        {np.mean(pooled_ex, 0)[0]:+.2f}        | {np.mean(pooled_ex, 0)[1]:+.2f}")
+    line(t, r[:, 0].mean(), r[:, 1].mean())
+line("pooled", *np.mean(pooled, 0))
+line("pooled without Exodia", *np.mean(pooled_ex, 0))

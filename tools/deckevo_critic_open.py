@@ -96,7 +96,9 @@ def main():
             held = np.array([card in h for h in hands]) & np.isfinite(v)
             rest = ~held & np.isfinite(v)
             per[int(card)] = float(v[held].mean() - v[rest].mean()) if held.any() and rest.any() else None
-        res.append({"type": deck["type"], "mean_v": float(np.nanmean(v)), "critic_opening": per})
+        res.append(
+            {"type": deck["type"], "k": k, "checkpoint": ckpt, "mean_v": float(np.nanmean(v)), "critic_opening": per}
+        )
         print(f"{deck['type']:28s} mean V {np.nanmean(v):+.3f} over {int(np.isfinite(v).sum())} openings", flush=True)
     Path(out).write_text(json.dumps(res, indent=1))
 
