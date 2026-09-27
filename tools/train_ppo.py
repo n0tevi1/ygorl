@@ -37,9 +37,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--minutes", type=float, default=None, help="wall-clock budget")
     p.add_argument("--updates", type=int, default=None, help="number of PPO updates")
     g = p.add_argument_group("environment and rollout")
-    g.add_argument("--envs", type=int, default=32, help="environment slots = rollout columns B (default 32)")
+    g.add_argument("--envs", type=int, default=128, help="environment slots = rollout columns B (default 128)")
     g.add_argument("--env-threads", type=int, default=2, help="C++ worker threads (default 2)")
-    g.add_argument("--steps", type=int, default=64, help="rows per column per rollout, T (default 64)")
+    g.add_argument("--steps", type=int, default=128, help="rows per column per rollout, T (default 128)")
     g.add_argument("--event-length", type=int, default=64, help="event tokens per observation (default 64)")
     g.add_argument(
         "--keep-forced",
@@ -78,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--ema", type=float, default=0.02, help="reference EMA rate per update")
     g.add_argument("--lr", type=float, default=1e-3)
     g.add_argument("--epochs", type=int, default=4)
-    g.add_argument("--minibatch", type=int, default=256)
+    g.add_argument("--minibatch", type=int, default=2048)
     g.add_argument(
         "--bc-prior",
         default=None,

@@ -44,7 +44,7 @@ class PPOConfig:
     estimator: str = "vrpo"  # "vrpo" (design I2) or "gae" (control)
     vrpo_mode: str = "return"
     gamma: float = 1.0
-    lam: float = 0.95
+    lam: float = 0.5  # design I2: lower-variance advantages; 0.3 / the critic mode are worse (docs/benchmarks.md)
     clip: float = 0.2  # PPO ratio clip
     entropy_coef: float = 0.05  # design I1: 0.05-0.2
     kl_ref_coef: float = 0.05  # KL(π‖π_ref) to the EMA reference (design I8)
@@ -62,8 +62,8 @@ class PPOConfig:
     lr: float = 1e-3
     adam_eps: float = 1e-5
     max_grad_norm: float = 0.5
-    epochs: int = 4  # 4 x 256-row minibatches of 2,048 rows: approx_kl ~5e-3 per update (docs/benchmarks.md)
-    minibatch_size: int = 256
+    epochs: int = 4  # over the 16,384-row batch in 2,048-row minibatches (target_kl may stop earlier)
+    minibatch_size: int = 2048  # 8 minibatches per epoch of the 16,384-row default batch (design I1)
     adv_norm: str = "standard"  # normalize_advantages mode, over the whole rollout
 
     def __post_init__(self) -> None:
