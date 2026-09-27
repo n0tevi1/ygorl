@@ -249,6 +249,13 @@ class PPOLearner:
         self.updates = 0
         self.timing = False  # add time/<section> of each update to its stats (tools/bench_train.py)
 
+    def _policy_params(self) -> list[nn.Parameter]:
+        """Parameters the policy's logits depend on: the actor (with the trunk the critic may share)."""
+        actor = getattr(self.model, "actor", None)
+        if actor is None:
+            raise ValueError("critic warm-up needs a model with an .actor (the policy's parameters)")
+        return list(actor.parameters())
+
     @staticmethod
     def _frozen(module: nn.Module) -> nn.Module:
         m = copy.deepcopy(module)
@@ -301,7 +308,9 @@ class PPOLearner:
                         bootstrap_mask=ro.bootstrap_mask, truncated=ro.truncated, vrpo_mode=cfg.vrpo_mode,
                         normalize=cfg.adv_norm)  # fmt: skip
 
-    def update(self, ro: Rollout) -> dict[str, float]:
+    def update(self, ro: Rollout, policy: bool = True) -> dict[str, float]:
+        """One PPO update on ``ro``. ``policy=False`` (critic warm-up): only the Q / V losses, and only parameters the
+        policy does not use are stepped, so the policy (actor and shared trunk) stays exactly as it was."""
         cfg, model = self.cfg, self.model
         dev = next(model.parameters()).device
         laps = _Laps(dev if self.timing else None)
@@ -349,9 +358,14 @@ class PPOLearner:
                 ql = q_loss(out.q.float(), actions[idx], q_targets[idx])
                 vl = v_loss(out.v.float(), v_targets[idx])
                 loss = loss + cfg.q_coef * ql + cfg.v_coef * vl
+                if not policy:
+                    loss = cfg.q_coef * ql + cfg.v_coef * vl
                 laps.lap("forward")
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                if not policy:
+                    for p in self._policy_params():
+                        p.grad = None  # Adam skips parameters without a gradient: the policy does not move
                 laps.lap("backward")
                 grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
                 self.optimizer.step()
@@ -375,6 +389,7 @@ class PPOLearner:
         stats["adv_mean"], stats["adv_std"] = float(adv.mean()), float(adv.std(correction=0))
         stats["rows"] = n
         stats["minibatches"], stats["early_stop"] = steps, int(stopped)
+        stats["critic_warmup"] = int(not policy)
         stats.update(_advantage_by_kind(obs, actions, adv))
         if prior_rows is not None:
             stats["kl_prior_rows"] = int(prior_rows.sum())

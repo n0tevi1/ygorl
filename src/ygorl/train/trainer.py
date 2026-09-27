@@ -114,6 +114,11 @@ class TrainConfig:
     collect_threads: int = 2  # PyTorch threads while collecting (the env threads share the cores)
     bc_prior: str | None = None  # checkpoint of a BC policy: KL prior (ppo.kl_prior_coef)
     init_from: str | None = None  # initialize the actor from a checkpoint (e.g. BC warm start)
+    # critic warm-up: a critic that starts fresh (BC / actor-only warm starts) gives noise advantages that can push the
+    # policy off for hundreds of updates; the first updates then train the critic only (the policy is frozen) until
+    # its Q explained variance averages critic_warmup_ev over 5 updates, or for critic_warmup updates at most. 0 = off
+    critic_warmup: int = 0
+    critic_warmup_ev: float = 0.6
 
     def __post_init__(self) -> None:
         if self.keep_best_by and self.keep_best_by not in self.eval_opponents:
@@ -220,7 +225,8 @@ class Trainer:
         self.collector = RolloutCollector(self.env, self.acting, self.schedule, cfg.steps, opponents=self.schedule.opponent,
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
                                           device=self.device, stall_timeout=cfg.stall_timeout)  # fmt: skip
-        self.counters = {"updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
+        self._warmup_ev: list[float] = []
+        self.counters = {"critic_warmup_done": 0, "updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0, "snapshots": 0, "snapshots_skipped": 0}  # fmt: skip
         self.league = {"games": 0, "points": 0.0}  # the learner's pool games since the last snapshot joined
         self.best = {"score": None, "update": None}
@@ -337,8 +343,17 @@ class Trainer:
         torch.set_num_threads(cfg.torch_threads)
         t0 = time.perf_counter()
         with self._autocast():
-            stats = self.learner.update(ro)
+            warm = self.cfg.critic_warmup > 0 and not self.counters.get("critic_warmup_done")
+        stats = self.learner.update(ro, policy=not warm)
         update_s = time.perf_counter() - t0
+        if warm:
+            self._warmup_ev.append(stats["q_explained_var"])
+            recent = self._warmup_ev[-5:]
+            if self.learner.updates >= self.cfg.critic_warmup or (
+                    len(recent) == 5 and sum(recent) / 5 >= self.cfg.critic_warmup_ev):  # fmt: skip
+                self.counters["critic_warmup_done"] = self.learner.updates
+                self.log(f"critic warm-up done after {self.learner.updates} updates (Q explained variance "
+                         f"{sum(recent) / len(recent):.3f}): the policy trains from now on")  # fmt: skip
         if future is not None:  # the league bookkeeping between steps never runs next to a collection
             self._pending = future.result()
         step_s = time.perf_counter() - t_step
