@@ -66,9 +66,9 @@ class TrainConfig:
     env: str | None = None  # environment version / directory (rules, stamped into checkpoints)
     max_turns: int | None = None  # DuelConfig overrides (None = the environment's / default)
     max_decisions: int | None = None
-    num_envs: int = 32
+    num_envs: int = 128  # x steps = 16,384 rows per update (design I1: update noise is the plateau)
     env_threads: int = 2
-    steps: int = 64  # rows per environment slot per rollout (T)
+    steps: int = 128  # rows per environment slot per rollout (T)
     min_batch: int | None = None  # ready decisions per forward pass (default num_envs // 2)
     event_length: int = 64  # event tokens per observation (window mode)
     skip_forced: bool = True  # decisions with one choosable row are played in C++ and produce no rows
