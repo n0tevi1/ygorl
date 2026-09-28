@@ -76,6 +76,11 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--no-text", action="store_true", help="ignore the text tables in --text-dir")
     g.add_argument("--id-dropout", type=float, default=0.0, help="training: drop each card's ID embedding")
     g.add_argument("--separate-critic", action="store_true", help="critic gets its own trunk")
+    g.add_argument(
+        "--critic-deck-order",
+        action="store_true",
+        help="the privileged critic also sees both players' next 10 draws (docs/encoding.md)",
+    )
     g.add_argument("--no-privileged", action="store_true", help="non-privileged critic (ablation)")
     g = p.add_argument_group("PPO")
     g.add_argument("--objective", default="ppo_clip")
@@ -201,7 +206,8 @@ def config_from_args(args, decks: list[str]):
                        max_decisions=args.max_decisions, num_envs=args.envs, env_threads=args.env_threads,
                        steps=args.steps, event_length=args.event_length, skip_forced=not args.keep_forced, net=net,
                        text_dir=args.text_dir,
-                       privileged_critic=not args.no_privileged, shared_backbone=not args.separate_critic, ppo=ppo,
+                       privileged_critic=not args.no_privileged, shared_backbone=not args.separate_critic,
+                       critic_deck_order=args.critic_deck_order, ppo=ppo,
                        selfplay_fraction=args.selfplay_fraction, pool_size=args.pool_size,
                        pin_opponents=tuple(args.pin), pinned_share=args.pinned_share,
                        snapshot_every=args.snapshot_every, pool_sampling=args.pool_sampling, pfsp_power=args.pfsp_power,

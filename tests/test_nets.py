@@ -667,3 +667,35 @@ def test_id_dropout_keeps_the_expected_contribution():
     ident.train()
     mean = ident(index).mean(0)
     torch.testing.assert_close(mean, full, atol=0.02, rtol=0.05)
+
+
+def random_privileged(b: int, seed: int = 0, vocab: int = V) -> dict:
+    from ygorl.env.privileged import P_NEXT, P_WIDTHS
+
+    rng = np.random.default_rng(seed)
+    d = {k: torch.as_tensor(np.stack([np.column_stack([rng.integers(0, vocab, w), rng.integers(0, 2, w), np.zeros(w, int)])
+                                      for _ in range(b)])) for k, w in P_WIDTHS.items()}  # fmt: skip
+    d["counts"] = torch.as_tensor(rng.integers(0, 40, (b, 5)))
+    for k in ("my_next", "op_next"):
+        d[k] = torch.as_tensor(np.stack([np.column_stack([rng.integers(2, vocab, P_NEXT), np.zeros(P_NEXT, int),
+                                                          np.arange(P_NEXT)]) for _ in range(b)]))  # fmt: skip
+    return d
+
+
+def test_a_deck_order_critic_reads_the_next_draws_and_the_default_one_does_not():
+    from ygorl.nets.actor_critic import ActorCritic
+
+    obs, priv = random_batch(3), random_privileged(3)
+    swapped = {**priv, "my_next": priv["my_next"].flip(1)}  # same cards, other order
+    torch.manual_seed(0)
+    plain = ActorCritic(small(), privileged=True, privileged_dim=16, critic_hidden=16).eval()
+    torch.manual_seed(0)
+    ordered = ActorCritic(small(), privileged=True, privileged_dim=16, critic_hidden=16, deck_order=True).eval()
+    no_order = {k: v for k, v in priv.items() if k not in ("my_next", "op_next")}
+    with torch.no_grad():
+        assert torch.equal(plain(obs, priv).v, plain(obs, swapped).v)
+        assert torch.equal(plain(obs, priv).v, plain(obs, no_order).v)
+        assert not torch.allclose(ordered(obs, priv).v, ordered(obs, swapped).v)
+        assert torch.equal(ordered(obs, priv).logits, plain(obs, priv).logits)  # the actor never sees it
+    with pytest.raises(ValueError, match="privileged"):
+        ActorCritic(small(), privileged=False, deck_order=True)

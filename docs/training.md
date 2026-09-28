@@ -174,6 +174,10 @@ V(s)    = MLP(ctx)                                               [...]
 - `privileged`：对手真值（`EncodedEvent.privileged`，[encoding.md](encoding.md)「训练态真值」）编码成的特征向量；
   由网络侧（T4b.1 / T4c）负责把 int32 表编码成向量。**只进 critic 与信念损失，从不进 actor**；
   `Critic(privileged_dim=0)` 是非特权 critic，供 T4c.2 消融。构造时声明了特权维度却不给（或反之）直接报错。
+- **卡组顺序**（`TrainConfig.critic_deck_order` / `--critic-deck-order`，默认关）：特权编码器另读双方接下来的 10 张抽卡
+  （`my_next` / `op_next`），每张的卡片嵌入加上「距卡组顶深度」嵌入，按抽卡顺序拼接。用意：未来抽卡是胜负方差里最大的一块，
+  critic 知道它就能把这部分运气从优势里扣掉。风险：critic 依赖 actor 永远不可能知道的信息，状态 critic 在部分可观测下的偏差会变大，
+  是否值得以策略对局矩阵的实测为准。
 - `candidates`：候选动作嵌入（与 actor 打分头用的同一组行），Q 头和 actor 一样是点积形状。
 - `squash=True` 时 Q、V 过 tanh，落在终局奖励的 [−1, 1] 区间。
 
@@ -385,7 +389,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
   KL 为 0 与梯度方向；先验 KL 只在第 1 回合（`kl_prior_turns`）时的行选择、权重与更新结果；学习器状态往返；快照池逐出与 keep-best；策略目标可插拔（注册自定义目标，`prepare` / `loss` 被调用）。
 - `tests/test_advantages.py::test_truncated_rows_bootstrap_from_the_critic`：截断行的目标等于 critic 自身估计、与「切列 + 同座位自举」一致、
   截断行的奖励被忽略。
-- `tests/test_deck_pool.py`（约 10 秒）：没有 probation / active 卡组（清单缺失、只有 history 或占比为 0）时发局与固定牌组池逐位相同，`Trainer` 训练后权重也相同；进化占比、只发 probation / active、
+- `tests/test_deck_pool.py`（约 10 秒）：没有 probation / active 卡组（清单缺失、只有 history 或占比为 0）时发局与固定牌组池逐位相同（经 `Trainer` 构建的发局也相同；整次训练不比较：哪个槽位打哪一局取决于引擎线程的时序，同一配置跑两次权重就不同）；进化占比、只发 probation / active、
   对手来自语料或历史、坐两侧；打得差的卡组更常出现、`weight` 生效；重读后只发当前卡组；原地改写的卡组文件会被重读；不合法 / 重复 / 读不到 / 状态或权重错的条目被跳过并记录，写到一半的清单保留上一版池；
   池状态往返（删掉清单与卡组文件后）发局相同；
   `Trainer` 记录进化卡组得分、续训后池与发局状态一致、训练中重读清单。

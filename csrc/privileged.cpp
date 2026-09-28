@@ -108,6 +108,14 @@ void encode_privileged(Duel& core, int viewer, const Vocab& vocab, Privileged& o
             ++n_set;
         }
     }
+    for (int who = 0; who < 2; ++who) {  // the top of the deck is the highest sequence
+        const int player = who == 0 ? viewer : op;
+        std::vector<Entry> next;
+        const auto slots = query(core, player, LOCATION_DECK);
+        for (size_t i = slots.size(); i-- > 0 && next.size() < static_cast<size_t>(P_NEXT);)
+            if (slots[i].present) next.push_back(entry(slots[i], static_cast<uint32_t>(next.size()), vocab));
+        fill(next, P_NEXT, who == 0 ? out.my_next : out.op_next);
+    }
     out.counts = {static_cast<int32_t>(hand.size()), static_cast<int32_t>(deck.size()), static_cast<int32_t>(extra.size()),
                   n_set, static_cast<int32_t>(removed.size())};
 }

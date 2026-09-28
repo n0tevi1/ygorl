@@ -358,3 +358,28 @@ def test_encode_privileged_is_viewer_relative(db, vocab):
         priv = encode_privileged(core, viewer, vocab)
         assert priv["counts"][1] == deck_counts[1 - viewer]
     core.close()
+
+
+# ------------------------------------------------------------------ deck order (a deck-order critic's input)
+
+
+@pytest.mark.parametrize("first", [0, 1])
+def test_the_next_draws_are_the_top_of_each_deck(db, vocab, first):
+    """At the first decision both players have drawn their opening hands from the end of the loaded list, so the next
+    draws are the loaded main deck read backwards from the sixth-last card."""
+    duel = Duel(5, None, DECKS["snake_eye"], DECKS["kashtira"], cards=db, first=first, config=DuelConfig())
+    loaded = duel.loaded_decks()
+    enc = ObservationEncoder(db, vocab, privileged=True)
+    seen = []
+
+    class Agent(RandomAgent):
+        def act(self, point):
+            seen.append((point.player, enc.encode_privileged(point, duel._core)))
+            return super().act(point)
+
+    duel.run(Agent(1), Agent(2))
+    player, priv = seen[0]
+    for key, seat in (("my_next", player), ("op_next", 1 - player)):
+        want = [vocab.index(c) for c in loaded[seat][0][:-5][::-1][:10]]
+        np.testing.assert_array_equal(priv[key][:, 0], want)
+        np.testing.assert_array_equal(priv[key][:, 2], np.arange(10))

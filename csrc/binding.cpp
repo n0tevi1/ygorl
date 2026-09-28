@@ -160,6 +160,8 @@ py::dict privileged_dict(const host::Privileged& p) {
     d["op_set"] = to_array(p.op_set, {host::P_SET, host::P_COLS});
     d["op_removed"] = to_array(p.op_removed, {host::P_REMOVED, host::P_COLS});
     d["counts"] = to_array(p.counts, {host::P_COUNTS});
+    d["my_next"] = to_array(p.my_next, {host::P_NEXT, host::P_COLS});
+    d["op_next"] = to_array(p.op_next, {host::P_NEXT, host::P_COLS});
     return d;
 }
 
