@@ -29,6 +29,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("decks", type=Path, nargs="*", metavar="DECK", help=".ydk file or directory of .ydk files")
     p.add_argument("--pairings", default="cross", choices=("all", "cross", "mirror"),
                    help="deck pairings to sample (default cross: distinct decks only)")  # fmt: skip
+    p.add_argument(
+        "--deck-pool",
+        default=None,
+        metavar="MANIFEST",
+        help="evolved decks added while training runs (ygorl-deck-pool JSON, re-read every --deck-pool-every updates)",
+    )
+    p.add_argument("--deck-pool-every", type=int, default=10, help="updates between manifest re-reads")
+    p.add_argument("--evolved-share", type=float, default=0.3, help="share of deals with an evolved deck (default 0.3)")
+    p.add_argument(
+        "--evolved-power",
+        type=float,
+        default=1.0,
+        help="evolved decks are drawn with weight x (1 - p) ** power, p the policy's score piloting it",
+    )
     p.add_argument("--env", default=None, metavar="PATH|VERSION", help="environment (rules; stamped into checkpoints)")
     p.add_argument("--out", type=Path, default=None, help="run directory")
     p.add_argument("--name", default=None, help="run name under the environment's artifacts/train/ (with --env)")
@@ -181,7 +195,9 @@ def config_from_args(args, decks: list[str]):
                     minibatch_size=args.minibatch, kl_prior_coef=args.kl_prior,
                     kl_prior_turns=args.kl_prior_turns, target_kl=args.target_kl or None,
                     **{k: v for k, v in (('lam', args.lam), ('vrpo_mode', args.vrpo_mode)) if v is not None})  # fmt: skip
-    return TrainConfig(decks=tuple(decks), pairings=args.pairings, env=args.env, max_turns=args.max_turns,
+    return TrainConfig(decks=tuple(decks), pairings=args.pairings, deck_pool=args.deck_pool and str(Path(args.deck_pool).resolve()),
+                       deck_pool_every=args.deck_pool_every, evolved_share=args.evolved_share,
+                       evolved_power=args.evolved_power, env=args.env, max_turns=args.max_turns,
                        max_decisions=args.max_decisions, num_envs=args.envs, env_threads=args.env_threads,
                        steps=args.steps, event_length=args.event_length, skip_forced=not args.keep_forced, net=net,
                        text_dir=args.text_dir,
