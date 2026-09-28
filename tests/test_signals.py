@@ -46,6 +46,9 @@ def test_a_card_measured_in_one_type_informs_another_type_less_than_its_own():
     assert 0 < in_b < in_a  # shared through the card effect, shrunk
     with pytest.raises(ValueError):
         m.add(Observation("A", (5,), (6,), 0.0, 0.0))
+    # unseen cards keep their priors, summed per term before the variance
+    assert m.gain([7], [7], "A") == (0.0, 0.0)
+    assert m.gain([7, 7], [], "A")[1] == pytest.approx(2 * (0.03**2 + 0.02**2) ** 0.5)
 
 
 def test_calibration_switches_off_an_unrelated_signal_and_weights_a_related_one():
@@ -82,10 +85,20 @@ def is_extra(pw):
     return pw >= 900
 
 
+def trained_model():
+    """Measured: 100-102 (main) and 902 (extra) are good, 2, 3, 10 and 900 (the worst) are bad (against neutral card 50)."""
+    m = CardValueModel()
+    good, bad = {100: 0.05, 101: 0.04, 102: 0.03, 902: 0.03}, {2: -0.04, 3: -0.05, 10: -0.03, 900: -0.08}
+    for c, v in {**good, **bad}.items():
+        for _ in range(30):
+            m.add(Observation("T", (c,), (50,), v, 0.005))
+    return m
+
+
 def test_informed_children_are_legal_bundled_same_direction_and_explore_as_configured():
     base = deck([1] * 3 + [2] * 3 + [3] * 3 + list(range(10, 41)), [900, 901])
-    pool = [100, 101, 102, 1, 902]
-    m = CardValueModel(prior={100: 0.05, 101: 0.04, 102: 0.03, 902: 0.02, 3: -0.05, 2: -0.04, 10: -0.03})
+    pool = [100, 101, 102, 1, 2, 902]  # 1 and 2 are already in the deck: a bundle must not undo its own edits
+    m = trained_model()
     kids = informed_children(base, "T", m, pool, legal=legal, is_extra=is_extra, rng=np.random.default_rng(0),
                              informed=5, explore=2, max_bundle=3, protected=[3])  # fmt: skip
     informed = [k for k in kids if k.kind == "informed"]
@@ -95,10 +108,26 @@ def test_informed_children_are_legal_bundled_same_direction_and_explore_as_confi
         assert legal(k.deck)
         assert all(e.out != 3 for e in k.edits)  # protected
         assert all(is_extra(e.into) == (e.section == "extra") for e in k.edits)
+        assert not {e.into for e in k.edits} & {e.out for e in k.edits}  # no undone edits
     assert max(len(k.edits) for k in informed) > 1
-    # with a confident model, informed edits go from low-valued cards to high-valued ones
-    for k in informed:
+    assert any(e.section == "extra" for k in informed for e in k.edits)  # 900 -> 902
+    for k in informed:  # every edit goes from a card measured low to one measured higher
         assert k.predicted > 0
+        assert all(m.gain([e.into], [e.out], "T")[0] > 0 for e in k.edits)
+
+
+def test_fitting_thousands_of_evaluations_is_fast():
+    import time
+
+    rng = np.random.default_rng(0)
+    m = CardValueModel()
+    for _ in range(3000):
+        a, b = rng.integers(0, 1500, 2)
+        m.add(Observation(f"T{rng.integers(3)}", (int(a),), (int(b),), float(rng.normal(0, 0.02)), 0.02))
+    t = time.perf_counter()
+    m.gain([1], [2], "T0")
+    m.sample(range(100), "T1", rng)
+    assert time.perf_counter() - t < 30
 
 
 def test_win_conditions_and_search_targets_are_protected():
@@ -112,7 +141,11 @@ def test_win_conditions_and_search_targets_are_protected():
     pieces = {33396948, 7902349, 70903634, 44519536, 8124921}  # Exodia, its arms and legs
     assert pieces <= protected_cards(exodia)
     base = deck([1] * 3 + [2] * 3 + list(range(10, 44)))
-    graph = SynergyGraph({1: {}, 2: {}, 10: {}}, [Edge(1, 2, "search", 0x1, 5, "filter"),
-                                                   Edge(1, 10, "search", 0x1, 500, "category")])  # fmt: skip
+    graph = SynergyGraph({1: {}, 2: {}, 10: {}, 11: {}, 12: {}},
+                         [Edge(1, 2, "search", 0x1, 30, "filter"), Edge(1, 10, "search", 0x1, 31, "category"),
+                          Edge(1, 11, "search", 0x10, 5, "filter"),  # from the graveyard: not a deck search
+                          Edge(12, 12, "search", 0x1, 1, "filter")])  # fmt: skip
     got = protected_cards(base, graph, scripts_dir=Path("/nonexistent"))
-    assert got == {2}  # 10 is behind a query that matches 500 cards: not a real search target
+    assert got == {2}  # 10: a query matching more than 30 cards is no real search target
+    board = deck([94212438] + [31893528, 67287533, 94772232, 30170981] + list(range(10, 45)))
+    assert {94212438, 31893528, 67287533, 94772232, 30170981} <= protected_cards(board)  # via CARDS_SPIRIT_MESSAGE
