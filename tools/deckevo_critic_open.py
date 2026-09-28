@@ -31,7 +31,8 @@ def load_actor_critic(path, device):
     c = state["config"]
     cfg = NetConfig.from_dict(state["net_config"])
     model = ActorCritic(cfg, None, privileged=c["privileged_critic"], privileged_dim=c["privileged_dim"],
-                        critic_hidden=c["critic_hidden"], shared_backbone=c["shared_backbone"])  # fmt: skip
+                        critic_hidden=c["critic_hidden"], shared_backbone=c["shared_backbone"],
+                        deck_order=c.get("critic_deck_order", False))  # fmt: skip
     model.load_state_dict(state["learner"]["model"])
     return model.to(device).eval(), vocab_from_text(state["vocab"]), int(c["event_length"])
 

@@ -22,9 +22,10 @@ from ygorl.cards.cdb import CardVocab
 from ygorl.engine import constants as C
 from ygorl.engine.query import parse_query_location
 
-P_HAND, P_DECK, P_EXTRA, P_SET, P_REMOVED = 32, 64, 32, 15, 64
+P_HAND, P_DECK, P_EXTRA, P_SET, P_REMOVED, P_NEXT = 32, 64, 32, 15, 64, 10
 P_WIDTHS = {"op_hand": P_HAND, "op_deck": P_DECK, "op_extra": P_EXTRA, "op_set": P_SET, "op_removed": P_REMOVED}
-PRIVILEGED_KEYS = (*P_WIDTHS, "counts")
+P_ORDER = ("my_next", "op_next")  # deck order: the next P_NEXT draws of each player (only a deck-order critic reads it)
+PRIVILEGED_KEYS = (*P_WIDTHS, "counts", *P_ORDER)
 P_COLS = 3  # card_index, public, sequence
 N_MZONE, N_SZONE = 7, 8
 PRIVILEGED_QUERY_FLAGS = C.QUERY_CODE | C.QUERY_POSITION  # QUERY_IS_PUBLIC is always returned
@@ -44,12 +45,19 @@ def encode_privileged(core, viewer: int, vocab: CardVocab) -> dict[str, np.ndarr
 
     Every row is ``(card_index, public, sequence)``; hand and face-down banished cards keep
     their zone order, deck and extra deck are compositions sorted by ``(card_index, public)``,
-    and ``op_set`` has one fixed row per monster zone (0-6) and spell/trap zone (7-14).
+    and ``op_set`` has one fixed row per monster zone (0-6) and spell/trap zone (7-14). ``my_next`` / ``op_next``
+    are the next ``P_NEXT`` draws of the viewer and the opponent, top of the deck first (``sequence`` = depth).
     """
     op = 1 - viewer
 
-    def query(loc: int) -> list[dict | None]:
-        return parse_query_location(core.query_location(PRIVILEGED_QUERY_FLAGS, op, loc))
+    def query(loc: int, player: int = op) -> list[dict | None]:
+        return parse_query_location(core.query_location(PRIVILEGED_QUERY_FLAGS, player, loc))
+
+    def upcoming(player: int) -> np.ndarray:
+        cards = [c for c in query(C.LOCATION_DECK, player) if c][::-1]  # the top is the highest sequence
+        return _rows(
+            [(vocab.index(c["code"]), int(bool(c["public"])), k) for k, c in enumerate(cards[:P_NEXT])], P_NEXT
+        )
 
     def entry(card: dict, seq: int) -> tuple[int, int, int]:
         return vocab.index(card["code"]), int(bool(card["public"])), seq
@@ -75,6 +83,8 @@ def encode_privileged(core, viewer: int, vocab: CardVocab) -> dict[str, np.ndarr
         "op_set": field,
         "op_removed": _rows(removed, P_REMOVED),
         "counts": np.array([len(hand), len(deck), len(extra), n_set, len(removed)], dtype=np.int32),
+        "my_next": upcoming(viewer),
+        "op_next": upcoming(op),
     }
 
 

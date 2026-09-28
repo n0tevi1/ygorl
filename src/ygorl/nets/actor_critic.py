@@ -26,10 +26,12 @@ from ygorl.nets.config import NetConfig
 from ygorl.nets.heads import MASKED_LOGIT
 from ygorl.nets.policy import PolicyNet, _pad_to, trim_padding
 from ygorl.nets.text import TextFeatures
+from ygorl.env.privileged import P_NEXT
 from ygorl.train.critic import Critic
 
 PRIVILEGED_LISTS = ("op_hand", "op_deck", "op_extra", "op_set", "op_removed")  # docs/encoding.md 训练态真值
 PRIVILEGED_COUNTS = "counts"
+PRIVILEGED_ORDER = ("my_next", "op_next")  # the next draws of both players; read only by a deck-order critic
 
 
 class ActorCriticOutput(NamedTuple):
@@ -40,13 +42,23 @@ class ActorCriticOutput(NamedTuple):
 
 class PrivilegedEncoder(nn.Module):
     """Opponent ground truth -> ``[B, dim]``: per list, masked mean of card-identity + public embeddings;
-    ``log1p`` of the true counts; one linear layer. Its own embedding table (nothing shared with the actor)."""
+    ``log1p`` of the true counts; one linear layer. Its own embedding table (nothing shared with the actor).
+    ``deck_order``: also the next draws of both players (``PRIVILEGED_ORDER``), each row's card embedding plus an
+    embedding of its depth in the deck, flattened in draw order (the order is the point)."""
 
-    def __init__(self, vocab_size: int, dim: int = 64) -> None:
+    def __init__(self, vocab_size: int, dim: int = 64, *, deck_order: bool = False, order_depth: int = P_NEXT) -> None:
         super().__init__()
         self.card = nn.Embedding(vocab_size, dim, padding_idx=0)
         self.public = nn.Embedding(2, dim)
-        self.out = nn.Sequential(nn.Linear(len(PRIVILEGED_LISTS) * dim + 5, dim), nn.ReLU())
+        self.deck_order = deck_order
+        extra = 0
+        if deck_order:
+            self.order_dim = max(8, dim // 4)
+            self.order_card = nn.Embedding(vocab_size, self.order_dim, padding_idx=0)
+            self.depth = nn.Embedding(order_depth, self.order_dim)
+            self.order_depth = order_depth
+            extra = len(PRIVILEGED_ORDER) * order_depth * self.order_dim
+        self.out = nn.Sequential(nn.Linear(len(PRIVILEGED_LISTS) * dim + 5 + extra, dim), nn.ReLU())
         self.dim = dim
 
     def forward(self, priv: Mapping[str, Tensor]) -> Tensor:
@@ -58,6 +70,13 @@ class PrivilegedEncoder(nn.Module):
             emb = (self.card(idx) + self.public(rows[..., 1].clamp(0, 1))) * present
             parts.append(emb.sum(-2) / present.sum(-2).clamp(min=1))
         parts.append(torch.log1p(priv[PRIVILEGED_COUNTS].float()))
+        if self.deck_order:
+            for key in PRIVILEGED_ORDER:
+                rows = priv[key][:, : self.order_depth]  # [B, D, 3]
+                idx = rows[..., 0].clamp(0, self.order_card.num_embeddings - 1)
+                depth = torch.arange(rows.shape[1], device=rows.device)
+                emb = (self.order_card(idx) + self.depth(depth)) * (idx > 0).unsqueeze(-1).float()
+                parts.append(emb.flatten(1))
         return self.out(torch.cat(parts, -1))
 
 
@@ -66,18 +85,23 @@ def collate_privileged(privileged: Sequence[Mapping[str, np.ndarray] | None],
     """Stack ``EncodedEvent.privileged`` dicts; None when any is missing (inference-mode environment)."""
     if not privileged or any(p is None for p in privileged):
         return None
-    keys = (*PRIVILEGED_LISTS, PRIVILEGED_COUNTS)
+    keys = (*PRIVILEGED_LISTS, PRIVILEGED_COUNTS, *(k for k in PRIVILEGED_ORDER if k in privileged[0]))
     return {k: torch.as_tensor(np.stack([p[k] for p in privileged])).long().to(device) for k in keys}
 
 
 class ActorCritic(nn.Module):
     def __init__(self, cfg: NetConfig, text: TextFeatures | None = None, *, privileged: bool = True,
-                 privileged_dim: int = 64, critic_hidden: int = 128, shared_backbone: bool = True) -> None:  # fmt: skip
+                 privileged_dim: int = 64, critic_hidden: int = 128, shared_backbone: bool = True,
+                 deck_order: bool = False) -> None:  # fmt: skip
         super().__init__()
         self.cfg = cfg
         self.actor = PolicyNet(cfg, text)
         self.critic_trunk = None if shared_backbone else PolicyNet(cfg, text)
-        self.privileged = PrivilegedEncoder(cfg.vocab_size, privileged_dim) if privileged else None
+        if deck_order and not privileged:
+            raise ValueError("a deck-order critic is a privileged critic")
+        self.privileged = (
+            PrivilegedEncoder(cfg.vocab_size, privileged_dim, deck_order=deck_order) if privileged else None
+        )
         d = cfg.d_model
         self.critic = Critic(history_dim=d, action_dim=d, privileged_dim=privileged_dim if privileged else 0,
                              hidden=critic_hidden)  # fmt: skip
@@ -110,4 +134,4 @@ class ActorCritic(nn.Module):
         return ActorCriticOutput(logits, crit.q, crit.v)
 
 
-__all__ = ["ActorCritic", "ActorCriticOutput", "PrivilegedEncoder", "collate_privileged"]
+__all__ = ["PRIVILEGED_ORDER", "ActorCritic", "ActorCriticOutput", "PrivilegedEncoder", "collate_privileged"]

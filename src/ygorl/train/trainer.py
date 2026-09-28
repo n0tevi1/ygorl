@@ -84,6 +84,7 @@ class TrainConfig:
     privileged_dim: int = 64
     critic_hidden: int = 128
     shared_backbone: bool = True
+    critic_deck_order: bool = False  # the privileged critic also reads both players' next draws (docs/encoding.md)
     ppo: PPOConfig = field(default_factory=PPOConfig)
     selfplay_fraction: float = 0.75  # deals against the current policy; the rest against pool snapshots
     pool_size: int = 8
@@ -255,7 +256,8 @@ class Trainer:
     def _new_model(self) -> ActorCritic:
         c = self.cfg
         model = ActorCritic(self.net_config, self._text, privileged=c.privileged_critic, privileged_dim=c.privileged_dim,
-                           critic_hidden=c.critic_hidden, shared_backbone=c.shared_backbone)  # fmt: skip
+                           critic_hidden=c.critic_hidden, shared_backbone=c.shared_backbone,
+                           deck_order=c.critic_deck_order)  # fmt: skip
         return use_split_k(model).to(self.device)
 
     # -- persistence ----------------------------------------------------------------------------------

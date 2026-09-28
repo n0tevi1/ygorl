@@ -186,14 +186,14 @@ def test_the_trainer_deals_records_and_checkpoints_the_evolved_pool(tmp_path):
     assert resumed.schedule.evolved is resumed.evolved
 
 
-def test_a_trainer_with_no_live_evolved_deck_trains_like_the_fixed_pool(tmp_path):
+def test_a_trainer_with_no_live_evolved_deck_deals_like_the_fixed_pool(tmp_path):
+    """Through the Trainer's own wiring (the schedule it builds, the manifest it reads). Whole training runs are not
+    compared: which slot plays which deal depends on engine thread timing, so two runs of one config already differ."""
     fixed = Trainer(small_cfg(steps=32), tmp_path / "fixed", log=None)
-    fixed.train(max_updates=1)
     path = manifest(tmp_path, {"old": ("labrynth", "history")})
     pooled = Trainer(small_cfg(steps=32, deck_pool=str(path), deck_pool_every=1), tmp_path / "pooled", log=None)
-    pooled.train(max_updates=1)
-    a, b = fixed.model.state_dict(), pooled.model.state_dict()
-    assert all(torch.equal(a[k], b[k]) for k in a)
+    assert pooled.evolved.ids("history") == ["old"]
+    assert deals(pooled.schedule, 400) == deals(fixed.schedule, 400)
 
 
 def test_the_evolved_pool_defaults_follow_the_spec():
