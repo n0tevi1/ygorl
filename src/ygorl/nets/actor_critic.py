@@ -26,6 +26,7 @@ from ygorl.nets.config import NetConfig
 from ygorl.nets.heads import MASKED_LOGIT
 from ygorl.nets.policy import PolicyNet, _pad_to, trim_padding
 from ygorl.nets.text import TextFeatures
+from ygorl.env.privileged import P_NEXT
 from ygorl.train.critic import Critic
 
 PRIVILEGED_LISTS = ("op_hand", "op_deck", "op_extra", "op_set", "op_removed")  # docs/encoding.md 训练态真值
@@ -45,7 +46,7 @@ class PrivilegedEncoder(nn.Module):
     ``deck_order``: also the next draws of both players (``PRIVILEGED_ORDER``), each row's card embedding plus an
     embedding of its depth in the deck, flattened in draw order (the order is the point)."""
 
-    def __init__(self, vocab_size: int, dim: int = 64, *, deck_order: bool = False, order_depth: int = 10) -> None:
+    def __init__(self, vocab_size: int, dim: int = 64, *, deck_order: bool = False, order_depth: int = P_NEXT) -> None:
         super().__init__()
         self.card = nn.Embedding(vocab_size, dim, padding_idx=0)
         self.public = nn.Embedding(2, dim)

@@ -46,6 +46,8 @@ def usage(model, vocab, event_length, base, meta, opp_idx, pairs, device):
     config = DuelConfig(max_decisions=4000)
     specs = [s for k in range(pairs) for s in paired_specs(base, meta[opp_idx[k]], 1, derive_seed(11, 1, k), config)]
     idx = {vocab.index(pw): pw for pw in set(base.main)}
+    if len(idx) != len(set(base.main)) or 1 in idx:
+        raise ValueError("a deck card is missing from the vocab (shares the unknown index)")
     env = EncodedVecEnv(256, 8, cards=cards, vocab=vocab, event_length=event_length, privileged=True, skip_forced=True)
     games = [defaultdict(lambda: [False, False, False]) for _ in specs]  # card -> [in hand, legal, chosen]
     adv = defaultdict(list)

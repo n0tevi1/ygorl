@@ -697,5 +697,6 @@ def test_a_deck_order_critic_reads_the_next_draws_and_the_default_one_does_not()
         assert torch.equal(plain(obs, priv).v, plain(obs, no_order).v)
         assert not torch.allclose(ordered(obs, priv).v, ordered(obs, swapped).v)
         assert torch.equal(ordered(obs, priv).logits, plain(obs, priv).logits)  # the actor never sees it
+        assert torch.equal(ordered(obs, priv).logits, ordered(obs, swapped).logits)
     with pytest.raises(ValueError, match="privileged"):
         ActorCritic(small(), privileged=False, deck_order=True)
