@@ -19,10 +19,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ygorl.cards.cdb import CardVocab
+
+if TYPE_CHECKING:
+    from ygorl.nets.config import NetConfig
 
 EFFECT_SLOTS = 17  # column = string index + 1 (action column 4 / chaining value2); column 0 = no string
 
@@ -166,3 +170,19 @@ class TextFeatures:
         effect = rng.standard_normal((rows + 1, effect_dim)).astype(np.float32)
         effect[0] = 0
         return cls(card, effect, lookup)
+
+
+def frozen_views(cfg: NetConfig) -> list[str]:
+    """The card views of a network whose tables are frozen inputs, not weights (non-persistent buffers: checkpoints
+    do not store them, docs/nets.md)."""
+    views = (("card_text", cfg.card_text_dim), ("effect_text", cfg.effect_text_dim), ("card_facts", cfg.n_archetypes))
+    return [name for name, width in views if width]
+
+
+def require_tables(cfg: NetConfig, text: TextFeatures | None, source: object) -> None:
+    """The one check that a network about to be rebuilt has its frozen tables (every checkpoint loader calls it);
+    whether they are the right tables is checked by the modules that read them."""
+    views = frozen_views(cfg)
+    if views and text is None:
+        raise ValueError(f"{source}: the network was trained with frozen tables ({', '.join(views)}); pass the "
+                         "feature directory it was trained with")  # fmt: skip

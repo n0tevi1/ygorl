@@ -81,7 +81,7 @@ T5.2 离线生成、本仓库不下载模型。目录内（例如 `environments/
 网络（`CardIdentity`，`NetConfig.card_facts` 开关，**默认关闭、显式开启**——特征目录里后来多出的 `card_facts.npz` 不会改变续训中的网络；维度由 `with_text` 从表里填）：卡片身份再加四项——
 系列成员嵌入之和、引用系列嵌入之和经一层投影（**与成员共用一张系列表**，「检索 X 系列」与「是 X 系列」在同一空间）、
 类别多热的线性投影、查询多热的线性投影。四项的权重都**从零开始**（加上这些视角的热启动网络输出与原来完全相同）。`id_dropout`（训练时按概率把每张卡的 ID 嵌入项置零，留下的按 1/(1−p) 放大，期望与评估模式一致）逼网络用可泛化的视角。
-热启动（`init_from`）允许新配置只多出卡片视角（文本、事实、ID 丢弃）：旧权重照载，新模块从零开始（`CARD_VIEW_FIELDS`）。
+热启动（`init_from`）允许新配置只多出卡片视角（文本、事实、ID 丢弃）：旧权重照载，新模块从零开始（`train.checkpoint.warm_start`、`CARD_VIEW_FIELDS`）。
 检查点不带这些表，加载时按训练配置的 `text_dir` 重读。命令行：`tools/train_ppo.py --text-dir DIR [--card-facts] [--no-text] [--id-dropout P]`。
 
 ## 卡片表示探针

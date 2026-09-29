@@ -1,11 +1,12 @@
-"""PPO checkpoints (T4b.4): one self-contained ``.pt`` file per checkpoint.
+"""Checkpoints (T4b.4, #122): writing PPO checkpoints, and rebuilding every network from a PPO or policy checkpoint.
 
-Contents (``torch.save`` of plain containers and tensors, loadable with ``weights_only=True``):
+A PPO checkpoint is one self-contained ``.pt`` file (``torch.save`` of plain containers and tensors, loadable with
+``weights_only=True``):
 
 | key | content |
 |-----|---------|
 | ``format`` | :data:`FORMAT` |
-| ``config`` | ``TrainConfig.to_dict()`` (includes the PPO hyper-parameters) |
+| ``config`` | ``TrainConfig.to_dict()`` (includes the PPO hyper-parameters and the critic options) |
 | ``net_config`` | ``NetConfig.to_dict()`` of the actor |
 | ``vocab`` | the ``CardVocab`` JSON written by ``CardVocab.save`` (vocab indices are part of the model) |
 | ``environment`` | ``Environment.stamp()`` of the training environment, or None |
@@ -13,9 +14,19 @@ Contents (``torch.save`` of plain containers and tensors, loadable with ``weight
 | ``pool`` / ``schedule`` | snapshot pool (keep-best included) and deal counter + RNG, for resuming |
 | ``counters`` / ``rng`` | progress counters, torch RNG states |
 
-:func:`load_policy` rebuilds only the actor (a :class:`ygorl.nets.PolicyNet`) for playing and evaluation;
-:func:`load_actor` does the same for either a PPO checkpoint or a policy checkpoint (``ygorl.nets.agent``, e.g.
-from BC), told apart by :func:`checkpoint_format`.
+A policy checkpoint (``ygorl.nets.agent``, e.g. from BC) holds only an actor; :func:`checkpoint_format` tells the
+two apart. This module is the one place that rebuilds networks from either:
+
+- :func:`load_actor`: the actor (:class:`ygorl.nets.PolicyNet`) of any checkpoint, for playing and evaluation;
+  :func:`load_policy` is the same for PPO checkpoints only;
+- :func:`load_actor_critic`: the whole :class:`ActorCritic` of a PPO checkpoint, with its critic options
+  (:class:`CriticConfig`); :func:`build_actor_critic` builds a fresh one (the trainer, the snapshot pool);
+- :func:`warm_start`: copy a loaded actor into a new network, which may add card views;
+- :class:`Signature`: what a network reads (card vocab, event window length); ``a.mismatches(b)`` says in words
+  why two checkpoints / runs cannot share observations.
+
+Frozen text tables and card facts are not stored in checkpoints (docs/nets.md): they are reloaded from ``text_dir``
+or, for a PPO checkpoint, from its run's ``config["text_dir"]``; ``ygorl.nets.text.require_tables`` is the check.
 """
 
 from __future__ import annotations
@@ -23,18 +34,27 @@ from __future__ import annotations
 import functools
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
 
 from ygorl.cards.cdb import CardVocab
+from ygorl.nets.actor_critic import ActorCritic
+from ygorl.nets.agent import vocab_passwords
 from ygorl.nets.config import NetConfig
 from ygorl.nets.policy import PolicyNet
-from ygorl.nets.text import TextFeatures
+from ygorl.nets.text import TextFeatures, frozen_views, require_tables
 
 FORMAT = "ygorl-ppo-1"
 ACTOR_PREFIX = "actor."
+# A warm start may add card views (text tables, card facts, ID dropout) to the checkpoint's network: those modules
+# start fresh, every other weight must fit (docs/nets.md「卡片事实」)
+CARD_VIEW_FIELDS = frozenset({"card_text", "effect_text", "card_text_dim", "effect_text_dim", "card_facts",
+                              "n_archetypes", "n_archetype_slots", "n_reference_slots", "n_categories", "n_queries",
+                              "id_dropout"})  # fmt: skip
+CARD_VIEW_MODULES = ("text_proj", "archetype", "reference_proj", "category_proj", "query_proj", "effect.proj")
 
 
 def vocab_to_text(vocab: CardVocab, path: Path) -> str:
@@ -61,42 +81,11 @@ def save_checkpoint(state: dict, path: str | Path) -> Path:
 
 
 def load_checkpoint(path: str | Path) -> dict:
+    """The raw state of a PPO checkpoint (for resuming); networks come from the ``load_*`` functions below."""
     state = torch.load(Path(path), map_location="cpu", weights_only=True)
     if not isinstance(state, dict) or state.get("format") != FORMAT:
         raise ValueError(f"{path}: not a ygorl PPO checkpoint (format {FORMAT})")
     return state
-
-
-@dataclass
-class LoadedPolicy:
-    net: PolicyNet  # eval mode, on CPU
-    vocab: CardVocab
-    event_length: int
-    net_config: NetConfig
-    environment: dict | None
-    update: int
-    path: Path
-
-
-def load_policy(path: str | Path, text_dir: str | Path | None = None) -> LoadedPolicy:
-    """The actor of a checkpoint. Frozen text tables (if the net uses them) are reloaded from ``text_dir``
-    or the training run's ``config["text_dir"]`` (they are not stored in checkpoints, docs/nets.md)."""
-    state = load_checkpoint(path)
-    cfg = NetConfig.from_dict(state["net_config"])
-    vocab = vocab_from_text(state["vocab"])
-    text = None
-    if cfg.card_text_dim or cfg.effect_text_dim or cfg.n_archetypes:
-        where = text_dir or state["config"].get("text_dir")
-        if where is None:
-            raise ValueError(f"{path}: the network uses frozen text tables / card facts; pass their directory")
-        text = TextFeatures.load(where, vocab)
-    net = PolicyNet(cfg, text)
-    model = state["learner"]["model"]
-    net.load_state_dict({k[len(ACTOR_PREFIX) :]: v for k, v in model.items() if k.startswith(ACTOR_PREFIX)})
-    net.eval()
-    net.requires_grad_(False)
-    return LoadedPolicy(net, vocab, int(state["config"]["event_length"]), cfg, state.get("environment"),
-                        int(state["learner"]["updates"]), Path(path))  # fmt: skip
 
 
 def checkpoint_format(path: str | Path) -> str | None:
@@ -113,8 +102,133 @@ def _format_of(path: str, mtime_ns: int) -> str | None:
     return data.get("format") if isinstance(data, dict) else None
 
 
+# -- what a network reads -----------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Signature:
+    """What a network reads besides its weights: the card vocab (the same index must be the same card) and the event
+    window length of its observations. Two networks can play on one ``EncodedVecEnv`` iff their signatures are equal;
+    hashable, so it also groups checkpoints."""
+
+    passwords: tuple[int, ...]  # vocab passwords in index order (from CardVocab.FIRST_INDEX)
+    event_length: int
+
+    @classmethod
+    def of(cls, vocab: CardVocab, event_length: int) -> Signature:
+        return cls(tuple(vocab_passwords(vocab)), int(event_length))
+
+    def mismatches(self, other: Signature, *, event_length: bool = True) -> list[str]:
+        """Why ``other`` cannot read this signature's observations, one readable reason per difference (empty =
+        compatible); ``event_length=False`` compares the vocab only."""
+        out = []
+        a, b = self.passwords, other.passwords
+        if a != b:
+            n = min(len(a), len(b))
+            first = next((i for i in range(n) if a[i] != b[i]), n)
+            what = (f"index {CardVocab.FIRST_INDEX + first} is card {a[first]} vs {b[first]}" if first < n
+                    else f"{len(a)} vs {len(b)} cards")  # fmt: skip
+            out.append(f"the card vocab differs ({what})")
+        if event_length and self.event_length != other.event_length:
+            out.append(f"{self.event_length} vs {other.event_length} event tokens per observation")
+        return out
+
+
+# -- the critic ---------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CriticConfig:
+    """The critic options of an :class:`ActorCritic` (``TrainConfig`` fields ``privileged_critic``,
+    ``privileged_dim``, ``critic_hidden``, ``shared_backbone``, ``critic_deck_order``)."""
+
+    privileged: bool = True
+    privileged_dim: int = 64
+    hidden: int = 128
+    shared_backbone: bool = True
+    deck_order: bool = False
+
+    @classmethod
+    def from_train_config(cls, c: Mapping) -> CriticConfig:
+        """From ``TrainConfig.to_dict()``, as stored in a PPO checkpoint's ``config``."""
+        return cls(bool(c["privileged_critic"]), int(c["privileged_dim"]), int(c["critic_hidden"]),
+                   bool(c["shared_backbone"]), bool(c.get("critic_deck_order", False)))  # fmt: skip
+
+
+def build_actor_critic(net_config: NetConfig, text: TextFeatures | None, critic: CriticConfig) -> ActorCritic:
+    """A freshly initialized actor-critic (CPU, train mode); every ActorCritic is built here."""
+    return ActorCritic(net_config, text, privileged=critic.privileged, privileged_dim=critic.privileged_dim,
+                       critic_hidden=critic.hidden, shared_backbone=critic.shared_backbone,
+                       deck_order=critic.deck_order)  # fmt: skip
+
+
+# -- loading ------------------------------------------------------------------------------------------------------
+
+
+@dataclass
+class LoadedPolicy:
+    net: PolicyNet  # eval mode, no gradients, on CPU
+    vocab: CardVocab
+    event_length: int
+    net_config: NetConfig
+    environment: dict | None
+    update: int  # PPO updates (0 for a policy checkpoint)
+    path: Path
+
+    @property
+    def signature(self) -> Signature:
+        return Signature.of(self.vocab, self.event_length)
+
+
+@dataclass
+class LoadedActorCritic:
+    model: ActorCritic  # eval mode, no gradients, on CPU
+    critic: CriticConfig
+    vocab: CardVocab
+    event_length: int
+    net_config: NetConfig
+    environment: dict | None
+    update: int
+    path: Path
+
+    @property
+    def signature(self) -> Signature:
+        return Signature.of(self.vocab, self.event_length)
+
+
+def _tables(cfg: NetConfig, vocab: CardVocab, where: str | Path | None, path) -> TextFeatures | None:
+    """The frozen tables ``cfg`` needs, read from ``where`` (None when it needs none)."""
+    if not frozen_views(cfg):
+        return None
+    text = TextFeatures.load(where, vocab) if where is not None else None
+    require_tables(cfg, text, path)
+    return text
+
+
+def _frozen(module):
+    module.eval()
+    return module.requires_grad_(False)
+
+
+def _ppo(path: str | Path, text_dir: str | Path | None):
+    state = load_checkpoint(path)
+    cfg = NetConfig.from_dict(state["net_config"])
+    vocab = vocab_from_text(state["vocab"])
+    return state, cfg, vocab, _tables(cfg, vocab, text_dir or state["config"].get("text_dir"), path)
+
+
+def load_policy(path: str | Path, text_dir: str | Path | None = None) -> LoadedPolicy:
+    """The actor of a PPO checkpoint."""
+    state, cfg, vocab, text = _ppo(path, text_dir)
+    net = PolicyNet(cfg, text)
+    model = state["learner"]["model"]
+    net.load_state_dict({k[len(ACTOR_PREFIX) :]: v for k, v in model.items() if k.startswith(ACTOR_PREFIX)})
+    return LoadedPolicy(_frozen(net), vocab, int(state["config"]["event_length"]), cfg, state.get("environment"),
+                        int(state["learner"]["updates"]), Path(path))  # fmt: skip
+
+
 def load_actor(path: str | Path, text_dir: str | Path | None = None) -> LoadedPolicy:
-    """:func:`load_policy` for a PPO checkpoint or a policy checkpoint (``ygorl.nets.agent``, e.g. BC)."""
+    """The actor of a PPO checkpoint or of a policy checkpoint (``ygorl.nets.agent``, e.g. BC)."""
     from ygorl.nets import agent
 
     fmt = checkpoint_format(path)
@@ -125,15 +239,40 @@ def load_actor(path: str | Path, text_dir: str | Path | None = None) -> LoadedPo
     text = None
     if text_dir is not None:
         data = torch.load(Path(path), map_location="cpu", weights_only=True, mmap=True)
-        text = TextFeatures.load(text_dir, CardVocab(data["vocab"]))
-    ckpt = agent.load_checkpoint(path, text)
-    ckpt.net.requires_grad_(False)
-    return LoadedPolicy(ckpt.net, ckpt.vocab, ckpt.event_length, ckpt.net.cfg, ckpt.environment, 0, Path(path))
+        text = _tables(NetConfig.from_dict(data["config"]), CardVocab(data["vocab"]), text_dir, path)
+    ckpt = agent.load_checkpoint(path, text)  # which checks the tables too (require_tables)
+    return LoadedPolicy(_frozen(ckpt.net), ckpt.vocab, ckpt.event_length, ckpt.net.cfg, ckpt.environment, 0,
+                        Path(path))  # fmt: skip
 
 
-def vocab_passwords(vocab: CardVocab) -> list[int]:
-    return [vocab.password(i) for i in range(CardVocab.FIRST_INDEX, len(vocab))]
+def load_actor_critic(path: str | Path, text_dir: str | Path | None = None) -> LoadedActorCritic:
+    """The whole actor-critic of a PPO checkpoint (the learner's model), built with the run's critic options. A policy
+    checkpoint has no critic: :func:`warm_start` puts its actor into a new actor-critic."""
+    if checkpoint_format(path) != FORMAT:
+        raise ValueError(f"{path}: not a PPO checkpoint (a policy checkpoint has no critic)")
+    state, cfg, vocab, text = _ppo(path, text_dir)
+    critic = CriticConfig.from_train_config(state["config"])
+    model = build_actor_critic(cfg, text, critic)
+    model.load_state_dict(state["learner"]["model"])
+    return LoadedActorCritic(_frozen(model), critic, vocab, int(state["config"]["event_length"]), cfg,
+                             state.get("environment"), int(state["learner"]["updates"]), Path(path))  # fmt: skip
 
 
-__all__ = ["FORMAT", "LoadedPolicy", "checkpoint_format", "load_actor", "load_checkpoint", "load_policy",
-           "save_checkpoint", "vocab_from_text", "vocab_passwords", "vocab_to_text"]  # fmt: skip
+def warm_start(actor: PolicyNet, source: LoadedPolicy) -> list[str]:
+    """Copy ``source``'s weights into ``actor``, a new network over the same vocab. The two networks must be the same
+    except for card views the new one adds (:data:`CARD_VIEW_FIELDS`): those modules keep their fresh (zero-output)
+    initialization. Returns the config fields that differ (empty = an exact copy)."""
+    old, new = source.net_config.to_dict(), actor.cfg.to_dict()
+    differ = sorted(k for k in old.keys() | new.keys() if old.get(k) != new.get(k))
+    if set(differ) - CARD_VIEW_FIELDS:
+        raise ValueError(f"{source.path}: its network {old} differs from the configured {new} "
+                         "(set the same net options)")  # fmt: skip
+    missing, unexpected = actor.load_state_dict(source.net.state_dict(), strict=not differ)
+    if unexpected or any(not any(m in k for m in CARD_VIEW_MODULES) for k in missing):
+        raise ValueError(f"{source.path}: weights do not fit (missing {missing}, unexpected {unexpected})")
+    return differ
+
+
+__all__ = ["FORMAT", "CriticConfig", "LoadedActorCritic", "LoadedPolicy", "Signature", "build_actor_critic",
+           "checkpoint_format", "load_actor", "load_actor_critic", "load_checkpoint", "load_policy", "save_checkpoint",
+           "vocab_from_text", "vocab_to_text", "warm_start"]  # fmt: skip

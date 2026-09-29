@@ -233,7 +233,7 @@ AgentMatrix.load(path, env=env)
 - 指纹在开打前计算。所以不要对正在训练、会被改写的 `best.pt` 建矩阵：先拷一份固定的检查点再加入。
 
 **批量路径**（#87）：`build_agent_matrix(..., device="cuda")`。
-- 两边都是普通 `policy:` / `policy-greedy:` 检查点（没有 `lethal:` 包装）、词表和事件窗口相同的格子，走「批量评估」的 C++ 步进路径，网络放在 `device` 上；
+- 两边都是普通 `policy:` / `policy-greedy:` 检查点（没有 `lethal:` 包装）、词表和事件窗口相同（`train.checkpoint.Signature` 相等，按它分组）的格子，走「批量评估」的 C++ 步进路径，网络放在 `device` 上；
   其余格子仍走 `Arena`，所有 Arena 格子共用一个进程池。
 - 两条路径打的是同一批局面：槽位、种子、先攻方都相同。
   - 采样：批量路径用 `play_policies(..., sample_seeds=, sampling=)`，按拿着槽位的 agent 的槽位种子采样，每边各自的 greedy / temperature。
@@ -265,3 +265,4 @@ AgentMatrix.load(path, env=env)
 命令行：`tools/eval_batched.py CKPT --decks DIR [--opponents DIR] [--opponent-checkpoint CKPT2] [--pairings 200] [--pairs 1]
 [--device cuda] [--envs 256] [--out report.json]`：CKPT 驾驶 `--decks` 里的牌，对手策略驾驶 `--opponents` 里的牌，按 `--seed`
 抽一次对阵；打印总胜率（Wilson 区间）与先后攻分项，`--out` 另写按驾驶牌组拆开的胜率与耗时统计。吞吐见 [benchmarks.md](benchmarks.md)。
+两个检查点都用 `train.checkpoint.load_actor` 加载，词表或事件窗口长度不同时报错并写明哪里不同（`Signature.mismatches`；`tools/tune_deck.py` 同）。

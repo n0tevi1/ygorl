@@ -20,21 +20,9 @@ from ygorl.engine.duel import DuelConfig, default_cards, shuffle_deck
 from ygorl.env import GameSpec
 from ygorl.env.encoded import EncodedVecEnv
 from ygorl.eval.arena import derive_seed
-from ygorl.nets import NetConfig
-from ygorl.nets.actor_critic import ActorCritic, collate_privileged
+from ygorl.nets.actor_critic import collate_privileged
 from ygorl.nets.batch import collate
-from ygorl.train.checkpoint import load_checkpoint, vocab_from_text
-
-
-def load_actor_critic(path, device):
-    state = load_checkpoint(path)
-    c = state["config"]
-    cfg = NetConfig.from_dict(state["net_config"])
-    model = ActorCritic(cfg, None, privileged=c["privileged_critic"], privileged_dim=c["privileged_dim"],
-                        critic_hidden=c["critic_hidden"], shared_backbone=c["shared_backbone"],
-                        deck_order=c.get("critic_deck_order", False))  # fmt: skip
-    model.load_state_dict(state["learner"]["model"])
-    return model.to(device).eval(), vocab_from_text(state["vocab"]), int(c["event_length"])
+from ygorl.train.checkpoint import load_actor_critic
 
 
 @torch.no_grad()
@@ -87,7 +75,8 @@ def main():
     env = load_environment("md-2026-09", cards=cards)
     meta = [m.deck for m in env.meta_decks]
     w = np.array([m.share for m in env.meta_decks], dtype=float)
-    model, vocab, event_length = load_actor_critic(ckpt, "cuda")
+    ac = load_actor_critic(ckpt)
+    model, vocab, event_length = ac.model.to("cuda"), ac.vocab, ac.event_length
     res = []
     for di, deck in enumerate(json.loads(Path(m2).read_text())):
         d = load_ydk(env.artifacts_dir / deck["file"])

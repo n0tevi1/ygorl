@@ -39,24 +39,21 @@ from ygorl.nets.config import NetConfig
 from ygorl.nets.gemm import use_split_k
 from ygorl.nets.text import TextFeatures
 from ygorl.train.checkpoint import (
+    CriticConfig,
+    Signature,
+    build_actor_critic,
     load_actor,
     load_checkpoint,
     save_checkpoint,
     vocab_from_text,
-    vocab_passwords,
     vocab_to_text,
+    warm_start,
 )
 from ygorl.train.ppo import PPOConfig, PPOLearner
 from ygorl.train.rollout import Rollout, RolloutCollector, RolloutStalled
 from ygorl.train.selfplay import DeckPool, EvolvedDecks, SelfPlaySchedule, SnapshotPool
 
 SMALL_NET = {"d_model": 64, "n_heads": 4, "board_layers": 1, "history_layers": 1}
-# A warm start may add card views (text tables, card facts, ID dropout) to the checkpoint's network: those modules
-# start fresh, every other weight must fit (docs/nets.md「卡片事实」)
-CARD_VIEW_FIELDS = frozenset({"card_text", "effect_text", "card_text_dim", "effect_text_dim", "card_facts",
-                              "n_archetypes", "n_archetype_slots", "n_reference_slots", "n_categories", "n_queries",
-                              "id_dropout"})  # fmt: skip
-CARD_VIEW_MODULES = ("text_proj", "archetype", "reference_proj", "category_proj", "query_proj", "effect.proj")
 
 
 @dataclass(frozen=True)
@@ -143,6 +140,10 @@ class TrainConfig:
         d["pin_opponents"] = list(self.pin_opponents)
         return d
 
+    @property
+    def critic(self) -> CriticConfig:
+        return CriticConfig.from_train_config(self.to_dict())
+
     @classmethod
     def from_dict(cls, data: dict) -> TrainConfig:
         known = {f.name for f in fields(cls)}
@@ -195,32 +196,23 @@ class Trainer:
         torch.manual_seed(derive_seed(cfg.seed, 0))
         self.model = self._new_model()
         if init is not None:
-            old, new = init.net_config.to_dict(), self.net_config.to_dict()
-            differ = {k for k in old.keys() | new.keys() if old.get(k) != new.get(k)}
-            if differ - CARD_VIEW_FIELDS:
-                raise ValueError(f"{cfg.init_from}: its network {old} differs from the configured {new} "
-                                 "(set the same net options)")  # fmt: skip
-            missing, unexpected = self.model.actor.load_state_dict(init.net.state_dict(), strict=not differ)
-            if unexpected or any(not any(m in k for m in CARD_VIEW_MODULES) for k in missing):
-                raise ValueError(f"{cfg.init_from}: weights do not fit (missing {missing}, unexpected {unexpected})")
-            added = f"; new card views start fresh: {sorted(differ)}" if differ else ""
+            added = warm_start(self.model.actor, init)
+            added = f"; new card views start fresh: {added}" if added else ""
             self.log(f"initialized the actor from {cfg.init_from} (the critic starts fresh{added})")
+        signature = Signature.of(self.vocab, cfg.event_length)
         prior = None
         if cfg.bc_prior:
             loaded = load_actor(cfg.bc_prior, cfg.text_dir)
-            if vocab_passwords(loaded.vocab) != vocab_passwords(self.vocab):
-                raise ValueError(f"{cfg.bc_prior}: its card vocab differs from the run's; the prior would read "
-                                 "other cards from the same indices")  # fmt: skip
+            if why := signature.mismatches(loaded.signature, event_length=False):
+                raise ValueError(f"{cfg.bc_prior}: the run and the prior differ: {'; '.join(why)}; the prior would "
+                                 "read other cards from the same indices")  # fmt: skip
             prior = loaded.net.to(self.device)
         self.learner = PPOLearner(self.model, cfg.ppo, prior)
         self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share, cfg.pool_sampling, cfg.pfsp_power)
         for path in cfg.pin_opponents:
             pinned = load_actor(path, cfg.text_dir)
-            if vocab_passwords(pinned.vocab) != vocab_passwords(self.vocab):
-                raise ValueError(f"{path}: its card vocab differs from the run's (pinned opponent)")
-            if pinned.event_length != cfg.event_length:
-                raise ValueError(f"{path}: trained with {pinned.event_length} event tokens, the run uses "
-                                 f"{cfg.event_length} (pinned opponent)")  # fmt: skip
+            if why := signature.mismatches(pinned.signature):
+                raise ValueError(f"{path}: the run and the pinned opponent differ: {'; '.join(why)}")
             self.pool.pin(pinned.net.to(self.device), tag=f"pinned:{Path(path).name}")
         self.evolved = None
         if cfg.deck_pool is not None:
@@ -254,11 +246,7 @@ class Trainer:
         (self.run_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
 
     def _new_model(self) -> ActorCritic:
-        c = self.cfg
-        model = ActorCritic(self.net_config, self._text, privileged=c.privileged_critic, privileged_dim=c.privileged_dim,
-                           critic_hidden=c.critic_hidden, shared_backbone=c.shared_backbone,
-                           deck_order=c.critic_deck_order)  # fmt: skip
-        return use_split_k(model).to(self.device)
+        return use_split_k(build_actor_critic(self.net_config, self._text, self.cfg.critic)).to(self.device)
 
     # -- persistence ----------------------------------------------------------------------------------
     @classmethod
