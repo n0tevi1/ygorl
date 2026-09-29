@@ -25,215 +25,34 @@ from pathlib import Path
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """The tool's own options plus every training-config flag (ygorl.train.cli; needs PyTorch)."""
+    from ygorl.train import cli
+
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("decks", type=Path, nargs="*", metavar="DECK", help=".ydk file or directory of .ydk files")
-    p.add_argument("--pairings", default="cross", choices=("all", "cross", "mirror"),
-                   help="deck pairings to sample (default cross: distinct decks only)")  # fmt: skip
-    p.add_argument(
-        "--deck-pool",
-        default=None,
-        metavar="MANIFEST",
-        help="evolved decks added while training runs (ygorl-deck-pool JSON, re-read every --deck-pool-every updates)",
-    )
-    p.add_argument("--deck-pool-every", type=int, default=10, help="updates between manifest re-reads")
-    p.add_argument("--evolved-share", type=float, default=0.3, help="share of deals with an evolved deck (default 0.3)")
-    p.add_argument(
-        "--evolved-power",
-        type=float,
-        default=1.0,
-        help="evolved decks are drawn with weight x (1 - p) ** power, p the policy's score piloting it",
-    )
-    p.add_argument("--env", default=None, metavar="PATH|VERSION", help="environment (rules; stamped into checkpoints)")
     p.add_argument("--out", type=Path, default=None, help="run directory")
     p.add_argument("--name", default=None, help="run name under the environment's artifacts/train/ (with --env)")
     p.add_argument("--resume", type=Path, default=None, metavar="CKPT", help="continue from a checkpoint")
     p.add_argument("--summary", type=Path, default=None, metavar="METRICS", help="print a metrics.jsonl summary")
     p.add_argument("--minutes", type=float, default=None, help="wall-clock budget")
     p.add_argument("--updates", type=int, default=None, help="number of PPO updates")
-    g = p.add_argument_group("environment and rollout")
-    g.add_argument("--envs", type=int, default=128, help="environment slots = rollout columns B (default 128)")
-    g.add_argument("--env-threads", type=int, default=2, help="C++ worker threads (default 2)")
-    g.add_argument("--steps", type=int, default=128, help="rows per column per rollout, T (default 128)")
-    g.add_argument("--event-length", type=int, default=64, help="event tokens per observation (default 64)")
-    g.add_argument(
-        "--keep-forced",
-        action="store_true",
-        help="also make rows of decisions with a single legal action (default: played in C++, no rows)",
-    )
-    g.add_argument("--max-turns", type=int, default=None)
-    g.add_argument("--max-decisions", type=int, default=None)
-    g = p.add_argument_group("network")
-    g.add_argument("--d-model", type=int, default=64)
-    g.add_argument("--layers", type=int, default=1, help="board and history Transformer layers (default 1)")
-    g.add_argument("--history", default="transformer", choices=("transformer", "lstm", "none"))
-    g.add_argument("--no-id-embedding", action="store_true", help="drop the per-card ID embedding")
-    g.add_argument(
-        "--text-dir",
-        default=None,
-        help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)",
-    )
-    g.add_argument("--card-facts", action="store_true", help="use card_facts.npz in --text-dir (experimental)")
-    g.add_argument("--no-text", action="store_true", help="ignore the text tables in --text-dir")
-    g.add_argument("--id-dropout", type=float, default=0.0, help="training: drop each card's ID embedding")
-    g.add_argument("--separate-critic", action="store_true", help="critic gets its own trunk")
-    g.add_argument(
-        "--critic-deck-order",
-        action="store_true",
-        help="the privileged critic also sees both players' next 10 draws (docs/encoding.md)",
-    )
-    g.add_argument("--no-privileged", action="store_true", help="non-privileged critic (ablation)")
-    g = p.add_argument_group("PPO")
-    g.add_argument("--objective", default="ppo_clip")
-    g.add_argument("--estimator", default="vrpo", choices=("vrpo", "gae"))
-    g.add_argument("--lam", type=float, default=None, help="lambda of the advantage estimate (default: PPOConfig's)")
-    g.add_argument(
-        "--critic-lam",
-        type=float,
-        default=None,
-        help="lambda of the critic's Q / V targets only (default: --lam); 1.0 = game results",
-    )
-    g.add_argument(
-        "--vrpo-mode",
-        default=None,
-        choices=("return", "critic"),
-        help="VRPO advantage: 'return' (Q-boosted with lambda returns) or 'critic' (default: PPOConfig's)",
-    )
-    g.add_argument("--entropy", type=float, default=0.05, help="entropy coefficient (design: 0.05-0.2)")
-    g.add_argument("--kl-ref", type=float, default=0.05, help="KL coefficient to the EMA reference")
-    g.add_argument("--ema", type=float, default=0.02, help="reference EMA rate per update")
-    g.add_argument("--lr", type=float, default=1e-3)
-    g.add_argument("--epochs", type=int, default=4)
-    g.add_argument("--minibatch", type=int, default=2048)
-    g.add_argument(
-        "--bc-prior",
-        default=None,
-        metavar="CKPT",
-        help="policy (e.g. BC) or PPO checkpoint used as a KL prior; same card vocab",
-    )
-    g.add_argument("--kl-prior", type=float, default=0.0, help="KL coefficient to the BC prior")
-    g.add_argument(
-        "--kl-prior-turns",
-        type=int,
-        default=0,
-        help="apply the prior KL only to the turn player's decisions up to this turn (default 0: all)",
-    )
-    g.add_argument(
-        "--target-kl",
-        type=float,
-        default=0.01,
-        help="stop an update's remaining minibatches once one exceeds 1.5x this approx_kl; 0 = off",
-    )
-    g.add_argument(
-        "--init-from",
-        default=None,
-        metavar="CKPT",
-        help="initialize the actor from a policy (e.g. BC) or PPO checkpoint with the same network config",
-    )
-    g.add_argument("--critic-warmup", type=int, default=0, metavar="N",
-                   help="train only the critic (policy frozen) for up to N updates at the start, until its Q explained "
-                        "variance averages --critic-warmup-ev over 5 updates; for warm starts whose critic is fresh "
-                        "(default 0 = off)")  # fmt: skip
-    g.add_argument(
-        "--critic-warmup-ev",
-        type=float,
-        default=0.6,
-        metavar="EV",
-        help="Q explained variance that ends the critic warm-up (default 0.6)",
-    )
-    g.add_argument("--turn-discount", type=float, default=1.0, metavar="G",
-                   help="speed pressure: a decided game's terminal reward is +/- G ** turns (default 1.0 = off; a "
-                        "diagnostic arm, design T6 vs C3)")  # fmt: skip
-    g = p.add_argument_group("league and evaluation")
-    g.add_argument("--selfplay-fraction", type=float, default=0.75)
-    g.add_argument("--pool-size", type=int, default=8)
-    g.add_argument(
-        "--pin",
-        action="append",
-        default=[],
-        metavar="CKPT",
-        help="keep this policy / PPO checkpoint in the opponent pool for the whole run (repeatable)",
-    )
-    g.add_argument("--pinned-share", type=float, default=0.5, help="share of pool games against pinned opponents")
-    g.add_argument("--snapshot-every", type=int, default=10)
-    g.add_argument(
-        "--pool-sampling",
-        choices=("uniform", "pfsp"),
-        default="pfsp",
-        help="pfsp (default, design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power",
-    )
-    g.add_argument("--pfsp-power", type=float, default=2.0)
-    g.add_argument(
-        "--snapshot-min-win-rate",
-        type=float,
-        default=None,
-        help="a due snapshot joins the pool only if the learner scored above this against the pool",
-    )
-    g.add_argument("--snapshot-min-games", type=int, default=20)
-    g.add_argument("--checkpoint-every", type=int, default=10)
-    g.add_argument("--eval-every", type=int, default=25)
-    g.add_argument("--eval-pairs", type=int, default=8, help="paired seeds per deck pairing and baseline")
-    g.add_argument(
-        "--eval-pairings",
-        type=int,
-        default=0,
-        help="evaluate on a fixed sample of this many training pairings (0 = all; for large deck pools)",
-    )
-    g.add_argument("--eval-opponents", default="greedy,random")
-    g.add_argument("--keep-best-by", default="greedy")
-    g.add_argument("--eval-workers", type=int, default=2)
-    g.add_argument("--seed", type=int, default=0)
-    g.add_argument("--device", default="cpu", help="PyTorch device of the learner and acting network (cpu, cuda)")
-    g.add_argument(
-        "--overlap",
-        action="store_true",
-        help="experimental: collect the next rollout while updating (one update stale)",
-    )
-    g.add_argument("--bf16", action="store_true", help="experimental: bf16 autocast on a GPU")
-    g.add_argument("--torch-threads", type=int, default=4)
-    g.add_argument("--collect-threads", type=int, default=2)
+    cli.add_arguments(p)
     return p
 
 
 def config_from_args(args, decks: list[str]):
-    from ygorl.train.ppo import PPOConfig
-    from ygorl.train.trainer import TrainConfig
+    from ygorl.train import cli
 
-    net = {"d_model": args.d_model, "n_heads": 4, "board_layers": args.layers, "history_layers": args.layers,
-           "history": args.history, "id_embedding": not args.no_id_embedding, "card_facts": args.card_facts,
-           "card_text": not args.no_text, "effect_text": not args.no_text, "id_dropout": args.id_dropout}  # fmt: skip
-    ppo = PPOConfig(objective=args.objective, estimator=args.estimator, entropy_coef=args.entropy,
-                    kl_ref_coef=args.kl_ref, reference_ema=args.ema, lr=args.lr, epochs=args.epochs,
-                    minibatch_size=args.minibatch, kl_prior_coef=args.kl_prior,
-                    kl_prior_turns=args.kl_prior_turns, target_kl=args.target_kl or None,
-                    **{k: v for k, v in (('lam', args.lam), ('vrpo_mode', args.vrpo_mode), ('critic_lam', args.critic_lam)) if v is not None})  # fmt: skip
-    return TrainConfig(decks=tuple(decks), pairings=args.pairings, deck_pool=args.deck_pool and str(Path(args.deck_pool).resolve()),
-                       deck_pool_every=args.deck_pool_every, evolved_share=args.evolved_share,
-                       evolved_power=args.evolved_power, env=args.env, max_turns=args.max_turns,
-                       max_decisions=args.max_decisions, num_envs=args.envs, env_threads=args.env_threads,
-                       steps=args.steps, event_length=args.event_length, skip_forced=not args.keep_forced, net=net,
-                       text_dir=args.text_dir,
-                       privileged_critic=not args.no_privileged, shared_backbone=not args.separate_critic,
-                       critic_deck_order=args.critic_deck_order, ppo=ppo,
-                       selfplay_fraction=args.selfplay_fraction, pool_size=args.pool_size,
-                       pin_opponents=tuple(args.pin), pinned_share=args.pinned_share,
-                       snapshot_every=args.snapshot_every, pool_sampling=args.pool_sampling, pfsp_power=args.pfsp_power,
-                       snapshot_min_win_rate=args.snapshot_min_win_rate, snapshot_min_games=args.snapshot_min_games,
-                       checkpoint_every=args.checkpoint_every,
-                       eval_every=args.eval_every, eval_pairs=args.eval_pairs, eval_pairings=args.eval_pairings,
-                       eval_opponents=tuple(s for s in args.eval_opponents.split(",") if s),
-                       keep_best_by=args.keep_best_by, eval_workers=args.eval_workers, seed=args.seed, device=args.device,
-                       torch_threads=args.torch_threads, collect_threads=args.collect_threads,
-                       bc_prior=args.bc_prior, init_from=args.init_from, critic_warmup=args.critic_warmup,
-                       critic_warmup_ev=args.critic_warmup_ev, turn_discount=args.turn_discount)  # fmt: skip
+    return cli.from_args(args, decks)
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
     try:
         import torch  # noqa: F401
     except ImportError:
         print("train_ppo: PyTorch is missing; run `uv sync --extra train`", file=sys.stderr)
         return 2
+    args = build_parser().parse_args(argv)
     from ygorl.commands import CommandError, load_decks, load_env
     from ygorl.train.trainer import Trainer, summarize_metrics
 
