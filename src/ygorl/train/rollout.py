@@ -33,6 +33,8 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
+from ygorl.nets.batch import policy_logits
+
 TRUNCATION_REASONS = frozenset({"turn_limit", "decision_limit", "error"})
 
 
@@ -129,11 +131,6 @@ class _Slot:
     opponent: nn.Module | None = None  # the snapshot, resolved when the game starts (it may leave the pool)
     rows: int = 0  # rows of the current game, across rollouts
     rows_here: int = 0  # rows of the current game in the column being filled
-
-
-def _logits_of(module: nn.Module, batch) -> Tensor:
-    fn = getattr(module, "policy_logits", None)
-    return fn(batch) if fn is not None else module(batch).logits
 
 
 class RolloutCollector:
@@ -299,7 +296,7 @@ class RolloutCollector:
 
     def _act_opponent(self, module: nn.Module, events: list) -> None:
         batch = self.model.collate([ev.obs for ev in events], self.device)
-        probs = torch.softmax(_logits_of(module, batch).float(), -1).cpu()
+        probs = torch.softmax(policy_logits(module, batch).float(), -1).cpu()
         actions = torch.multinomial(probs, 1, generator=self.generator).squeeze(-1)
         for ev, a in zip(events, actions.tolist()):
             self.env.step(ev.env_id, int(a))

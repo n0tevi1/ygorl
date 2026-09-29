@@ -18,6 +18,7 @@ import numpy as np
 from ygorl import _core
 from ygorl.cards.cdb import CardVocab
 from ygorl.engine.duel import Duel, default_cards, default_scripts, expand_seed
+from ygorl.env.driver import Game, drive
 from ygorl.env.events import DEFAULT_EVENT_LENGTH
 from ygorl.env.pool import GameSpec
 
@@ -97,27 +98,16 @@ class EncodedVecEnv:
         """Play every spec with ``choose(seed, step, n) -> k``, which picks the ``k``-th of the ``n`` rows the mask
         leaves (equivalent copies are masked, docs/encoding.md); results in spec order."""
         results: list[dict | None] = [None] * len(specs)
-        queue = iter(enumerate(specs))
-        running: dict[int, list] = {}  # env -> [spec index, step]
 
-        def launch(env_id: int) -> bool:
-            nxt = next(queue, None)
-            if nxt is None:
-                return False
-            running[env_id] = [nxt[0], 0]
-            self.reset(env_id, nxt[1])
-            return True
-
-        active = sum(launch(e) for e in range(self.num_envs))
-        while active:
-            for ev in self.recv(1):
-                i, step = running[ev.env_id]
-                if ev.result is not None:
-                    results[i] = ev.result
-                    if not launch(ev.env_id):
-                        active -= 1
-                    continue
+        def decide(ready: list[tuple[Game, EncodedEvent]]) -> list[int]:
+            actions = []
+            for game, ev in ready:
                 legal = np.flatnonzero(ev.obs["action_mask"])
-                running[ev.env_id][1] = step + 1
-                self.step(ev.env_id, int(legal[choose(specs[i].seed, step, len(legal))]))
+                actions.append(int(legal[choose(game.spec.seed, game.steps, len(legal))]))
+            return actions
+
+        def on_result(game: Game, result: dict) -> None:
+            results[game.index] = result
+
+        drive(self, specs, decide, on_result)
         return results  # type: ignore[return-value]
