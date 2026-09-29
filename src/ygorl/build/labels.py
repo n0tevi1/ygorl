@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from ygorl.agents.registry import agent_factory, policy_checkpoint_of
+from ygorl.agents.registry import agent_factory, parse_spec
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
 from ygorl.engine.duel import DuelConfig
@@ -128,7 +128,7 @@ def _pilot_files(*specs: str) -> tuple[tuple[str, str], ...]:
     """A retrained checkpoint at the same path is another pilot: fingerprint the file's content."""
     out = []
     for spec in dict.fromkeys(specs):
-        path = policy_checkpoint_of(spec)
+        path = parse_spec(spec).checkpoint
         if path is not None:
             out.append((spec, hashlib.sha256(Path(path).read_bytes()).hexdigest()))
     return tuple(out)

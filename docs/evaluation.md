@@ -77,6 +77,7 @@ Greedy 依赖 `DecisionPoint`，不能走那条路，所以对基线的评估统
 验收（T3.1）：`tests/test_agents.py` 让 Greedy 在 10 套测试牌组上各打一局（对 Random），零 retry、零未知消息，且都以胜负或回合上限结束；开发时的 200 局抽样全部以 `MSG_WIN` 结束，Greedy 胜率约 90%。
 
 `AGENTS = {"random": RandomAgent, "greedy": GreedyAgent}` 按名字列出基线 agent。命令行用 `ygorl.agents.registry` 的规格 `name[:arg]`：`make_agent(spec, seed)` 构造 agent，`agent_factory(spec)` 返回可 pickle、以规格为名字的 factory（`AgentSpec`），可直接传给 `Arena` / `build_matrix`。
+规格字符串只在登记表里解析：`parse_spec(spec)` 返回 `ParsedSpec`（`kind`、`arg`；策略检查点的 `checkpoint`、`greedy`、`temperature`；包装类 agent（`register_agent(..., wraps=True)`，如 `lethal`）的内层 `inner`，`.policy` 穿过包装取到策略），`policy_spec(path, greedy=, temperature=)` 反过来写出策略检查点的规格，`parse_named_spec` 拆 `ygorl strength` 的 `名字=规格`。agent 矩阵、Trainer 的评估与标签缓存都经由它们读写规格，不自己拆字符串。
 
 ## Arena（`ygorl/eval/arena.py`，T3.2）
 

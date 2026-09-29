@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -30,7 +29,7 @@ from typing import Any
 import numpy as np
 
 from ygorl.agents.base import AgentFactory, agent_name
-from ygorl.agents.registry import AgentSpec, agent_factory, parse_policy_arg, policy_checkpoint_of
+from ygorl.agents.registry import AgentSpec, ParsedSpec, agent_factory, parse_spec
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
 from ygorl.engine.duel import DuelConfig, shuffle_deck
@@ -228,17 +227,12 @@ def cell_specs(agent_a: AgentFactory, agent_b: AgentFactory, slots, env: Environ
 def agent_fingerprint(spec: str) -> str:
     """Content hash of the checkpoint a ``policy`` agent spec plays (through any ``lethal:`` wrapper), "" otherwise:
     the same name with other weights must not be mistaken for an agent already in a matrix."""
-    inner = spec
-    while inner.startswith("lethal:"):
-        inner = inner[len("lethal:") :]
-    try:
-        path = policy_checkpoint_of(inner)
-    except ValueError:
-        return ""
-    if path is None or not Path(path).is_file():
+    parsed = _parsed(spec)
+    policy = parsed.policy if parsed is not None else None
+    if policy is None or not Path(policy.checkpoint).is_file():
         return ""
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with open(policy.checkpoint, "rb") as f:
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
     return "sha256:" + h.hexdigest()[:16]
@@ -293,12 +287,18 @@ def _play(old: AgentMatrix | None, rows: list[tuple[str, str, str, AgentFactory,
     )  # fmt: skip
 
 
-def policy_setting(spec: str) -> tuple[str, bool, float] | None:
-    """``(checkpoint, greedy, temperature)`` of a plain ``policy`` / ``policy-greedy`` spec (no wrapper), else None."""
-    name, _, arg = spec.partition(":")
-    if name not in ("policy", "policy-greedy") or not arg:
+def _parsed(spec: str) -> ParsedSpec | None:
+    """``spec`` parsed by the registry; None for a ``factory:<name>`` or a spec that does not parse (any more)."""
+    try:
+        return parse_spec(spec)
+    except ValueError:
         return None
-    return parse_policy_arg(arg if name == "policy" else f"{arg}@greedy")
+
+
+def _plain_policy(spec: str) -> ParsedSpec | None:
+    """The parsed spec of a plain policy checkpoint agent (no wrapper), else None."""
+    parsed = _parsed(spec)
+    return parsed if parsed is not None and parsed.is_policy else None
 
 
 def _play_batched(cells, rows, slots, config: DuelConfig, device: str, envs: int = 128,
@@ -306,27 +306,25 @@ def _play_batched(cells, rows, slots, config: DuelConfig, device: str, envs: int
     """The cells whose two agents are plain policy checkpoints with the same card vocab and event length, played on
     the batched C++ path (``play_policies``): the arena's games (slots, seeds, first players), decisions sampled from
     each agent's slot seed, statistics counted the same way. Other cells are left to the arena."""
-    if not any(policy_setting(rows[i][1]) and policy_setting(rows[j][1]) for i, j in cells):
+    if not any(_plain_policy(rows[i][1]) and _plain_policy(rows[j][1]) for i, j in cells):
         return {}
-    import torch
-
-    if torch.version.hip:  # fused attention with a mask on ROCm (docs/benchmarks.md), as the trainer sets it
-        os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
     from ygorl.env import GameSpec as EnvSpec
     from ygorl.env.encoded import EncodedVecEnv
     from ygorl.eval.batched import play_policies
-    from ygorl.train.checkpoint import load_actor
+    from ygorl.train.checkpoint import load_actor, torch_device
 
+    dev = torch_device(device)
     loaded: dict[str, Any] = {}
 
     def policy(spec: str):
-        setting = policy_setting(spec)
-        if setting is None:
+        parsed = _plain_policy(spec)
+        if parsed is None:
             return None
-        if setting[0] not in loaded:
-            pol = load_actor(setting[0])
-            loaded[setting[0]] = (pol, pol.net.to(torch.device(device)), pol.signature)
-        return loaded[setting[0]], setting
+        path = parsed.checkpoint
+        if path not in loaded:
+            pol = load_actor(path)
+            loaded[path] = (pol, pol.net.to(dev), pol.signature)
+        return loaded[path], (parsed.greedy, parsed.temperature)
 
     groups: dict[Any, list] = {}  # by Signature (card vocab, event length)
     for i, j in cells:
@@ -351,7 +349,7 @@ def _play_batched(cells, rows, slots, config: DuelConfig, device: str, envs: int
                                              config=base))  # fmt: skip
                         seeds.append((slot_seeds[m], slot_seeds[1 - m]))
             records, _ = play_policies(env, specs, ca[1], cb[1], device=device, pairs_per_spec=4, sample_seeds=seeds,
-                                       sampling=((sa[1], sa[2]), (sb[1], sb[2])))  # fmt: skip
+                                       sampling=(sa, sb))  # fmt: skip
             out[i, j] = records
     return out
 

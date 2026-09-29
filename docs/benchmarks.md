@@ -366,7 +366,7 @@ K 每次更新平均只用 32 个 minibatch 中的约 12 个（`approx_kl` 约 0
   （裁填充后每个 minibatch 形状都不同）。`ygorl.nets.gemm` 在 ROCm 上按 `K` 切分（`SplitKLinear` 与 `CategoricalEmbedding` 的反向），
   一次更新 2.0 → 1.25 s。
 - 带掩码的 `scaled_dot_product_attention` 在 ROCm 上默认走 math 实现（每次带一个约 3 ms 的 `all` 归约）；
-  `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` 打开融合实现，1.25 → 1.13 s。`Trainer` 在 ROCm 设备上自动设置。
+  `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1` 打开融合实现，1.25 → 1.13 s。`Trainer` 与 agent 矩阵的批量路径在 ROCm 设备上自动设置（`train.checkpoint.torch_device`）。
 - PyTorch profiler 在 ROCm 上会把核函数本身拖慢（被追踪的一次更新里核函数时间 2.6 s，大于不追踪时整个更新的 1.13 s），所以忙碌率用 sysfs 采样。
 
 | 配置（每次更新 2,048 行，另注明的除外） | 收集 / 段 | 更新 / 次 | 行/秒 | 相对 GPU 基线 | GPU 忙碌 |
