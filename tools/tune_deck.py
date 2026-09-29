@@ -51,7 +51,7 @@ def main() -> int:
     from ygorl.data.environment import load_environment
     from ygorl.engine.duel import default_cards
     from ygorl.env.encoded import EncodedVecEnv
-    from ygorl.train.checkpoint import load_actor, vocab_passwords
+    from ygorl.train.checkpoint import load_actor
 
     cards = default_cards()
     env = load_environment(args.env, cards=cards)
@@ -82,8 +82,8 @@ def main() -> int:
 
     pol = load_actor(args.checkpoint)
     opp = load_actor(args.opponent_checkpoint) if args.opponent_checkpoint else pol
-    if vocab_passwords(opp.vocab) != vocab_passwords(pol.vocab) or opp.event_length != pol.event_length:
-        raise SystemExit("the two checkpoints need the same card vocab and event length")
+    if why := pol.signature.mismatches(opp.signature):
+        raise SystemExit(f"the two checkpoints need the same card vocab and event length: {'; '.join(why)}")
     device = torch.device(args.device)
     net_a = pol.net.to(device)
     net_b = net_a if opp is pol else opp.net.to(device)

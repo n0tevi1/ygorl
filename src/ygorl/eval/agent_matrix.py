@@ -315,7 +315,7 @@ def _play_batched(cells, rows, slots, config: DuelConfig, device: str, envs: int
     from ygorl.env import GameSpec as EnvSpec
     from ygorl.env.encoded import EncodedVecEnv
     from ygorl.eval.batched import play_policies
-    from ygorl.train.checkpoint import load_actor, vocab_passwords
+    from ygorl.train.checkpoint import load_actor
 
     loaded: dict[str, Any] = {}
 
@@ -325,23 +325,23 @@ def _play_batched(cells, rows, slots, config: DuelConfig, device: str, envs: int
             return None
         if setting[0] not in loaded:
             pol = load_actor(setting[0])
-            loaded[setting[0]] = (pol, pol.net.to(torch.device(device)), tuple(vocab_passwords(pol.vocab)))
+            loaded[setting[0]] = (pol, pol.net.to(torch.device(device)), pol.signature)
         return loaded[setting[0]], setting
 
-    groups: dict[tuple, list] = {}
+    groups: dict[Any, list] = {}  # by Signature (card vocab, event length)
     for i, j in cells:
         a, b = policy(rows[i][1]), policy(rows[j][1])
         if a is None or b is None:
             continue
-        (pa, _, va), (pb, _, vb) = a[0], b[0]
-        if va != vb or pa.event_length != pb.event_length:
+        sig_a, sig_b = a[0][2], b[0][2]
+        if sig_a.mismatches(sig_b):  # another vocab or event length: the arena plays the cell
             continue
-        groups.setdefault((va, pa.event_length), []).append((i, j, a, b))
+        groups.setdefault(sig_a, []).append((i, j, a, b))
     base = replace(config, shuffle_decks=False)
     out: dict[tuple[int, int], list[GameRecord]] = {}
-    for (_, event_length), group in groups.items():
+    for signature, group in groups.items():
         env = EncodedVecEnv(min(envs, 4 * len(slots)), threads, vocab=group[0][2][0][0].vocab,
-                            event_length=event_length, skip_forced=True)  # fmt: skip
+                            event_length=signature.event_length, skip_forced=True)  # fmt: skip
         for i, j, (ca, sa), (cb, sb) in group:
             specs, seeds = [], []
             for s, decks, slot_seeds in slots:

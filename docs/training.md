@@ -15,7 +15,7 @@ checkpoint / 日志）。需要 `uv sync --extra train`。
 | `ygorl.train.ppo` | `PPOConfig`、`PPOLearner`（一次更新）、可插拔的策略目标 `PolicyObjective` / `register_objective`（`ppo_clip`、`pg`） |
 | `ygorl.train.selfplay` | `SnapshotPool`（快照池 + keep-best）、`DeckPool`（牌组池与对阵）、`SelfPlaySchedule`（配对先后攻的发局） |
 | `ygorl.train.trainer` | `TrainConfig`、`Trainer`（训练循环、评估、checkpoint、续训、日志）、`evaluate_checkpoint`、`summarize_metrics` |
-| `ygorl.train.checkpoint` | checkpoint 读写、`load_policy`（只重建 actor，供对战 / 评估） |
+| `ygorl.train.checkpoint` | checkpoint 读写；所有网络都在这里重建（见 §8.5「从检查点重建网络」）：`load_actor` / `load_policy`（只重建 actor，供对战 / 评估）、`load_actor_critic`（整个 actor-critic 连同 critic 选项）、`build_actor_critic`、`warm_start`，以及 `Signature`（词表 + 事件窗口长度）的兼容性检查 |
 | `ygorl.train.toy` | 玩具博弈 Nim（与 `EncodedVecEnv` 同接口的 `NimEnv` + `NimModel`），单测与调试用 |
 | `ygorl.nets.actor_critic` | `ActorCritic`：`PolicyNet` actor + 特权 Q / V critic；`PrivilegedEncoder`（对手真值 → 特征） |
 
@@ -276,7 +276,8 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
    **热启动与先验**：`--init-from CKPT`（`TrainConfig.init_from`）把 actor 设成某个检查点的网络、critic 从头训；`--bc-prior CKPT`
    给 `π_BC`。两者都接受 PPO 训练的 checkpoint 或 BC 等导出的策略检查点（`ygorl.nets.agent`，[bc.md](bc.md)），按文件的 `format`
    字段区分（`train.checkpoint.load_actor`）。热启动时本次运行沿用检查点的卡片词表，网络配置（`d_model`、层数、历史模块等）必须与
-   `--d-model` 等参数一致，否则报错；先验的词表必须与本次运行相同（同一下标要是同一张卡），网络大小可以不同。
+   `--d-model` 等参数一致，只允许多出卡片视角（`train.checkpoint.warm_start`，[nets.md](nets.md)「卡片事实」），否则报错；
+   先验的词表必须与本次运行相同（同一下标要是同一张卡；`Signature.mismatches(..., event_length=False)`），网络大小可以不同。
    **只在第 1 回合用先验**：`--kl-prior-turns N`（`PPOConfig.kl_prior_turns`，默认 0 = 所有行）只对「回合玩家自己的决策、回合数 ≤ N」
    的行（观测 `globals` 的 `is_my_turn` 与 `turn` 两列）计先验 KL，其余行按 0 计入同一个均值（被选中的行权重与不限制时相同）；
    日志多一个 `kl_prior_rows`（本段被选中的行数）。`N = 1` 即求解器示范覆盖的先攻第 1 回合，理由与对比实验见 [bc.md](bc.md)「补救实验」。
@@ -341,7 +342,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
   续训不需要清单与卡组文件还在，先恢复保存时的池，到下一个重读点再读当前文件。
 - **固定对手**（`TrainConfig.pin_opponents` / `--pin CKPT`，可重复）：把策略检查点（例如 BC 热启动用的那份）或 PPO checkpoint 整局钉在池里，
   不被逐出、不进 checkpoint（续训时按配置重新钉上，id 为 −1、−2……）；池局里固定对手合占 `pinned_share`（默认 0.5），其余均分给快照。
-  词表与事件窗口长度必须与本次运行相同。用意：自博弈早期的历史快照都接近随机，固定一个会进战斗、会展开的对手让信号更有用
+  词表与事件窗口长度必须与本次运行相同（`Signature.mismatches`，报错写明哪里不同）。用意：自博弈早期的历史快照都接近随机，固定一个会进战斗、会展开的对手让信号更有用
   （Gin Rummy 2026「更强对手的课程」、cjiang1209/yugioh-agent 默认对 greedy 训练）。
 
 ### 8.4 评估
@@ -356,8 +357,21 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 一个 checkpoint 是一个自包含的 `.pt`（`torch.save` 普通容器，`weights_only=True` 可读）：`config`（`TrainConfig`，含
 `PPOConfig`）、`net_config`、`vocab`（`CardVocab.save` 写出的 JSON 原文——词表下标是模型的一部分）、`environment`
 （训练环境的 `stamp()`，没有环境时为 None）、`learner`（模型、EMA 参考、优化器、更新数）、`pool`（全部快照含 keep-best）、
-`schedule`（发局计数与 RNG）、`counters`、`best`、`rng`、`evolved`（进化牌组池的条目、卡表与逐卡组得分，没有时为 None）。`load_policy(path)` 只重建 actor（`PolicyNet`）。
+`schedule`（发局计数与 RNG）、`counters`、`best`、`rng`、`evolved`（进化牌组池的条目、卡表与逐卡组得分，没有时为 None）。
 续训恢复以上全部状态；进行中的对局不保存，续训时各槽位开新局。
+
+**从检查点重建网络**（#122）：训练器、对战 agent、评估、智能体矩阵与研究脚本都经 `ygorl.train.checkpoint` 重建网络，不各自拼装：
+
+| 函数 | 作用 |
+|------|------|
+| `load_actor(path, text_dir=None)` | 任一检查点（PPO 或 BC 等策略检查点，按 `format` 区分）的 actor（`PolicyNet`，eval、无梯度、CPU）、词表、事件窗口长度；`load_policy` 同上但只收 PPO 检查点 |
+| `load_actor_critic(path, text_dir=None)` | PPO 检查点的整个 `ActorCritic`，critic 选项（`privileged`、`privileged_dim`、`critic_hidden`、`shared_backbone`、`critic_deck_order`）取自该次运行的配置（`CriticConfig`）；策略检查点没有 critic，报错 |
+| `build_actor_critic(net_config, text, critic)` | 新建 `ActorCritic` 的唯一入口（训练器、快照池） |
+| `warm_start(actor, loaded)` | 热启动：把加载的 actor 拷进新网络，只允许新网络多出卡片视角（`CARD_VIEW_FIELDS`，新模块保持初始化），返回多出的配置项；不需要构造 `Trainer` 即可测 |
+| `loaded.signature` / `Signature.mismatches(other)` | 网络读什么（词表的卡密顺序、事件窗口长度）；两份检查点 / 运行能否共用观测，不能时逐条给出可读的原因（空表 = 兼容）；可哈希，批量路径按它分组 |
+
+冻结文本表与卡片事实不在检查点里：从 `text_dir` 读，PPO 检查点缺省用其运行配置的 `text_dir`；缺表时所有加载器走同一个检查
+（`nets.text.require_tables`，报错列出缺的视角，如 `card_facts`）。
 
 运行目录（`tools/train_ppo.py` 默认 `out/train/<时间戳>`；给 `--env` 时是 `environments/<版本>/artifacts/train/<名字>`，
 产物绑定环境版本）：
@@ -409,6 +423,9 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
   对快照池训练同样收敛；收集器布局（交替座位、终局奖励、段间衔接自举状态）、快照局只含学习方的行、截断局标记且无奖励、
   引擎错误事件（开局失败 / 局中错误）记为截断并立即开新局；默认超参数符合设计（熵系数在 0.05–0.2）；EMA 参考；
   KL 为 0 与梯度方向；先验 KL 只在第 1 回合（`kl_prior_turns`）时的行选择、权重与更新结果；学习器状态往返；快照池逐出与 keep-best；策略目标可插拔（注册自定义目标，`prepare` / `loss` 被调用）。
+- `tests/test_checkpoint.py`（手工写的小检查点，不构造 `Trainer`、不开局）：各种 critic 选项（含牌序 critic、非共享主干、非特权）的
+  actor-critic 往返；策略检查点能当 actor 加载、不能当 actor-critic；所有加载器缺表时同一报错，PPO 检查点从运行配置找回表；
+  `Signature` 的兼容性原因；从 PPO / BC 检查点热启动、热启动多出卡片视角、网络不同则报错。
 - `tests/test_advantages.py::test_truncated_rows_bootstrap_from_the_critic`：截断行的目标等于 critic 自身估计、与「切列 + 同座位自举」一致、
   截断行的奖励被忽略。
 - `tests/test_deck_pool.py`（约 10 秒）：没有 probation / active 卡组（清单缺失、只有 history 或占比为 0）时发局与固定牌组池逐位相同（经 `Trainer` 构建的发局也相同；整次训练不比较：哪个槽位打哪一局取决于引擎线程的时序，同一配置跑两次权重就不同）；进化占比、只发 probation / active、
