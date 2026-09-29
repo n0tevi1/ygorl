@@ -39,6 +39,7 @@ from typing import Any
 import numpy as np
 
 from ygorl.build.archive import DESCRIPTORS, DeckArchive
+from ygorl.build.crossover import crossover_children
 from ygorl.build.diagnose import opening_effects
 from ygorl.build.selection import SD_PAIR, sequential_validate, top_two_thompson
 from ygorl.build.signals import Calibration, CardValueModel, Observation, combine_prior, informed_children
@@ -53,6 +54,13 @@ ROUND_FORMAT = "ygorl-evolution-round"
 SIGNAL_DEFAULTS = {"opening_effect": 0.0}
 LIVE = ("probation", "active")
 VALIDATION_OFFSET = 1_000_000  # first pair index of sequential validation (fresh seeds, never searched)
+MUTATION_KINDS = ("informed", "explore")  # child kinds of the mutation generator (informed_children)
+
+
+def generator(kind: str) -> str:
+    """The generator a child kind belongs to: ``mutation`` for ``informed_children``'s kinds, else the kind itself
+    (``crossover``)."""
+    return "mutation" if kind in MUTATION_KINDS else kind
 
 
 @dataclass(frozen=True)
@@ -74,6 +82,7 @@ class RoundConfig:
     informed: int = 6
     explore: int = 2
     max_bundle: int = 3
+    crossover: int = 0  # crossover children per parent (the parent × an archive elite, #141); off by default
     diagnose_pairs: int = 0  # the parent's first pairs, played up front (they are the parent's baseline too)
     batch: int = 25
     max_pairs: int = 600
@@ -505,6 +514,14 @@ class Evolution:
         children = informed_children(base, parent.type, self.model, lab.pool(parent), legal=lab.legal,
                                      is_extra=lab.is_extra, rng=rng, informed=config.informed, explore=config.explore,
                                      max_bundle=config.max_bundle, protected=lab.protected(base))  # fmt: skip
+        mates: dict[int, dict] = {}  # child index -> its second parent (crossover children)
+        if config.crossover > 0:
+            crossed = crossover_children(base, self.archive, descriptors=lab.descriptors(base), legal=lab.legal,
+                                         rng=np.random.default_rng([config.seed, n, i, 2]), n=config.crossover,
+                                         protected=lab.protected(base), exclude=[c.deck for c in children])  # fmt: skip
+            for c, m in crossed:
+                mates[len(children)] = {**m.to_dict(), "key": deck_key(m.deck)}
+                children.append(c)
         predicted = [self.model.gain([e.into for e in c.edits], [e.out for e in c.edits], parent.type)
                      for c in children]  # fmt: skip
         screen = [None] * len(children)
@@ -551,7 +568,8 @@ class Evolution:
                 search = {"pairs": a.pairs, "diff": _finite(a.observed), "ci": [_finite(a.observed - h),
                           _finite(a.observed + h)], "posterior": [a.mean, a.sd], "p_positive": a.p_positive,
                           "p_best": a.p_best}  # fmt: skip
-            rows.append({"child": f"r{n:04d}-p{i}-c{j}", "kind": c.kind,
+            rows.append({"child": f"r{n:04d}-p{i}-c{j}", "kind": c.kind, "generator": generator(c.kind),
+                         "mate": mates.get(j),
                          "edits": [{"out": e.out, "into": e.into, "section": e.section} for e in c.edits],
                          "deck": _deck_json(c.deck), "predicted": {"mean": predicted[j][0], "sd": predicted[j][1]},
                          "l0": screen[j], "screened": screened[j], "search": search,
@@ -631,7 +649,8 @@ class Evolution:
         file = f"decks/{mid}.ydk"
         _write(self.manifest_path.parent / file, deck.to_ydk())
         self.manifest["decks"].append({"id": mid, "file": file, "status": "probation", "weight": 1.0,
-                                       "parent": parent.id, "type": parent.type, "round": n, "lineage": row["child"],
+                                       "parent": parent.id, "mate": (row.get("mate") or {}).get("id"),
+                                       "type": parent.type, "round": n, "lineage": row["child"],
                                        "edits": row["edits"], "diff": row["validation"]["diff"],
                                        "descriptors": row["descriptors"]})  # fmt: skip
 
@@ -639,7 +658,8 @@ class Evolution:
         adm = self.archive_applied.get(row["child"], {})
         return {"child": row["child"], "round": state["round"], "time": _now(),
                 "parent": {"id": r["parent"]["id"], "type": r["parent"]["type"], "key": r["parent"]["key"]},
-                "kind": row["kind"], "edits": row["edits"], "key": deck_key(_deck_from(row["deck"])),
+                "kind": row["kind"], "generator": row.get("generator", generator(row["kind"])),
+                "mate": row.get("mate"), "edits": row["edits"], "key": deck_key(_deck_from(row["deck"])),
                 "predicted": row["predicted"], "l0": row["l0"], "screened": row["screened"], "search": row["search"],
                 "validation": row["validation"], "all_pairs": row["all_pairs"], "learned": row["learned"],
                 "games": row["games"],
@@ -672,6 +692,9 @@ class Evolution:
                                 "accepted": [c["child"] for c in r["children"] if c["accepted"]]}
                                for r in results],
                 "accepted": accepted, "games": games,
+                "generators": {"round": _by_generator(children),
+                               "cumulative": _by_generator([c for c in self.lineage() if c["round"] != state["round"]]
+                                                           + children)},
                 "cumulative": {"games": cum_games, "accepted": cum_accepted,
                                "games_per_accepted": cum_games / cum_accepted if cum_accepted else None},
                 "archive": {**self.archive.summary(), "stale": self.archive.stale(state["mix"]),
@@ -699,6 +722,20 @@ def _objective(scores: np.ndarray, config: RoundConfig, prior_pairs: float = 10.
     var = (prior_pairs * 0.125 + ss) / (prior_pairs + n - 1)
     lower = float(scores.mean()) - config.archive_z * math.sqrt(var / n)
     return {"pairs": n, "win_rate": float(scores.mean()), "lower": lower if n >= config.archive_min_pairs else None}
+
+
+def _by_generator(children: Sequence[Mapping]) -> dict[str, dict]:
+    """Per generator: children evaluated, chosen for validation, accepted, and the accepted share (lineage records or
+    round rows)."""
+    out: dict[str, dict] = {}
+    for c in children:
+        g = out.setdefault(c.get("generator") or generator(c["kind"]), {"children": 0, "chosen": 0, "accepted": 0})
+        g["children"] += 1
+        g["chosen"] += c.get("validation") is not None
+        g["accepted"] += bool(c["accepted"])
+    for g in out.values():
+        g["accepted_rate"] = g["accepted"] / g["children"]
+    return dict(sorted(out.items()))
 
 
 def _learned(d: np.ndarray) -> dict:
@@ -739,6 +776,10 @@ def format_report(r: Mapping) -> str:
                      f"chosen {p['chosen']}, " + (f"validation {v['decision']} after {v['pairs']} pairs "
                      f"(diff {v['diff']:+.3f}, lower {v['lower']:+.3f})" if v and v["diff"] is not None
                      else "no validation") + f", {p['games']} games")  # fmt: skip
+    gens = r.get("generators", {}).get("cumulative", {})
+    if set(gens) - {"mutation"}:
+        lines.append("generators (cumulative): " + "; ".join(f"{k} {g['accepted']}/{g['children']} accepted "
+                                                            f"({g['chosen']} validated)" for k, g in gens.items()))  # fmt: skip
     c = r["cumulative"]
     gpa = f"{c['games_per_accepted']:.0f}" if c["games_per_accepted"] else "n/a"
     lines.append(f"cumulative: {c['games']} games, {c['accepted']} accepted, {gpa} games per accepted edit")
@@ -756,4 +797,4 @@ def _now() -> str:
 
 
 __all__ = ["DESCRIPTORS", "Evolution", "GameLog", "Lab", "Opponent", "Parent", "RoundConfig", "check_environment",
-           "deck_key", "file_sha256", "format_report", "opponent_mix", "pool_diversity"]  # fmt: skip
+           "deck_key", "file_sha256", "format_report", "generator", "opponent_mix", "pool_diversity"]  # fmt: skip
