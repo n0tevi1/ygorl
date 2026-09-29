@@ -30,7 +30,7 @@ from typing import Any
 from ygorl.agents.base import AgentFactory, agent_name
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
-from ygorl.engine.duel import Duel, DuelConfig, shuffle_deck
+from ygorl.engine.duel import Duel, DuelConfig, deck_of_seat, shuffle_deck
 
 MASK64 = (1 << 64) - 1
 
@@ -164,7 +164,9 @@ def summarize(records: Sequence[GameRecord], *, agent_a: str, agent_b: str, deck
               confidence: float = 0.95, environment: dict[str, str] | None = None) -> ArenaReport:  # fmt: skip
     """Aggregate game records (agent a's side) into a report."""
     total = _side(records)
-    first_player = sum(1.0 if r.winner == r.first else 0.5 if r.winner is None else 0.0 for r in records)
+    first_player = sum(
+        1.0 if r.winner == deck_of_seat(r.first, 0) else 0.5 if r.winner is None else 0.0 for r in records
+    )
     n = total.games
     return ArenaReport(
         agent_a=agent_a, agent_b=agent_b, deck_a=deck_a, deck_b=deck_b, seed=seed, games=n,

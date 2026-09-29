@@ -402,9 +402,8 @@ class SelfPlaySchedule:
                 info["learner_deck"] = (deck_a, deck_b)[side].name
             if evolved is not None:
                 info["evolved"] = (deck_a, deck_b)[evolved].name
-                info["evolved_seat"] = (evolved + first) % 2
-            # engine seat p holds deck (first + p) % 2, so deck `side` sits at seat (side + first) % 2
-            self._queue.append(Assignment(spec, opponent, (side + first) % 2, info))
+                info["evolved_seat"] = spec.seat_of_deck(evolved)
+            self._queue.append(Assignment(spec, opponent, spec.seat_of_deck(side), info))
 
     def state_dict(self) -> dict:
         return {"deals": self.deals, "rng": self.rng.bit_generator.state}

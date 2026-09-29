@@ -51,6 +51,19 @@ def expand_seed(seed: int) -> list[int]:
     return out
 
 
+def deck_of_seat(first: int, seat: int) -> int:
+    """Index into (a, b) of the deck at engine ``seat`` when ``first`` names the deck that moves first.
+
+    Engine seat 0 always moves first, so seat ``p`` holds deck ``(first + p) % 2``; the one place this rule is written.
+    """
+    return (first + seat) % 2
+
+
+def seat_of_deck(first: int, deck: int) -> int:
+    """Engine seat of deck ``deck`` (0 = a, 1 = b): the inverse of :func:`deck_of_seat` (the rule is its own inverse)."""
+    return deck_of_seat(first, deck)
+
+
 def _splitmix64(state: int) -> tuple[int, int]:
     state = (state + 0x9E3779B97F4A7C15) & MASK64
     z = state
@@ -212,7 +225,7 @@ class Duel:
     # -- helpers ---------------------------------------------------------
     def deck_of(self, player: int) -> int:
         """Index into (a, b) of the deck seated as engine ``player``."""
-        return (self.first + player) % 2
+        return deck_of_seat(self.first, player)
 
     def field_state(self) -> M.ReloadField:
         """Current field summary from the engine (``OCG_DuelQueryField``)."""
@@ -491,7 +504,7 @@ class DuelTracker:
         self._activations: dict[tuple, int] = {}  # (player, card key, description) -> menu activations this turn
         self._activations_turn = -1
         self._stepped = False
-        self._learner = (config.learner + first) % 2  # engine player of the learning deck
+        self._learner = seat_of_deck(first, config.learner)  # engine player of the learning deck
 
     @property
     def awaiting(self) -> bool:
@@ -710,9 +723,9 @@ class DuelTracker:
             # looping while ahead never counts as a win (mirror of Tracker::winner)
             engine_winner = (None if lp[0] == lp[1] or res.reason != "turn_limit"
                              else (0 if lp[0] > lp[1] else 1))  # fmt: skip
-        res.winner = None if engine_winner is None else (self.first + engine_winner) % 2
+        res.winner = None if engine_winner is None else deck_of_seat(self.first, engine_winner)
         res.turns = self.turn
-        res.lp = (lp[self.first], lp[1 - self.first])  # engine player `first` holds deck a
+        res.lp = (lp[seat_of_deck(self.first, 0)], lp[seat_of_deck(self.first, 1)])
         return res
 
 

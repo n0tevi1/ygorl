@@ -9,7 +9,7 @@ import numpy as np
 from ygorl.build.diagnose import OPENING_HAND, opening_effects, opening_hand
 from ygorl.cards.ydk import load_ydk
 from ygorl.engine import constants as C
-from ygorl.engine.duel import Duel, DuelConfig, shuffle_deck
+from ygorl.engine.duel import Duel, DuelConfig, deck_of_seat, shuffle_deck
 from ygorl.engine.query import CARD_QUERY_FLAGS, parse_query_location
 
 DECKS = Path(__file__).parent / "decks"
@@ -38,10 +38,9 @@ def test_the_opening_hand_is_the_end_of_the_loaded_main_deck():
     for first in (0, 1):
         seen.clear()
         Duel(5, None, a, b, config=DuelConfig(shuffle_decks=False, max_decisions=2), first=first).run(Probe(), Probe())
-        # engine seat p holds deck (first + p) % 2
         decks = (a, b)
         for p in (0, 1):
-            assert seen[p] == sorted(opening_hand(decks[(first + p) % 2].main)), (first, p)
+            assert seen[p] == sorted(opening_hand(decks[deck_of_seat(first, p)].main)), (first, p)
     assert OPENING_HAND == 5
 
 
