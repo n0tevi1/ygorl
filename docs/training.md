@@ -247,6 +247,9 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
   计入 `Rollout.opponent_decisions`，属于「环境」（§1 的推荐做法）。快照在开局时解析并随局保存，局中被逐出池也不影响。
 - 就绪的决策按「谁来下」分组、每组一次前向：学习方组同时得到 logits、Q、V（行为策略与 critic 值在动作时记录，
   不再重算）；动作从 softmax 采样（可复现的 `torch.Generator`）。
+- 收集器有自己的调度循环，不走整局对弈的对局驱动（`ygorl.env.driver`，见 [evaluation.md](evaluation.md)「批量评估」）：
+  列满 `T` 行时要扣住待答决策、还要做卡死检测，这两件事是收集特有的。快照对手与 KL 参考的 logits 与批量评估共用
+  `nets.batch.policy_logits`。
 - 终局：`reason ∈ {turn_limit, decision_limit, error}` 为截断（§1），其余按胜负给最后一行奖励；错误事件照常记账、槽位立刻开新局，
   不会中断训练。
 - 段尾：一列满 `T` 行后，其环境在下一个**学习方**决策上暂停（对手的决策继续推进），这个待答决策就是该列的自举状态

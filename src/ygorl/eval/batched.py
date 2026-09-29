@@ -12,6 +12,8 @@ agent for one decision at a time on the CPU. :func:`play_policies` runs the game
   or on thread timing (the arena's per-agent RNG streams are different: same distribution, different samples).
 - **Records** are :class:`ygorl.eval.arena.GameRecord` from deck a's side, so :func:`ygorl.eval.arena.summarize`
   and the paired comparisons work unchanged.
+- **Scheduling** (spec queue, launch failures, slot reuse, ``min_batch``) is :func:`ygorl.env.driver.drive`'s; this
+  module answers a round's decisions and turns results into records.
 
 Only network policies play here (greedy / random agents live in Python; use the arena for them).
 """
@@ -29,9 +31,10 @@ from torch import nn
 from ygorl.cards.ydk import Deck
 from ygorl.engine.duel import DuelConfig, shuffle_deck
 from ygorl.env import GameSpec
-from ygorl.env.encoded import EncodedVecEnv
+from ygorl.env.driver import Game, drive
+from ygorl.env.encoded import EncodedEvent, EncodedVecEnv
 from ygorl.eval.arena import GameRecord, derive_seed
-from ygorl.nets.batch import collate
+from ygorl.nets.batch import collate, policy_logits
 
 
 def paired_specs(deck_a: Deck, deck_b: Deck, pairs: int, seed: int, config: DuelConfig) -> list[GameSpec]:
@@ -75,75 +78,64 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
         m.eval()
     min_batch = max(1, min_batch if min_batch is not None else env.num_envs // 2)
     records: list[GameRecord | None] = [None] * len(specs)
-    queue = iter(enumerate(specs))
-    running: dict[int, list[int]] = {}  # env -> [spec index, decisions answered by seat 0, by seat 1]
-    t0, forwards, decisions, forward_s = time.perf_counter(), 0, 0, 0.0
+    t0, forwards, forward_s = time.perf_counter(), 0, 0.0
 
-    def launch(env_id: int) -> bool:
-        """Start the next spec on ``env_id``; a spec whose duel cannot start is recorded as an exception (as in the
-        arena) and the next one is tried."""
-        for i, spec in queue:
-            try:
-                env.reset(env_id, spec)
-            except Exception as exc:  # noqa: BLE001 - recorded, counted as an error
-                records[i] = GameRecord(pair=i // pairs_per_spec, seed=spec.seed, first=spec.first, winner=None,
-                                        reason="exception", error=f"{type(exc).__name__}: {exc}")  # fmt: skip
-                continue
-            running[env_id] = [i, 0, 0]
-            return True
-        return False
+    def on_error(i: int, spec: GameSpec, exc: Exception) -> None:
+        """A spec whose duel cannot start is recorded as an exception (as in the arena)."""
+        records[i] = GameRecord(pair=i // pairs_per_spec, seed=spec.seed, first=spec.first, winner=None,
+                                reason="exception", error=f"{type(exc).__name__}: {exc}")  # fmt: skip
 
-    active = sum(launch(e) for e in range(env.num_envs))
-    while active:
-        groups: dict[int, list] = {}
-        for ev in env.recv(min(min_batch, active)):
-            i = running[ev.env_id][0]
-            spec = specs[i]
-            if ev.result is not None:
-                res = ev.result
-                w = res.get("winner")
-                lp = res.get("lp", (0, 0))
-                reason = str(res.get("reason", ""))
-                failed = reason == "error"  # the engine raised: an error, not a draw (the arena's "exception")
-                records[i] = GameRecord(pair=i // pairs_per_spec, seed=spec.seed, first=spec.first,
-                                        winner=None if w is None or failed else spec.deck_of_seat(w),
-                                        reason="exception" if failed else reason,
-                                        turns=int(res.get("turns", 0)), decisions=int(res.get("decisions", 0)),
-                                        win_reason=res.get("win_reason"),
-                                        lp=(lp[spec.seat_of_deck(0)], lp[spec.seat_of_deck(1)]),
-                                        error=str(res.get("error", "")))  # fmt: skip
-                if not launch(ev.env_id):
-                    active -= 1
-                continue
-            side = spec.deck_of_seat(ev.player)  # 0: the player holding deck a
+    def on_result(game: Game, res: dict) -> None:
+        spec = game.spec
+        w = res.get("winner")
+        lp = res.get("lp", (0, 0))
+        reason = str(res.get("reason", ""))
+        failed = reason == "error"  # the engine raised: an error, not a draw (the arena's "exception")
+        records[game.index] = GameRecord(pair=game.index // pairs_per_spec, seed=spec.seed, first=spec.first,
+                                         winner=None if w is None or failed else spec.deck_of_seat(w),
+                                         reason="exception" if failed else reason,
+                                         turns=int(res.get("turns", 0)), decisions=int(res.get("decisions", 0)),
+                                         win_reason=res.get("win_reason"),
+                                         lp=(lp[spec.seat_of_deck(0)], lp[spec.seat_of_deck(1)]),
+                                         error=str(res.get("error", "")))  # fmt: skip
+
+    def decide(ready: list[tuple[Game, EncodedEvent]]) -> list[int]:
+        """One forward pass per (module, greedy, temperature) group of the ready decisions."""
+        nonlocal forwards, forward_s
+        groups: dict[tuple, tuple[nn.Module, list[int]]] = {}
+        for k, (game, ev) in enumerate(ready):
+            side = game.spec.deck_of_seat(ev.player)  # 0: the player holding deck a
             module = policy_a if side == 0 else policy_b
-            greedy_s, temp_s = side_sampling[side]
-            groups.setdefault((id(module), greedy_s, temp_s), [module, [], greedy_s, temp_s])[1].append(ev)
-        for module, events, greedy_s, temp_s in groups.values():
+            groups.setdefault((id(module), *side_sampling[side]), (module, []))[1].append(k)
+        actions = [0] * len(ready)
+        for (_, greedy_s, temp_s), (module, ks) in groups.items():
             f0 = time.perf_counter()
-            batch = collate([ev.obs for ev in events], device)
-            fn = getattr(module, "policy_logits", None)
-            logits = (fn(batch) if fn is not None else module(batch).logits).float()
+            logits = policy_logits(module, collate([ready[k][1].obs for k in ks], device)).float()
             if greedy_s:
-                actions = logits.argmax(-1).cpu().numpy()
+                chosen = logits.argmax(-1).cpu().tolist()
             else:
                 probs = torch.softmax(logits / temp_s, -1).cpu().numpy().astype(np.float64)
                 cdf = np.cumsum(probs, -1)
-                actions = np.empty(len(events), dtype=np.int64)
-                for k, ev in enumerate(events):
-                    slot = running[ev.env_id]
-                    sp, n = specs[slot[0]], slot[1 + ev.player]
+                chosen = []
+                for row, k in enumerate(ks):
+                    game, ev = ready[k]
+                    sp, n = game.spec, game.state[ev.player]  # decisions this seat answered before this one
                     if sample_seeds is not None:
-                        u = _uniform(sample_seeds[slot[0]][sp.deck_of_seat(ev.player)], 0, 0, n)
+                        u = _uniform(sample_seeds[game.index][sp.deck_of_seat(ev.player)], 0, 0, n)
                     else:
                         u = _uniform(sp.seed, sp.first, ev.player, n)
-                    actions[k] = min(int(np.searchsorted(cdf[k], u * cdf[k, -1], side="right")), probs.shape[1] - 1)
+                    chosen.append(min(int(np.searchsorted(cdf[row], u * cdf[row, -1], side="right")),
+                                      probs.shape[1] - 1))  # fmt: skip
             forward_s += time.perf_counter() - f0
             forwards += 1
-            for ev, a in zip(events, actions.tolist(), strict=True):
-                running[ev.env_id][1 + ev.player] += 1
-                decisions += 1
-                env.step(ev.env_id, int(a))
+            for k, a in zip(ks, chosen, strict=True):
+                actions[k] = int(a)
+                game, ev = ready[k]
+                game.state[ev.player] += 1
+        return actions
+
+    decisions = drive(env, specs, decide, on_result, min_batch=min_batch, start=lambda i, spec: [0, 0],
+                      on_error=on_error)  # fmt: skip
     seconds = time.perf_counter() - t0
     stats = {"games": len(specs), "decisions": decisions, "seconds": seconds, "forwards": forwards,
              "forward_s": forward_s, "games_per_s": len(specs) / seconds if seconds else 0.0,

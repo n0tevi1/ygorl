@@ -32,10 +32,11 @@ from dataclasses import asdict, dataclass, fields
 import torch
 from torch import Tensor, nn
 
+from ygorl.nets.batch import policy_logits
 from ygorl.nets.policy import trim_padding
 from ygorl.train.advantages import ESTIMATORS, NORMALIZE_MODES, VRPO_MODES, Estimate, estimate
 from ygorl.train.critic import q_loss, v_loss
-from ygorl.train.rollout import Rollout, _logits_of
+from ygorl.train.rollout import Rollout
 
 
 @dataclass(frozen=True)
@@ -296,7 +297,7 @@ class PPOLearner:
     @torch.no_grad()
     def _score(self, module: nn.Module, obs, n: int) -> Tensor:
         chunk = max(1, self.cfg.minibatch_size)
-        out = [_logits_of(module, _index(obs, slice(i, min(i + chunk, n)))).float() for i in range(0, n, chunk)]
+        out = [policy_logits(module, _index(obs, slice(i, min(i + chunk, n)))).float() for i in range(0, n, chunk)]
         return torch.cat(out)
 
     # -- update --------------------------------------------------------------------------------------

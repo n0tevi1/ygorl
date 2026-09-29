@@ -261,6 +261,13 @@ AgentMatrix.load(path, env=env)
 - **失败**：开不了局（`reset` 抛异常）记为 `exception` 并接着打下一局；引擎在局中出错（`reason="error"`）也记为 `exception`、不算平局，
   都进报告的 `errors`。
 - 只能打网络策略（greedy / random 在 Python 里，仍用 Arena）。
+- **调度**交给对局驱动 `ygorl.env.driver.drive(env, specs, decide, on_result)`：它持有对局规格队列、把规格填进空闲槽位、
+  一局结束就在同一槽位开下一局；开局失败交给 `on_error`（批量评估记为 `exception`，未给时直接抛出）；每轮等
+  `min(min_batch, 在跑的局数)` 个事件，先记结束的局、补开新局，再把本轮所有就绪决策一次交给 `decide`（事件 → 动作）。
+  `play_policies`、`EncodedVecEnv.play`（测试 / 基准用的确定性选择）与 `run_games`（`VecDuelEnv` 上的 Python agent）都走它，
+  调用方只写「怎么答一批决策」和「一局结束记什么」；驱动本身用假环境测试（`tests/test_driver.py`）。
+  计分按 `GameSpec.deck_of_seat` / `seat_of_deck` 把引擎座位换成牌组。前向用 `nets.batch.policy_logits`（有 `policy_logits`
+  就只算 actor），与训练的快照对手是同一个函数。
 
 命令行：`tools/eval_batched.py CKPT --decks DIR [--opponents DIR] [--opponent-checkpoint CKPT2] [--pairings 200] [--pairs 1]
 [--device cuda] [--envs 256] [--out report.json]`：CKPT 驾驶 `--decks` 里的牌，对手策略驾驶 `--opponents` 里的牌，按 `--seed`

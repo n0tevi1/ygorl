@@ -69,3 +69,19 @@ def test_a_deck_that_cannot_start_is_recorded_and_the_rest_play(setup):
     assert all(r.reason != "exception" for r in recs[1:])
     rep = summarize(recs, agent_a="a", agent_b="b", deck_a="x", deck_b="y", seed=5)
     assert rep.errors == 1
+
+
+def test_same_seeds_give_the_same_records_with_per_side_sampling(setup):
+    cards, vocab, net, specs = setup
+    torch.manual_seed(1)
+    other = PolicyNet(net.cfg)
+    seeds = [(11 + i, 99 - i) for i in range(len(specs))]
+    kw = dict(sampling=((True, 1.0), (False, 0.5)), sample_seeds=seeds)
+    one, st1 = play_policies(_env(1, cards, vocab), specs, net, other, **kw)
+    three, st3 = play_policies(_env(3, cards, vocab), specs, net, other, min_batch=2, **kw)
+    again, _ = play_policies(_env(3, cards, vocab), specs, net, other, min_batch=3, **kw)
+    assert one == three == again and st1["decisions"] == st3["decisions"]
+    # the sample seeds are the only randomness: other seeds, other games
+    moved, _ = play_policies(_env(3, cards, vocab), specs, net, other, sampling=kw["sampling"],
+                             sample_seeds=[(a + 1, b + 1) for a, b in seeds])  # fmt: skip
+    assert [r.first for r in moved] == [r.first for r in one] and moved != one

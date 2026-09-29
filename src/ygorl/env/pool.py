@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 
 from ygorl import _core
 from ygorl.cards.ydk import Deck
+from ygorl.env.driver import Game, drive
 from ygorl.engine.duel import (
     DecisionPoint,
     Duel,
@@ -172,6 +173,22 @@ class VecDuelEnv:
 AgentFactory = Callable[[int, GameSpec], tuple]
 
 
+class _Driven:
+    """:class:`VecDuelEnv` in the driver's ``reset`` / ``step`` protocol; an action is ``(index, probs)``."""
+
+    def __init__(self, env: VecDuelEnv) -> None:
+        self.env, self.num_envs = env, env.num_envs
+
+    def reset(self, env_id: int, spec: GameSpec) -> None:
+        self.env.start(env_id, spec)
+
+    def step(self, env_id: int, action: tuple) -> None:
+        self.env.act(env_id, *action)
+
+    def recv(self, min_events: int) -> list[EnvEvent]:
+        return self.env.recv(min_events)
+
+
 def run_games(specs: Sequence[GameSpec], agent_factory: AgentFactory, num_envs: int = 8, num_threads: int | None = None,
               cards=None, scripts=None, record_steps: bool = False) -> list[DuelResult]:  # fmt: skip
     """Play every spec on a :class:`VecDuelEnv`; ``agent_factory(i, spec) -> (agent_a, agent_b)``.
@@ -180,29 +197,23 @@ def run_games(specs: Sequence[GameSpec], agent_factory: AgentFactory, num_envs: 
     """
     env = VecDuelEnv(min(num_envs, max(1, len(specs))), num_threads, cards, scripts, record_steps)
     results: list[DuelResult | None] = [None] * len(specs)
-    queue = iter(enumerate(specs))
-    seats: dict[int, tuple[int, tuple]] = {}
 
-    def launch(env_id: int) -> bool:
-        nxt = next(queue, None)
-        if nxt is None:
-            return False
-        i, spec = nxt
+    def seated(i: int, spec: GameSpec) -> tuple:
+        """The game's agents by engine seat."""
         a, b = agent_factory(i, spec)
-        seats[env_id] = (i, ((a, b)[spec.deck_of_seat(0)], (a, b)[spec.deck_of_seat(1)]))
-        env.start(env_id, spec)
-        return True
+        return (a, b)[spec.deck_of_seat(0)], (a, b)[spec.deck_of_seat(1)]
 
-    active = sum(launch(e) for e in range(env.num_envs))
-    while active:
-        for ev in env.recv(min_events=1):
-            i, seat = seats[ev.env_id]
-            if ev.result is not None:
-                results[i] = ev.result
-                if not launch(ev.env_id):
-                    active -= 1
-            else:
-                agent = seat[ev.point.player]
-                env.act(ev.env_id, agent.act(ev.point), getattr(agent, "last_probs", None))
+    def decide(ready: list[tuple[Game, EnvEvent]]) -> list[tuple]:
+        """Each agent answers its own decision (an action and the probabilities it recorded)."""
+        out = []
+        for game, ev in ready:
+            agent = game.state[ev.point.player]
+            out.append((agent.act(ev.point), getattr(agent, "last_probs", None)))
+        return out
+
+    def on_result(game: Game, result: DuelResult) -> None:
+        results[game.index] = result
+
+    drive(_Driven(env), specs, decide, on_result, start=seated)
     env.close()
     return results  # type: ignore[return-value]
