@@ -1,6 +1,7 @@
 """Deck evolution step (ygorl.build.evolve) and its MAP-Elites archive (ygorl.build.archive), with stand-in games."""
 
 import json
+import zlib
 
 import numpy as np
 import pytest
@@ -37,8 +38,12 @@ class Games:
     """Stand-in paired evaluator: game ``g`` of pair ``k`` is won when a uniform shared by every deck (common random
     numbers) is below 0.45 + the deck's card effects; going first adds 0.05."""
 
-    def __init__(self, seed, fail_after=None):
+    def __init__(self, seed, fail_after=None, effects=None, copy=1.0):
         self.seed, self.games, self.fail_after, self.calls = seed, 0, fail_after, 0
+        self.effects = EFFECT if effects is None else effects
+        self.copy = (
+            copy  # the chance a game follows the shared uniform; otherwise a deck-own one (less than perfect CRN)
+        )
 
     def play(self, jobs, per_game=False):
         assert per_game
@@ -47,8 +52,12 @@ class Games:
             raise RuntimeError("machine reclaimed")
         out = []
         for deck, pairs in jobs:
-            p = 0.45 + sum(EFFECT.get(c, 0.0) for c in deck.main)
+            p = 0.45 + sum(self.effects.get(c, 0.0) for c in deck.main)
             u = np.array([np.random.default_rng([self.seed % 2**32, k]).random(2) for k in pairs]).reshape(-1, 2)
+            if self.copy < 1:
+                own = zlib.crc32(deck_key(deck).encode())
+                r = np.array([np.random.default_rng([self.seed % 2**32, k, own]).random(4) for k in pairs])
+                u = np.where(r.reshape(-1, 4)[:, :2] < self.copy, u, r.reshape(-1, 4)[:, 2:])
             out.append((u < p + np.array([0.05, 0.0])).astype(float))
             self.games += 2 * len(pairs)
         return out
@@ -71,7 +80,7 @@ def make_lab(fail_after=None, played=None):
                checkpoint={"path": "ckpt.pt", "sha256": "abc", "update": 400})  # fmt: skip
 
 
-CONFIG = RoundConfig(informed=4, explore=2, batch=10, max_pairs=120, look=40, cap=200, seed=7)
+CONFIG = RoundConfig(informed=4, explore=2, batch=10, max_pairs=120, look=40, cap=200, archive_min_pairs=10, seed=7)
 OPPONENTS = [Opponent("meta", Deck(main=(5,) * 40), 1.0)]
 PARENTS = [Parent("corpus:base", BASE, "Base")]
 
@@ -106,7 +115,9 @@ def test_a_round_is_reproducible_and_accepts_a_better_child(tmp_path):
     assert any(e["into"] == 50 for e in accepted["edits"])
     # every evaluated child fed the card-value model and the calibration table, and the state reloads
     again = Evolution(tmp_path / "a", Env())
-    assert len(again.model.observations) == a["children"] and again.calibration.report()["model_gain"]["pairs"] == 6
+    # one first-batch observation per child plus the validated child's fresh pairs; calibration from the first batch
+    assert len(again.model.observations) == a["children"] + 1
+    assert again.calibration.report()["model_gain"]["pairs"] == 6
     assert again.archive.to_dict() == ev_a.archive.to_dict() and len(again.archive) >= 1
     assert a["archive"]["admitted_this_round"] >= 1 and a["pool"]["decks"] == 1
     assert (tmp_path / "a" / "rounds" / "0001" / "report.txt").read_text().startswith("round 1")
@@ -123,13 +134,17 @@ def test_lineage_records_are_complete(tmp_path):
                                                                            for e in r["edits"])  # fmt: skip
         assert set(r["predicted"]) == {"mean", "sd"} and r["predicted"]["sd"] > 0
         assert r["search"]["pairs"] > 0 and len(r["search"]["ci"]) == 2 and r["search"]["diff"] is not None
-        assert r["measured"]["pairs"] >= r["search"]["pairs"] and r["measured"]["stderr"] > 0
-        assert r["games"] == 2 * r["measured"]["pairs"]
+        assert r["all_pairs"]["pairs"] >= r["search"]["pairs"] and r["all_pairs"]["stderr"] > 0
+        assert r["games"] == 2 * r["all_pairs"]["pairs"] and "biased" in r["all_pairs"]["note"]
+        first = r["learned"][0]
+        assert first["source"] == "first_batch" and first["pairs"] == CONFIG.batch and first["stderr"] > 0
         assert r["checkpoint"] == {"path": "ckpt.pt", "sha256": "abc", "update": 400}
         assert r["environment"] == Env().stamp() and r["time"] and isinstance(r["accepted"], bool)
         assert r["archive"]["status"] in ("new", "improved", "rejected")
     chosen = [r for r in lines if r["validation"]]
     assert len(chosen) == 1 and {"pairs", "decision", "diff", "lower"} <= chosen[0]["validation"].keys()
+    assert [x["source"] for x in chosen[0]["learned"]] == ["first_batch", "validation"]
+    assert chosen[0]["learned"][1]["pairs"] == chosen[0]["validation"]["pairs"]
 
 
 def test_an_interrupted_round_resumes_without_replaying_its_games(tmp_path):
@@ -284,3 +299,106 @@ def test_diagnosis_is_the_parents_baseline_and_feeds_only_the_calibration(tmp_pa
     cal = ev.calibration.report()
     assert cal["opening_effect"]["pairs"] == report["children"] and cal["opening_effect"]["weight"] == 0.0
     assert ev.model.prior == {}  # weight 0: the opening-hand effect does not move the prior
+
+
+def test_the_signal_library_learns_only_unbiased_differences(tmp_path):
+    """Close effects make the race's choice depend on noise: the chosen child's all-pairs difference is then biased
+    upward, while what the card-value model receives (first batches, fresh validation pairs) is right on average."""
+    effects = {50: 0.03, 51: 0.02, 52: 0.01, 53: -0.01, 54: -0.02}
+
+    def truth(into, out):
+        return sum(effects.get(c, 0.0) for c in into) - sum(effects.get(c, 0.0) for c in out)
+
+    lab = make_lab()
+    lab.evaluator = lambda seed, opponents: Games(seed, effects=effects, copy=0.8)
+    config = RoundConfig(informed=4, explore=2, max_bundle=1, batch=10, max_pairs=60, look=20, cap=40,
+                         archive_min_pairs=10)  # fmt: skip
+    learned, chosen_all, chosen_fresh = [], [], []
+    for seed in range(40):
+        ev = Evolution(tmp_path / str(seed), Env())
+        ev.run_round(PARENTS, lab, RoundConfig(**{**config.__dict__, "seed": seed}), OPPONENTS)
+        learned += [o.diff - truth(o.into, o.out) for o in ev.model.observations]
+        for r in ev.lineage():
+            if r["validation"]:
+                t = truth([e["into"] for e in r["edits"]], [e["out"] for e in r["edits"]])
+                chosen_all.append(r["all_pairs"]["diff"] - t)
+                chosen_fresh.append(r["learned"][1]["diff"] - t)
+    se = np.std(learned) / np.sqrt(len(learned))
+    assert abs(np.mean(learned)) < 3 * se + 1e-3
+    assert abs(np.mean(chosen_fresh)) < 3 * np.std(chosen_fresh) / np.sqrt(len(chosen_fresh)) + 1e-3
+    assert np.mean(chosen_all) > np.mean(chosen_fresh) + 0.01  # the all-pairs number is selection-biased
+
+
+def test_appends_cut_a_torn_last_line_first(tmp_path):
+    from ygorl.build.evolve import GameLog, append_lines
+
+    path = tmp_path / "log.jsonl"
+    append_lines(path, ['{"a": 1}'])
+    with open(path, "a") as f:
+        f.write('{"a": 2, "cut by a cra')  # a crash in the middle of a write
+    append_lines(path, ['{"a": 3}'])
+    assert [json.loads(line) for line in path.read_text().splitlines()] == [{"a": 1}, {"a": 3}]
+    only = tmp_path / "only.jsonl"
+    only.write_text('{"frag')
+    append_lines(only, ['{"b": 1}'])
+    assert only.read_text() == '{"b": 1}\n'
+    # a game log with a torn line reads what it can and appends cleanly
+    games = tmp_path / "games.jsonl"
+    log = GameLog(Games(1), games)
+    log.play([(BASE, range(3))])
+    with open(games, "a") as f:
+        f.write('{"deck": "x", "pai')
+    again = GameLog(Games(1), games)
+    assert len(again.games_of(BASE)) == 3
+    again.play([(BASE, range(5))])
+    assert len(GameLog(Games(1), games).games_of(BASE)) == 5 and again.played == 4
+
+
+def test_elites_scored_under_another_opponent_mix_are_stale():
+    a = DeckArchive({"x": (2, (0.0, 1.0))})
+    d1, d2, d3 = Deck(main=(1,)), Deck(main=(2,)), Deck(main=(3,))
+    assert a.add("d1", d1, 0.8, {"x": 0.1}, mix="m1").status == "new"
+    assert a.add("d2", d2, 0.5, {"x": 0.1}, mix="m1").status == "rejected"
+    assert a.stale("m2") == 1 and a.stale("m1") == 0
+    fresh = a.add("d2", d2, 0.5, {"x": 0.1}, mix="m2")  # lower objective, but the elite's score is from another mix
+    assert fresh.status == "refreshed" and fresh.admitted and fresh.replaced == "d1" and a.stale("m2") == 0
+    assert a.add("d3", d3, 0.4, {"x": 0.1}, mix="m2").status == "rejected"  # pyribs dropped the stale 0.8 too
+    assert a.add("d3", d3, 0.6, {"x": 0.1}, mix="m2").status == "improved"
+    back = DeckArchive.from_dict(json.loads(json.dumps(a.to_dict())))
+    assert back.to_dict() == a.to_dict() and back.elite(fresh.cell)["mix"] == "m2"
+
+
+def test_the_archive_objective_is_a_lower_bound_and_the_mix_is_recorded(tmp_path):
+    ev, report = run(tmp_path)
+    for e in ev.archive.elites():
+        assert e["mix"] and e["objective"] < 1.0
+    assert report["archive"]["stale"] == 0
+    few = Evolution(tmp_path / "few", Env())
+    few.run_round(PARENTS, make_lab(), RoundConfig(**{**CONFIG.__dict__, "archive_min_pairs": 10_000}), OPPONENTS)
+    assert len(few.archive) == 0
+    assert {v["status"] for v in few.archive_applied.values()} == {"too_few_pairs"}
+    # a new opponent mix in the next round makes the old elites stale
+    ev2 = Evolution(tmp_path, Env())
+    other = [Opponent("meta2", Deck(main=(6,) * 40), 1.0)]
+    report2 = ev2.run_round(PARENTS, make_lab(), CONFIG, other)
+    assert report2["archive"]["stale"] < report["archive"]["elites"] + report2["archive"]["elites"]
+    assert any(v["status"] == "refreshed" for k, v in ev2.archive_applied.items() if k.startswith("r0002"))
+
+
+def test_manifest_edits_made_during_a_round_survive(tmp_path):
+    lab = make_lab()
+    manifest = tmp_path / "manifest.json"
+    (tmp_path / "decks").mkdir(parents=True)
+    (tmp_path / "decks" / "hand.ydk").write_text(BASE.to_ydk())
+
+    def evaluator(seed, opponents):  # someone edits the manifest while the round runs
+        data = {"format": "ygorl-deck-pool", "version": 1, "environment": Env().stamp(),
+                "decks": [{"id": "hand", "file": "decks/hand.ydk", "status": "active", "weight": 2.0}]}  # fmt: skip
+        manifest.write_text(json.dumps(data))
+        return Games(seed)
+
+    lab.evaluator = evaluator
+    Evolution(tmp_path, Env()).run_round(PARENTS, lab, CONFIG, OPPONENTS)
+    decks = json.loads(manifest.read_text())["decks"]
+    assert [d["id"] for d in decks][0] == "hand" and decks[0]["weight"] == 2.0
+    assert any(d["id"].startswith("evo-") for d in decks)

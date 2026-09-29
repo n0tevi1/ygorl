@@ -46,8 +46,9 @@ REACH = ("search", "special_summon")
 @dataclass(frozen=True)
 class Admission:
     """Outcome of :meth:`DeckArchive.add`: ``status`` is ``new`` (filled an empty cell), ``improved`` (beat the
-    cell's elite, whose id is ``replaced``), ``rejected`` (the cell's elite is at least as good) or ``invalid`` (a
-    descriptor or the objective is not finite)."""
+    cell's elite, whose id is ``replaced``), ``refreshed`` (replaced a stale elite: one scored under another opponent
+    mix, whatever its objective), ``rejected`` (the cell's elite is at least as good) or ``invalid`` (a descriptor or
+    the objective is not finite)."""
 
     status: str
     cell: int | None = None
@@ -55,11 +56,15 @@ class Admission:
 
     @property
     def admitted(self) -> bool:
-        return self.status in ("new", "improved")
+        return self.status in ("new", "improved", "refreshed")
 
 
 class DeckArchive:
-    """One elite deck per descriptor cell. ``grid`` maps each descriptor to (bins, (low, high))."""
+    """One elite deck per descriptor cell. ``grid`` maps each descriptor to (bins, (low, high)).
+
+    Objectives are only comparable under the same opponents and pilot, so each elite records the ``mix`` (an opaque
+    fingerprint of the opponent mix and the policy) it was scored under; an elite whose mix differs from the one a
+    newcomer brings is stale, and the newcomer takes its cell whatever the objectives (the cell is reset)."""
 
     def __init__(self, grid: Mapping[str, tuple[int, tuple[float, float]]] | None = None, *,
                  stamp: Mapping | None = None) -> None:  # fmt: skip
@@ -70,7 +75,7 @@ class DeckArchive:
         self.names = tuple(self.grid)
         self._ribs = GridArchive(solution_dim=1, dims=[b for b, _ in self.grid.values()],
                                  ranges=[r for _, r in self.grid.values()])  # fmt: skip
-        self._cells: dict[int, dict] = {}  # cell -> {"id", "deck", "objective", "descriptors"}
+        self._cells: dict[int, dict] = {}  # cell -> {"id", "deck", "objective", "descriptors", "mix"}
         self.replaced: list[str] = []
 
     def _measures(self, descriptors: Mapping[str, float]) -> np.ndarray:
@@ -84,24 +89,38 @@ class DeckArchive:
     def cell(self, descriptors: Mapping[str, float]) -> int:
         return int(self._ribs.index_of_single(self._measures(descriptors)))
 
-    def add(self, deck_id: str, deck: Deck, objective: float, descriptors: Mapping[str, float]) -> Admission:
+    def add(self, deck_id: str, deck: Deck, objective: float, descriptors: Mapping[str, float], *,
+            mix: str | None = None) -> Admission:  # fmt: skip
         values = [float(descriptors[n]) for n in self.names]
         if not math.isfinite(objective) or not all(math.isfinite(v) for v in values):
             return Admission("invalid")
         m = self._measures(descriptors)
         cell = int(self._ribs.index_of_single(m))
-        status = int(
-            self._ribs.add_single([float(len(self.replaced) + len(self._cells))], float(objective), m)["status"]
-        )
-        if status == 0:
-            return Admission("rejected", cell)
         old = self._cells.get(cell)
-        self._cells[cell] = {"id": deck_id, "deck": deck, "objective": float(objective),
-                             "descriptors": dict(zip(self.names, values))}  # fmt: skip
+        entry = {"id": deck_id, "deck": deck, "objective": float(objective),
+                 "descriptors": dict(zip(self.names, values)), "mix": mix}  # fmt: skip
+        if old is not None and old.get("mix") != mix:  # stale: reset the cell
+            self._cells[cell] = entry
+            self._rebuild()
+            self.replaced.append(old["id"])
+            return Admission("refreshed", cell, old["id"])
+        if int(self._ribs.add_single([0.0], float(objective), m)["status"]) == 0:
+            return Admission("rejected", cell)
+        self._cells[cell] = entry
         if old is not None:
             self.replaced.append(old["id"])
             return Admission("improved", cell, old["id"])
         return Admission("new", cell)
+
+    def _rebuild(self) -> None:
+        """pyribs keeps the best objective per cell and cannot lower one: re-add the current elites."""
+        self._ribs.clear()
+        for e in self._cells.values():
+            self._ribs.add_single([0.0], e["objective"], self._measures(e["descriptors"]))
+
+    def stale(self, mix: str | None) -> int:
+        """Elites scored under another mix than ``mix``."""
+        return sum(e.get("mix") != mix for e in self._cells.values())
 
     def elite(self, cell: int) -> dict | None:
         return self._cells.get(cell)
@@ -132,7 +151,8 @@ class DeckArchive:
         return {"format": FORMAT, "version": VERSION, "environment": self.stamp,
                 "grid": {k: [b, list(r)] for k, (b, r) in self.grid.items()},
                 "elites": [{"id": e["id"], "main": list(e["deck"].main), "extra": list(e["deck"].extra),
-                            "objective": e["objective"], "descriptors": e["descriptors"]} for e in self.elites()],
+                            "objective": e["objective"], "descriptors": e["descriptors"], "mix": e.get("mix")}
+                           for e in self.elites()],
                 "replaced": list(self.replaced)}  # fmt: skip
 
     @classmethod
@@ -142,7 +162,7 @@ class DeckArchive:
         a = cls({k: (b, tuple(r)) for k, (b, r) in d["grid"].items()}, stamp=d.get("environment"))
         for e in d.get("elites", []):
             deck = Deck(main=tuple(e["main"]), extra=tuple(e["extra"]), name=e["id"])
-            if not a.add(e["id"], deck, e["objective"], e["descriptors"]).admitted:
+            if not a.add(e["id"], deck, e["objective"], e["descriptors"], mix=e.get("mix")).admitted:
                 raise ValueError(f"archive elite {e['id']} does not fit its own grid")
         a.replaced = list(d.get("replaced", []))
         return a
