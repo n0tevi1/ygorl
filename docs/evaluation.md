@@ -249,6 +249,14 @@ AgentMatrix.load(path, env=env)
   输出写明用的是哪条路径；要跨机器逐位复现，请显式给 `--device`。
 - 尚可提速：现在每格调用一次 `play_policies`，一格只有 4 × 配对数局，每格末尾环境会部分空转；把同一组（词表 + 事件窗口）的格子合进一次调用会更快。
 
+### 参考小组（2026-09-29 起的做法）
+
+大矩阵（`out/strength/curve.json`，50 多个 agent）每加一个 agent 都要和全部已有 agent 各打 200 局（约 1 万局、20–40 分钟 GPU），并且随矩阵变大线性变贵。
+新检查点改为加进一张**固定的参考小组矩阵**：11 个锚点覆盖整个强度范围（random 以外的最弱到最强：CRIT-u2400、greedy、cap_big、CORPUS、V0、L05、BB、
+BBL05 种子 0 / 1、league、BBL05-u1200），用同一套 `ygorl strength --out out/strength/panel.json` 增量扩展，只与锚点（和同批新 agent）对局，约 2,000 局 / 个。
+锚点固定，所以不同时间加进来的检查点可以直接比较「对锚点的平均胜率」；需要全矩阵的 Nash / alpha-rank 时再单独扩展大矩阵。
+实验按「逐轮淘汰」安排：先看第 200 次更新在小组上的成绩，明显落后的臂不再跑到 400 次、不补种子。
+
 ## 批量评估（策略对策略，`ygorl.eval.batched`）
 
 `Arena` 每局是一个 Python `Duel`，策略 agent 在 CPU 上一次只答一个决策。调卡组要在很多牌组上打很多局网络策略之间的对局，
