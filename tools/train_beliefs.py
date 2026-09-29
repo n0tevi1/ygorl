@@ -46,7 +46,8 @@ from ygorl.env.belief_prior import (
     responded_labels,
     role_targets,
 )
-from ygorl.env.encoded import EncodedVecEnv
+from ygorl.env.driver import Game, drive
+from ygorl.env.encoded import EncodedEvent, EncodedVecEnv
 from ygorl.env.encoding import ACTION_KINDS
 from ygorl.env.events import E_EVENT
 from ygorl.env.privileged import belief_targets
@@ -156,48 +157,37 @@ def collect(args, db, vocab, meta, rogue, pools) -> dict[str, np.ndarray]:
     cfg = DuelConfig(max_turns=args.max_turns)
     rows: dict[str, list] = {k: [] for k in ("cards", "globals", "events", "event_mask", "actions", "game", *TARGET_KEYS,
                                              "copies_mask", "evidence", "order")}  # fmt: skip
-    state: dict[int, dict] = {}
-    started = 0
-
-    def launch(e: int) -> bool:
-        nonlocal started
-        if started >= args.games:
-            return False
-        rng = np.random.default_rng([args.seed, started])  # per game: independent of the thread timing
+    specs, deck_labels, rngs = [], [], []
+    for i in range(args.games):
+        rng = np.random.default_rng([args.seed, i])  # per game: independent of the thread timing
         (da, ka), (db_, kb) = sample_deck(rng, meta, rogue, pools), sample_deck(rng, meta, rogue, pools)
-        first = started % 2
-        spec = GameSpec(seed=args.seed * 100_000 + started, deck_a=da, deck_b=db_, first=first, config=cfg)
-        labels = (ka, kb)  # deck a, deck b
-        # engine player p's opponent's label:
-        state[e] = {"game": started, "op_label": [labels[spec.deck_of_seat(1 - p)] for p in (0, 1)],
-                    "trackers": [EvidenceTracker(meta), EvidenceTracker(meta)], "last": [None, None],
-                    "pending": [[], []], "rng": rng, "step": 0}  # fmt: skip
-        env.reset(e, spec)
-        started += 1
-        return True
+        specs.append(GameSpec(seed=args.seed * 100_000 + i, deck_a=da, deck_b=db_, first=i % 2, config=cfg))
+        deck_labels.append((ka, kb))  # deck a, deck b
+        rngs.append(rng)  # the same stream then picks the game's actions
 
-    active = sum(launch(e) for e in range(args.envs))
-    decisions = 0
-    t0 = time.time()
-    while active:
-        for ev in env.recv(1):
-            st = state[ev.env_id]
-            if ev.result is not None:
-                for p in (0, 1):
-                    last, pending = st["last"][p], st["pending"][p]
-                    if last is None or not pending:
-                        continue
-                    stream, n = last
-                    labels = responded_labels(stream[:n], [pos for _, pos in pending])
-                    if n >= STREAM:  # truncated stream: positions are unreliable
-                        labels[:] = -1
-                    for (i, _), y in zip(pending, labels):
-                        rows["responded"][i] = int(y)
-                if not launch(ev.env_id):
-                    active -= 1
+    def start(i: int, spec: GameSpec) -> dict:
+        # engine player p's opponent's label:
+        return {"op_label": [deck_labels[i][spec.deck_of_seat(1 - p)] for p in (0, 1)],
+                "trackers": [EvidenceTracker(meta), EvidenceTracker(meta)], "last": [None, None],
+                "pending": [[], []], "rng": rngs[i], "step": 0}  # fmt: skip
+
+    def on_result(game: Game, result: dict) -> None:
+        st = game.state
+        for p in (0, 1):
+            last, pending = st["last"][p], st["pending"][p]
+            if last is None or not pending:
                 continue
-            obs, p = ev.obs, ev.player
-            decisions += 1
+            stream, n = last
+            labels = responded_labels(stream[:n], [pos for _, pos in pending])
+            if n >= STREAM:  # truncated stream: positions are unreliable
+                labels[:] = -1
+            for (i, _), y in zip(pending, labels):
+                rows["responded"][i] = int(y)
+
+    def decide(ready: list[tuple[Game, EncodedEvent]]) -> list[int]:
+        actions = []
+        for game, ev in ready:
+            st, obs, p = game.state, ev.obs, ev.player
             evidence = st["trackers"][p].update(obs["cards"], obs["globals"])
             n_tok = int(obs["event_mask"].sum())
             st["last"][p] = (obs["events"], n_tok)
@@ -216,8 +206,8 @@ def collect(args, db, vocab, meta, rogue, pools) -> dict[str, np.ndarray]:
                 rows["events"].append(ev_win)
                 rows["event_mask"].append(ev_mask)
                 rows["actions"].append(obs["actions"][a : a + 1].copy())
-                rows["game"].append(st["game"])
-                rows["order"].append(st["game"] * 1_000_000 + st["step"])
+                rows["game"].append(game.index)
+                rows["order"].append(game.index * 1_000_000 + st["step"])
                 rows["deck_type"].append(st["op_label"][p])
                 rows["remaining_copies"].append(tg["remaining_copies"].targets.astype(np.int8))
                 rows["copies_mask"].append(tg["remaining_copies"].mask)
@@ -232,8 +222,12 @@ def collect(args, db, vocab, meta, rogue, pools) -> dict[str, np.ndarray]:
                 rows["evidence"].append(evidence)
                 if activate:
                     st["pending"][p].append((i, n_tok))
-            env.step(ev.env_id, a)
-    print(f"collected {len(rows['game'])} samples from {started} games / {decisions} decisions "
+            actions.append(a)
+        return actions
+
+    t0 = time.time()
+    decisions = drive(env, specs, decide, on_result, start=start)
+    print(f"collected {len(rows['game'])} samples from {len(specs)} games / {decisions} decisions "
           f"in {time.time() - t0:.0f}s", flush=True)  # fmt: skip
     ev = Evidence.stack(rows.pop("evidence"))
     data = {k: np.stack(v) if isinstance(v[0], np.ndarray) else np.asarray(v) for k, v in rows.items()}

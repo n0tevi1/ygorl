@@ -14,6 +14,8 @@ decisions and what to keep of a finished game.
 - **Batching**: each round waits for ``min(min_batch, running games)`` events; finished games are recorded and
   their slots refilled first, then ``decide`` answers all the ready decisions of the round at once and they are
   stepped in event order.
+- **Abandoning**: ``decide`` may answer :data:`ABANDON` instead of an action: the game is dropped where it stands
+  (no ``on_result``) and its slot starts the next spec, e.g. to read only the first decision of every game.
 
 The self-play :class:`ygorl.train.rollout.RolloutCollector` keeps its own loop: it holds columns at ``T`` rows and
 watches for stalled engines, which whole-game playing does not need.
@@ -37,6 +39,8 @@ class Game:
     state: Any = None  # the caller's per-game data (``start(index, spec)``), e.g. the two agents
 
 
+ABANDON = object()  # ``decide``'s answer for a game to drop at this decision (see the module docstring)
+
 Decide = Callable[[list[tuple[Game, Any]]], Sequence[Any]]
 
 
@@ -45,7 +49,8 @@ def drive(env, specs: Sequence[Any], decide: Decide, on_result: Callable[[Game, 
           on_error: Callable[[int, Any, Exception], None] | None = None) -> int:  # fmt: skip
     """Play every spec on ``env``'s slots; returns the number of decisions answered.
 
-    ``decide([(game, event), ...]) -> actions`` answers the round's ready decisions (one action per event, in order);
+    ``decide([(game, event), ...]) -> actions`` answers the round's ready decisions (one action per event, in order,
+    or :data:`ABANDON`);
     ``on_result(game, result)`` receives each finished game with the event's result. ``start(index, spec)``, if
     given, builds ``Game.state`` before the game is reset. ``on_error(index, spec, exc)``: see the module docstring.
     """
@@ -84,10 +89,13 @@ def drive(env, specs: Sequence[Any], decide: Decide, on_result: Callable[[Game, 
             continue
         actions = decide(ready)
         for (game, ev), action in zip(ready, actions, strict=True):
+            if action is ABANDON:
+                launch(ev.env_id)
+                continue
             game.steps += 1
             decisions += 1
             env.step(ev.env_id, action)
     return decisions
 
 
-__all__ = ["Decide", "Game", "drive"]
+__all__ = ["ABANDON", "Decide", "Game", "drive"]

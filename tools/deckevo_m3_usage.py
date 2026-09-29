@@ -1,8 +1,8 @@
 """M3 for the usage signals (#109, docs/spikes/deck-evolution.md §3): do dead-card rate, use rate or the advantage
 after use (Q - V̄ of the actions on a card) predict the M2 leave-one-out truth?
 
-Replays the parent decks of M2 on M2's own game specs (same decks, opponents and seeds; the policy's sampling is fresh)
-with a checkpoint's actor-critic, and records for deck a's player, per game and card: whether a copy was in hand,
+Replays the parent decks of M2 on M2's own game specs (same decks, opponents and seeds; the policy's sampling is fresh,
+from a seeded stream per game) with a checkpoint's actor-critic on the game driver (ygorl.env.driver), and records for deck a's player, per game and card: whether a copy was in hand,
 whether an action on it was ever legal, whether one was chosen, and Q(s, a) - sum_b pi(b) Q(s, b) of the chosen
 actions on it. Per card of the M2 sample:
 
@@ -14,8 +14,9 @@ actions on it. Per card of the M2 sample:
 Spearman (average ranks) against the LOO values within each deck and pooled on per-deck z-scores, with and without
 Exodia (whose win-condition pieces are never "used").
 
-Usage: tools/deckevo_m3_usage.py CHECKPOINT M2.json OUT.json"""
+Usage: tools/deckevo_m3_usage.py CHECKPOINT M2.json OUT.json [--pairs 500] [--env md-2026-09] [--device cuda]"""
 
+import argparse
 import json
 import sys
 from collections import defaultdict
@@ -30,15 +31,17 @@ from deckevo_m3_signals import spearman  # noqa: E402
 from ygorl.cards.ydk import load_ydk  # noqa: E402
 from ygorl.data.environment import load_environment  # noqa: E402
 from ygorl.engine.duel import DuelConfig, default_cards  # noqa: E402
+from ygorl.env.driver import drive  # noqa: E402
 from ygorl.env.encoded import EncodedVecEnv  # noqa: E402
 from ygorl.eval.arena import derive_seed  # noqa: E402
 from ygorl.eval.batched import paired_specs  # noqa: E402
 from ygorl.nets import collate  # noqa: E402
 from ygorl.nets.actor_critic import collate_privileged  # noqa: E402
-from ygorl.train.checkpoint import load_actor_critic  # noqa: E402
+from ygorl.train.checkpoint import load_actor_critic, torch_device  # noqa: E402
 
 HAND, CONTROLLER, CARD = 2, 4, 0  # card table: location 2 = hand, column 4 controller (0 = viewer), column 0 index
 ACTION_CARD = 2  # action table column 2: the card's vocab index
+SAMPLE_SEED = 0  # game i samples its decisions from np.random.default_rng([SAMPLE_SEED, i])
 
 
 def usage(model, vocab, event_length, base, meta, opp_idx, pairs, device):
@@ -51,39 +54,21 @@ def usage(model, vocab, event_length, base, meta, opp_idx, pairs, device):
     env = EncodedVecEnv(256, 8, cards=cards, vocab=vocab, event_length=event_length, privileged=True, skip_forced=True)
     games = [defaultdict(lambda: [False, False, False]) for _ in specs]  # card -> [in hand, legal, chosen]
     adv = defaultdict(list)
-    queue = iter(range(len(specs)))
-    running = {}
-    gen = torch.Generator(device=device).manual_seed(0)
 
-    def launch(e):
-        for i in queue:
-            env.reset(e, specs[i])
-            running[e] = i
-            return True
-        return False
-
-    active = sum(launch(e) for e in range(env.num_envs))
-    while active:
-        evs = env.recv(min(64, active))
-        ready = [ev for ev in evs if ev.result is None]
-        for ev in evs:
-            if ev.result is not None and not launch(ev.env_id):
-                active -= 1
-        if not ready:
-            continue
-        with torch.no_grad():
-            o = model(
-                collate([ev.obs for ev in ready], device), collate_privileged([ev.privileged for ev in ready], device)
-            )
-            pi = torch.softmax(o.logits.float(), -1)
-            acts = torch.multinomial(pi, 1, generator=gen).squeeze(1)
-            vbar = (pi * o.q.float()).sum(-1)
-            gain = (o.q.float().gather(1, acts[:, None]).squeeze(1) - vbar).cpu().numpy()
-        acts = acts.tolist()
-        for ev, a, g in zip(ready, acts, gain):
-            i = running[ev.env_id]
-            if ev.player == specs[i].seat_of_deck(0):  # deck a's player
-                rec, obs = games[i], ev.obs
+    @torch.no_grad()
+    def decide(ready):
+        evs = [ev for _, ev in ready]
+        o = model(collate([ev.obs for ev in evs], device), collate_privileged([ev.privileged for ev in evs], device))
+        pi = torch.softmax(o.logits.float(), -1)
+        cdf = np.cumsum(pi.cpu().numpy().astype(np.float64), -1)
+        # each game samples from its own seeded stream: the choices do not depend on how the games were batched
+        acts = [min(int(np.searchsorted(c, game.state.random() * c[-1], side="right")), len(c) - 1)
+                for (game, _), c in zip(ready, cdf)]  # fmt: skip
+        vbar = (pi * o.q.float()).sum(-1)
+        gain = (o.q.float().gather(1, torch.tensor(acts, device=pi.device)[:, None]).squeeze(1) - vbar).cpu().numpy()
+        for (game, ev), a, g in zip(ready, acts, gain):
+            if ev.player == game.spec.seat_of_deck(0):  # deck a's player
+                rec, obs = games[game.index], ev.obs
                 c = obs["cards"]
                 for ci in c[(c[:, 1] == HAND) & (c[:, CONTROLLER] == 0), CARD].tolist():
                     if ci in idx:
@@ -96,7 +81,10 @@ def usage(model, vocab, event_length, base, meta, opp_idx, pairs, device):
                 if chosen in idx:
                     rec[chosen][2] = True
                     adv[chosen].append(float(g))
-            env.step(ev.env_id, a)
+        return acts
+
+    drive(env, specs, decide, lambda game, result: None, min_batch=64,
+          start=lambda i, spec: np.random.default_rng([SAMPLE_SEED, i]))  # fmt: skip
     out = {}
     for ci, pw in idx.items():
         hand = sum(g[ci][0] for g in games if ci in g)
@@ -110,23 +98,31 @@ def usage(model, vocab, event_length, base, meta, opp_idx, pairs, device):
 
 
 def main():
-    ckpt, m2, out = sys.argv[1], sys.argv[2], sys.argv[3]
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("checkpoint")
+    ap.add_argument("m2", help="the .json summary written by deckevo_m2_loo.py")
+    ap.add_argument("out")
+    ap.add_argument("--pairs", type=int, default=500)
+    ap.add_argument("--env", default="md-2026-09")
+    ap.add_argument("--device", default="cuda")
+    args = ap.parse_args()
+    ckpt, m2, out, pairs = args.checkpoint, args.m2, args.out, args.pairs
+    device = torch_device(args.device)
     cards = default_cards()
-    env = load_environment("md-2026-09", cards=cards)
+    env = load_environment(args.env, cards=cards)
     meta = [m.deck for m in env.meta_decks]
     w = np.array([m.share for m in env.meta_decks], dtype=float)
     summary = json.loads(Path(m2).read_text())
-    pairs = 500
     opp_idx = [int(np.random.default_rng(derive_seed(11, 2, k)).choice(len(meta), p=w / w.sum())) for k in range(pairs)]
     ac = load_actor_critic(ckpt)
-    model, vocab, event_length = ac.model.to("cuda"), ac.vocab, ac.event_length
+    model, vocab, event_length = ac.model.to(device), ac.vocab, ac.event_length
     names = ("dead_rate", "idle_rate", "use_rate", "advantage")
     signs = {"dead_rate": -1, "idle_rate": -1, "use_rate": 1, "advantage": 1}  # higher = more valuable
     pooled = {n: ([], [], [], []) for n in names}  # sig, truth, sig without Exodia, truth without Exodia
     res = []
     for deck in summary:
         base = load_ydk(env.artifacts_dir / deck["file"])
-        sig = usage(model, vocab, event_length, base, meta, opp_idx, pairs, "cuda")
+        sig = usage(model, vocab, event_length, base, meta, opp_idx, pairs, device)
         loo = {r["card"]: r["value"] for r in deck["loo"]}
         row = {"type": deck["type"], "cards": {str(c): {**sig[c], "loo": loo[c]} for c in loo}}
         line = []

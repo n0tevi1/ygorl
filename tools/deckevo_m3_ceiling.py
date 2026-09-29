@@ -11,23 +11,10 @@ from pathlib import Path
 
 import numpy as np
 
-from ygorl.build.diagnose import opening_effects
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deckevo_m3_signals import spearman  # noqa: E402
 
-
-def ranks(x):
-    """Average ranks (ties share the mean of their positions)."""
-    x = np.asarray(x, dtype=float)
-    order = np.argsort(x, kind="stable")
-    r = np.empty(len(x))
-    r[order] = np.arange(len(x))
-    for v in np.unique(x):
-        tie = x == v
-        r[tie] = r[tie].mean()
-    return r
-
-
-def spearman(a, b):
-    return float(np.corrcoef(ranks(a), ranks(b))[0, 1])
+from ygorl.build.diagnose import opening_effects  # noqa: E402
 
 
 def z(x):

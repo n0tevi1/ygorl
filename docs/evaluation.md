@@ -265,6 +265,8 @@ AgentMatrix.load(path, env=env)
 - **调度**交给对局驱动 `ygorl.env.driver.drive(env, specs, decide, on_result)`：它持有对局规格队列、把规格填进空闲槽位、
   一局结束就在同一槽位开下一局；开局失败交给 `on_error`（批量评估记为 `exception`，未给时直接抛出）；每轮等
   `min(min_batch, 在跑的局数)` 个事件，先记结束的局、补开新局，再把本轮所有就绪决策一次交给 `decide`（事件 → 动作）。
+  `decide` 也可以对某个决策答 `ABANDON`：这局就停在这里（不调 `on_result`），槽位直接开下一局——只读每局第一个决策的
+  critic 起手值（`tools/deckevo_critic_open.py`）、oracle 搜索在搜索点暂停真实对局（`tools/oracle_search.py`）用它。
   `play_policies`、`EncodedVecEnv.play`（测试 / 基准用的确定性选择）与 `run_games`（`VecDuelEnv` 上的 Python agent）都走它，
   调用方只写「怎么答一批决策」和「一局结束记什么」；驱动本身用假环境测试（`tests/test_driver.py`）。
   计分按 `GameSpec.deck_of_seat` / `seat_of_deck` 把引擎座位换成牌组。前向用 `nets.batch.policy_logits`（有 `policy_logits`

@@ -5,10 +5,10 @@ parent - child is that card's (one copy's) marginal value. The parent's games ar
 hand (the engine draws from the end of the main deck list, so the opening hand is the last 5 cards of the shuffled
 deck in the game spec) for M3.
 
-Usage: tools/deckevo_m2_loo.py CHECKPOINT N_DECKS CARDS PAIRS OUT.npz"""
+Usage: tools/deckevo_m2_loo.py CHECKPOINT N_DECKS CARDS PAIRS OUT.npz [--env md-2026-09] [--device cuda]"""
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -20,15 +20,25 @@ from ygorl.engine.duel import DuelConfig, default_cards
 from ygorl.env.encoded import EncodedVecEnv
 from ygorl.eval.arena import derive_seed
 from ygorl.eval.batched import paired_specs, play_policies
-from ygorl.train.checkpoint import load_actor
+from ygorl.train.checkpoint import load_actor, torch_device
 
 BLANK = 65957473  # Metal Armored Bug
 
 
 def main():
-    ckpt, n_decks, n_cards, pairs, out = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("checkpoint")
+    ap.add_argument("n_decks", type=int)
+    ap.add_argument("cards", type=int)
+    ap.add_argument("pairs", type=int)
+    ap.add_argument("out")
+    ap.add_argument("--env", default="md-2026-09")
+    ap.add_argument("--device", default="cuda")
+    args = ap.parse_args()
+    ckpt, n_decks, n_cards, pairs, out = args.checkpoint, args.n_decks, args.cards, args.pairs, args.out
+    device = torch_device(args.device)
     cards = default_cards()
-    env = load_environment("md-2026-09", cards=cards)
+    env = load_environment(args.env, cards=cards)
     corpus = json.loads(env.artifact_path("deck_corpus.json").read_text())
     lists = [(e["type"], e["file"], load_ydk(env.artifacts_dir / e["file"])) for e in corpus["decks"]]
     train = {p.name for p in Path("out/corpus/train").glob("*.ydk")}
@@ -38,7 +48,7 @@ def main():
     meta = [m.deck for m in env.meta_decks]
     weights = np.array([m.share for m in env.meta_decks], dtype=float)
     pol = load_actor(ckpt)
-    net = pol.net.to("cuda")
+    net = pol.net.to(device)
     config = DuelConfig(max_decisions=4000)
     opp_idx = [int(np.random.default_rng(derive_seed(11, 2, k)).choice(len(meta), p=weights / weights.sum()))
                for k in range(pairs)]  # fmt: skip
@@ -54,7 +64,7 @@ def main():
                  for s in paired_specs(d, meta[opp_idx[k]], 1, derive_seed(11, 1, k), config)]  # fmt: skip
         vec = EncodedVecEnv(min(256, len(specs)), 8, cards=cards, vocab=pol.vocab, event_length=pol.event_length,
                             skip_forced=True)  # fmt: skip
-        records, stats = play_policies(vec, specs, net, device="cuda")
+        records, stats = play_policies(vec, specs, net, device=device)
         s = np.array([np.nan if r.reason == "exception" else 1.0 if r.winner == 0 else 0.5 if r.winner is None else 0.0
                       for r in records]).reshape(len(decks), pairs, 2)  # fmt: skip
         parent_specs = specs[: pairs * 2]
