@@ -4,10 +4,10 @@ against the environment's meta decks by share), but keep every game's outcome. R
 Pearson correlation rho between parent and child outcomes game by game and pair by pair, and the standard deviation
 of the paired difference (what sets the games needed to confirm a change).
 
-Usage: tools/deckevo_m1_rho.py CHECKPOINT N_DECKS CHILDREN PAIRS OUT.json"""
+Usage: tools/deckevo_m1_rho.py CHECKPOINT N_DECKS CHILDREN PAIRS OUT.json [--env md-2026-09] [--device cuda]"""
 
+import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -19,19 +19,23 @@ from ygorl.engine.duel import DuelConfig, default_cards
 from ygorl.env.encoded import EncodedVecEnv
 from ygorl.eval.arena import derive_seed
 from ygorl.eval.batched import paired_specs, play_policies
-from ygorl.train.checkpoint import load_actor
+from ygorl.train.checkpoint import load_actor, torch_device
 
 
 def main():
-    ckpt, n_decks, n_children, pairs, out = (
-        sys.argv[1],
-        int(sys.argv[2]),
-        int(sys.argv[3]),
-        int(sys.argv[4]),
-        sys.argv[5],
-    )
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("checkpoint")
+    ap.add_argument("n_decks", type=int)
+    ap.add_argument("children", type=int)
+    ap.add_argument("pairs", type=int)
+    ap.add_argument("out")
+    ap.add_argument("--env", default="md-2026-09")
+    ap.add_argument("--device", default="cuda")
+    args = ap.parse_args()
+    ckpt, n_decks, n_children, pairs, out = args.checkpoint, args.n_decks, args.children, args.pairs, args.out
+    device = torch_device(args.device)
     cards = default_cards()
-    env = load_environment("md-2026-09", cards=cards)
+    env = load_environment(args.env, cards=cards)
     corpus = json.loads(env.artifact_path("deck_corpus.json").read_text())
     lists = [(e["type"], e["file"], load_ydk(env.artifacts_dir / e["file"])) for e in corpus["decks"]]
     train = {p.name for p in Path("out/corpus/train").glob("*.ydk")}
@@ -41,9 +45,9 @@ def main():
     meta = [m.deck for m in env.meta_decks]
     weights = np.array([m.share for m in env.meta_decks], dtype=float)
     pol = load_actor(ckpt)
-    net = pol.net.to("cuda")
+    net = pol.net.to(device)
     config = DuelConfig(max_decisions=4000)
-    res = {"checkpoint": ckpt, "pairs": pairs, "decks": []}
+    res = {"checkpoint": ckpt, "environment": env.version, "pairs": pairs, "decks": []}
     all_g, all_p, all_d = [], [], []
     for dtype, file, base in picks:
         same = [d for t, _, d in lists if t == dtype and d is not base]
@@ -58,7 +62,7 @@ def main():
         ]
         vec = EncodedVecEnv(min(256, len(specs)), 8, cards=cards, vocab=pol.vocab, event_length=pol.event_length,
                             skip_forced=True)  # fmt: skip
-        records, stats = play_policies(vec, specs, net, device="cuda")
+        records, stats = play_policies(vec, specs, net, device=device)
         s = np.array([np.nan if r.reason == "exception" else 1.0 if r.winner == 0 else 0.5 if r.winner is None else 0.0
                       for r in records]).reshape(len(decks), pairs, 2)  # fmt: skip
         par_g, par_p = s[0].reshape(-1), s[0].mean(-1)

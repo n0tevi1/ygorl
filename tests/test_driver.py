@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from ygorl.env.driver import drive
+from ygorl.env.driver import ABANDON, drive
 
 
 @dataclass
@@ -17,7 +17,7 @@ class Event:
 class FakeEnv:
     """A game spec is its length: that many decisions (players alternate), then a result with the actions taken.
 
-    A negative spec cannot start. ``recv`` returns every ready event, as a real environment does once ``min_events``
+    A negative spec cannot start. A game awaiting its answer can be reset (abandoned: it simply ends). ``recv`` returns every ready event, as a real environment does once ``min_events``
     are ready; with ``max_events`` it returns at most that many, and none on every third call (a timeout), fewer than
     ``min_events`` asked for. It asserts the driver never waits for more events than games are running.
     """
@@ -30,8 +30,14 @@ class FakeEnv:
         self.ready: list[Event] = []
         self.resets: list[tuple[int, int]] = []  # (env, spec) in reset order
         self.waits: list[int] = []
+        self.awaiting: set[int] = set()  # slots whose decision was returned by recv and not answered yet
+        self.abandoned: list[int] = []  # specs of games reset while awaiting an answer
 
     def reset(self, env_id: int, spec: int) -> None:
+        if env_id in self.awaiting:
+            self.awaiting.discard(env_id)
+            self.abandoned.append(self.games.pop(env_id)[0])
+            self.running -= 1
         assert env_id not in self.games, "a slot was reset while its game was running"
         if spec < 0:
             raise ValueError(f"bad spec {spec}")
@@ -41,6 +47,8 @@ class FakeEnv:
         self._emit(env_id)
 
     def step(self, env_id: int, action) -> None:
+        assert env_id in self.awaiting, "a decision was answered before it was received"
+        self.awaiting.discard(env_id)
         self.games[env_id][1].append(action)
         self._emit(env_id)
 
@@ -52,6 +60,7 @@ class FakeEnv:
             n = 0 if len(self.waits) % 3 == 0 else min(n, self.max_events)
         out, self.ready = self.ready[:n], self.ready[n:]
         self.running -= sum(ev.result is not None for ev in out)
+        self.awaiting |= {ev.env_id for ev in out if ev.result is None}
         return out
 
     def _emit(self, env_id: int) -> None:
@@ -144,3 +153,16 @@ def test_partial_and_empty_recv_still_finishes_every_game(max_events):
     for i, (_, steps, res) in results.items():
         assert res == {"spec": specs[i], "actions": [(i, s) for s in range(specs[i])]} and steps == specs[i]
     assert max(batches) <= max_events and 3 in env.waits  # smaller batches than asked for, and some empty rounds
+
+
+def test_abandoned_games_end_without_a_result_and_free_their_slot():
+    env = FakeEnv(2)
+    results = {}
+
+    def decide(ready):
+        # specs 1 and 3 are dropped at their first decision; the others play out
+        return [ABANDON if game.spec in (1, 3) else 0 for game, _ in ready]
+
+    n = drive(env, [2, 1, 3, 2, 4], decide, lambda game, res: results.setdefault(game.index, res["actions"]))
+    assert sorted(results) == [0, 3, 4] and sorted(env.abandoned) == [1, 3] and not env.games
+    assert n == 2 + 2 + 4 and [s for _, s in env.resets] == [2, 1, 3, 2, 4]
