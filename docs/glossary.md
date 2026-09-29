@@ -118,8 +118,10 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | evolution step / round | 进化步骤 / 一轮进化 | 选亲本 → 诊断 → 子代 → L0 筛 → 前二 Thompson 采样 → 序贯复核 → 通过者以试用状态入池；独立进程，状态可续跑（`ygorl.build.evolve`，`tools/evolve_decks.py`，tuning.md「进化步骤」） |
 | deck lineage | 卡组谱系 | 每个被评估子代一条记录：亲本、改动、预测增益、实测配对差与区间、对局数、检查点、环境、是否通过（`lineage.jsonl`） |
 | association rule / support / confidence / lift | 关联规则 / 支持度 / 置信度 / 提升度 | 「跑 A（和 B）的卡表也跑 C」：同时含前件与 C 的卡表占比 / 含前件的卡表里含 C 的比例 / 置信度 ÷ P(C)；牌组语料上挖出，只作进化的候选来源（`ygorl.build.rules`，tuning.md「关联规则候选」） |
-| child generator | 子代生成器 | 提出子代的来源：`informed`（卡片价值模型）、`explore`（随机替换）、`rules`（关联规则）；记在谱系的 `generator` |
+| child generator | 子代生成器 | 提出子代的来源：`mutation`（`informed_children`：有依据 / 探索）、`crossover`（交叉）、`rules`（关联规则）；记在谱系的 `generator`，报告按它统计通过率 |
 | package completion | 引擎包补全 | 给定部分引擎包，返回语料里通常与之同在的缺失成员（`DeckRules.complete`，#113） |
 | L0 screen | L0 筛 | 零对局成本的预筛：critic 在公共随机数起手上比较子代与亲本的开局值；M4 通过前默认关闭（`shadow` 只计数） |
 | MAP-Elites archive / admission | MAP-Elites 档案 / 入选 | 按五个描述符分格、每格留胜率下界最高的卡组（pyribs）；填入空格、严格胜过格内精英，或取代对手分布已变的过期精英即入选（`ygorl.build.archive`） |
+| crossover child / mate | 交叉子代 / 配偶 | 本轮亲本与一个档案精英（配偶，按格子距离偏向远处格子抽取）按卡表交叉、换入配偶不超过一半差异的子代；以亲本为配对基准，谱系 `generator = "crossover"`（`ygorl.build.crossover`，tuning.md「交叉子代」） |
+| cell distance | 格子距离 | 两组描述符在 MAP-Elites 网格上各维格序号差之和（只算双方都有值的描述符） |
 | descriptor proxy | 描述符代理 | 真值要求解器的描述符的廉价近似：combo 长度 ≈ 检索链深度，卡手率 ≈ 起手没有启动卡的概率（tuning.md「进化步骤」） |

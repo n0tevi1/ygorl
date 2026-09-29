@@ -147,8 +147,9 @@ def test_rule_children_in_the_evolution_step_record_their_generator(tmp_path):
     rows = [r for r in lineage if r["generator"] == "rules"]
     assert rows and all(r["kind"] == "rules" for r in rows)
     assert all(any(e["into"] == 50 for e in r["edits"]) for r in rows)
-    assert {r["generator"] for r in lineage} == {"informed", "explore", "rules"}
-    g = report["by_generator"]["rules"]
-    assert g["children"] == len(rows) and g["first_batch"]["children"] == len(rows)
-    assert sum(x["children"] for x in report["by_generator"].values()) == report["children"]
-    assert "rules:" in (tmp_path / "s" / "rounds" / "0001" / "report.txt").read_text()
+    assert {r["generator"] for r in lineage} == {"mutation", "rules"}
+    assert all(r["learned"][0]["source"] == "first_batch" for r in rows)  # rule children feed the signal library too
+    g = report["generators"]["round"]["rules"]
+    assert g["children"] == len(rows) and g["accepted_rate"] == g["accepted"] / g["children"]
+    assert sum(x["children"] for x in report["generators"]["round"].values()) == report["children"]
+    assert "rules " in (tmp_path / "s" / "rounds" / "0001" / "report.txt").read_text()

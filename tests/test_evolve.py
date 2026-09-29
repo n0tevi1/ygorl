@@ -402,3 +402,35 @@ def test_manifest_edits_made_during_a_round_survive(tmp_path):
     decks = json.loads(manifest.read_text())["decks"]
     assert [d["id"] for d in decks][0] == "hand" and decks[0]["weight"] == 2.0
     assert any(d["id"].startswith("evo-") for d in decks)
+
+
+# ------------------------------------------------------------------ crossover children (#141)
+
+
+def test_the_evolution_step_evaluates_crossover_children_and_records_both_parents(tmp_path):
+    config = RoundConfig(**{**CONFIG.__dict__, "crossover": 2})
+    ev, first = run(tmp_path, config=config)
+    assert "crossover" not in first["generators"]["round"]  # the archive was empty when the round began
+    assert len(ev.archive) >= 2
+    again = Evolution(tmp_path, Env())
+    report = again.run_round(PARENTS, make_lab(), config, OPPONENTS)
+    assert report["generators"]["round"]["crossover"]["children"] == 2
+    assert report["generators"]["cumulative"]["mutation"]["children"] == 12
+    crossed = [r for r in again.lineage() if r["generator"] == "crossover"]
+    assert len(crossed) == 2
+    elites = {e["id"]: e for e in ev.archive.elites()}
+    for r in crossed:
+        assert r["round"] == 2 and r["kind"] == "crossover" and r["parent"]["id"] == "corpus:base"
+        assert set(r["mate"]) == {"id", "cell", "key", "distance"} and r["mate"]["id"] in elites
+        assert r["mate"]["cell"] == elites[r["mate"]["id"]]["cell"] and r["key"] != r["mate"]["key"]
+        assert r["edits"] and r["search"]["pairs"] >= CONFIG.batch  # same evaluation path: Thompson's first batch
+        assert r["learned"] and r["learned"][0]["source"] == "first_batch"
+    assert all(r["generator"] == "mutation" and r["mate"] is None for r in again.lineage() if r["kind"] != "crossover")
+
+
+def test_crossover_is_off_by_default(tmp_path):
+    ev, _ = run(tmp_path)
+    again = Evolution(tmp_path, Env())
+    report = again.run_round(PARENTS, make_lab(), CONFIG, OPPONENTS)
+    assert set(report["generators"]["cumulative"]) == {"mutation"}
+    assert not any(r["kind"] == "crossover" for r in again.lineage())
