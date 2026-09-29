@@ -129,15 +129,32 @@ class PairedEvaluator:
             return np.zeros((0, len(pairs)))
         return np.stack(self.play([(d, pairs) for d in decks]))
 
-    def play(self, jobs: Sequence[tuple[Deck, range]]) -> list[np.ndarray]:
-        """One score per pair of each ``(deck, pairs)`` job, all jobs in one batch (the jobs may cover different
-        pairs: an allocator that gives each candidate its own number of pairs still fills the GPU)."""
-        from ygorl.eval.batched import paired_specs, play_policies  # needs PyTorch (the train extra)
+    def specs(self, deck: Deck, pairs: Iterable[int]) -> list:
+        """The game specs of ``deck`` on ``pairs``: two per pair, the deck going first then second."""
+        from ygorl.eval.batched import paired_specs  # needs PyTorch (the train extra)
 
-        specs = [s for d, pairs in jobs for k in pairs
-                 for s in paired_specs(d, self._opponent(k), 1, derive_seed(self.seed, 1, k), self.config)]  # fmt: skip
+        return [s for k in pairs
+                for s in paired_specs(deck, self._opponent(k), 1, derive_seed(self.seed, 1, k), self.config)]  # fmt: skip
+
+    def opening_hands(self, deck: Deck, pairs: range) -> list[tuple[int, ...]]:
+        """The opening hand ``deck`` is dealt on each pair (both games of a pair deal the same hand), without
+        playing: the shuffle depends on the pair's seed only (docs/tuning.md, ``ygorl.build.diagnose``)."""
+        from ygorl.build.diagnose import opening_hand
+        from ygorl.engine.duel import shuffle_deck
+
+        if not self.config.shuffle_decks:
+            return [opening_hand(deck.main) for _ in pairs]
+        return [opening_hand(shuffle_deck(deck.main, derive_seed(derive_seed(self.seed, 1, k), 0), 0)) for k in pairs]
+
+    def play(self, jobs: Sequence[tuple[Deck, range]], *, per_game: bool = False) -> list[np.ndarray]:
+        """One score per pair of each ``(deck, pairs)`` job, all jobs in one batch (the jobs may cover different
+        pairs: an allocator that gives each candidate its own number of pairs still fills the GPU). With
+        ``per_game``, each job's scores are ``[pair, 2]``: the game the deck went first, then the one it went second."""
+        from ygorl.eval.batched import play_policies  # needs PyTorch (the train extra)
+
+        specs = [s for d, pairs in jobs for s in self.specs(d, pairs)]
         if not specs:
-            return [np.zeros(0) for _ in jobs]
+            return [np.zeros((0, 2) if per_game else 0) for _ in jobs]
         env = self.env_factory(min(self.num_envs, len(specs)))
         records, stats = play_policies(env, specs, self.policy, self.opponent, device=self.device)
         self.games += len(specs)
@@ -151,8 +168,11 @@ class PairedEvaluator:
             self.seconds += time.perf_counter() - t0
         out, at = [], 0
         for _, pairs in jobs:
-            g = s[at : at + 2 * len(pairs)].reshape(len(pairs), 2)
+            g = s[at : at + 2 * len(pairs)].reshape(len(pairs), 2)  # paired_specs: deck a first, then second
             at += 2 * len(pairs)
+            if per_game:
+                out.append(g)
+                continue
             with np.errstate(invalid="ignore"), warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN pairs stay NaN
                 out.append(np.nanmean(g, -1))

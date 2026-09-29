@@ -1,0 +1,678 @@
+"""One step of deck evolution (#111, spec #105 「微调」, docs/tuning.md「进化步骤」).
+
+:class:`Evolution` owns the evolution's state in one directory, bound to one environment:
+
+- ``manifest.json``: the deck-pool manifest the trainer reads (``ygorl-deck-pool``, training.md §8.3), plus an
+  ``environment`` stamp; accepted children go in as ``probation`` decks, their lists in ``decks/<id>.ydk``;
+- ``archive.json``: the MAP-Elites archive (:class:`ygorl.build.archive.DeckArchive`);
+- ``signals.json``: the signal library (:class:`ygorl.build.signals.CardValueModel` and
+  :class:`ygorl.build.signals.Calibration`);
+- ``lineage.jsonl``: one record per evaluated child;
+- ``rounds/NNNN/``: a round's settings and per-parent results (``round.json``), every game it played
+  (``games-<parent>.jsonl``) and its report (``report.json``, ``report.txt``).
+
+:meth:`Evolution.run_round` runs one round. Per parent: optional diagnosis (the parent's first pairs; its
+opening-hand effects only reach the prior through the calibration table, where they weigh 0 until they prove
+themselves) → ``informed_children`` → the L0 screen (off by default; ``shadow`` only counts what it would remove) →
+top-two Thompson sampling → sequential validation of the chosen child → every evaluated child's paired difference
+into the card-value model and the calibration table, every evaluated deck into the archive, the accepted child into
+the manifest, and a lineage record per child.
+
+Resuming: every game result is appended to the round's game log as it arrives, and the round replays
+deterministically (fixed seeds per round and parent), so a rerun after a crash reads the games it already has
+instead of playing them. A parent's result is written to ``round.json`` before its side effects, which are
+idempotent (keyed by the child's id), so a crash between the two is repaired by the next run.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import asdict, dataclass, field, replace
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from ygorl.build.archive import DESCRIPTORS, DeckArchive
+from ygorl.build.diagnose import opening_effects
+from ygorl.build.selection import SD_PAIR, sequential_validate, top_two_thompson
+from ygorl.build.signals import Calibration, CardValueModel, Observation, combine_prior, informed_children
+from ygorl.cards.ydk import Deck, parse_ydk
+from ygorl.data.environment import EnvironmentConfigError
+from ygorl.eval.arena import derive_seed
+
+MANIFEST_FORMAT = "ygorl-deck-pool"  # ygorl.train.selfplay.MANIFEST_FORMAT (not imported: that module needs PyTorch)
+SIGNALS_FORMAT = "ygorl-signal-library"
+ROUND_FORMAT = "ygorl-evolution-round"
+# per-card signals and their weights before evidence: M3 found no cheap signal that predicts a card's value
+SIGNAL_DEFAULTS = {"opening_effect": 0.0}
+LIVE = ("probation", "active")
+
+
+@dataclass(frozen=True)
+class Parent:
+    id: str  # manifest id, or e.g. "corpus:<file stem>"
+    deck: Deck
+    type: str  # the deck type the card-value model files observations under
+
+
+@dataclass(frozen=True)
+class Opponent:
+    name: str
+    deck: Deck
+    weight: float
+
+
+@dataclass
+class RoundConfig:
+    informed: int = 6
+    explore: int = 2
+    max_bundle: int = 3
+    diagnose_pairs: int = 0  # the parent's first pairs, played up front (they are the parent's baseline too)
+    batch: int = 25
+    max_pairs: int = 600
+    batches_per_round: int = 4
+    confidence: float = 0.95
+    look: int = 100
+    cap: int = 1000
+    alpha: float = 0.025
+    min_effect: float = 0.02
+    budget: int | None = None  # games per round: no parent starts once the round has played this many
+    l0: str = "off"  # "off", "shadow" (count what the screen would remove) or "on"
+    l0_min: float = -0.02  # children the screen predicts below this (win-rate units) are removed
+    seed: int = 0
+
+
+@dataclass
+class Lab:
+    """What a round needs from the environment and the policy. The command line builds it from ``--env`` and
+    ``--checkpoint``; tests build stand-ins.
+
+    ``evaluator(seed, opponents)`` returns a paired evaluator (:class:`ygorl.build.tuner.PairedEvaluator`: ``play(jobs,
+    per_game=True)``, optionally ``opening_hands``); ``pool(parent)`` the candidate cards; ``descriptors(deck)`` the
+    deck-list descriptors (:func:`ygorl.build.archive.deck_descriptors`); ``screen(evaluator, parent, children)`` the
+    L0 screen's predicted difference per child (win-rate units, on the evaluator's pairs: common random numbers);
+    ``checkpoint`` what the lineage records about the policy."""
+
+    evaluator: Callable[[int, Sequence[Opponent]], Any]
+    legal: Callable[[Deck], bool]
+    is_extra: Callable[[int], bool]
+    pool: Callable[[Parent], Sequence[int]]
+    protected: Callable[[Deck], set[int]] = lambda deck: set()
+    descriptors: Callable[[Deck], Mapping[str, float]] = lambda deck: {}
+    screen: Callable[[Any, Deck, Sequence[Deck]], Sequence[float]] | None = None
+    checkpoint: Mapping[str, Any] = field(default_factory=dict)
+
+
+# ------------------------------------------------------------------ files
+
+
+def _write(path: Path, text: str) -> None:
+    """Atomic replace (a reader never sees half a file: the trainer rereads the manifest while we write it)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _json(obj) -> str:
+    return json.dumps(obj, ensure_ascii=False, indent=1, allow_nan=False, default=_default) + "\n"
+
+
+def _default(o):
+    if isinstance(o, np.generic):
+        return o.item()
+    raise TypeError(f"not JSON serializable: {type(o).__name__}")
+
+
+def _finite(x: float) -> float | None:
+    return float(x) if x is not None and math.isfinite(x) else None
+
+
+def deck_key(deck: Deck) -> str:
+    """Identity of a deck list *in order* (in-place edits keep positions, and the order decides the shuffle)."""
+    return hashlib.sha1(f"{deck.main}|{deck.extra}".encode()).hexdigest()[:16]
+
+
+def _deck_json(deck: Deck) -> dict:
+    return {"main": list(deck.main), "extra": list(deck.extra)}
+
+
+def _deck_from(d: Mapping, name: str = "") -> Deck:
+    return Deck(main=tuple(d["main"]), extra=tuple(d["extra"]), name=name)
+
+
+def file_sha256(path: str | Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def check_environment(env, stamp: Mapping | None, what: str) -> None:
+    """Raise :class:`EnvironmentConfigError` unless ``stamp`` (a checkpoint's, a manifest's ...) is ``env``'s."""
+    try:
+        env.check_stamp(stamp or {})
+    except EnvironmentConfigError as exc:
+        raise EnvironmentConfigError(f"{what}: {exc}") from None
+
+
+# ------------------------------------------------------------------ games
+
+
+class GameLog:
+    """An evaluator that remembers every game: per deck (in order) and pair, the score going first and going second.
+    Results are appended to ``path`` as they arrive, so a rerun of the same calls plays nothing it already has."""
+
+    def __init__(self, evaluator, path: Path | None = None) -> None:
+        self.evaluator, self.path = evaluator, path
+        self.table: dict[str, dict[int, tuple[float, float]]] = {}
+        self.played = 0  # games played by this object (not read back from the file)
+        if path is not None and path.is_file():
+            for line in path.read_text().splitlines():
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue  # a line cut by a crash
+                row = self.table.setdefault(rec["deck"], {})
+                for k, (a, b) in zip(rec["pairs"], rec["games"], strict=True):
+                    row[int(k)] = (math.nan if a is None else a, math.nan if b is None else b)
+
+    @property
+    def games(self) -> int:
+        return 2 * sum(len(r) for r in self.table.values())
+
+    def play(self, jobs: Sequence[tuple[Deck, range]]) -> list[np.ndarray]:
+        todo = []
+        for deck, pairs in jobs:
+            have = self.table.get(deck_key(deck), {})
+            missing = [k for k in pairs if k not in have]
+            if missing:
+                todo.append((deck, missing))
+        if todo:
+            out = self.evaluator.play(todo, per_game=True)
+            lines = []
+            for (deck, ks), g in zip(todo, out, strict=True):
+                g = np.asarray(g, dtype=float).reshape(len(ks), 2)
+                row = self.table.setdefault(deck_key(deck), {})
+                for k, (a, b) in zip(ks, g.tolist(), strict=True):
+                    row[k] = (a, b)
+                lines.append(json.dumps({"deck": deck_key(deck), "pairs": ks,
+                                         "games": [[_finite(a), _finite(b)] for a, b in g.tolist()]}))  # fmt: skip
+                self.played += 2 * len(ks)
+            if self.path is not None:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write("".join(line + "\n" for line in lines))
+                    f.flush()
+                    os.fsync(f.fileno())
+        out = []
+        for deck, pairs in jobs:
+            row = self.table[deck_key(deck)] if len(pairs) else {}
+            g = np.array([row[k] for k in pairs], dtype=float).reshape(len(pairs), 2)
+            with np.errstate(invalid="ignore"), _quiet():
+                out.append(np.nanmean(g, -1) if len(g) else np.zeros(0))
+        return out
+
+    def games_of(self, deck: Deck) -> dict[int, tuple[float, float]]:
+        return self.table.get(deck_key(deck), {})
+
+    def summary(self, deck: Deck) -> dict[str, float]:
+        """Win rate (objective), going first and going second, over every pair ``deck`` played here."""
+        g = np.array(list(self.games_of(deck).values()), dtype=float).reshape(-1, 2)
+        with _quiet():
+            return {"win_rate": float(np.nanmean(g)) if g.size else math.nan,
+                    "win_rate_first": float(np.nanmean(g[:, 0])) if g.size else math.nan,
+                    "win_rate_second": float(np.nanmean(g[:, 1])) if g.size else math.nan}  # fmt: skip
+
+    def differences(self, child: Deck, base: Deck) -> np.ndarray:
+        """Per shared pair (search and validation alike): child minus base."""
+        c, b = self.games_of(child), self.games_of(base)
+        with _quiet():
+            d = np.array([np.nanmean(c[k]) - np.nanmean(b[k]) for k in sorted(c.keys() & b.keys())])
+        return d[np.isfinite(d)]
+
+
+class _quiet:
+    def __enter__(self):
+        import warnings
+
+        self._w = warnings.catch_warnings()
+        self._w.__enter__()
+        warnings.simplefilter("ignore", RuntimeWarning)
+
+    def __exit__(self, *exc):
+        self._w.__exit__(*exc)
+
+
+def _mean_se(d: np.ndarray, prior_pairs: float = 10.0) -> tuple[float, float]:
+    """Mean paired difference and its standard error, the per-pair variance counting ``prior_pairs`` pseudo-pairs of
+    SD_PAIR² (as the selection code does), so a short run of identical pairs cannot claim zero error."""
+    n = len(d)
+    if n == 0:
+        return math.nan, math.nan
+    ss = float(((d - d.mean()) ** 2).sum()) if n > 1 else 0.0
+    var = (prior_pairs * SD_PAIR**2 + ss) / (prior_pairs + n - 1)
+    return float(d.mean()), math.sqrt(var / n)
+
+
+# ------------------------------------------------------------------ opponents
+
+
+def opponent_mix(meta: Sequence[tuple[str, Deck, float]], *, nash: Mapping[str, float] | None = None,
+                 decks: Mapping[str, Deck] | None = None, nash_share: float = 0.5) -> list[Opponent]:  # fmt: skip
+    """Opponents drawn by ``nash_share`` × the Nash weights of the deck matchup matrix + (1 − ``nash_share``) × the
+    environment's meta shares (each part normalized). ``nash`` maps matrix deck names to weights; a name resolves to
+    a meta deck or to ``decks`` (e.g. evolved decks by id). Without a matrix (or with ``nash_share`` 0) the meta shares
+    alone decide."""
+    if not 0 <= nash_share <= 1:
+        raise ValueError("nash_share must be in [0, 1]")
+    meta_total = sum(s for _, _, s in meta)
+    weights: dict[str, float] = {}
+    lists: dict[str, Deck] = {}
+    use_nash = bool(nash) and nash_share > 0 and sum(nash.values()) > 0
+    for name, deck, share in meta:
+        lists[name] = deck
+        weights[name] = (1 - nash_share if use_nash else 1.0) * share / meta_total
+    if use_nash:
+        total = sum(nash.values())
+        known = {n for n, _, _ in meta} | set(decks or {})
+        unknown = sorted(n for n, w in nash.items() if w > 0 and n not in known)
+        if unknown:
+            raise ValueError(f"matchup matrix decks with Nash weight that are neither meta nor pool decks: {unknown}")
+        for name, w in nash.items():
+            if w > 0:
+                lists.setdefault(name, (decks or {}).get(name))
+                weights[name] = weights.get(name, 0.0) + nash_share * w / total
+    return [Opponent(n, lists[n], w) for n, w in weights.items() if w > 0]
+
+
+# ------------------------------------------------------------------ state
+
+
+class Evolution:
+    """The evolution's persistent state in ``directory``, bound to ``env`` (an :class:`ygorl.data.Environment`, or
+    anything with ``stamp()`` / ``check_stamp()``). Every file carries the environment stamp; a file from another
+    environment is an error. ``manifest`` defaults to ``directory / "manifest.json"``."""
+
+    def __init__(self, directory: str | Path, env, *, manifest: str | Path | None = None,
+                 grid: Mapping | None = None) -> None:  # fmt: skip
+        self.dir = Path(directory)
+        self.env = env
+        self.stamp = dict(env.stamp())
+        self.manifest_path = Path(manifest) if manifest is not None else self.dir / "manifest.json"
+        self.manifest = self._load_manifest()
+        self.archive, self.archive_applied = self._load_archive(grid)
+        self.model, self.calibration, self.signals_applied = self._load_signals()
+        self.lineage_path = self.dir / "lineage.jsonl"
+
+    # -- loading
+    def _load_manifest(self) -> dict:
+        if not self.manifest_path.is_file():
+            return {"format": MANIFEST_FORMAT, "version": 1, "environment": self.stamp, "decks": []}
+        data = json.loads(self.manifest_path.read_text())
+        if data.get("format") != MANIFEST_FORMAT:
+            raise ValueError(f"{self.manifest_path}: not a {MANIFEST_FORMAT} manifest")
+        if "environment" in data or data.get("decks"):
+            check_environment(self.env, data.get("environment"), f"manifest {self.manifest_path}")
+        data["environment"] = self.stamp
+        return data
+
+    def _load_archive(self, grid) -> tuple[DeckArchive, dict]:
+        path = self.dir / "archive.json"
+        if not path.is_file():
+            return DeckArchive(grid, stamp=self.stamp), {}
+        data = json.loads(path.read_text())
+        check_environment(self.env, data.get("environment"), f"archive {path}")
+        return DeckArchive.from_dict(data), dict(data.get("applied", {}))
+
+    def _load_signals(self) -> tuple[CardValueModel, Calibration, set[str]]:
+        path = self.dir / "signals.json"
+        if not path.is_file():
+            return CardValueModel(), Calibration(SIGNAL_DEFAULTS), set()
+        data = json.loads(path.read_text())
+        if data.get("format") != SIGNALS_FORMAT:
+            raise ValueError(f"{path}: not a {SIGNALS_FORMAT} file")
+        check_environment(self.env, data.get("environment"), f"signal library {path}")
+        return CardValueModel.from_dict(data["model"]), Calibration.from_dict(data["calibration"]), set(data["applied"])
+
+    def check_checkpoint(self, stamp: Mapping | None, path: str | Path = "checkpoint") -> None:
+        check_environment(self.env, stamp, f"checkpoint {path}")
+
+    # -- saving
+    def _save(self) -> None:
+        _write(self.dir / "signals.json", _json({"format": SIGNALS_FORMAT, "version": 1, "environment": self.stamp,
+                                                 "model": self.model.to_dict(),
+                                                 "calibration": self.calibration.to_dict(),
+                                                 "applied": sorted(self.signals_applied)}))  # fmt: skip
+        _write(self.dir / "archive.json", _json({**self.archive.to_dict(), "applied": self.archive_applied}))
+        _write(self.manifest_path, _json(self.manifest))
+
+    # -- queries
+    def lineage(self) -> list[dict]:
+        if not self.lineage_path.is_file():
+            return []
+        out = []
+        for line in self.lineage_path.read_text().splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                continue
+        return out
+
+    def pool(self, *statuses: str) -> list[Parent]:
+        """Manifest decks with the given statuses (default: probation and active), as parents."""
+        out = []
+        for e in self.manifest["decks"]:
+            if e.get("status", "probation") in (statuses or LIVE):
+                deck = parse_ydk((self.manifest_path.parent / e["file"]).read_text(), name=e["id"])
+                out.append(Parent(e["id"], deck, str(e.get("type", ""))))
+        return out
+
+    def pick_parents(self, candidates: Sequence[Parent], k: int) -> list[Parent]:
+        """The ``k`` candidates used least often as parents so far (ties: the higher archive objective, then the
+        given order): every pool deck gets its turn before any gets a second."""
+        uses: dict[str, int] = {}
+        for r in {(r["round"], r["parent"]["id"]) for r in self.lineage()}:
+            uses[r[1]] = uses.get(r[1], 0) + 1
+        best = {e["id"]: e["objective"] for e in self.archive.elites()}
+        order = sorted(range(len(candidates)),
+                       key=lambda i: (uses.get(candidates[i].id, 0), -best.get(candidates[i].id, -math.inf), i))  # fmt: skip
+        return [candidates[i] for i in order[:k]]
+
+    def rounds(self) -> list[int]:
+        return sorted(int(p.name) for p in (self.dir / "rounds").glob("[0-9]*") if (p / "round.json").is_file())
+
+    def _round_state(self, n: int) -> dict:
+        return json.loads((self.dir / "rounds" / f"{n:04d}" / "round.json").read_text())
+
+    # -- one round
+    def run_round(self, parents: Sequence[Parent], lab: Lab, config: RoundConfig, opponents: Sequence[Opponent], *,
+                  log: Callable[[str], None] | None = None) -> dict:  # fmt: skip
+        """Run (or resume) one round; returns its report. An unfinished round is resumed with the parents, settings
+        and opponents it was started with (the arguments are then ignored, with a note in the log)."""
+        say = log or (lambda m: None)
+        done_rounds = self.rounds()
+        last = self._round_state(done_rounds[-1]) if done_rounds else None
+        if last is not None and not last.get("done"):
+            n, state = last["round"], last
+            say(f"resuming round {n} ({len(state['results'])} of {len(state['parents'])} parents done)")
+            parents = [Parent(p["id"], _deck_from(p["deck"], p["id"]), p["type"]) for p in state["parents"]]
+            config = RoundConfig(**state["config"])
+            opponents = [Opponent(o["name"], _deck_from(o["deck"], o["name"]), o["weight"]) for o in state["opponents"]]
+            if lab.checkpoint and dict(lab.checkpoint) != state["checkpoint"]:
+                raise ValueError(f"round {n} was started with checkpoint {state['checkpoint']}: finish it with the same "
+                                 "checkpoint (its logged games were played by that policy)")  # fmt: skip
+        else:
+            n = (done_rounds[-1] + 1) if done_rounds else 1
+            state = {"format": ROUND_FORMAT, "round": n, "environment": self.stamp, "started": _now(),
+                     "checkpoint": dict(lab.checkpoint), "config": asdict(config),
+                     "parents": [{"id": p.id, "type": p.type, "deck": _deck_json(p.deck)} for p in parents],
+                     "opponents": [{"name": o.name, "weight": o.weight, "deck": _deck_json(o.deck)} for o in opponents],
+                     "results": [], "done": False}  # fmt: skip
+        if config.l0 not in ("off", "shadow", "on"):
+            raise ValueError("l0 must be off, shadow or on")
+        if config.l0 != "off" and lab.screen is None:
+            raise ValueError(f"l0={config.l0} needs a screen")
+        rdir = self.dir / "rounds" / f"{n:04d}"
+        _write(rdir / "round.json", _json(state))
+        spent = sum(r["games"] for r in state["results"])
+        for r in state["results"]:  # a crash may have cut the side effects short
+            self._apply(state, r)
+        for i in range(len(state["results"]), len(parents)):
+            if config.budget is not None and spent >= config.budget:
+                say(f"budget of {config.budget} games spent: {len(parents) - i} parents left for the next round")
+                state["budget_stop"] = True
+                break
+            r = self._parent(n, i, parents[i], lab, config, opponents, rdir, say)
+            spent += r["games"]
+            state["results"].append(r)
+            _write(rdir / "round.json", _json(state))
+            self._apply(state, r)
+        state["done"], state["finished"] = True, _now()
+        report = self._report(state)
+        state["report"] = report
+        _write(rdir / "report.json", _json(report))
+        _write(rdir / "report.txt", format_report(report))
+        _write(rdir / "round.json", _json(state))
+        return report
+
+    def _parent(self, n: int, i: int, parent: Parent, lab: Lab, config: RoundConfig, opponents: Sequence[Opponent],
+                rdir: Path, say) -> dict:  # fmt: skip
+        """Play one parent's part of round ``n``; returns its JSON-ready result (no side effects but games)."""
+        ev = lab.evaluator(derive_seed(config.seed, n, i), opponents)
+        games = GameLog(ev, rdir / f"games-{i}.jsonl")
+        rng = np.random.default_rng([config.seed, n, i])
+        base = parent.deck
+        signals: dict[str, dict[int, float]] = {}
+        prior: dict[int, float] = {}
+        base_scores: list[float] = []
+        if config.diagnose_pairs > 0:
+            pairs = range(config.diagnose_pairs)
+            base_scores = games.play([(base, pairs)])[0].tolist()
+            if hasattr(ev, "opening_hands"):
+                effects = opening_effects(ev.opening_hands(base, pairs), base_scores, base.main)
+                signals["opening_effect"] = {e.card: e.effect for e in effects if math.isfinite(e.effect)}
+            prior = combine_prior(signals, self.calibration)
+            if prior:  # also in _apply (from the result), so a crash cannot lose it
+                self.model.set_prior({**self.model.prior, **prior})
+        children = informed_children(base, parent.type, self.model, lab.pool(parent), legal=lab.legal,
+                                     is_extra=lab.is_extra, rng=rng, informed=config.informed, explore=config.explore,
+                                     max_bundle=config.max_bundle, protected=lab.protected(base))  # fmt: skip
+        predicted = [self.model.gain([e.into for e in c.edits], [e.out for e in c.edits], parent.type)
+                     for c in children]  # fmt: skip
+        screen = [None] * len(children)
+        if config.l0 != "off" and children:
+            screen = [float(s) for s in lab.screen(ev, base, [c.deck for c in children])]
+        screened = [s is not None and s < config.l0_min for s in screen]
+        keep = [j for j in range(len(children)) if not (config.l0 == "on" and screened[j])]
+        say(f"parent {parent.id} ({parent.type}): {len(children)} children"
+            + (f", L0 would remove {sum(screened)}" if config.l0 != "off" else ""))  # fmt: skip
+        race = top_two_thompson(base, [children[j].deck for j in keep], games,
+                                prior=[(m, max(sd, 1e-3)) for m, sd in (predicted[j] for j in keep)],
+                                batch=config.batch, max_pairs=config.max_pairs,
+                                batches_per_round=config.batches_per_round, confidence=config.confidence,
+                                base_scores=base_scores, rng=np.random.default_rng([config.seed, n, i, 1]),
+                                log=say)  # fmt: skip
+        chosen = keep[race.best] if race.best is not None else None
+        validation = None
+        if chosen is not None:
+            v = sequential_validate(base, children[chosen].deck, games, look=config.look, cap=config.cap,
+                                    alpha=config.alpha, min_effect=config.min_effect, log=say)  # fmt: skip
+            last = v.looks[-1] if v.looks else None
+            validation = {"pairs": v.pairs, "decision": v.decision, "accepted": v.accepted,
+                          "diff": last.mean if last else None, "lower": last.lower if last else None,
+                          "upper": last.upper if last else None}  # fmt: skip
+        arms = {keep[a.index]: a for a in race.arms}
+        rows = []
+        for j, c in enumerate(children):
+            a = arms.get(j)
+            d = games.differences(c.deck, base)
+            mean, se = _mean_se(d)
+            search = None
+            if a is not None:
+                ds = np.asarray(race.scores[a.index]) - np.asarray(race.base_scores[: a.pairs])
+                _, se_search = _mean_se(ds[np.isfinite(ds)])
+                h = 1.96 * se_search
+                search = {"pairs": a.pairs, "diff": _finite(a.observed), "ci": [_finite(a.observed - h),
+                          _finite(a.observed + h)], "posterior": [a.mean, a.sd], "p_positive": a.p_positive,
+                          "p_best": a.p_best}  # fmt: skip
+            rows.append({"child": f"r{n:04d}-p{i}-c{j}", "kind": c.kind,
+                         "edits": [{"out": e.out, "into": e.into, "section": e.section} for e in c.edits],
+                         "deck": _deck_json(c.deck), "predicted": {"mean": predicted[j][0], "sd": predicted[j][1]},
+                         "l0": screen[j], "screened": screened[j], "search": search,
+                         "validation": validation if j == chosen else None,
+                         "measured": {"pairs": len(d), "diff": _finite(mean), "stderr": _finite(se)},
+                         "games": 2 * len(games.games_of(c.deck)),
+                         "accepted": bool(j == chosen and validation and validation["accepted"]),
+                         "stats": {k: _finite(v) for k, v in games.summary(c.deck).items()},
+                         "descriptors": _descriptors(lab, c.deck, games)})  # fmt: skip
+        return {"index": i, "parent": {"id": parent.id, "type": parent.type, "key": deck_key(base)},
+                "signals": {k: {str(c): v for c, v in s.items()} for k, s in signals.items()},
+                "prior": {str(c): v for c, v in prior.items()},
+                "parent_stats": {k: _finite(v) for k, v in games.summary(base).items()},
+                "parent_descriptors": _descriptors(lab, base, games),
+                "parent_games": 2 * len(games.games_of(base)), "stop": race.stop, "search_pairs": race.pairs,
+                "chosen": rows[chosen]["child"] if chosen is not None else None, "children": rows,
+                "games": games.games, "played": games.played}  # fmt: skip
+
+    def _apply(self, state: dict, r: dict) -> None:
+        """A parent's side effects, idempotent per child id: signal library, archive, manifest, lineage."""
+        n = state["round"]
+        pinfo = next(p for p in state["parents"] if p["id"] == r["parent"]["id"])
+        parent = Parent(pinfo["id"], _deck_from(pinfo["deck"], pinfo["id"]), pinfo["type"])
+        if r["prior"]:
+            self.model.set_prior({**self.model.prior, **{int(c): v for c, v in r["prior"].items()}})
+        opening = {int(c): v for c, v in r["signals"].get("opening_effect", {}).items()}
+        for row in r["children"]:
+            uid = row["child"]
+            m = row["measured"]
+            if uid not in self.signals_applied and m["diff"] is not None and m["stderr"]:
+                into = tuple(e["into"] for e in row["edits"])
+                out = tuple(e["out"] for e in row["edits"])
+                self.model.add(Observation(parent.type, into, out, m["diff"], m["stderr"]))
+                self.calibration.record("model_gain", row["predicted"]["mean"], m["diff"])
+                if opening:  # cards swapped in were never in this deck's openings: count them as average (0)
+                    self.calibration.record("opening_effect", sum(opening.get(c, 0.0) for c in into)
+                                            - sum(opening.get(c, 0.0) for c in out), m["diff"])  # fmt: skip
+                self.signals_applied.add(uid)
+        entries = [(f"r{n:04d}-p{r['index']}", parent.id, parent.deck, r["parent_stats"], r["parent_descriptors"])]
+        entries += [(row["child"], self._manifest_id(row) if row["accepted"] else row["child"], _deck_from(row["deck"]),
+                     row["stats"], row["descriptors"]) for row in r["children"]]  # fmt: skip
+        for key, did, deck, stats, desc in entries:
+            if key in self.archive_applied:
+                continue
+            desc = {k: math.nan if v is None else v for k, v in desc.items()}
+            objective = math.nan if stats["win_rate"] is None else stats["win_rate"]
+            adm = self.archive.add(did, deck, objective, desc)
+            self.archive_applied[key] = {"status": adm.status, "cell": adm.cell, "replaced": adm.replaced}
+        for row in r["children"]:
+            if row["accepted"]:
+                self._admit(n, parent, row)
+        self._save()
+        have = {rec["child"] for rec in self.lineage()}
+        lines = [json.dumps(self._lineage(state, r, row), ensure_ascii=False) for row in r["children"]
+                 if row["child"] not in have]  # fmt: skip
+        if lines:
+            self.lineage_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.lineage_path, "a", encoding="utf-8") as f:
+                f.write("".join(line + "\n" for line in lines))
+
+    @staticmethod
+    def _manifest_id(row: dict) -> str:
+        return f"evo-{row['child']}"
+
+    def _admit(self, n: int, parent: Parent, row: dict) -> None:
+        mid = self._manifest_id(row)
+        if any(e["id"] == mid for e in self.manifest["decks"]):
+            return
+        deck = replace(_deck_from(row["deck"]), name=mid)
+        file = f"decks/{mid}.ydk"
+        _write(self.manifest_path.parent / file, deck.to_ydk())
+        self.manifest["decks"].append({"id": mid, "file": file, "status": "probation", "weight": 1.0,
+                                       "parent": parent.id, "type": parent.type, "round": n, "lineage": row["child"],
+                                       "edits": row["edits"], "diff": row["validation"]["diff"],
+                                       "descriptors": row["descriptors"]})  # fmt: skip
+
+    def _lineage(self, state: dict, r: dict, row: dict) -> dict:
+        adm = self.archive_applied.get(row["child"], {})
+        return {"child": row["child"], "round": state["round"], "time": _now(),
+                "parent": {"id": r["parent"]["id"], "type": r["parent"]["type"], "key": r["parent"]["key"]},
+                "kind": row["kind"], "edits": row["edits"], "key": deck_key(_deck_from(row["deck"])),
+                "predicted": row["predicted"], "l0": row["l0"], "screened": row["screened"], "search": row["search"],
+                "validation": row["validation"], "measured": row["measured"], "games": row["games"],
+                "checkpoint": state["checkpoint"], "environment": state["environment"], "accepted": row["accepted"],
+                "manifest_id": self._manifest_id(row) if row["accepted"] else None,
+                "archive": {k: adm.get(k) for k in ("status", "cell", "replaced")}}  # fmt: skip
+
+    def _report(self, state: dict) -> dict:
+        results = state["results"]
+        children = [c for r in results for c in r["children"]]
+        games = sum(r["games"] for r in results)
+        accepted = sum(c["accepted"] for c in children)
+        cum_games, cum_accepted = games, accepted
+        for m in self.rounds():
+            if m != state["round"]:
+                rep = self._round_state(m).get("report") or {}
+                cum_games += rep.get("games", 0)
+                cum_accepted += rep.get("accepted", 0)
+        admitted = [self.archive_applied.get(c["child"], {}).get("status") for c in children]
+        return {"round": state["round"], "environment": state["environment"], "checkpoint": state["checkpoint"],
+                "started": state["started"], "finished": state.get("finished"), "parents": len(results),
+                "parents_planned": len(state["parents"]), "budget_stop": bool(state.get("budget_stop")),
+                "children": len(children), "l0": state["config"]["l0"],
+                "l0_would_remove": sum(bool(c["screened"]) for c in children),
+                "games_per_child": {c["child"]: c["games"] for c in children},
+                "per_parent": [{"parent": r["parent"]["id"], "children": len(r["children"]), "stop": r["stop"],
+                                "search_pairs": r["search_pairs"], "parent_games": r["parent_games"],
+                                "chosen": r["chosen"], "games": r["games"],
+                                "validation": next((c["validation"] for c in r["children"] if c["validation"]), None),
+                                "accepted": [c["child"] for c in r["children"] if c["accepted"]]}
+                               for r in results],
+                "accepted": accepted, "games": games,
+                "cumulative": {"games": cum_games, "accepted": cum_accepted,
+                               "games_per_accepted": cum_games / cum_accepted if cum_accepted else None},
+                "archive": {**self.archive.summary(), "admitted_this_round": sum(s in ("new", "improved")
+                                                                                 for s in admitted)},
+                "pool": pool_diversity([p.deck for p in self.pool()]),
+                "calibration": {k: {**v, "ci": [_finite(x) for x in v["ci"]], "spearman": _finite(v["spearman"])}
+                                for k, v in self.calibration.report().items()}}  # fmt: skip
+
+
+def _descriptors(lab: Lab, deck: Deck, games: GameLog) -> dict[str, float | None]:
+    """The archive descriptors of ``deck``: the two win rates from its games, the rest from the deck list."""
+    s = games.summary(deck)
+    return {"win_rate_first": _finite(s["win_rate_first"]), "win_rate_second": _finite(s["win_rate_second"]),
+            **{k: _finite(float(v)) for k, v in lab.descriptors(deck).items()}}  # fmt: skip
+
+
+def pool_diversity(decks: Sequence[Deck]) -> dict:
+    """Size and mean pairwise card distance (1 − weighted Jaccard of the card counts) of the live pool."""
+    counts = [d.counts() for d in decks]
+    dist = []
+    for a in range(len(counts)):
+        for b in range(a + 1, len(counts)):
+            x, y = counts[a], counts[b]
+            keys = x.keys() | y.keys()
+            inter = sum(min(x[k], y[k]) for k in keys)
+            union = sum(max(x[k], y[k]) for k in keys)
+            dist.append(1 - inter / union if union else 0.0)
+    return {"decks": len(decks), "mean_distance": float(np.mean(dist)) if dist else None}
+
+
+def format_report(r: Mapping) -> str:
+    lines = [f"round {r['round']} ({r['environment']['environment']}): {r['parents']} of {r['parents_planned']} "
+             f"parents, {r['children']} children, {r['games']} games, {r['accepted']} accepted"
+             + (" (budget spent)" if r["budget_stop"] else "")]  # fmt: skip
+    if r["l0"] != "off":
+        lines.append(f"L0 screen ({r['l0']}): would remove {r['l0_would_remove']} children")
+    for p in r["per_parent"]:
+        v = p["validation"]
+        lines.append(f"  {p['parent']}: {p['children']} children, search {p['search_pairs']} pairs ({p['stop']}), "
+                     f"chosen {p['chosen']}, " + (f"validation {v['decision']} after {v['pairs']} pairs "
+                     f"(diff {v['diff']:+.3f}, lower {v['lower']:+.3f})" if v and v["diff"] is not None
+                     else "no validation") + f", {p['games']} games")  # fmt: skip
+    c = r["cumulative"]
+    gpa = f"{c['games_per_accepted']:.0f}" if c["games_per_accepted"] else "n/a"
+    lines.append(f"cumulative: {c['games']} games, {c['accepted']} accepted, {gpa} games per accepted edit")
+    a = r["archive"]
+    lines.append(f"archive: {a['elites']} elites of {a['cells']} cells (coverage {a['coverage']:.4f}), "
+                 f"{a['admitted_this_round']} admitted this round, QD score {a['qd_score']:.3f}")  # fmt: skip
+    p = r["pool"]
+    md = f"{p['mean_distance']:.3f}" if p["mean_distance"] is not None else "n/a"
+    lines.append(f"pool: {p['decks']} live evolved decks, mean card distance {md}")
+    return "\n".join(lines) + "\n"
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+__all__ = ["DESCRIPTORS", "Evolution", "GameLog", "Lab", "Opponent", "Parent", "RoundConfig", "check_environment",
+           "deck_key", "file_sha256", "format_report", "opponent_mix", "pool_diversity"]  # fmt: skip

@@ -71,6 +71,21 @@ class CardValueModel:
         self.prior = dict(prior)
         self._fit = None
 
+    def to_dict(self) -> dict:
+        """JSON-ready state (the fit is recomputed on load)."""
+        return {"card_scale": self.card_scale, "type_scale": self.type_scale,
+                "prior": [[c, v] for c, v in sorted(self.prior.items())],
+                "observations": [[o.deck_type, list(o.into), list(o.out), o.diff, o.stderr]
+                                 for o in self.observations]}  # fmt: skip
+
+    @classmethod
+    def from_dict(cls, d: Mapping) -> CardValueModel:
+        m = cls(card_scale=float(d["card_scale"]), type_scale=float(d["type_scale"]),
+                prior={int(c): float(v) for c, v in d.get("prior", [])})  # fmt: skip
+        for t, into, out, diff, se in d.get("observations", []):
+            m.add(Observation(str(t), tuple(map(int, into)), tuple(map(int, out)), float(diff), float(se)))
+        return m
+
     def _solve(self) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray]:
         """(term index, posterior mean, posterior covariance, inverse Cholesky factor of the precision), cached until
         the next ``add`` / ``set_prior``. Precision = diag(prior precision) + Xᵀ W X, built from the stacked rows."""
@@ -207,6 +222,18 @@ class Calibration:
 
     def enabled(self, signal: str) -> bool:
         return self.weight(signal) > 0
+
+    def to_dict(self) -> dict:
+        return {"defaults": dict(self.defaults), "min_pairs": self.min_pairs,
+                "pairs": {k: [list(p) for p in v] for k, v in sorted(self.pairs.items())}}  # fmt: skip
+
+    @classmethod
+    def from_dict(cls, d: Mapping) -> Calibration:
+        cal = cls(d.get("defaults", {}), min_pairs=int(d.get("min_pairs", 20)))
+        for name, pairs in d.get("pairs", {}).items():
+            for predicted, measured in pairs:
+                cal.record(name, predicted, measured)
+        return cal
 
     def report(self) -> dict[str, dict]:
         out = {}
