@@ -25,7 +25,6 @@ import numpy as np
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from deckevo_critic_open import load_actor_critic  # noqa: E402
 from deckevo_m3_signals import spearman  # noqa: E402
 
 from ygorl.cards.ydk import load_ydk  # noqa: E402
@@ -36,6 +35,7 @@ from ygorl.eval.arena import derive_seed  # noqa: E402
 from ygorl.eval.batched import paired_specs  # noqa: E402
 from ygorl.nets import collate  # noqa: E402
 from ygorl.nets.actor_critic import collate_privileged  # noqa: E402
+from ygorl.train.checkpoint import load_actor_critic  # noqa: E402
 
 HAND, CONTROLLER, CARD = 2, 4, 0  # card table: location 2 = hand, column 4 controller (0 = viewer), column 0 index
 ACTION_CARD = 2  # action table column 2: the card's vocab index
@@ -118,7 +118,8 @@ def main():
     summary = json.loads(Path(m2).read_text())
     pairs = 500
     opp_idx = [int(np.random.default_rng(derive_seed(11, 2, k)).choice(len(meta), p=w / w.sum())) for k in range(pairs)]
-    model, vocab, event_length = load_actor_critic(ckpt, "cuda")
+    ac = load_actor_critic(ckpt)
+    model, vocab, event_length = ac.model.to("cuda"), ac.vocab, ac.event_length
     names = ("dead_rate", "idle_rate", "use_rate", "advantage")
     signs = {"dead_rate": -1, "idle_rate": -1, "use_rate": 1, "advantage": 1}  # higher = more valuable
     pooled = {n: ([], [], [], []) for n in names}  # sig, truth, sig without Exodia, truth without Exodia

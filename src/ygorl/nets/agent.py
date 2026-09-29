@@ -32,7 +32,7 @@ from ygorl.nets.batch import collate
 from ygorl.nets.config import NetConfig
 from ygorl.nets.heads import MASKED_LOGIT
 from ygorl.nets.policy import PolicyNet
-from ygorl.nets.text import TextFeatures
+from ygorl.nets.text import TextFeatures, require_tables
 
 CHECKPOINT_FORMAT = "ygorl-policy"
 CHECKPOINT_VERSION = 1
@@ -76,8 +76,7 @@ def load_checkpoint(path: str | Path, text: TextFeatures | None = None) -> Polic
     if data.get("format_version") != CHECKPOINT_VERSION:
         raise ValueError(f"{path}: unsupported checkpoint format_version {data.get('format_version')}")
     cfg = NetConfig.from_dict(data["config"])
-    if (cfg.card_text_dim or cfg.effect_text_dim) and text is None:
-        raise ValueError(f"{path}: the network was trained with frozen text tables; pass the same TextFeatures")
+    require_tables(cfg, text, path)
     vocab = CardVocab(data["vocab"])
     if len(vocab) != cfg.vocab_size:
         raise ValueError(f"{path}: vocab has {len(vocab)} entries, the config {cfg.vocab_size}")
