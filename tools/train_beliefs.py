@@ -168,8 +168,8 @@ def collect(args, db, vocab, meta, rogue, pools) -> dict[str, np.ndarray]:
         first = started % 2
         spec = GameSpec(seed=args.seed * 100_000 + started, deck_a=da, deck_b=db_, first=first, config=cfg)
         labels = (ka, kb)  # deck a, deck b
-        # engine player p holds deck (first + p) % 2; its opponent's label:
-        state[e] = {"game": started, "op_label": [labels[(first + 1 - p) % 2] for p in (0, 1)],
+        # engine player p's opponent's label:
+        state[e] = {"game": started, "op_label": [labels[spec.deck_of_seat(1 - p)] for p in (0, 1)],
                     "trackers": [EvidenceTracker(meta), EvidenceTracker(meta)], "last": [None, None],
                     "pending": [[], []], "rng": rng, "step": 0}  # fmt: skip
         env.reset(e, spec)

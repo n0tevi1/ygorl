@@ -20,7 +20,7 @@ from ygorl.engine.branch import (
     fork,
     recorded_actions,
 )
-from ygorl.engine.duel import Duel, DuelConfig
+from ygorl.engine.duel import Duel, DuelConfig, deck_of_seat
 from ygorl.engine.replay import Replay, ReplayEnvironmentMismatch
 
 DECKS = {p.stem: load_ydk(p) for p in sorted((Path(__file__).parent / "decks").glob("*.ydk"))}
@@ -185,7 +185,7 @@ def test_fork_exposes_the_decision_point(short_game):
         assert branch.prefix == result.actions[:t]
         assert branch.recorded_action == result.actions[t]
         assert 0 <= branch.recorded_action < len(branch.point.actions)
-        assert branch.side == (rep.first + branch.point.player) % 2
+        assert branch.side == deck_of_seat(rep.first, branch.point.player)
 
 
 def test_fork_mid_multi_select(game):

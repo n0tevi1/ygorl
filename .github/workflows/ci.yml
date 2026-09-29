@@ -1,9 +1,13 @@
 name: CI
 
+# Pushes to main and pull requests only: a push to a PR branch already runs as pull_request, so running both
+# doubled every PR's minutes. Docs-only changes skip CI.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
+    paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
+    paths-ignore: ["docs/**", "**/*.md"]
 
 concurrency:
   group: ci-${{ github.ref }}

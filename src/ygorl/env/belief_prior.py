@@ -36,6 +36,7 @@ FIELD_ZONE = N_MZONE + 5  # spell/trap zone sequence 5
 DEFAULT_ROLES = ("hand_trap", "ash", "maxx_c", "nibiru", "extender")
 ROLE_PASSWORDS = {"ash": (14558127,), "maxx_c": (23434538,), "nibiru": (27204311,)}
 N_COUNTS = 5  # Evidence.counts: op_deck, hidden hand, hidden set, hidden removed, hidden extra
+EV_DECK, EV_HAND, EV_SET, EV_REMOVED, EV_EXTRA = range(N_COUNTS)  # positions in Evidence.counts
 
 # card-table columns and location codes (docs/encoding.md)
 _IDX, _LOC, _SEQ, _CTRL, _OWNER, _VISIBLE = 0, 1, 2, 4, 5, 7
@@ -203,13 +204,12 @@ def observe(cards: np.ndarray, globals_: np.ndarray, meta: MetaTable) -> Evidenc
         zones[base + seq[seq < n]] = True
     visible_hand = int((op & (cards[:, _VISIBLE] == 1) & (loc == _HAND)).sum())
     visible_extra = int((op & (cards[:, _VISIBLE] == 1) & (loc == _EXTRA)).sum())
-    counts = np.array([
-        int(globals_[_OP_DECK]),
-        max(int(globals_[_OP_HAND]) - visible_hand, 0),
-        int(zones.sum()),
-        int((hidden & (loc == _REMOVED)).sum()),
-        max(int(globals_[_OP_EXTRA]) - visible_extra, 0),
-    ], dtype=np.int64)  # fmt: skip
+    counts = np.zeros(N_COUNTS, dtype=np.int64)
+    counts[EV_DECK] = int(globals_[_OP_DECK])
+    counts[EV_HAND] = max(int(globals_[_OP_HAND]) - visible_hand, 0)
+    counts[EV_SET] = int(zones.sum())
+    counts[EV_REMOVED] = int((hidden & (loc == _REMOVED)).sum())
+    counts[EV_EXTRA] = max(int(globals_[_OP_EXTRA]) - visible_extra, 0)
     return Evidence(visible.copy(), other, visible, public_hand, counts, zones)
 
 
@@ -301,7 +301,8 @@ def hdt_prior(ev: Evidence, meta: MetaTable, *, eps: float = 1e-4) -> BeliefPrio
     comp = np.concatenate([meta.counts, meta.other_counts[None]], 0)  # [K+1, C]
     cap = np.clip(MAX_COPIES - visible, 0, MAX_COPIES)  # [N, C]
     u = np.minimum(np.clip(comp[None] - visible[:, None], 0, None), cap[:, None])  # [N, K+1, C]
-    deck, hand_n, set_n, removed_n, extra_n = (ev.counts[:, i, None, None] for i in range(N_COUNTS))
+    deck, hand_n, set_n, removed_n, extra_n = (ev.counts[:, i, None, None]
+                                               for i in (EV_DECK, EV_HAND, EV_SET, EV_REMOVED, EV_EXTRA))  # fmt: skip
     pool = deck + hand_n + set_n + removed_n  # hidden main-deck cards
     main_u = np.minimum(np.where(meta.is_extra, 0, u), pool)
     extra_u = np.minimum(np.where(meta.is_extra, u, 0), extra_n)

@@ -102,21 +102,20 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
             if ev.result is not None:
                 res = ev.result
                 w = res.get("winner")
-                deck_of_seat = [(spec.first + p) % 2 for p in (0, 1)]  # engine seat p holds deck (first + p) % 2
                 lp = res.get("lp", (0, 0))
                 reason = str(res.get("reason", ""))
                 failed = reason == "error"  # the engine raised: an error, not a draw (the arena's "exception")
                 records[i] = GameRecord(pair=i // pairs_per_spec, seed=spec.seed, first=spec.first,
-                                        winner=None if w is None or failed else deck_of_seat[w],
+                                        winner=None if w is None or failed else spec.deck_of_seat(w),
                                         reason="exception" if failed else reason,
                                         turns=int(res.get("turns", 0)), decisions=int(res.get("decisions", 0)),
                                         win_reason=res.get("win_reason"),
-                                        lp=(lp[deck_of_seat.index(0)], lp[deck_of_seat.index(1)]),
+                                        lp=(lp[spec.seat_of_deck(0)], lp[spec.seat_of_deck(1)]),
                                         error=str(res.get("error", "")))  # fmt: skip
                 if not launch(ev.env_id):
                     active -= 1
                 continue
-            side = (spec.first + ev.player) % 2  # 0: the player holding deck a
+            side = spec.deck_of_seat(ev.player)  # 0: the player holding deck a
             module = policy_a if side == 0 else policy_b
             greedy_s, temp_s = side_sampling[side]
             groups.setdefault((id(module), greedy_s, temp_s), [module, [], greedy_s, temp_s])[1].append(ev)
@@ -135,7 +134,7 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
                     slot = running[ev.env_id]
                     sp, n = specs[slot[0]], slot[1 + ev.player]
                     if sample_seeds is not None:
-                        u = _uniform(sample_seeds[slot[0]][(sp.first + ev.player) % 2], 0, 0, n)
+                        u = _uniform(sample_seeds[slot[0]][sp.deck_of_seat(ev.player)], 0, 0, n)
                     else:
                         u = _uniform(sp.seed, sp.first, ev.player, n)
                     actions[k] = min(int(np.searchsorted(cdf[k], u * cdf[k, -1], side="right")), probs.shape[1] - 1)

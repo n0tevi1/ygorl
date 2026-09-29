@@ -82,7 +82,7 @@ def usage(model, vocab, event_length, base, meta, opp_idx, pairs, device):
         acts = acts.tolist()
         for ev, a, g in zip(ready, acts, gain):
             i = running[ev.env_id]
-            if ev.player == specs[i].first:  # deck a's player (engine seat p holds deck (first + p) % 2)
+            if ev.player == specs[i].seat_of_deck(0):  # deck a's player
                 rec, obs = games[i], ev.obs
                 c = obs["cards"]
                 for ci in c[(c[:, 1] == HAND) & (c[:, CONTROLLER] == 0), CARD].tolist():

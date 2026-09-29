@@ -38,5 +38,6 @@
 
 - 提交信息使用简洁的祈使句，说明做了什么以及为什么。
 - 提交前跑 `tools/presubmit.sh`（ruff 格式化 + lint，与 CI 的 `--check` 一致）。
+- 合并 PR 前在本机跑 `tools/presubmit.sh --test`（全部单测）；GitHub CI 只在 PR 与 main 的推送上跑，文档改动不跑。
 - 新增依赖前先在 README 的「快速开始」里写明安装方式。
 - 目录结构变化时同步更新 README 的「目录结构」一节。

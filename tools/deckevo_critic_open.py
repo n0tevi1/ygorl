@@ -61,7 +61,7 @@ def opening_values(model, vocab, event_length, deck, opponents, weights, k, seed
             )
             for ev, v in zip(ready, out.v.float().cpu().tolist()):
                 i = running[ev.env_id]
-                side = specs[i].first  # engine seat holding deck a
+                side = specs[i].seat_of_deck(0)  # engine seat holding deck a
                 values[i] = v if ev.player == side else -v
         for ev in evs:  # one reading per game: start the next spec on this slot
             if not launch(ev.env_id):

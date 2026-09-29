@@ -14,7 +14,7 @@ from ygorl.cards.ydk import load_ydk
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
 from ygorl.engine.actions import make_decision
-from ygorl.engine.duel import Duel, DuelConfig, default_scripts, expand_seed
+from ygorl.engine.duel import Duel, DuelConfig, deck_of_seat, default_scripts, expand_seed, seat_of_deck
 from ygorl.env.encoding import ACTION_KINDS, ObservationEncoder
 
 DECKS = {p.stem: load_ydk(p) for p in sorted((Path(__file__).parent / "decks").glob("*.ydk"))}
@@ -195,12 +195,13 @@ def lockstep_game(db, vocab, seed, a, b, first=0, max_decisions=20000):
     checks = []
     encoder = ObservationEncoder(db, vocab)
     seats = [Lockstep(seed, host, encoder, duel, checks), Lockstep(seed + 1, host, encoder, duel, checks)]
-    result = duel.run(*(seats if first == 0 else seats[::-1]))
+    result = duel.run(seats[seat_of_deck(first, 0)], seats[seat_of_deck(first, 1)])
     r = host.result()
     assert host.done()
     assert (r["winner"], r["reason"], r["win_reason"], r["turns"], tuple(r["lp"]), r["decisions"]) == (
-        result.winner if first == 0 else (None if result.winner is None else 1 - result.winner),
-        result.reason, result.win_reason, result.turns, result.lp if first == 0 else result.lp[::-1], result.decisions)  # fmt: skip
+        None if result.winner is None else seat_of_deck(first, result.winner),
+        result.reason, result.win_reason, result.turns,
+        (result.lp[deck_of_seat(first, 0)], result.lp[deck_of_seat(first, 1)]), result.decisions)  # fmt: skip
     assert r["responses"] == result.responses
     return len(checks)
 
