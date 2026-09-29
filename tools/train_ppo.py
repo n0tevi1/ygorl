@@ -87,6 +87,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--estimator", default="vrpo", choices=("vrpo", "gae"))
     g.add_argument("--lam", type=float, default=None, help="lambda of the advantage estimate (default: PPOConfig's)")
     g.add_argument(
+        "--critic-lam",
+        type=float,
+        default=None,
+        help="lambda of the critic's Q / V targets only (default: --lam); 1.0 = game results",
+    )
+    g.add_argument(
         "--vrpo-mode",
         default=None,
         choices=("return", "critic"),
@@ -199,7 +205,7 @@ def config_from_args(args, decks: list[str]):
                     kl_ref_coef=args.kl_ref, reference_ema=args.ema, lr=args.lr, epochs=args.epochs,
                     minibatch_size=args.minibatch, kl_prior_coef=args.kl_prior,
                     kl_prior_turns=args.kl_prior_turns, target_kl=args.target_kl or None,
-                    **{k: v for k, v in (('lam', args.lam), ('vrpo_mode', args.vrpo_mode)) if v is not None})  # fmt: skip
+                    **{k: v for k, v in (('lam', args.lam), ('vrpo_mode', args.vrpo_mode), ('critic_lam', args.critic_lam)) if v is not None})  # fmt: skip
     return TrainConfig(decks=tuple(decks), pairings=args.pairings, deck_pool=args.deck_pool and str(Path(args.deck_pool).resolve()),
                        deck_pool_every=args.deck_pool_every, evolved_share=args.evolved_share,
                        evolved_power=args.evolved_power, env=args.env, max_turns=args.max_turns,
