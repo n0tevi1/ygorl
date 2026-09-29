@@ -160,7 +160,7 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 | `op_extra` | `[P_EXTRA=32, 3]` | 对手额外卡组全部卡（里侧 + 表侧灵摆，`public` 区分） | 同 `op_deck` |
 | `op_set` | `[P_SET=15, 3]` | 对手场上**里侧**的卡：第 0–6 行 = 怪兽区序号 0–6，第 7–14 行 = 魔陷区序号 0–7 | 按区域固定；空区域或表侧卡为全 0 行 |
 | `op_removed` | `[P_REMOVED=64, 3]` | 对手里侧除外的卡 | 除外区序号（与 actor 表中除外行对齐） |
-| `counts` | `[5]` | 截断前的真实张数：手牌、主卡组、额外卡组、里侧场上、里侧除外 | — |
+| `counts` | `[P_COUNTS=5]` | 截断前的真实张数：手牌、主卡组、额外卡组、里侧场上、里侧除外（下标常量 `COUNT_HAND` / `COUNT_DECK` / `COUNT_EXTRA` / `COUNT_SET` / `COUNT_REMOVED`） | — |
 | `my_next` | `[P_NEXT=10, 3]` | viewer **自己**主卡组接下来要抽的 10 张（卡组顶在前） | `sequence` = 距卡组顶的位置 0–9 |
 | `op_next` | `[P_NEXT=10, 3]` | 对手主卡组接下来要抽的 10 张 | 同 `my_next` |
 
@@ -191,6 +191,10 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 - Python 参考：`ygorl.env.privileged.encode_privileged(core, viewer, vocab)`；C++：`csrc/privileged.{h,cpp}`（只查
   `QUERY_CODE | QUERY_POSITION`，`QUERY_IS_PUBLIC` 总会返回）。
+- Python 侧的键与宽度只在 `ygorl.env.privileged` 定义一次（`P_WIDTHS` 五个列表、`counts` 与 `P_COUNTS`、`P_ORDER` 两个抽卡序列，
+  合为 `PRIVILEGED_KEYS`）；critic 的 `PrivilegedEncoder` 与 `collate_privileged` 直接读这份 schema，不另列键表。
+  `counts` 的位置一律用 `COUNT_*` 常量，不写裸下标。C++ 侧（`csrc/privileged.h`、`csrc/binding.cpp`）保留自己的副本，
+  由下面的逐元素一致测试（含键集合等于 `PRIVILEGED_KEYS`）守住。
 - `tests/test_privileged.py`：推理态 `privileged is None` 且 Python 入口抛错；训练态与直接的引擎查询（逐张 `core.query` +
   `query_count`，不经位置查询解析）一致；C++ 与 Python 在 5 局随机对局的全部决策点上逐元素一致；`EncodedVecEnv` 两种模式的
   actor 观测逐元素相同、训练态真值与单局 `HostDuel` 一致；`belief_targets` 的形状能直接构造 `BeliefBatch`。

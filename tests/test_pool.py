@@ -102,7 +102,7 @@ def test_vec_env_events_and_errors(db):
 def test_single_env_matches_duel(db):
     spec = specs(1)[0]
     agent_a, agent_b = agents(0, spec)
-    seats = (agent_a, agent_b) if spec.first == 0 else (agent_b, agent_a)
+    seats = ((agent_a, agent_b)[spec.deck_of_seat(0)], (agent_a, agent_b)[spec.deck_of_seat(1)])
     env = DuelEnv(cards=db)
     point = env.reset(spec)
     result = None

@@ -16,7 +16,7 @@ from ygorl.cards.ydk import load_ydk
 from ygorl.data import load_environment
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
-from ygorl.engine.duel import Duel, DuelConfig, default_scripts
+from ygorl.engine.duel import Duel, DuelConfig, default_scripts, seat_of_deck
 from ygorl.engine.replay import Replay, ReplayEnvironmentMismatch
 
 DECKS = {p.stem: load_ydk(p) for p in sorted((Path(__file__).parent / "decks").glob("*.ydk"))}
@@ -520,7 +520,7 @@ def test_limit_games_end_with_a_host_msg_win(db, env, tmp_path, limit, reason):
     rep.to_yrpx(path, env=env)
     *_, packets = parse_yrpx(path.read_bytes())
     wins = [p for m, p in packets if m == C.MSG_WIN]
-    seat = 2 if result.winner is None else (result.winner - duel.first) % 2
+    seat = 2 if result.winner is None else seat_of_deck(duel.first, result.winner)
     assert wins == [bytes([seat, 0x3])] and packets[-2][0] == C.MSG_WIN  # [player, reason] like the host's timeout
     # the winner comes from the recorded result, not from a rule baked into the exporter
     rep.result = {**rep.result, "winner": None}

@@ -670,13 +670,13 @@ def test_id_dropout_keeps_the_expected_contribution():
 
 
 def random_privileged(b: int, seed: int = 0, vocab: int = V) -> dict:
-    from ygorl.env.privileged import P_NEXT, P_WIDTHS
+    from ygorl.env.privileged import P_COUNTS, P_NEXT, P_ORDER, P_WIDTHS
 
     rng = np.random.default_rng(seed)
     d = {k: torch.as_tensor(np.stack([np.column_stack([rng.integers(0, vocab, w), rng.integers(0, 2, w), np.zeros(w, int)])
                                       for _ in range(b)])) for k, w in P_WIDTHS.items()}  # fmt: skip
-    d["counts"] = torch.as_tensor(rng.integers(0, 40, (b, 5)))
-    for k in ("my_next", "op_next"):
+    d["counts"] = torch.as_tensor(rng.integers(0, 40, (b, P_COUNTS)))
+    for k in P_ORDER:
         d[k] = torch.as_tensor(np.stack([np.column_stack([rng.integers(2, vocab, P_NEXT), np.zeros(P_NEXT, int),
                                                           np.arange(P_NEXT)]) for _ in range(b)]))  # fmt: skip
     return d

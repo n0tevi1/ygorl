@@ -64,7 +64,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 
 | 标识符 | 中文 | 说明 |
 |--------|------|------|
-| engine player / seat | 引擎玩家 / 座位 | 0 先攻；与卡组 a / b 的对应由 `first` 决定 |
+| engine player / seat | 引擎玩家 / 座位 | 0 先攻；座位 p 持卡组 `(first + p) % 2`（0 = a），只由 `deck_of_seat` / `seat_of_deck`（`GameSpec` 同名方法、`Duel.deck_of`）回答 |
 | side a / b | a 方 / b 方 | 按卡组区分，结果按 (a, b) 顺序报告 |
 | `decision` | 决策 | 需要玩家应答的 `MSG_SELECT_*` 等消息 |
 | `response` | 应答 | `set_response` 的字节 |

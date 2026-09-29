@@ -26,12 +26,8 @@ from ygorl.nets.config import NetConfig
 from ygorl.nets.heads import MASKED_LOGIT
 from ygorl.nets.policy import PolicyNet, _pad_to, trim_padding
 from ygorl.nets.text import TextFeatures
-from ygorl.env.privileged import P_NEXT
+from ygorl.env.privileged import P_COUNTS, P_NEXT, P_ORDER, P_WIDTHS, PRIVILEGED_KEYS
 from ygorl.train.critic import Critic
-
-PRIVILEGED_LISTS = ("op_hand", "op_deck", "op_extra", "op_set", "op_removed")  # docs/encoding.md 训练态真值
-PRIVILEGED_COUNTS = "counts"
-PRIVILEGED_ORDER = ("my_next", "op_next")  # the next draws of both players; read only by a deck-order critic
 
 
 class ActorCriticOutput(NamedTuple):
@@ -43,7 +39,7 @@ class ActorCriticOutput(NamedTuple):
 class PrivilegedEncoder(nn.Module):
     """Opponent ground truth -> ``[B, dim]``: per list, masked mean of card-identity + public embeddings;
     ``log1p`` of the true counts; one linear layer. Its own embedding table (nothing shared with the actor).
-    ``deck_order``: also the next draws of both players (``PRIVILEGED_ORDER``), each row's card embedding plus an
+    ``deck_order``: also the next draws of both players (``P_ORDER``), each row's card embedding plus an
     embedding of its depth in the deck, flattened in draw order (the order is the point)."""
 
     def __init__(self, vocab_size: int, dim: int = 64, *, deck_order: bool = False, order_depth: int = P_NEXT) -> None:
@@ -57,21 +53,21 @@ class PrivilegedEncoder(nn.Module):
             self.order_card = nn.Embedding(vocab_size, self.order_dim, padding_idx=0)
             self.depth = nn.Embedding(order_depth, self.order_dim)
             self.order_depth = order_depth
-            extra = len(PRIVILEGED_ORDER) * order_depth * self.order_dim
-        self.out = nn.Sequential(nn.Linear(len(PRIVILEGED_LISTS) * dim + 5 + extra, dim), nn.ReLU())
+            extra = len(P_ORDER) * order_depth * self.order_dim
+        self.out = nn.Sequential(nn.Linear(len(P_WIDTHS) * dim + P_COUNTS + extra, dim), nn.ReLU())
         self.dim = dim
 
     def forward(self, priv: Mapping[str, Tensor]) -> Tensor:
         parts = []
-        for key in PRIVILEGED_LISTS:
+        for key in P_WIDTHS:
             rows = priv[key]  # [B, N, 3] = (card_index, public, sequence)
             idx = rows[..., 0].clamp(0, self.card.num_embeddings - 1)
             present = (idx > 0).unsqueeze(-1).float()
             emb = (self.card(idx) + self.public(rows[..., 1].clamp(0, 1))) * present
             parts.append(emb.sum(-2) / present.sum(-2).clamp(min=1))
-        parts.append(torch.log1p(priv[PRIVILEGED_COUNTS].float()))
+        parts.append(torch.log1p(priv["counts"].float()))
         if self.deck_order:
-            for key in PRIVILEGED_ORDER:
+            for key in P_ORDER:
                 rows = priv[key][:, : self.order_depth]  # [B, D, 3]
                 idx = rows[..., 0].clamp(0, self.order_card.num_embeddings - 1)
                 depth = torch.arange(rows.shape[1], device=rows.device)
@@ -85,7 +81,7 @@ def collate_privileged(privileged: Sequence[Mapping[str, np.ndarray] | None],
     """Stack ``EncodedEvent.privileged`` dicts; None when any is missing (inference-mode environment)."""
     if not privileged or any(p is None for p in privileged):
         return None
-    keys = (*PRIVILEGED_LISTS, PRIVILEGED_COUNTS, *(k for k in PRIVILEGED_ORDER if k in privileged[0]))
+    keys = [k for k in PRIVILEGED_KEYS if k not in P_ORDER or k in privileged[0]]
     return {k: torch.as_tensor(np.stack([p[k] for p in privileged])).long().to(device) for k in keys}
 
 
@@ -134,4 +130,4 @@ class ActorCritic(nn.Module):
         return ActorCriticOutput(logits, crit.q, crit.v)
 
 
-__all__ = ["PRIVILEGED_ORDER", "ActorCritic", "ActorCriticOutput", "PrivilegedEncoder", "collate_privileged"]
+__all__ = ["ActorCritic", "ActorCriticOutput", "PrivilegedEncoder", "collate_privileged"]
