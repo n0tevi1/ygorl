@@ -18,12 +18,15 @@ class FakeEnv:
     """A game spec is its length: that many decisions (players alternate), then a result with the actions taken.
 
     A negative spec cannot start. ``recv`` returns every ready event, as a real environment does once ``min_events``
-    are ready; it asserts the driver never waits for more events than games are running.
+    are ready; with ``max_events`` it returns at most that many, and none on every third call (a timeout), fewer than
+    ``min_events`` asked for. It asserts the driver never waits for more events than games are running.
     """
 
-    def __init__(self, num_envs: int) -> None:
+    def __init__(self, num_envs: int, max_events: int | None = None) -> None:
         self.num_envs = num_envs
+        self.max_events = max_events
         self.games: dict[int, list] = {}  # env -> [spec, actions]
+        self.running = 0  # games reset whose result has not been returned by recv yet
         self.ready: list[Event] = []
         self.resets: list[tuple[int, int]] = []  # (env, spec) in reset order
         self.waits: list[int] = []
@@ -34,6 +37,7 @@ class FakeEnv:
             raise ValueError(f"bad spec {spec}")
         self.resets.append((env_id, spec))
         self.games[env_id] = [spec, []]
+        self.running += 1
         self._emit(env_id)
 
     def step(self, env_id: int, action) -> None:
@@ -41,9 +45,13 @@ class FakeEnv:
         self._emit(env_id)
 
     def recv(self, min_events: int) -> list[Event]:
-        assert 1 <= min_events <= len(self.games) + len(self.ready)
+        assert 1 <= min_events <= self.running
         self.waits.append(min_events)
-        out, self.ready = self.ready, []
+        n = len(self.ready)
+        if self.max_events is not None:
+            n = 0 if len(self.waits) % 3 == 0 else min(n, self.max_events)
+        out, self.ready = self.ready[:n], self.ready[n:]
+        self.running -= sum(ev.result is not None for ev in out)
         return out
 
     def _emit(self, env_id: int) -> None:
@@ -125,3 +133,14 @@ def test_start_builds_per_game_state():
     drive(env, [3, 4, 1], decide, lambda game, res: seen.append((game.index, game.state)),
           start=lambda i, spec: [0, 0])  # fmt: skip
     assert sorted(seen) == [(0, [2, 1]), (1, [2, 2]), (2, [1, 0])]
+
+
+@pytest.mark.parametrize("max_events", [1, 2])
+def test_partial_and_empty_recv_still_finishes_every_game(max_events):
+    env = FakeEnv(3, max_events=max_events)
+    specs = [2, 0, 5, 1, 3, 4, 2]
+    results, batches, n = _play(env, specs, min_batch=3)
+    assert sorted(results) == list(range(len(specs))) and n == sum(specs) and not env.games
+    for i, (_, steps, res) in results.items():
+        assert res == {"spec": specs[i], "actions": [(i, s) for s in range(specs[i])]} and steps == specs[i]
+    assert max(batches) <= max_events and 3 in env.waits  # smaller batches than asked for, and some empty rounds
