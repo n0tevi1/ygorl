@@ -115,3 +115,8 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | top-two Thompson sampling | 前二 Thompson 采样 | 按后验把对局批次分给「可能最好」与「可能次好」的子代（`ygorl.build.selection.top_two_thompson`，tuning.md「进化评估器」） |
 | control variate / opening luck | 控制变量 / 起手手气 | 每局得分减去 critic 读出的起手手气：实际起手的 V 减同一卡组其它洗牌的平均 V；期望不变（`ygorl.build.control`） |
 | sequential validation | 序贯复核 | 新种子上分批看、按 α 支出界判定的复核（O'Brien–Fleming），大效应早停（`ygorl.build.selection.sequential_validate`） |
+| evolution step / round | 进化步骤 / 一轮进化 | 选亲本 → 诊断 → 子代 → L0 筛 → 前二 Thompson 采样 → 序贯复核 → 通过者以试用状态入池；独立进程，状态可续跑（`ygorl.build.evolve`，`tools/evolve_decks.py`，tuning.md「进化步骤」） |
+| deck lineage | 卡组谱系 | 每个被评估子代一条记录：亲本、改动、预测增益、实测配对差与区间、对局数、检查点、环境、是否通过（`lineage.jsonl`） |
+| L0 screen | L0 筛 | 零对局成本的预筛：critic 在公共随机数起手上比较子代与亲本的开局值；M4 通过前默认关闭（`shadow` 只计数） |
+| MAP-Elites archive / admission | MAP-Elites 档案 / 入选 | 按五个描述符分格、每格留胜率下界最高的卡组（pyribs）；填入空格、严格胜过格内精英，或取代对手分布已变的过期精英即入选（`ygorl.build.archive`） |
+| descriptor proxy | 描述符代理 | 真值要求解器的描述符的廉价近似：combo 长度 ≈ 检索链深度，卡手率 ≈ 起手没有启动卡的概率（tuning.md「进化步骤」） |

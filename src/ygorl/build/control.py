@@ -102,4 +102,19 @@ def critic_opening_values(model, env_factory: Callable[[int], object], specs: Se
     return values
 
 
-__all__ = ["CriticControlVariate", "critic_opening_values"]
+def opening_value_screen(values: Callable[[Sequence[object]], np.ndarray], evaluator, base, children, *,
+                         hands: int = 256) -> list[float]:  # fmt: skip
+    """The L0 screen of deck evolution (#105, docs/tuning.md「进化步骤」; off until M4 passes): per child, the mean
+    critic value at the first decision over the evaluator's first ``hands`` pairs (both seats; common random numbers:
+    the child's hands differ from the parent's only in the edited cards) minus the parent's, halved into win-rate
+    units. ``values`` reads specs as :func:`critic_opening_values` does. No game is played."""
+    decks = [base, *children]
+    specs = [s for d in decks for s in evaluator.specs(d, range(hands))]
+    v = np.asarray(values(specs), dtype=float).reshape(len(decks), -1)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        mean = np.nanmean(v, -1)
+    return [float(0.5 * (m - mean[0])) for m in mean[1:]]
+
+
+__all__ = ["CriticControlVariate", "critic_opening_values", "opening_value_screen"]
