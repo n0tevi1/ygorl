@@ -12,7 +12,7 @@ from ygorl.engine import constants as C
 from ygorl.engine import messages as M
 from ygorl.engine.actions import make_decision
 from ygorl.engine.curriculum import FULL, HANDTRAP, MODES, SOLO, allowed_actions, auto_action
-from ygorl.engine.duel import Duel, DuelConfig
+from ygorl.engine.duel import Duel, DuelConfig, seat_of_deck
 from ygorl.engine.replay import Replay
 from ygorl.env import GameSpec, paired_specs, run_games
 from ygorl.env.encoding import ObservationEncoder
@@ -169,7 +169,7 @@ def play(db, mode, seed, a, b, first, learner=0, max_turns=4):
     duel = Duel(seed, None, DECKS[a], DECKS[b], cards=db, first=first, config=config, record_messages=True)
     watchers = Watcher(seed), Watcher(seed + 1)
     result = duel.run(*watchers)
-    learner_seat = next(p for p in (0, 1) if duel.deck_of(p) == learner)
+    learner_seat = seat_of_deck(first, learner)
     opponent_points = [p for p in watchers[1 - learner].points if p.turn_player == learner_seat]
     return duel, result, learner_seat, opponent_points
 

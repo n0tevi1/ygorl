@@ -104,7 +104,7 @@ def main():
             job = slots[ev.env_id]
             if ev.result is not None:
                 w = ev.result.get("winner")
-                me = job.spec.first  # engine seat holding deck a (the searcher)
+                me = job.spec.seat_of_deck(0)  # engine seat holding deck a (the searcher)
                 failed = str(ev.result.get("reason", "")) == "error"
                 score = np.nan if failed else 0.5 if w is None else float(w == me)
                 del slots[ev.env_id]
@@ -133,7 +133,7 @@ def main():
             for ev, pr in zip(ready, probs):
                 job = slots[ev.env_id]
                 g = ev.obs["globals"]
-                me = job.spec.first
+                me = job.spec.seat_of_deck(0)
                 turn = int(g[3])
                 if (job.real and ev.player == me and int(g[18]) == C.MSG_SELECT_IDLECMD and int(g[2]) == 1
                         and int(g[4]) == MAIN1 and turn not in job.searched_turns):  # fmt: skip

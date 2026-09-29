@@ -37,7 +37,7 @@ from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment, PlayerRules
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
-from ygorl.engine.duel import Duel, DuelConfig, DuelResult, expand_seed
+from ygorl.engine.duel import Duel, DuelConfig, DuelResult, expand_seed, seat_of_deck
 
 FORMAT = "ygorl-replay"
 FORMAT_VERSION = 1
@@ -272,7 +272,7 @@ class Replay:
         duel.replay(self.responses, observer=host)
         if not host.won and self.result.get("reason") in _LIMIT_REASONS:
             winner = self.result.get("winner")
-            seat = 2 if winner is None else (winner - duel.first) % 2
+            seat = 2 if winner is None else seat_of_deck(duel.first, winner)
             host.packets += _packet(
                 C.MSG_WIN, bytes([seat, WIN_REASON_LIMIT])
             )  # the host's own [player, reason] packet

@@ -43,7 +43,7 @@ from ygorl.engine.actions import (
     TributeState,
 )
 from ygorl import _core
-from ygorl.engine.duel import DecisionPoint, DuelResult, DuelSession, SessionSnapshot
+from ygorl.engine.duel import DecisionPoint, DuelResult, DuelSession, SessionSnapshot, deck_of_seat
 from ygorl.engine.replay import Replay
 
 MAX_SEARCH_NODES = 200_000
@@ -296,7 +296,7 @@ class Branch:
     @property
     def side(self) -> int:
         """Side to act at ``t`` in (a, b) order: 0 = deck a, 1 = deck b."""
-        return (self.replay.first + self.point.player) % 2
+        return deck_of_seat(self.replay.first, self.point.player)
 
     def rollout(self, action: int, policy_a, policy_b, *, record_steps: bool = False,
                 record_messages: bool = False) -> DuelResult:  # fmt: skip

@@ -5,11 +5,24 @@ from pathlib import Path
 import pytest
 
 from ygorl.agents import RandomAgent
+from ygorl.build.diagnose import opening_hand
 from ygorl.cards.cdb import CardDB
 from ygorl.cards.legality import IllegalDeck
 from ygorl.cards.ydk import Deck, load_ydk
+from ygorl.engine import constants as C
 from ygorl.engine import messages as M
-from ygorl.engine.duel import WIN_REASON_LP, DecisionPoint, Duel, DuelConfig, DuelResult, expand_seed
+from ygorl.engine.duel import (
+    WIN_REASON_LP,
+    DecisionPoint,
+    Duel,
+    DuelConfig,
+    DuelResult,
+    deck_of_seat,
+    expand_seed,
+    seat_of_deck,
+)
+from ygorl.engine.query import CARD_QUERY_FLAGS, parse_query_location
+from ygorl.env import GameSpec
 
 DECKS = {p.stem: load_ydk(p) for p in sorted((Path(__file__).parent / "decks").glob("*.ydk"))}
 
@@ -35,6 +48,39 @@ def test_expand_seed_is_deterministic_and_nonzero():
     assert expand_seed(0) != expand_seed(1)
     assert len(expand_seed(7)) == 4 and any(expand_seed(0))
     assert all(0 <= x < 2**64 for x in expand_seed(2**70))
+
+
+def test_game_spec_says_which_seat_holds_which_deck(db):
+    """Locks the seat <-> deck rule against the engine: for both first players, each engine seat's opening hand comes
+    from the deck the spec (and the duel) says it holds, and the answers invert each other."""
+    a, b = DECKS["snake_eye"], DECKS["kashtira"]
+    hands = {}
+
+    class Probe:
+        name = "probe"
+
+        def observe(self, point, core):
+            if not hands:
+                for p in (0, 1):
+                    got = parse_query_location(core.query_location(CARD_QUERY_FLAGS, p, C.LOCATION_HAND))
+                    hands[p] = sorted(c.get("code") for c in got if c)
+
+        def act(self, point):
+            return 0
+
+    for first in (0, 1):
+        spec = GameSpec(
+            seed=5, deck_a=a, deck_b=b, first=first, config=DuelConfig(shuffle_decks=False, max_decisions=2)
+        )
+        duel = Duel(spec.seed, None, a, b, cards=db, config=spec.config, first=first)
+        hands.clear()
+        duel.run(Probe(), Probe())
+        want = {0: first, 1: 1 - first}  # seat 0 moves first: deck_a when first == 0, deck_b when first == 1
+        for seat in (0, 1):
+            deck = want[seat]
+            assert spec.deck_of_seat(seat) == duel.deck_of(seat) == deck_of_seat(first, seat) == deck
+            assert spec.seat_of_deck(deck) == seat_of_deck(first, deck) == seat
+            assert hands[seat] == sorted(opening_hand((a, b)[deck].main)), (first, seat)
 
 
 def test_random_vs_random_completes(db):

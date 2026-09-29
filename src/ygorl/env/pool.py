@@ -38,7 +38,9 @@ from ygorl.engine.duel import (
     DuelTracker,
     default_cards,
     default_scripts,
+    deck_of_seat,
     expand_seed,
+    seat_of_deck,
 )
 
 
@@ -49,6 +51,14 @@ class GameSpec:
     deck_b: Deck
     first: int = 0
     config: DuelConfig = field(default_factory=DuelConfig)
+
+    def deck_of_seat(self, seat: int) -> int:
+        """Index into (a, b) of the deck at engine ``seat`` (seat 0 moves first): ``(first + seat) % 2``."""
+        return deck_of_seat(self.first, seat)
+
+    def seat_of_deck(self, deck: int) -> int:
+        """Engine seat of deck ``deck`` (0 = deck_a, 1 = deck_b)."""
+        return seat_of_deck(self.first, deck)
 
 
 def paired_specs(specs: Iterable[GameSpec]) -> list[GameSpec]:
@@ -179,7 +189,7 @@ def run_games(specs: Sequence[GameSpec], agent_factory: AgentFactory, num_envs: 
             return False
         i, spec = nxt
         a, b = agent_factory(i, spec)
-        seats[env_id] = (i, (a, b) if spec.first == 0 else (b, a))
+        seats[env_id] = (i, ((a, b)[spec.deck_of_seat(0)], (a, b)[spec.deck_of_seat(1)]))
         env.start(env_id, spec)
         return True
 
