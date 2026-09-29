@@ -13,6 +13,11 @@ from ygorl.engine.duel import DuelConfig
 from ygorl.env import GameSpec
 from ygorl.env import events as E
 from ygorl.env.belief_prior import (
+    EV_DECK,
+    EV_EXTRA,
+    EV_HAND,
+    EV_REMOVED,
+    EV_SET,
     N_SET_ZONES,
     Evidence,
     EvidenceTracker,
@@ -26,7 +31,15 @@ from ygorl.env.belief_prior import (
     role_targets,
 )
 from ygorl.env.encoded import EncodedVecEnv
-from ygorl.env.privileged import belief_targets, copy_counts
+from ygorl.env.privileged import (
+    COUNT_DECK,
+    COUNT_EXTRA,
+    COUNT_HAND,
+    COUNT_REMOVED,
+    COUNT_SET,
+    belief_targets,
+    copy_counts,
+)
 from ygorl.eval.beliefs import BeliefBatch, Head, evaluate_beliefs
 
 DATA = Path(__file__).parent / "data"
@@ -191,11 +204,11 @@ def test_evidence_agrees_with_privileged_ground_truth(db, vocab, meta):
             priv, obs, p = ev.privileged, ev.obs, ev.player
             evidence = trackers[ev.env_id, p].update(obs["cards"], obs["globals"])
             hidden = lambda key, n: int((priv[key][:n][:, 1] == 0).sum())  # noqa: E731
-            assert evidence.counts[0] == priv["counts"][1]  # op_deck
-            assert evidence.counts[1] == hidden("op_hand", priv["counts"][0])
-            assert evidence.counts[2] == priv["counts"][3]
-            assert evidence.counts[3] == priv["counts"][4]
-            assert evidence.counts[4] == hidden("op_extra", priv["counts"][2])
+            assert evidence.counts[EV_DECK] == priv["counts"][COUNT_DECK]
+            assert evidence.counts[EV_HAND] == hidden("op_hand", priv["counts"][COUNT_HAND])
+            assert evidence.counts[EV_SET] == priv["counts"][COUNT_SET]
+            assert evidence.counts[EV_REMOVED] == priv["counts"][COUNT_REMOVED]
+            assert evidence.counts[EV_EXTRA] == hidden("op_extra", priv["counts"][COUNT_EXTRA])
             np.testing.assert_array_equal(evidence.set_zones, priv["op_set"][:, 0] != 0)
             opponent = games[ev.env_id][1 - p]  # first=0: engine player p holds deck p
             prior = hdt_prior(evidence, meta)

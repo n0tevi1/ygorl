@@ -18,8 +18,9 @@ from ygorl.cli import main  # noqa: E402
 from ygorl.engine.duel import Duel, DuelConfig  # noqa: E402
 from ygorl.env import GameSpec  # noqa: E402
 from ygorl.env.encoded import EncodedVecEnv  # noqa: E402
+from ygorl.env.privileged import P_WIDTHS  # noqa: E402
 from ygorl.nets import NetConfig, collate  # noqa: E402
-from ygorl.nets.actor_critic import PRIVILEGED_LISTS, ActorCritic  # noqa: E402
+from ygorl.nets.actor_critic import ActorCritic  # noqa: E402
 from ygorl.train.checkpoint import load_checkpoint, load_policy  # noqa: E402
 from ygorl.train.ppo import PPOConfig  # noqa: E402
 from ygorl.train.rollout import RolloutCollector  # noqa: E402
@@ -100,8 +101,8 @@ def test_self_play_layout_on_real_duels(db, vocab):
     assert len(ro.games) == B and all(g.reason == "decision_limit" and g.truncated for g in ro.games)
     assert all(g.learner_rows == 30 == g.result["decisions"] for g in ro.games)
     # the privileged ground truth reaches the critic batch, never the observation batch
-    assert set(PRIVILEGED_LISTS) <= set(ro.privileged) and ro.privileged["op_hand"].shape[:2] == (T * B, 32)
-    assert not set(PRIVILEGED_LISTS) & set(ro.obs)
+    assert set(P_WIDTHS) <= set(ro.privileged) and ro.privileged["op_hand"].shape[:2] == (T * B, 32)
+    assert not set(P_WIDTHS) & set(ro.obs)
     assert ro.bootstrap_mask.any(-1).all() and ro.opponent_decisions == 0
     # the next segment starts from the held bootstrap decisions
     ro2 = col.collect()

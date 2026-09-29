@@ -27,6 +27,7 @@ from ygorl.cards.cdb import CardDB, CardVocab
 from ygorl.cards.ydk import load_ydk
 from ygorl.engine.duel import Duel, DuelConfig, default_scripts, expand_seed
 from ygorl.env.encoding import ACTION_KINDS, ObservationEncoder
+from ygorl.env.privileged import COUNT_REMOVED, COUNT_SET
 
 DECK_DIR = Path(__file__).resolve().parents[1] / "tests" / "decks"
 
@@ -69,8 +70,8 @@ def main() -> int:
                 ok = ok and all(np.array_equal(cpp[k], py[k]) for k in py)
                 cpp_p, py_p = host.observe_privileged(), encoder.encode_privileged(point, duel._core)
                 ok = ok and cpp_p.keys() == py_p.keys() and all(np.array_equal(cpp_p[k], py_p[k]) for k in py_p)
-                privileged_nonempty["op_set"] += int(py_p["counts"][3] > 0)
-                privileged_nonempty["op_removed"] += int(py_p["counts"][4] > 0)
+                privileged_nonempty["op_set"] += int(py_p["counts"][COUNT_SET] > 0)
+                privileged_nonempty["op_removed"] += int(py_p["counts"][COUNT_REMOVED] > 0)
                 if not ok:
                     mismatches.append((games, point.index, point.decision.name))
                 points += 1
