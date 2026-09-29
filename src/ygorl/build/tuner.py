@@ -18,6 +18,7 @@ against the environment's meta decks (piloted by the same or another policy), on
 from __future__ import annotations
 
 import math
+import time
 import warnings
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -97,6 +98,10 @@ class PairedEvaluator:
     ``derive_seed(seed, 2, k)``, both first players. :meth:`scores` returns, per deck, one score per pair (mean of
     its two games: 1 / 0.5 / 0 from the deck's side), so decks are compared pair by pair. A game that raised in
     the engine is missing (NaN), not a draw; a pair with both games missing is NaN. ``errors`` counts those games.
+
+    ``control`` (optional, e.g. :class:`ygorl.build.control.CriticControlVariate`) maps the game specs to one
+    zero-mean adjustment per game that is subtracted from the game's score (a control variate: the expectation is
+    unchanged, the variance may drop).
     """
 
     env_factory: Callable[[int], object]  # num_envs -> EncodedVecEnv
@@ -108,6 +113,7 @@ class PairedEvaluator:
     device: str = "cpu"
     num_envs: int = 256
     config: DuelConfig = field(default_factory=lambda: DuelConfig(max_decisions=4000))
+    control: Callable[[Sequence[object]], np.ndarray] | None = None
     games: int = 0
     seconds: float = 0.0
     errors: int = 0
@@ -118,21 +124,39 @@ class PairedEvaluator:
         return self.opponents[int(idx)]
 
     def scores(self, decks: Sequence[Deck], pairs: range) -> np.ndarray:
+        """``[deck, pair]`` scores of every deck on the same pairs."""
+        if not decks:
+            return np.zeros((0, len(pairs)))
+        return np.stack(self.play([(d, pairs) for d in decks]))
+
+    def play(self, jobs: Sequence[tuple[Deck, range]]) -> list[np.ndarray]:
+        """One score per pair of each ``(deck, pairs)`` job, all jobs in one batch (the jobs may cover different
+        pairs: an allocator that gives each candidate its own number of pairs still fills the GPU)."""
         from ygorl.eval.batched import paired_specs, play_policies  # needs PyTorch (the train extra)
 
-        specs = [s for d in decks for k in pairs
+        specs = [s for d, pairs in jobs for k in pairs
                  for s in paired_specs(d, self._opponent(k), 1, derive_seed(self.seed, 1, k), self.config)]  # fmt: skip
+        if not specs:
+            return [np.zeros(0) for _ in jobs]
         env = self.env_factory(min(self.num_envs, len(specs)))
         records, stats = play_policies(env, specs, self.policy, self.opponent, device=self.device)
         self.games += len(specs)
         self.seconds += stats["seconds"]
         s = np.array([np.nan if r.reason == "exception" else 1.0 if r.winner == 0 else 0.5 if r.winner is None else 0.0
                       for r in records])  # fmt: skip
-        s = s.reshape(len(decks), len(pairs), 2)
         self.errors += int(np.isnan(s).sum())
-        with np.errstate(invalid="ignore"), warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN pairs stay NaN
-            return np.nanmean(s, -1)
+        if self.control is not None:
+            t0 = time.perf_counter()
+            s = s - np.asarray(self.control(specs), dtype=float)
+            self.seconds += time.perf_counter() - t0
+        out, at = [], 0
+        for _, pairs in jobs:
+            g = s[at : at + 2 * len(pairs)].reshape(len(pairs), 2)
+            at += 2 * len(pairs)
+            with np.errstate(invalid="ignore"), warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN pairs stay NaN
+                out.append(np.nanmean(g, -1))
+        return out
 
 
 @dataclass
