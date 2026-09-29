@@ -16,6 +16,12 @@ from ygorl.env import GameSpec
 from ygorl.env.encoded import EncodedVecEnv, chooser
 from ygorl.env.encoding import ObservationEncoder
 from ygorl.env.privileged import (
+    COUNT_DECK,
+    COUNT_EXTRA,
+    COUNT_HAND,
+    COUNT_REMOVED,
+    COUNT_SET,
+    P_COUNTS,
     P_WIDTHS,
     PRIVILEGED_KEYS,
     CandidateCards,
@@ -167,10 +173,13 @@ def check_against_engine(priv, core, viewer, vocab):
     assert priv["op_set"].shape == (15, 3)
     assert [tuple(r) for r in priv["op_set"]] == exp["op_set"]
     set_count = sum(1 for r in exp["op_set"] if r[0])
-    counts = [len(exp["op_hand"]), len(exp["op_deck"]), len(exp["op_extra"]), set_count, len(exp["op_removed"])]
-    assert priv["counts"].tolist() == counts
-    assert counts[0] == core.query_count(1 - viewer, C.LOCATION_HAND)
-    assert counts[1] == core.query_count(1 - viewer, C.LOCATION_DECK)
+    counts = np.zeros(P_COUNTS, dtype=np.int32)
+    counts[[COUNT_HAND, COUNT_DECK, COUNT_EXTRA, COUNT_SET, COUNT_REMOVED]] = (
+        len(exp["op_hand"]), len(exp["op_deck"]), len(exp["op_extra"]), set_count, len(exp["op_removed"])
+    )  # fmt: skip
+    np.testing.assert_array_equal(priv["counts"], counts)
+    assert counts[COUNT_HAND] == core.query_count(1 - viewer, C.LOCATION_HAND)
+    assert counts[COUNT_DECK] == core.query_count(1 - viewer, C.LOCATION_DECK)
     return counts
 
 
@@ -179,7 +188,7 @@ def check_against_engine(priv, core, viewer, vocab):
 def test_python_privileged_matches_engine_queries(db, vocab, seed, a, b):
     duel = Duel(seed, None, DECKS[a], DECKS[b], cards=db, config=DuelConfig(max_decisions=600))
     enc = ObservationEncoder(db, vocab, privileged=True)
-    totals = np.zeros(5, dtype=int)
+    totals = np.zeros(P_COUNTS, dtype=int)
     n = [0]
 
     class Agent(RandomAgent):
@@ -191,7 +200,8 @@ def test_python_privileged_matches_engine_queries(db, vocab, seed, a, b):
 
     duel.run(Agent(seed), Agent(seed + 1))
     assert n[0] > 100
-    assert totals[0] and totals[1] and totals[2]  # hands, decks and extra decks were actually checked
+    # hands, decks and extra decks were actually checked
+    assert totals[COUNT_HAND] and totals[COUNT_DECK] and totals[COUNT_EXTRA]
 
 
 def test_set_cards_and_facedown_banish_are_seen(db, vocab):
@@ -204,8 +214,8 @@ def test_set_cards_and_facedown_banish_are_seen(db, vocab):
         class Agent(RandomAgent):
             def act(self, point):
                 counts = check_against_engine(enc.encode_privileged(point, duel._core), duel._core, point.player, vocab)
-                seen["set"] += int(counts[3] > 0)
-                seen["removed"] += int(counts[4] > 0)
+                seen["set"] += int(counts[COUNT_SET] > 0)
+                seen["removed"] += int(counts[COUNT_REMOVED] > 0)
                 return super().act(point)
 
         duel.run(Agent(seed), Agent(seed + 1))
@@ -228,13 +238,13 @@ def lockstep(db, vocab, seed, a, b, first):
         def act(self, point):
             py = enc.encode_privileged(point, duel._core)
             cpp = host.observe_privileged()
-            assert set(cpp) == set(py)
+            assert set(cpp) == set(py) == set(PRIVILEGED_KEYS)
             for k in py:
                 assert cpp[k].dtype == np.int32
                 np.testing.assert_array_equal(cpp[k], py[k], err_msg=f"{k} at decision {point.index}")
             stats["points"] += 1
-            stats["set"] += int(py["counts"][3] > 0)
-            stats["removed"] += int(py["counts"][4] > 0)
+            stats["set"] += int(py["counts"][COUNT_SET] > 0)
+            stats["removed"] += int(py["counts"][COUNT_REMOVED] > 0)
             idx = super().act(point)
             host.act(idx)
             return idx
@@ -325,7 +335,8 @@ def test_copy_counts_and_belief_targets(vocab):
     }
     priv["op_set"][7 + 2] = (7, 0, 2)  # a non-candidate set spell/trap
     priv["op_set"][7 + 3] = (4, 1, 3)  # a revealed face-down card
-    priv["counts"] = np.array([3, 8, 2, 3, 0], dtype=np.int32)
+    priv["counts"] = np.zeros(P_COUNTS, dtype=np.int32)
+    priv["counts"][[COUNT_HAND, COUNT_DECK, COUNT_EXTRA, COUNT_SET, COUNT_REMOVED]] = (3, 8, 2, 3, 0)
 
     assert copy_counts(priv["op_deck"], cands).tolist() == [2, 0, 1, 5]
     assert copy_counts(priv["op_deck"], vocab).shape == (len(vocab),)
@@ -356,7 +367,7 @@ def test_encode_privileged_is_viewer_relative(db, vocab):
     deck_counts = [core.query_count(p, C.LOCATION_DECK) for p in (0, 1)]
     for viewer in (0, 1):
         priv = encode_privileged(core, viewer, vocab)
-        assert priv["counts"][1] == deck_counts[1 - viewer]
+        assert priv["counts"][COUNT_DECK] == deck_counts[1 - viewer]
     core.close()
 
 

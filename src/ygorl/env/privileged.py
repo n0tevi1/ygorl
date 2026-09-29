@@ -26,6 +26,8 @@ P_HAND, P_DECK, P_EXTRA, P_SET, P_REMOVED, P_NEXT = 32, 64, 32, 15, 64, 10
 P_WIDTHS = {"op_hand": P_HAND, "op_deck": P_DECK, "op_extra": P_EXTRA, "op_set": P_SET, "op_removed": P_REMOVED}
 P_ORDER = ("my_next", "op_next")  # deck order: the next P_NEXT draws of each player (only a deck-order critic reads it)
 PRIVILEGED_KEYS = (*P_WIDTHS, "counts", *P_ORDER)
+P_COUNTS = 5  # "counts": true sizes before truncation, at these positions
+COUNT_HAND, COUNT_DECK, COUNT_EXTRA, COUNT_SET, COUNT_REMOVED = range(P_COUNTS)
 P_COLS = 3  # card_index, public, sequence
 N_MZONE, N_SZONE = 7, 8
 PRIVILEGED_QUERY_FLAGS = C.QUERY_CODE | C.QUERY_POSITION  # QUERY_IS_PUBLIC is always returned
@@ -76,13 +78,16 @@ def encode_privileged(core, viewer: int, vocab: CardVocab) -> dict[str, np.ndarr
             if card and facedown(card):
                 field[base + seq] = entry(card, seq)
                 n_set += 1
+    counts = np.zeros(P_COUNTS, dtype=np.int32)
+    counts[COUNT_HAND], counts[COUNT_DECK], counts[COUNT_EXTRA] = len(hand), len(deck), len(extra)
+    counts[COUNT_SET], counts[COUNT_REMOVED] = n_set, len(removed)
     return {
         "op_hand": _rows(hand, P_HAND),
         "op_deck": _rows(deck, P_DECK),
         "op_extra": _rows(extra, P_EXTRA),
         "op_set": field,
         "op_removed": _rows(removed, P_REMOVED),
-        "counts": np.array([len(hand), len(deck), len(extra), n_set, len(removed)], dtype=np.int32),
+        "counts": counts,
         "my_next": upcoming(viewer),
         "op_next": upcoming(op),
     }
