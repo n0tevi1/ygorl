@@ -161,6 +161,11 @@ est.v_targets    # V 头目标
 `q` / `values` 由更新前的 critic 在 rollout 数据上算出，`probs` 是行为策略 π_old；目标在一次 rollout 内算一次，
 PPO 的多个 epoch 共用（与 GAE 的常规做法相同，不做重要性修正）。所有估计函数在 `torch.no_grad()` 下运行。
 
+**critic 目标的 λ**（`target_lam` / `PPOConfig.critic_lam` / `--critic-lam`，默认与 `lam` 相同）：只改 Q / V 头的目标，优势仍用 `lam`。
+λ = 0.5 让策略梯度的噪声小（设计 I2），但同一个 λ 也让 critic 的目标大半是它自己下一步的估计：训练目标上的解释方差约 0.96，
+对真实胜负却只有约 0.3（[benchmarks.md](benchmarks.md)「critic 能预测多少」）；几个回合后才起作用的信息（例如未来的抽卡）几乎传不到 critic。
+λ = 1 让 critic 按对局结果（到 rollout 段末为止）学习。
+
 ## 5. 特权 critic
 
 ```

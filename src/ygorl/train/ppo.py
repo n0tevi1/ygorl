@@ -45,6 +45,7 @@ class PPOConfig:
     vrpo_mode: str = "return"
     gamma: float = 1.0
     lam: float = 0.5  # design I2: lower-variance advantages; 0.3 / the critic mode are worse (docs/benchmarks.md)
+    critic_lam: float | None = None  # λ of the Q / V targets only (None: lam); 1.0 trains the critic on game results
     clip: float = 0.2  # PPO ratio clip
     entropy_coef: float = 0.05  # design I1: 0.05-0.2
     kl_ref_coef: float = 0.05  # KL(π‖π_ref) to the EMA reference (design I8)
@@ -306,7 +307,7 @@ class PPOLearner:
                         lam=cfg.lam, bootstrap_player=ro.bootstrap_player, bootstrap_value=ro.bootstrap_value,
                         bootstrap_q=ro.bootstrap_q, bootstrap_probs=ro.bootstrap_probs,
                         bootstrap_mask=ro.bootstrap_mask, truncated=ro.truncated, vrpo_mode=cfg.vrpo_mode,
-                        normalize=cfg.adv_norm)  # fmt: skip
+                        normalize=cfg.adv_norm, target_lam=cfg.critic_lam)  # fmt: skip
 
     def update(self, ro: Rollout, policy: bool = True) -> dict[str, float]:
         """One PPO update on ``ro``. ``policy=False`` (critic warm-up): only the Q / V losses, and only parameters the

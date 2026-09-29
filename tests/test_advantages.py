@@ -642,3 +642,21 @@ def test_truncated_rows_bootstrap_from_the_critic():
     assert float(gae.advantages[k, 0]) == pytest.approx(0.0)
     with pytest.raises(ValueError, match="truncated"):
         adv.estimate("vrpo", rewards=rewards, truncated=truncated & False | ~dones, **kw, **boot)
+
+
+def test_the_critic_target_lambda_changes_the_targets_but_not_the_advantages():
+    game = duel()
+    q, v = game.solve()
+    d = game.batch(q=q, v=v)
+    kw = {k: d[k] for k in ("rewards", "dones", "players", "actions", "action_mask", "probs", "q", "values", "valid")}
+    for estimator in ("vrpo", "gae"):
+        base = adv.estimate(estimator, gamma=1.0, lam=0.5, **kw)
+        same = adv.estimate(estimator, gamma=1.0, lam=0.5, target_lam=0.5, **kw)
+        mc = adv.estimate(estimator, gamma=1.0, lam=0.5, target_lam=1.0, **kw)
+        full = adv.estimate(estimator, gamma=1.0, lam=1.0, **kw)
+        torch.testing.assert_close(same.q_targets, base.q_targets)
+        torch.testing.assert_close(mc.advantages, base.advantages)  # the policy's advantages keep lam
+        torch.testing.assert_close(mc.q_targets, full.q_targets)  # the critic's targets follow target_lam
+        torch.testing.assert_close(mc.v_targets, full.v_targets)
+    assert not torch.allclose(adv.estimate("vrpo", gamma=1.0, lam=0.5, target_lam=1.0, **kw).q_targets,
+                              adv.estimate("vrpo", gamma=1.0, lam=0.5, **kw).q_targets)  # fmt: skip

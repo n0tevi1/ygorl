@@ -199,7 +199,7 @@ def estimate(estimator: str, *, rewards: Tensor, dones: Tensor, players: Tensor,
              bootstrap_player: Tensor | None = None, bootstrap_value: Tensor | None = None,
              bootstrap_q: Tensor | None = None, bootstrap_probs: Tensor | None = None,
              bootstrap_mask: Tensor | None = None, truncated: Tensor | None = None, vrpo_mode: str = "return",
-             normalize: str = "none") -> Estimate:  # fmt: skip
+             normalize: str = "none", target_lam: float | None = None) -> Estimate:  # fmt: skip
     """The GAE / VRPO switch (docs/training.md).
 
     ``"vrpo"``: advantages from :func:`vrpo_advantages`; Q and V targets are the Expected-SARSA(λ) returns.
@@ -213,6 +213,11 @@ def estimate(estimator: str, *, rewards: Tensor, dones: Tensor, players: Tensor,
     reward is replaced by the critic's own estimate -- ``Q(s_t, a_t)`` for the Expected-SARSA returns,
     ``V(s_t)`` for GAE -- so the cut row has zero TD error and earlier rows bootstrap through the critic
     (docs/training.md). Whatever reward the row carried (e.g. an LP-decided limit) is ignored.
+
+    ``target_lam`` (default: ``lam``): the λ of the critic's Q / V targets only; the advantages keep ``lam``. A low
+    advantage λ cuts the policy gradient's variance, but the same λ makes the critic's target mostly its own next
+    estimate, so information that pays off only turns later (future draws) hardly reaches it; λ = 1 trains the
+    critic on the game results (up to the rollout segment's end).
     """
     if estimator not in ESTIMATORS:
         raise ValueError(f"estimator must be one of {ESTIMATORS}, got {estimator!r}")
@@ -231,10 +236,15 @@ def estimate(estimator: str, *, rewards: Tensor, dones: Tensor, players: Tensor,
         if not has_q:
             raise ValueError("the vrpo estimator needs q, probs, action_mask and actions")
         advantages, returns = vrpo_advantages(*es_args, bootstrap_value=es_boot, mode=vrpo_mode, **common)
+        if target_lam is not None and target_lam != lam:
+            returns = expected_sarsa_returns(*es_args, bootstrap_value=es_boot, **{**common, "lam": target_lam})
         q_targets = v_targets = returns
     else:
         if values is None:
             raise ValueError("the gae estimator needs values (the V head)")
         advantages, v_targets = gae(v_rewards, values, dones, players, bootstrap_value=bootstrap_value, **common)
-        q_targets = expected_sarsa_returns(*es_args, bootstrap_value=es_boot, **common) if has_q else None
+        tcommon = common if target_lam is None else {**common, "lam": target_lam}
+        if target_lam is not None and target_lam != lam:
+            v_targets = gae(v_rewards, values, dones, players, bootstrap_value=bootstrap_value, **tcommon)[1]
+        q_targets = expected_sarsa_returns(*es_args, bootstrap_value=es_boot, **tcommon) if has_q else None
     return Estimate(normalize_advantages(advantages, valid, normalize), v_targets, q_targets)
