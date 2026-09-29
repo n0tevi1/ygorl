@@ -11,22 +11,18 @@ from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
-import torch
 
+from ygorl.build.control import critic_opening_values
 from ygorl.build.diagnose import opening_hand
 from ygorl.cards.ydk import load_ydk
 from ygorl.data.environment import load_environment
 from ygorl.engine.duel import DuelConfig, default_cards, shuffle_deck
 from ygorl.env import GameSpec
-from ygorl.env.driver import ABANDON, drive
 from ygorl.env.encoded import EncodedVecEnv
 from ygorl.eval.arena import derive_seed
-from ygorl.nets.actor_critic import collate_privileged
-from ygorl.nets.batch import collate
 from ygorl.train.checkpoint import load_actor_critic, torch_device
 
 
-@torch.no_grad()
 def opening_values(model, vocab, event_length, deck, opponents, weights, k, seed, device):
     cards = default_cards()
     base = DuelConfig(max_decisions=4000, shuffle_decks=False)
@@ -39,19 +35,12 @@ def opening_values(model, vocab, event_length, deck, opponents, weights, k, seed
         for first in (0, 1):
             specs.append(GameSpec(seed=s, deck_a=a, deck_b=b, first=first, config=base))
             hands.append(opening_hand(a.main))
-    env = EncodedVecEnv(min(256, len(specs)), 8, cards=cards, vocab=vocab, event_length=event_length,
-                        privileged=True, skip_forced=True)  # fmt: skip
-    values = np.full(len(specs), np.nan)
 
-    def decide(ready):
-        out = model(
-            collate([ev.obs for _, ev in ready], device), collate_privileged([ev.privileged for _, ev in ready], device)
-        )
-        for (game, ev), v in zip(ready, out.v.float().cpu().tolist()):
-            values[game.index] = v if ev.player == game.spec.seat_of_deck(0) else -v  # from deck a's side
-        return [ABANDON] * len(ready)  # one reading per game: start the next spec on this slot
+    def factory(n):
+        return EncodedVecEnv(n, 8, cards=cards, vocab=vocab, event_length=event_length, privileged=True,
+                             skip_forced=True)  # fmt: skip
 
-    drive(env, specs, decide, lambda game, result: None, min_batch=64)
+    values = critic_opening_values(model, factory, specs, device=device)
     return values, hands
 
 

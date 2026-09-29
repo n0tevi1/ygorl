@@ -111,3 +111,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | deck-pool manifest | 牌组池清单 | 列出进化卡组的 `ygorl-deck-pool` JSON，训练器每隔几次更新重读（`ygorl.train.selfplay.EvolvedDecks`，training.md §8.3） |
 | opening-hand effect | 起手效应 | 同一牌组内，某卡在起手与不在起手的对局胜率差（`ygorl.build.diagnose`，spikes/deck-evolution.md §3） |
 | leave-one-out value | 留一值 | 把一份某卡换成空白通常怪兽后，亲本与子代配对胜率差；逐卡边际价值的真值（M2） |
+| common random numbers / paired difference | 公共随机数 / 配对差 | 亲本与子代在同一种子、同一对手、先后攻各一局上对局，逐对比较子代 − 亲本（`ygorl.build.tuner.PairedEvaluator`，[tuning.md](tuning.md)） |
+| top-two Thompson sampling | 前二 Thompson 采样 | 按后验把对局批次分给「可能最好」与「可能次好」的子代（`ygorl.build.selection.top_two_thompson`，tuning.md「进化评估器」） |
+| control variate / opening luck | 控制变量 / 起手手气 | 每局得分减去 critic 读出的起手手气：实际起手的 V 减同一卡组其它洗牌的平均 V；期望不变（`ygorl.build.control`） |
+| sequential validation | 序贯复核 | 新种子上分批看、按 α 支出界判定的复核（O'Brien–Fleming），大效应早停（`ygorl.build.selection.sequential_validate`） |
