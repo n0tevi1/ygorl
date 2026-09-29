@@ -153,14 +153,5 @@ class NetPolicy:
         return logits[:k].tolist() + [MASKED_LOGIT] * (n - k)
 
 
-def policy_agent_factory(arg: str | None, seed: int):
-    """Registry factory for ``policy:PATH[@greedy][@t=T]`` (sampling at temperature 1 by default)."""
-    from ygorl.agents.policy import PolicyAgent
-    from ygorl.agents.registry import parse_policy_arg
-
-    path, greedy, temperature = parse_policy_arg(arg)
-    return PolicyAgent(NetPolicy.from_checkpoint(path), seed=seed, greedy=greedy, temperature=temperature)
-
-
 __all__ = ["CHECKPOINT_FORMAT", "NetPolicy", "PolicyCheckpoint", "cached_checkpoint", "load_checkpoint",
-           "policy_agent_factory", "save_checkpoint", "vocab_passwords"]  # fmt: skip
+           "save_checkpoint", "vocab_passwords"]  # fmt: skip
