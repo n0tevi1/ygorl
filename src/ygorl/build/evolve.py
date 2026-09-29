@@ -40,6 +40,7 @@ import numpy as np
 
 from ygorl.build.archive import DESCRIPTORS, DeckArchive
 from ygorl.build.diagnose import opening_effects
+from ygorl.build.rules import rule_children
 from ygorl.build.selection import SD_PAIR, sequential_validate, top_two_thompson
 from ygorl.build.signals import Calibration, CardValueModel, Observation, combine_prior, informed_children
 from ygorl.cards.ydk import Deck, parse_ydk
@@ -74,6 +75,7 @@ class RoundConfig:
     informed: int = 6
     explore: int = 2
     max_bundle: int = 3
+    rules: int = 0  # children from the association rules (ygorl.build.rules; needs Lab.rules), off by default
     diagnose_pairs: int = 0  # the parent's first pairs, played up front (they are the parent's baseline too)
     batch: int = 25
     max_pairs: int = 600
@@ -100,7 +102,8 @@ class Lab:
     per_game=True)``, optionally ``opening_hands``); ``pool(parent)`` the candidate cards; ``descriptors(deck)`` the
     deck-list descriptors (:func:`ygorl.build.archive.deck_descriptors`); ``screen(evaluator, parent, children)`` the
     L0 screen's predicted difference per child (win-rate units, on the evaluator's pairs: common random numbers);
-    ``checkpoint`` what the lineage records about the policy."""
+    ``checkpoint`` what the lineage records about the policy; ``rules`` the association rules
+    (:class:`ygorl.build.rules.DeckRules`) behind the ``RoundConfig.rules`` children."""
 
     evaluator: Callable[[int, Sequence[Opponent]], Any]
     legal: Callable[[Deck], bool]
@@ -110,6 +113,7 @@ class Lab:
     descriptors: Callable[[Deck], Mapping[str, float]] = lambda deck: {}
     screen: Callable[[Any, Deck, Sequence[Deck]], Sequence[float]] | None = None
     checkpoint: Mapping[str, Any] = field(default_factory=dict)
+    rules: Any = None
 
 
 # ------------------------------------------------------------------ files
@@ -460,6 +464,8 @@ class Evolution:
             raise ValueError("l0 must be off, shadow or on")
         if config.l0 != "off" and lab.screen is None:
             raise ValueError(f"l0={config.l0} needs a screen")
+        if config.rules > 0 and lab.rules is None:
+            raise ValueError("rule children need the association rules (Lab.rules)")
         rdir = self.dir / "rounds" / f"{n:04d}"
         _write(rdir / "round.json", _json(state))
         spent = sum(r["games"] for r in state["results"])
@@ -502,9 +508,15 @@ class Evolution:
             prior = combine_prior(signals, self.calibration)
             if prior:  # also in _apply (from the result), so a crash cannot lose it
                 self.model.set_prior({**self.model.prior, **prior})
+        protected = lab.protected(base)
         children = informed_children(base, parent.type, self.model, lab.pool(parent), legal=lab.legal,
                                      is_extra=lab.is_extra, rng=rng, informed=config.informed, explore=config.explore,
-                                     max_bundle=config.max_bundle, protected=lab.protected(base))  # fmt: skip
+                                     max_bundle=config.max_bundle, protected=protected)  # fmt: skip
+        if config.rules > 0:  # own random stream: the other children stay as they were without it
+            children += rule_children(base, parent.type, lab.rules, self.model, legal=lab.legal, is_extra=lab.is_extra,
+                                      rng=np.random.default_rng([config.seed, n, i, 2]), children=config.rules,
+                                      max_bundle=config.max_bundle, protected=protected,
+                                      avoid=[c.deck for c in children])  # fmt: skip
         predicted = [self.model.gain([e.into for e in c.edits], [e.out for e in c.edits], parent.type)
                      for c in children]  # fmt: skip
         screen = [None] * len(children)
@@ -642,7 +654,7 @@ class Evolution:
                 "kind": row["kind"], "edits": row["edits"], "key": deck_key(_deck_from(row["deck"])),
                 "predicted": row["predicted"], "l0": row["l0"], "screened": row["screened"], "search": row["search"],
                 "validation": row["validation"], "all_pairs": row["all_pairs"], "learned": row["learned"],
-                "games": row["games"],
+                "games": row["games"], "generator": row["kind"],
                 "checkpoint": state["checkpoint"], "environment": state["environment"], "accepted": row["accepted"],
                 "manifest_id": self._manifest_id(row) if row["accepted"] else None,
                 "archive": {k: adm.get(k) for k in ("status", "cell", "replaced")}}  # fmt: skip
@@ -671,7 +683,7 @@ class Evolution:
                                 "validation": next((c["validation"] for c in r["children"] if c["validation"]), None),
                                 "accepted": [c["child"] for c in r["children"] if c["accepted"]]}
                                for r in results],
-                "accepted": accepted, "games": games,
+                "accepted": accepted, "games": games, "by_generator": by_generator(children),
                 "cumulative": {"games": cum_games, "accepted": cum_accepted,
                                "games_per_accepted": cum_games / cum_accepted if cum_accepted else None},
                 "archive": {**self.archive.summary(), "stale": self.archive.stale(state["mix"]),
@@ -713,6 +725,22 @@ def _descriptors(lab: Lab, deck: Deck, games: GameLog) -> dict[str, float | None
             **{k: _finite(float(v)) for k, v in lab.descriptors(deck).items()}}  # fmt: skip
 
 
+def by_generator(children: Sequence[Mapping]) -> dict[str, dict]:
+    """Per child generator (``kind``): children, chosen for validation, accepted, and the mean first-batch paired
+    difference (unbiased, docs/tuning.md「回流」) with its number of children."""
+    out: dict[str, dict] = {}
+    for c in children:
+        g = out.setdefault(c["kind"], {"children": 0, "chosen": 0, "accepted": 0, "first_batch": []})
+        g["children"] += 1
+        g["chosen"] += c["validation"] is not None
+        g["accepted"] += bool(c["accepted"])
+        g["first_batch"] += [m["diff"] for m in c["learned"] if m["source"] == "first_batch" and m["diff"] is not None]
+    for g in out.values():
+        d = g.pop("first_batch")
+        g["first_batch"] = {"children": len(d), "mean_diff": float(np.mean(d)) if d else None}
+    return out
+
+
 def pool_diversity(decks: Sequence[Deck]) -> dict:
     """Size and mean pairwise card distance (1 − weighted Jaccard of the card counts) of the live pool."""
     counts = [d.counts() for d in decks]
@@ -739,6 +767,12 @@ def format_report(r: Mapping) -> str:
                      f"chosen {p['chosen']}, " + (f"validation {v['decision']} after {v['pairs']} pairs "
                      f"(diff {v['diff']:+.3f}, lower {v['lower']:+.3f})" if v and v["diff"] is not None
                      else "no validation") + f", {p['games']} games")  # fmt: skip
+    for kind, g in r.get("by_generator", {}).items():
+        fb = g["first_batch"]
+        lines.append(
+            f"  {kind}: {g['children']} children, {g['chosen']} chosen, {g['accepted']} accepted"
+            + (f", first-batch diff {fb['mean_diff']:+.3f} over {fb['children']}" if fb["children"] else "")
+        )
     c = r["cumulative"]
     gpa = f"{c['games_per_accepted']:.0f}" if c["games_per_accepted"] else "n/a"
     lines.append(f"cumulative: {c['games']} games, {c['accepted']} accepted, {gpa} games per accepted edit")
@@ -755,5 +789,5 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
-__all__ = ["DESCRIPTORS", "Evolution", "GameLog", "Lab", "Opponent", "Parent", "RoundConfig", "check_environment",
-           "deck_key", "file_sha256", "format_report", "opponent_mix", "pool_diversity"]  # fmt: skip
+__all__ = ["DESCRIPTORS", "Evolution", "GameLog", "Lab", "Opponent", "Parent", "RoundConfig", "by_generator",
+           "check_environment", "deck_key", "file_sha256", "format_report", "opponent_mix", "pool_diversity"]  # fmt: skip
