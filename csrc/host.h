@@ -1,6 +1,6 @@
 // C++ host layer: decision decoding, action state machines, duel tracker and
 // observation encoder. It mirrors the Python reference implementation
-// (ygorl/engine/messages.py, actions.py, duel.py DuelTracker, env/encoding.py)
+// (ygorl/engine/messages.py, actions.py, tracker.py DuelTracker, env/encoding.py)
 // element for element; tests/test_cpp_host.py checks the two against each other.
 #pragma once
 
@@ -137,7 +137,7 @@ struct TrackerConfig {
     uint32_t max_decisions = 20000;
 };
 
-// Mirror of engine.duel.DuelTracker, in engine-player order.
+// Mirror of engine.tracker.DuelTracker, in engine-player order.
 class Tracker {
 public:
     Tracker(TrackerConfig cfg, const CardDatabase* cards);

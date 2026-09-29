@@ -5,7 +5,8 @@
 ## 分层
 
 ```
-ygorl.engine.duel      Duel(seed, env, deck_a, deck_b).run(agent_a, agent_b) / .replay(responses)
+ygorl.engine.duel      Duel(seed, env, deck_a, deck_b).run(agent_a, agent_b) / .replay(responses)；DuelSession；种子 / 洗牌
+ygorl.engine.tracker   DuelTracker：消费消息缓冲区、决策点、撤销类空操作、课程代答、对局结果（DecisionPoint / DuelResult）
 ygorl.engine.actions   决策消息 → 合法动作列表（多选拆步）→ set_response 字节
 ygorl.engine.messages  OCG_DuelGetMessage 缓冲区 → 类型化 Message（绝不抛异常）
 ygorl.engine.constants 由 tools/gen_constants.py 从 ocgapi_constants.h 生成
@@ -135,6 +136,11 @@ print(result.summary())
 - 引擎玩家 0 先攻；`first=1` 让 b 先攻。结果按 (a, b) 顺序报告。
 - 核心在 `MSG_WIN` 之后仍会继续处理，主机（EDOPro 与我们）在第一个 `MSG_WIN` 处结束对局。胜负原因：1 = LP，2 = 卡组耗尽，0x10 以上为卡片特殊胜利。
 - 回合上限（`DuelConfig.max_turns`）触发时 LP 高者胜，相等为平局；决策数上限（`max_decisions`，默认 6,000）只截断死循环，记为平局（[cli.md](cli.md)）。
+- **主机追踪器**（`tracker.py`）：`Duel.run` / `replay`、`DuelSession` 与 `VecDuelEnv` 都通过 `DuelTracker` 推进同一份主机逻辑：
+  逐个消费核心的消息缓冲区（LP、回合、阶段、事件、待答决策），把决策拆成 `DecisionPoint` 子步并把动作变成
+  `set_response` 字节，标出撤销类空操作，按课程模式代答，最后按 (a, b) 顺序给出 `DuelResult`。它不依赖 `duel.py`
+  （`DuelConfig` 只作类型标注），`DecisionPoint` / `DuelResult` / `DuelTracker`、座位规则 `deck_of_seat` / `seat_of_deck`
+  与各项上限常量都由 `ygorl.engine.duel` 再导出，旧的导入路径照常可用。C++ 的对应物是 `csrc/host.h` 的 `Tracker`。
 - **引擎步数上限**：两次决策之间最多 `MAX_ENGINE_STEPS`（100,000）次 `process()`；超过时对局以 `error`（「engine loop」）结束。
   没有它，一个一直处理、却不再向玩家要决策的核心会让所在的工作线程永远不返回（决策数上限管不到），训练就此挂住（2026-09-24 在语料训练中遇到一次）。
   C++ 的 `HostDuel` / `HostPool` 与 `DuelPool` 和 Python 的 `DuelTracker` 各自检查；`_core.set_max_engine_steps(n)` 只供测试调整。

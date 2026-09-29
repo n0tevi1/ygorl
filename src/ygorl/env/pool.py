@@ -2,7 +2,7 @@
 
 ``VecDuelEnv`` runs many duels at once: the core work (processing up to the
 next decision) happens on C++ worker threads without the GIL, while the
-host-side bookkeeping reuses :class:`ygorl.engine.duel.DuelTracker`, so a game
+host-side bookkeeping reuses :class:`ygorl.engine.tracker.DuelTracker`, so a game
 played here is identical to ``Duel(...).run(...)`` with the same seed and
 agents. Sub-steps of multi-selects are answered locally and never reach the
 core until the decision is complete.
@@ -36,13 +36,13 @@ from ygorl.engine.duel import (
     Duel,
     DuelConfig,
     DuelResult,
-    DuelTracker,
     default_cards,
     default_scripts,
     deck_of_seat,
     expand_seed,
     seat_of_deck,
 )
+from ygorl.engine.tracker import DuelTracker
 
 
 @dataclass(frozen=True)
