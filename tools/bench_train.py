@@ -2,6 +2,7 @@
 
   uv run python tools/bench_train.py --device cuda --envs 128 --steps 16 [--updates 6]
 
+Takes every training-config flag of tools/train_ppo.py (smaller defaults: ``--envs 32 --steps 64 --minibatch 256``).
 Runs ``--updates`` steps with evaluation, snapshots and checkpoints off, drops the first (warm-up) and reports the
 mean collect / update seconds, decisions per second while collecting and rows per second overall; ``--json``
 appends one line per run for docs/benchmarks.md. On an AMD GPU the mean ``gpu_busy_percent``
@@ -63,44 +64,29 @@ def _commit() -> str | None:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("decks", nargs="*", type=Path, help=".ydk files (default: tests/decks/*.ydk)")
-    p.add_argument("--device", default="cpu")
-    p.add_argument("--updates", type=int, default=6)
-    p.add_argument("--envs", type=int, default=32)
-    p.add_argument("--steps", type=int, default=64)
-    p.add_argument("--min-batch", type=int, default=None)
-    p.add_argument("--env-threads", type=int, default=2)
-    p.add_argument("--collect-threads", type=int, default=2)
-    p.add_argument("--torch-threads", type=int, default=4)
-    p.add_argument("--d-model", type=int, default=64)
-    p.add_argument("--layers", type=int, default=1)
-    p.add_argument("--event-length", type=int, default=64)
-    p.add_argument("--epochs", type=int, default=4)
-    p.add_argument("--minibatch", type=int, default=256)
-    p.add_argument("--no-target-kl", action="store_true", help="always run every epoch (fixed update cost)")
-    p.add_argument(
-        "--overlap",
-        action="store_true",
-        help="experimental: collect the next rollout while updating (one update stale)",
-    )
-    p.add_argument("--bf16", action="store_true", help="experimental: bf16 autocast on a GPU")
-    p.add_argument("--label", default="", help="free-form tag stored in the JSON line")
-    p.add_argument("--json", type=Path, default=None, help="append the summary as one JSON line")
-    args = p.parse_args()
-
+    from ygorl.train import cli
     from ygorl.train.ppo import PPOConfig
     from ygorl.train.trainer import TrainConfig, Trainer
     import torch
 
+    # every training-config flag (ygorl.train.cli), from a smaller rollout with evaluation, snapshots and checkpoints off
+    base = TrainConfig(num_envs=32, steps=64, ppo=PPOConfig(minibatch_size=256), snapshot_every=0, checkpoint_every=0,
+                       eval_every=0)  # fmt: skip
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("decks", nargs="*", type=Path, help=".ydk files (default: tests/decks/*.ydk)")
+    p.add_argument("--updates", type=int, default=6)
+    p.add_argument(
+        "--no-target-kl", action="store_true", help="always run every epoch (fixed update cost); = --target-kl 0"
+    )
+    p.add_argument("--label", default="", help="free-form tag stored in the JSON line")
+    p.add_argument("--json", type=Path, default=None, help="append the summary as one JSON line")
+    cli.add_arguments(p, base)
+    args = p.parse_args()
+    if args.no_target_kl:
+        args.target_kl = 0
+
     decks = [str(d) for d in (args.decks or sorted((ROOT / "tests" / "decks").glob("*.ydk")))]
-    net = {"d_model": args.d_model, "n_heads": 4, "board_layers": args.layers, "history_layers": args.layers}
-    ppo = PPOConfig(epochs=args.epochs, minibatch_size=args.minibatch, target_kl=None if args.no_target_kl else 0.01)
-    cfg = TrainConfig(decks=tuple(decks), num_envs=args.envs, steps=args.steps, min_batch=args.min_batch,
-                      env_threads=args.env_threads, collect_threads=args.collect_threads,
-                      torch_threads=args.torch_threads, event_length=args.event_length, net=net, ppo=ppo,
-                      device=args.device, overlap_collect=args.overlap, bf16=args.bf16, snapshot_every=0,
-                      checkpoint_every=0, eval_every=0)  # fmt: skip
+    cfg = cli.from_args(args, decks, base)
     busy = GpuBusy()
     records = []
     with tempfile.TemporaryDirectory() as tmp:
@@ -122,10 +108,11 @@ def main() -> None:
     def mean(key):
         return round(statistics.fmean(r[key] for r in kept), 3)
 
-    summary = {"label": args.label, "device": args.device, "envs": args.envs, "steps": args.steps,
-               "min_batch": args.min_batch, "env_threads": args.env_threads, "collect_threads": args.collect_threads,
-               "torch_threads": args.torch_threads, "overlap": args.overlap, "bf16": args.bf16, "d_model": args.d_model,
-               "layers": args.layers, "epochs": args.epochs, "minibatch": args.minibatch, "rows": kept[0]["rows"],
+    summary = {"label": args.label, "device": cfg.device, "envs": cfg.num_envs, "steps": cfg.steps,
+               "min_batch": cfg.min_batch, "env_threads": cfg.env_threads, "collect_threads": cfg.collect_threads,
+               "torch_threads": cfg.torch_threads, "overlap": cfg.overlap_collect, "bf16": cfg.bf16,
+               "d_model": args.d_model, "layers": args.layers, "epochs": cfg.ppo.epochs,
+               "minibatch": cfg.ppo.minibatch_size, "rows": kept[0]["rows"],
                "collect_s": mean("collect_s"), "update_s": mean("update_s"), "step_s": mean("step_s"),
                "minibatches": mean("minibatches"), "decisions_per_s": round(mean("decisions_per_s")),
                "rows_per_s": round(sum(r["rows"] for r in kept) / sum(r["step_s"] for r in kept)),

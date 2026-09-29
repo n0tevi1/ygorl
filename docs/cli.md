@@ -212,6 +212,11 @@ meta        20 decks, share 71.7%, all legal
     ...
 ```
 
+## 训练工具的参数
+
+`tools/train_ppo.py`、`tools/bench_train.py` 不是 `ygorl` 子命令，但它们的训练参数由训练配置本身生成（`ygorl.train.cli`）：
+`TrainConfig` / `PPOConfig` 的每个字段一个参数，名字、默认值与含义见 `--help`，机制见 [training.md](training.md) §8「配置即命令行」。
+
 ## 测试
 
 - `tests/test_cli.py`：每个命令的输出与直接调用 API 的结果一致（`duel` 对 `Duel.run`，`arena` 对 `Arena.run_many` + `merge`，`matrix` 对 `build_matrix` + `analyze`），

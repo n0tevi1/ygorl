@@ -225,6 +225,19 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
 命令行：`uv run python tools/train_ppo.py DECK... [--minutes 60] [--updates N] [--out DIR]`，`--resume CKPT` 续训，
 `--summary RUN/metrics.jsonl` 打印首末 10 次更新的平均指标；参数见 `--help`。
 
+**配置即命令行**（`ygorl.train.cli`，#121）：`TrainConfig` / `PPOConfig` 的每个字段恰好对应一个参数，每个选项只声明一次——
+类型与默认值取自配置 dataclass（或工具给的基础配置），`cli.FLAGS` 表只补命令行独有的信息：参数名、帮助、取反（`--no-privileged` →
+`privileged_critic=False`、`--separate-critic` → `shared_backbone=False`、`--keep-forced` → `skip_forced=False`）、可选值、
+「0 表示 None」（`--target-kl 0`、`--stall-timeout 0`）、逗号分隔（`--eval-opponents`）或可重复（`--pin`）。网络开关写进
+`TrainConfig.net`（NetConfig 覆盖项，只写与默认不同的键；`--layers` 同时设 `board_layers` 与 `history_layers`，`--no-text` 同时关
+`card_text` 与 `effect_text`）。接口是三个函数：`add_arguments(parser, base)` 建参数组、`from_args(args, decks, base)` 得到配置、
+`to_argv(cfg, base)` 反过来给出重建该配置的参数（与 `base` 相同的字段省略；命令行表达不了的值报错）。牌组是工具的位置参数，不是 flag。
+`tools/train_ppo.py` 与 `tools/bench_train.py` 都经这条路径建配置（后者的基础配置是 `--envs 32 --steps 64 --minibatch 256`、
+评估 / 快照 / checkpoint 关闭）。参数名与默认值和以前一致，`config.json` / checkpoint 里的字段名不变；以前解析了却没传进配置的
+`--overlap`、`--bf16` 现在生效，以前没有参数的字段（`--min-batch`、`--privileged-dim`、`--critic-hidden`、`--stall-timeout`、
+`--eval-greedy-policy`、`--gamma`、`--clip`、`--q-coef`、`--v-coef`、`--adam-eps`、`--max-grad-norm`、`--adv-norm`）有了参数。
+新增配置字段须在 `cli.FLAGS` 补一行，否则 `tests/test_train_cli.py` 失败。
+
 ### 8.1 收集（`RolloutCollector`）
 
 - 环境是 `EncodedVecEnv(privileged=True)`（训练态：事件带对手真值，只进 critic）。每个环境槽位是一列，每次 `collect()`
@@ -401,6 +414,10 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
   默认关闭，关闭时不做任何同步。
 
 ### 8.7 测试
+
+- `tests/test_train_cli.py`（约 5 秒）：每个配置字段都有且只有一个参数（枚举 dataclass 字段）；每个字段取非默认值后经 `to_argv` → 解析 →
+  `from_args` 往返不变，`to_dict` / `from_dict` 同样往返；不给参数得到 `TrainConfig()`；运行脚本用过的旧参数名含义不变；
+  `tools/train_ppo.py` 的 `--overlap` / `--bf16` 进入配置。
 
 - `tests/test_ppo.py`（玩具博弈，约 15 秒）：Nim 自博弈在 VRPO 与 GAE 下都收敛到最优策略（每个必胜局面取 `n mod 4`），
   对快照池训练同样收敛；收集器布局（交替座位、终局奖励、段间衔接自举状态）、快照局只含学习方的行、截断局标记且无奖励、
