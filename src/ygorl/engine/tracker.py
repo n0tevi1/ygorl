@@ -122,15 +122,13 @@ class DuelTracker:
     """
 
     def __init__(self, config: DuelConfig, first: int, cards, *, record_messages: bool = False,
-                 record_steps: bool = False, reference_log: list[bytes] | None = None,
-                 max_engine_steps: int | None = None) -> None:  # fmt: skip
+                 record_steps: bool = False, reference_log: list[bytes] | None = None) -> None:  # fmt: skip
         self.config = config
         self.first = first
         self.cards = cards
         self.record_messages = record_messages
         self.record_steps = record_steps
         self.reference_log = reference_log
-        self.max_engine_steps = MAX_ENGINE_STEPS if max_engine_steps is None else max_engine_steps
         self.result = DuelResult(winner=None, reason="", first=first)
         self.lp = [config.player.starting_lp, config.player.starting_lp]
         self.turn = 0
@@ -226,8 +224,8 @@ class DuelTracker:
             return
         if status != _core.DUEL_STATUS_AWAITING:
             self._engine_steps += 1
-            if self._engine_steps >= self.max_engine_steps:
-                self.stop("error", f"engine loop: no decision after {self.max_engine_steps} engine steps")
+            if self._engine_steps >= MAX_ENGINE_STEPS:
+                self.stop("error", f"engine loop: no decision after {MAX_ENGINE_STEPS} engine steps")
             return
         self._engine_steps = 0
         if decision is None and retried:

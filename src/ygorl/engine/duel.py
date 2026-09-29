@@ -301,11 +301,8 @@ class Duel:
 
     def tracker(self, reference_log: list[bytes] | None = None) -> DuelTracker:
         """Host-side bookkeeping for this duel (used by :meth:`run` and by the vectorized env)."""
-        # MAX_ENGINE_STEPS is read from this module at call time, so patching ygorl.engine.duel.MAX_ENGINE_STEPS
-        # (tests) still reaches every tracker a Duel hands out
         return DuelTracker(self.config, self.first, self.cards, record_messages=self.record_messages,
-                           record_steps=self.record_steps, reference_log=reference_log,
-                           max_engine_steps=MAX_ENGINE_STEPS)  # fmt: skip
+                           record_steps=self.record_steps, reference_log=reference_log)  # fmt: skip
 
 
 @dataclass(frozen=True)
