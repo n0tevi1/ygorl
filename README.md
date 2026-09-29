@@ -225,7 +225,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、Yugipedia 关系边（relations）、引擎包枚举（packages）、基因型与算子（genotype）、代理模型（surrogate）与真实对局标签（labels）、漏斗第一层起手分析（funnel）与真实首回合验证（first_turn）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
 │   ├── data/                # Environment 加载与校验；数据抓取与环境构建（fetch、cardmap、ygoprodeck、masterduelmeta、yugipedia、build）
-│   ├── engine/              # 消息解码、动作模型、单局 Duel、卡片查询解析（query.py）、回放（含 .yrp / .yrpX 读取）、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）；constants.py 为生成文件
+│   ├── engine/              # 消息解码、动作模型、单局 Duel、卡片查询解析（query.py）、回放（含 .yrp / .yrpX 读取）、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）、主机追踪器（tracker.py 的 DuelTracker）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；belief_prior.py 公开证据、meta 卡表与 HDT 式过滤（信念头的先验、输入特征与基线）；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv；observer.py 为 DecisionPoint 的观测（参考编码器 + 事件流，与 EncodedVecEnv 一致）
 │   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）、actor_critic（PolicyNet + 特权 Q / V critic）、belief（信念头、掩码损失、BeliefPolicy）、agent（检查点读写、PolicyAgent 用的 NetPolicy）
 │   ├── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线

@@ -31,7 +31,7 @@ namespace ygorl {
 
 // Engine steps (OCG_DuelProcess calls) allowed between two decisions before a duel is stopped as an engine loop:
 // a core that keeps processing without ever asking a player would otherwise hang its worker thread (the decision
-// limit never fires). Real chains take a few thousand steps at most. Mirror of engine.duel.MAX_ENGINE_STEPS;
+// limit never fires). Real chains take a few thousand steps at most. Mirror of engine.tracker.MAX_ENGINE_STEPS;
 // settable for tests (_core.set_max_engine_steps).
 inline std::atomic<uint32_t> g_max_engine_steps{100000};
 
