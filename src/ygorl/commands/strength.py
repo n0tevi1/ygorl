@@ -20,8 +20,6 @@ from ygorl.commands import (
 )
 from ygorl.commands.matrix import ARTIFACT_NAME_RE, _table
 
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-
 
 def add_parser(subparsers) -> None:
     p = subparsers.add_parser(
@@ -65,16 +63,15 @@ def add_parser(subparsers) -> None:
 
 
 def parse_agents(args: list[str]) -> dict[str, str]:
-    """``[NAME=]SPEC`` arguments -> {name: spec}. A ``NAME=`` prefix has no ':' (specs like ``policy:P@t=1`` do)."""
+    """``[NAME=]SPEC`` arguments -> {name: spec} (:func:`ygorl.agents.registry.parse_named_spec`)."""
+    from ygorl.agents.registry import parse_named_spec
+
     out: dict[str, str] = {}
     for arg in args:
-        name, sep, spec = arg.partition("=")
-        if not sep or ":" in name:
-            name, spec = arg, arg
-        if not spec:
-            raise CommandError(f"agent {arg!r} has an empty spec")
-        if sep and ":" not in name and not NAME_RE.match(name):
-            raise CommandError(f"agent name {name!r}: letters, digits, '.', '_' and '-', not starting with '.' or '-'")
+        try:
+            name, spec = parse_named_spec(arg)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from None
         if name in out:
             raise CommandError(f"duplicate agent name {name!r}: give each agent a NAME= prefix")
         out[name] = spec

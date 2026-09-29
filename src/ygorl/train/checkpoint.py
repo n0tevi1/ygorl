@@ -23,7 +23,8 @@ two apart. This module is the one place that rebuilds networks from either:
   (:class:`CriticConfig`); :func:`build_actor_critic` builds a fresh one (the trainer, the snapshot pool);
 - :func:`warm_start`: copy a loaded actor into a new network, which may add card views;
 - :class:`Signature`: what a network reads (card vocab, event window length); ``a.mismatches(b)`` says in words
-  why two checkpoints / runs cannot share observations.
+  why two checkpoints / runs cannot share observations;
+- :func:`torch_device`: the device networks run on (with the ROCm settings they need).
 
 Frozen text tables and card facts are not stored in checkpoints (docs/nets.md): they are reloaded from ``text_dir``
 or, for a PPO checkpoint, from its run's ``config["text_dir"]``; ``ygorl.nets.text.require_tables`` is the check.
@@ -100,6 +101,15 @@ def checkpoint_format(path: str | Path) -> str | None:
 def _format_of(path: str, mtime_ns: int) -> str | None:
     data = torch.load(path, map_location="cpu", weights_only=True, mmap=True)
     return data.get("format") if isinstance(data, dict) else None
+
+
+def torch_device(device: str | torch.device) -> torch.device:
+    """``device`` as a ``torch.device``. On a ROCm GPU this also turns on the fused attention kernels with a mask
+    (``TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`` unless set; docs/benchmarks.md), before any attention runs."""
+    device = torch.device(device)
+    if device.type == "cuda" and torch.version.hip:
+        os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
+    return device
 
 
 # -- what a network reads -----------------------------------------------------------------------------------------
@@ -275,4 +285,4 @@ def warm_start(actor: PolicyNet, source: LoadedPolicy) -> list[str]:
 
 __all__ = ["FORMAT", "CriticConfig", "LoadedActorCritic", "LoadedPolicy", "Signature", "build_actor_critic",
            "checkpoint_format", "load_actor", "load_actor_critic", "load_checkpoint", "load_policy", "save_checkpoint",
-           "vocab_from_text", "vocab_to_text", "warm_start"]  # fmt: skip
+           "torch_device", "vocab_from_text", "vocab_to_text", "warm_start"]  # fmt: skip

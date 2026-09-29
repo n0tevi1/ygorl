@@ -171,7 +171,7 @@ uv run ygorl strength greedy random best=policy:out/run/best.pt --decks out/corp
 
 - **agent**：至少两个，每个写 `[名字=]规格`。规格见 `ygorl arena` 的 agent 列表（`policy:PATH[@greedy][@t=T]`、`greedy`、`random`、`lethal:<agent>` 等）。
   不写名字时名字就是规格；名字只能含字母、数字、`.`、`_`、`-`，必须互不相同（同一规格出现两次就给其中一个起名字）。
-  `名字=` 前缀里不能有 `:`，所以 `policy:P@t=1` 这样的规格不会被误拆。
+  `名字=` 前缀里不能有 `:`，所以 `policy:P@t=1` 这样的规格不会被误拆（`ygorl.agents.registry.parse_named_spec`）。
 - **牌组池**：`--decks` 给文件或目录；不给时用 `--env` 的 meta 牌组。按固定种子从池里抽 `--pairings` 个有序牌组配对（默认 50）。
   每对 agent 在每个配对上打 4 局：两种牌组分配 × 先后攻各一次。
 - **输出**：排名（`ranking (...): a (0.61) > b (0.58) > ...`，按 alpha-rank、Nash、平均胜率排序，括号里是对其余所有 agent 的平均胜率；完全打平时次序无意义），以及行 agent 对列 agent 的胜率矩阵，末两列是 Nash 权重与 alpha-rank。

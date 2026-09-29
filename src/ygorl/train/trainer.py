@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import copy
 import json
-import os
 import shutil
 import statistics
 import time
@@ -45,6 +44,7 @@ from ygorl.train.checkpoint import (
     load_actor,
     load_checkpoint,
     save_checkpoint,
+    torch_device,
     vocab_from_text,
     vocab_to_text,
     warm_start,
@@ -181,9 +181,7 @@ class Trainer:
                             else DuelConfig(**overrides))  # fmt: skip
         self.decks = [load_ydk(p) for p in cfg.decks]
         self.cards = default_cards()
-        self.device = torch.device(cfg.device)
-        if self.device.type == "cuda" and torch.version.hip:  # fused attention with a mask (docs/benchmarks.md)
-            os.environ.setdefault("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL", "1")
+        self.device = torch_device(cfg.device)
         init = load_actor(cfg.init_from, cfg.text_dir) if cfg.init_from and state is None else None
         if state is not None:
             self.vocab = vocab_from_text(state["vocab"])
@@ -492,11 +490,11 @@ def evaluate_checkpoint(checkpoint: str | Path, decks, opponent: str, *, pairing
                         env=None, workers: int = 1, seed: int = 0, greedy_policy: bool = False):  # fmt: skip
     """Arena report of ``policy:<checkpoint>`` (on deck i) against ``opponent`` (on deck j) over the given
     ``(i, j)`` pairings, ``pairs`` paired seeds each; returns ``(merged report, seconds)``."""
-    from ygorl.agents.registry import AgentSpec
+    from ygorl.agents.registry import AgentSpec, policy_spec
     from ygorl.eval.arena import Arena, merge
 
-    kind = "policy-greedy" if greedy_policy else "policy"
-    arena = Arena(AgentSpec(f"{kind}:{Path(checkpoint).resolve()}"), AgentSpec(opponent), env=env, config=config,
+    agent = AgentSpec(policy_spec(Path(checkpoint).resolve(), greedy=greedy_policy))
+    arena = Arena(agent, AgentSpec(opponent), env=env, config=config,
                   workers=workers, mp_context="spawn" if workers > 1 else None)  # fmt: skip
     cells = [(decks[i], decks[j], derive_seed(seed, k)) for k, (i, j) in enumerate(pairings)]
     t0 = time.time()
