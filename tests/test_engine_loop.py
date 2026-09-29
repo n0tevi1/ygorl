@@ -12,7 +12,7 @@ from ygorl.agents import RandomAgent
 from ygorl.cards.cdb import CardDB
 from ygorl.cards.ydk import load_ydk
 from ygorl.engine import constants as C
-from ygorl.engine import duel as duel_module
+from ygorl.engine import tracker as tracker_module
 from ygorl.engine.duel import Duel, DuelConfig, default_cards, expand_seed
 from ygorl.env import GameSpec, run_games
 from ygorl.env.encoded import EncodedVecEnv, chooser
@@ -57,7 +57,7 @@ def test_cpp_duel_pool_stops_an_engine_loop(db, one_step):
 
 
 def test_python_tracker_stops_an_engine_loop(db, monkeypatch):
-    monkeypatch.setattr(duel_module, "MAX_ENGINE_STEPS", 1)
+    monkeypatch.setattr(tracker_module, "MAX_ENGINE_STEPS", 1)
     s = specs()[0]
     r = Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first).run(
         RandomAgent(0), RandomAgent(1)
@@ -66,7 +66,7 @@ def test_python_tracker_stops_an_engine_loop(db, monkeypatch):
 
 
 def test_the_default_limits_leave_real_games_alone(db):
-    assert _core.set_max_engine_steps(100_000) == 100_000 and duel_module.MAX_ENGINE_STEPS == 100_000
+    assert _core.set_max_engine_steps(100_000) == 100_000 and tracker_module.MAX_ENGINE_STEPS == 100_000
     assert _core.set_max_script_steps(100_000) == 100_000
     for res in EncodedVecEnv(2, 1, cards=db).play(specs(), chooser):
         assert res["reason"] != "error"

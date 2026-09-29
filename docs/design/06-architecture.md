@@ -44,7 +44,7 @@ ygorl/
 │                                 #       duel_pool.cpp host.cpp（消息解码、动作状态机、追踪器）
 │                                 #       obs_encoder.cpp event_encoder.cpp privileged.cpp host_pool.cpp binding.cpp
 ├── src/ygorl/
-│   ├── engine/    duel.py messages.py actions.py replay.py branch.py curriculum.py puzzle.py query.py
+│   ├── engine/    duel.py tracker.py messages.py actions.py replay.py branch.py curriculum.py puzzle.py query.py
 │   ├── cards/     cdb.py lflist.py ydk.py legality.py       # 含效果级文本 str1..16；文本嵌入 embeddings.py（规划，T5.2）
 │   ├── env/       pool.py single.py encoded.py encoding.py events.py privileged.py  # VecDuelEnv、DuelEnv、C++ 步进环境
 │   ├── solver/    combo_solver.py demos.py                  # ygo-combo-solver 封装、示范数据集（T4a.1）
