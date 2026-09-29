@@ -3,10 +3,13 @@ Same decks and children as M2 (tools/deckevo_m2_loo.py: one copy of a card repla
 children on the same common-random-number pairs against the environment's meta decks by share. Every game also gets
 its opening luck (ygorl.build.control): the privileged critic's V at the first decision of the actual deal minus its
 mean over K other shuffles of the same deck, each deck with its own cards. Per child and pooled, compare the variance
-of the per-pair difference child - parent before and after subtracting beta * luck (beta = 0.5: the critic's
-+1 / -1 scale to the score's 1 / 0; fixed, so the estimate stays unbiased). Also reported, as diagnostics only: the
-in-sample best beta and its reduction (optimistic), and the luck's explained variance of single games.
-The evaluator enables the control variate only if the pooled reduction at beta = 0.5 is at least 30%.
+of the per-pair difference child - parent before and after subtracting beta * luck, with two coefficients that keep
+the estimate unbiased because neither is fitted on the games it adjusts:
+- ``--beta`` (default 0.5: the critic's +1 / -1 scale to the score's 1 / 0, right only for a calibrated critic);
+- held out: for each deck, the variance-minimizing beta fitted on the other decks' pairs (leave one deck out),
+  applied to this deck; the pooled out-of-sample reduction is the number that decides M5 (needs >= 2 decks).
+Also reported, as diagnostics only: the in-sample best beta and its reduction (optimistic), and the luck's explained
+variance of single games. The evaluator enables the control variate only if the out-of-sample reduction is >= 30%.
 
 Usage: tools/deckevo_m5_cv.py CHECKPOINT N_DECKS CHILDREN PAIRS K OUT.json [--env md-2026-09] [--device cuda]
        [--beta 0.5] [--envs 256]"""
@@ -34,6 +37,12 @@ BLANK = 65957473  # Metal Armored Bug, as in M2
 def reduction(d_raw: np.ndarray, d_adj: np.ndarray) -> float:
     v = d_raw.var(ddof=1)
     return float(1 - d_adj.var(ddof=1) / v) if v > 0 else float("nan")
+
+
+def fit_beta(d_raw: np.ndarray, l_diff: np.ndarray) -> float:
+    """The variance-minimizing coefficient cov(d, l) / var(l)."""
+    v = l_diff.var(ddof=1) if len(l_diff) > 1 else 0.0
+    return float(np.cov(d_raw, l_diff)[0, 1] / v) if v > 0 else 0.0
 
 
 def main():
@@ -74,7 +83,7 @@ def main():
                                                                num_envs=args.envs), k=args.k, beta=args.beta)  # fmt: skip
     res = {"checkpoint": args.checkpoint, "environment": env.version, "pairs": args.pairs, "k": args.k,
            "beta": args.beta, "decks": []}  # fmt: skip
-    pooled_raw, pooled_luck, game_scores, game_luck = [], [], [], []
+    pooled_raw, pooled_luck, game_scores, game_luck, per_deck = [], [], [], [], []
     for di, (dtype, file, base) in enumerate(picks):
         distinct = sorted({pw for pw in base.main if pw != BLANK})
         chosen = [int(x) for x in np.random.default_rng(100 + di).choice(distinct, min(args.children, len(distinct)),
@@ -101,7 +110,7 @@ def main():
             m = np.isfinite(d_raw)
             d_raw, l_diff = d_raw[m], l_diff[m]
             d_adj = d_raw - args.beta * l_diff
-            best_beta = float(np.cov(d_raw, l_diff)[0, 1] / l_diff.var(ddof=1)) if l_diff.var() > 0 else 0.0
+            best_beta = fit_beta(d_raw, l_diff)
             rows.append({"card": chosen[c - 1], "name": cards[chosen[c - 1]].name, "pairs": int(m.sum()),
                          "diff_raw": float(d_raw.mean()), "diff_adj": float(d_adj.mean()),
                          "sd_raw": float(d_raw.std(ddof=1)), "sd_adj": float(d_adj.std(ddof=1)),
@@ -109,6 +118,7 @@ def main():
                          "reduction_best_beta": reduction(d_raw, d_raw - best_beta * l_diff)})  # fmt: skip
             pooled_raw.extend(d_raw.tolist())
             pooled_luck.extend(l_diff.tolist())
+            per_deck.append((di, d_raw, l_diff))
         entry = {"type": dtype, "file": file, "parent": float(np.nanmean(s[0])), "children": rows,
                  "game_seconds": stats["seconds"], "critic_seconds": critic_s}  # fmt: skip
         res["decks"].append(entry)
@@ -121,14 +131,29 @@ def main():
     idx = boot.integers(0, len(d_raw), size=(1000, len(d_raw)))
     reds = [reduction(d_raw[i], d_adj[i]) for i in idx]
     gs, gl = np.array(game_scores), np.array(game_luck)
-    best_beta = float(np.cov(d_raw, l_diff)[0, 1] / l_diff.var(ddof=1)) if l_diff.var() > 0 else 0.0
+    best_beta = fit_beta(d_raw, l_diff)
+    held_raw, held_adj, held_beta = [], [], {}
+    for di in range(len(picks)):  # leave one deck out: beta from the other decks' pairs only
+        rest = [(r, lk) for dj, r, lk in per_deck if dj != di]
+        if not rest:
+            continue
+        b = fit_beta(np.concatenate([r for r, _ in rest]), np.concatenate([lk for _, lk in rest]))
+        held_beta[di] = b
+        for dj, r, lk in per_deck:
+            if dj == di:
+                held_raw.extend(r.tolist())
+                held_adj.extend((r - b * lk).tolist())
+    heldout = reduction(np.array(held_raw), np.array(held_adj)) if held_raw else float("nan")
+    for di, b in held_beta.items():
+        res["decks"][di]["heldout_beta"] = b
     res["pooled"] = {
         "pairs": len(d_raw), "sd_raw": float(d_raw.std(ddof=1)), "sd_adj": float(d_adj.std(ddof=1)),
         "reduction": reduction(d_raw, d_adj), "reduction_ci": [float(np.nanquantile(reds, 0.025)),
                                                                 float(np.nanquantile(reds, 0.975))],
         "best_beta": best_beta, "reduction_best_beta": reduction(d_raw, d_raw - best_beta * l_diff),
         "game_luck_r2": float(np.corrcoef(gs, gl)[0, 1] ** 2) if gl.var() > 0 else 0.0,
-        "critic_readings": cv.readings, "enable": reduction(d_raw, d_adj) >= 0.3,
+        "heldout_reduction": heldout, "heldout_betas": list(held_beta.values()),
+        "critic_readings": cv.readings, "enable": bool(heldout >= 0.3),
     }  # fmt: skip
     print("pooled:", json.dumps(res["pooled"]))
     Path(args.out).write_text(json.dumps(res, indent=1))

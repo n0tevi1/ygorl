@@ -10,8 +10,11 @@ alternative shuffle is a uniform shuffle, like the actual one, so ``E[luck] = 0`
 - Parent and child each use their own deck. The alternative shuffles re-permute the dealt deck by a permutation
   that depends on the game seed only, so a parent and an in-place child (:func:`ygorl.build.tuner.apply`) get the same
   alternative hands but for the edited card: their lucks correlate like their games do.
-- ``beta`` is fixed, not fitted on the same games (fitting it would bias the estimate slightly); 0.5 turns the
-  critic's +1 / -1 scale into the score's 1 / 0.
+- ``beta`` is a parameter. 0.5 turns the critic's +1 / -1 scale into the score's 1 / 0, which is the best
+  coefficient only for a calibrated critic; the variance-minimizing one is cov(score, luck) / var(luck). Any ``beta``
+  that does not depend on the games it adjusts, e.g. one fitted on disjoint games (M5 fits it on held-out decks),
+  keeps the estimate unbiased: ``E[beta * luck] = beta * E[luck] = 0``. Fitting it on the same games would make
+  ``beta`` and ``luck`` dependent and bias the estimate slightly.
 - The critic's side: V is from the deciding player's view, so it is negated when the first decision is the
   opponent's (zero-sum). A game with no decision (NaN) gets no adjustment.
 

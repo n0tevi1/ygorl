@@ -9,31 +9,68 @@ from ygorl.build.selection import obrien_fleming_bounds, sequential_validate, to
 from ygorl.cards.ydk import Deck
 
 
+def _normals(seed, stream, ks):
+    """Standard normals per pair index, the same for a (seed, stream, k) on every call."""
+    chunks = {k // 100 for k in ks}
+    table = {c: np.random.default_rng([seed, stream, c]).standard_normal(100) for c in chunks}
+    return np.array([table[k // 100][k % 100] for k in ks])
+
+
+def _stream(name):
+    return 1 + zlib.crc32(name.encode()) % 997
+
+
 class PairedGames:
-    """Stand-in evaluator: deck ``i`` (its name) scores ``base[k] + effect[i] + noise`` on pair ``k``; the parent's
-    per-pair score is shared (common random numbers), so a child's paired difference has sd ``noise``."""
+    """Stand-in evaluator with continuous scores: on pair ``k`` every deck shares ``0.5 + 0.3 z_k`` (common random
+    numbers); the parent adds its own ``parent_noise`` term and each child ``effect + noise`` of its own. The parent's
+    term enters every child's paired difference, so the children's differences are correlated, as in real games."""
 
-    def __init__(self, effects, noise=0.2, seed=0):
-        self.effects, self.noise, self.seed = dict(effects), noise, seed
+    def __init__(self, effects, noise=0.18, parent_noise=0.1, seed=0):
+        self.effects, self.noise, self.parent_noise, self.seed = dict(effects), noise, parent_noise, seed
         self.games, self.calls = 0, []
-
-    def _noise(self, stream, ks):
-        """Standard normals per pair index, the same for a (seed, stream, k) on every call."""
-        chunks = {k // 100 for k in ks}
-        table = {c: np.random.default_rng([self.seed, stream, c]).standard_normal(100) for c in chunks}
-        return np.array([table[k // 100][k % 100] for k in ks])
 
     def play(self, jobs):
         self.calls.append([(d.name, r.start, r.stop) for d, r in jobs])
         out = []
         for d, pairs in jobs:
             ks = list(pairs)
-            shared = 0.5 + 0.3 * self._noise(0, ks)
+            shared = 0.5 + 0.3 * _normals(self.seed, 0, ks)
             if d.name == "base":
-                out.append(shared)
+                out.append(shared + self.parent_noise * _normals(self.seed, 1, ks))
             else:
-                own = self._noise(1 + zlib.crc32(d.name.encode()) % 997, ks)
+                own = _normals(self.seed, 1 + _stream(d.name), ks)
                 out.append(shared + self.effects.get(d.name, 0.0) + self.noise * own)
+            self.games += 2 * len(ks)
+        return out
+
+
+class DiscretePairs:
+    """Stand-in evaluator with real game results: a pair is two games scored 1 / 0 (pair score 0, 0.5 or 1). Each of
+    a child's games repeats the parent's result on the same seed with probability ``copy`` (common random numbers;
+    M1 measured a per-game correlation of 0.80) and is otherwise an independent game won with ``p + effect /
+    (1 - copy)``, so the child's win rate is ``p + effect``."""
+
+    def __init__(self, effects, p=0.45, copy=0.8, seed=0):
+        self.effects, self.p, self.copy, self.seed = dict(effects), p, copy, seed
+        self.games = 0
+
+    def _uniform(self, stream, ks):
+        """Uniforms per (pair, game), the same for a (seed, stream, k) on every call."""
+        chunks = {k // 100 for k in ks}
+        table = {c: np.random.default_rng([self.seed, stream, c]).random((100, 2)) for c in chunks}
+        return np.array([table[k // 100][k % 100] for k in ks]).reshape(len(ks), 2)
+
+    def play(self, jobs):
+        out = []
+        for d, pairs in jobs:
+            ks = list(pairs)
+            won = (self._uniform(0, ks) < self.p).astype(float)
+            if d.name != "base":
+                s = _stream(d.name)
+                q = self.p + self.effects.get(d.name, 0.0) / (1 - self.copy)
+                own = (self._uniform(2 * s, ks) < q).astype(float)
+                won = np.where(self._uniform(2 * s + 1, ks) < self.copy, won, own)
+            out.append(won.mean(-1))
             self.games += 2 * len(ks)
         return out
 
@@ -57,7 +94,7 @@ def test_thompson_picks_the_truly_best_child_over_many_seeds():
         assert race.pairs <= 600 and all(a.pairs % 25 == 0 and a.pairs >= 25 for a in race.arms)
         assert len(race.base_scores) == max(a.pairs for a in race.arms)
     # the misses are early confident stops on a null child (8 children at 25 pairs each): validation catches those
-    assert hits >= 80 and np.mean(pairs) < 400
+    assert hits >= 85 and np.mean(pairs) < 400
 
 
 def test_thompson_spends_on_the_leaders_and_stops_when_confident():
@@ -96,8 +133,9 @@ def test_obrien_fleming_bounds_match_the_textbook_and_hold_alpha():
         obrien_fleming_bounds((0.5, 0.4), 0.05)
 
 
-def test_sequential_false_positive_rate_under_no_effect_is_at_most_alpha():
-    alpha, runs = 0.05, 2000
+@pytest.mark.parametrize("alpha", [0.05, 0.025])
+def test_sequential_false_positive_rate_under_no_effect_is_at_most_alpha(alpha):
+    runs = 2000
     accepted, pairs = 0, []
     for seed in range(runs):
         v = sequential_validate(BASE, decks(1)[0], PairedGames({"c0": 0.0}, seed=seed), alpha=alpha, look=100, cap=1000)
@@ -105,7 +143,23 @@ def test_sequential_false_positive_rate_under_no_effect_is_at_most_alpha():
         pairs.append(v.pairs)
     sd = np.sqrt(alpha * (1 - alpha) / runs)
     assert accepted / runs <= alpha + 2 * sd
-    assert np.mean(pairs) < 1000  # futility stops cut the null runs short
+    assert np.mean(pairs) < 500  # the non-binding futility bound stops most null runs well before the cap
+
+
+def test_sequential_false_positive_rate_with_discrete_correlated_games():
+    """Pair scores 0 / 0.5 / 1, parent and child results correlated game by game as under common random numbers,
+    default alpha 0.025: the false-positive rate stays at most alpha and futility still cuts the null runs short."""
+    alpha, runs = 0.025, 1000
+    accepted, pairs = 0, []
+    for seed in range(runs):
+        v = sequential_validate(BASE, decks(1)[0], DiscretePairs({"c0": 0.0}, seed=seed))
+        accepted += v.accepted
+        pairs.append(v.pairs)
+    assert accepted / runs <= alpha + 2 * np.sqrt(alpha * (1 - alpha) / runs)
+    assert np.mean(pairs) < 500
+    # and a real +5 pp is usually accepted within the cap
+    hits = sum(sequential_validate(BASE, decks(1)[0], DiscretePairs({"c0": 0.05}, seed=s)).accepted for s in range(100))
+    assert hits >= 70
 
 
 def test_sequential_accepts_a_large_effect_early_and_uses_fresh_pairs():
@@ -125,4 +179,4 @@ def test_sequential_never_decides_on_a_zero_variance_run():
             return [np.full(len(r), 0.5) for _, r in jobs]
 
     v = sequential_validate(BASE, decks(1)[0], Ties(), look=4, cap=8)
-    assert v.decision == "cap" and v.looks[-1].upper > 0.1
+    assert v.decision == "cap" and v.looks[-1].upper > 0.05

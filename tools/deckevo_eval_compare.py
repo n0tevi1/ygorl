@@ -16,7 +16,7 @@ played, the edits accepted, games per accepted edit, and every accepted edit's v
 
 Usage: tools/deckevo_eval_compare.py CHECKPOINT N_DECKS OUT.json [--env md-2026-09] [--device cuda] [--arms mvp,evo]
        [--candidates 64] [--first-pairs 25] [--finalists 3] [--validation-pairs 200] [--informed 6] [--explore 2] [--batch 25] [--max-pairs 600]
-       [--look 100] [--cap 1000] [--control-k 0] [--envs 256] [--seed 0]"""
+       [--look 100] [--cap 1000] [--control-k 0] [--control-beta 0.5] [--envs 256] [--seed 0]"""
 
 import argparse
 import json
@@ -55,6 +55,12 @@ def main():
     ap.add_argument("--look", type=int, default=100)
     ap.add_argument("--cap", type=int, default=1000)
     ap.add_argument("--control-k", type=int, default=0, help="alternative shuffles of the control variate (0: off)")
+    ap.add_argument(
+        "--control-beta",
+        type=float,
+        default=0.5,
+        help="control variate coefficient; take it from M5's held-out fit, never from these games",
+    )
     ap.add_argument("--envs", type=int, default=256)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
@@ -88,7 +94,8 @@ def main():
                                  skip_forced=True)  # fmt: skip
 
         control = CriticControlVariate(lambda sp: critic_opening_values(critic, critic_env, sp, device=device,
-                                                                        num_envs=args.envs), k=args.control_k)  # fmt: skip
+                                                                        num_envs=args.envs), k=args.control_k,
+                                       beta=args.control_beta)  # fmt: skip
 
     def evaluator(seed, control=None):
         return PairedEvaluator(

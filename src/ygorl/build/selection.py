@@ -13,9 +13,9 @@ per-pair difference child minus parent.
   has ``P(diff > 0) > confidence``, or when the pair budget is spent.
 - :func:`sequential_validate`: the chosen child and its parent on fresh pairs (never used by the search), a look
   every ``look`` pairs up to ``cap``, with one-sided repeated confidence bounds from Lan-DeMets O'Brien-Fleming alpha
-  spending (:func:`obrien_fleming_bounds`). Accept when the lower bound is above 0; stop as futile when the upper
-  bound is below ``min_effect``; otherwise reject at the cap. The futility stop never accepts, so the chance of
-  accepting a child that is no better is at most ``alpha``.
+  spending (:func:`obrien_fleming_bounds`). Accept when the lower bound is above 0; stop as futile when a looser
+  (fixed ``futility_z``, non-binding) upper bound is below ``min_effect``; otherwise reject at the cap. The futility
+  stop never accepts, so the chance of accepting a child that is no better is at most ``alpha``.
 """
 
 from __future__ import annotations
@@ -209,8 +209,8 @@ def obrien_fleming_bounds(fractions: tuple[float, ...], alpha: float, step: floa
 class Look:
     pairs: int
     mean: float
-    lower: float
-    upper: float
+    lower: float  # efficacy bound: mean - z_bound * se
+    upper: float  # futility bound: mean + futility_z * se
     z_bound: float
 
 
@@ -233,14 +233,16 @@ class Validation:
 
 
 def sequential_validate(base: Deck, child: Deck, evaluator, *, look: int = 100, cap: int = 1000,
-                        alpha: float = 0.025, min_effect: float = 0.01, offset: int = 1_000_000,
-                        sd_pair: float = SD_PAIR, prior_pairs: float = 10.0,
+                        alpha: float = 0.025, min_effect: float = 0.02, offset: int = 1_000_000,
+                        futility_z: float = 1.645, sd_pair: float = SD_PAIR, prior_pairs: float = 10.0,
                         log: Callable[[str], None] | None = None) -> Validation:  # fmt: skip
     """Group-sequential check of ``child`` against ``base`` on fresh pairs from ``offset`` (never used by a search).
 
-    At each look (every ``look`` pairs, at most ``cap``), the repeated confidence bounds are
-    ``mean ± z_k * sd / sqrt(n)`` with ``z_k`` from :func:`obrien_fleming_bounds` at information ``pairs / cap``;
-    accept when the lower bound is above 0, stop as futile when the upper bound is below ``min_effect``. The per-pair
+    At each look (every ``look`` pairs, at most ``cap``), accept when the lower bound ``mean - z_k * sd / sqrt(n)``
+    is above 0, with ``z_k`` from :func:`obrien_fleming_bounds` at information ``pairs / cap``; stop as futile when
+    the upper bound ``mean + futility_z * sd / sqrt(n)`` is below ``min_effect``. The futility bound is non-binding
+    (stopping only ever rejects), so it can be much looser than the efficacy bound without raising the false-positive
+    rate above ``alpha``; with the efficacy z (7.0 at the first of 10 looks) it would almost never fire. The per-pair
     variance ``s²`` counts ``prior_pairs`` pseudo-pairs of ``sd_pair²`` (as in :func:`top_two_thompson`), so a short
     run of identical pairs (common under common random numbers) cannot give a zero-width interval."""
     if look <= 0 or cap < look:
@@ -260,14 +262,16 @@ def sequential_validate(base: Deck, child: Deck, evaluator, *, look: int = 100, 
         if len(d) < 2:
             continue
         var = (prior_pairs * sd_pair**2 + float(((d - d.mean()) ** 2).sum())) / (prior_pairs + len(d) - 1)
-        mean, half = float(d.mean()), z * math.sqrt(var / len(d))
-        out.looks.append(Look(stop, mean, mean - half, mean + half, z))
+        mean, se = float(d.mean()), math.sqrt(var / len(d))
+        lower, upper = mean - z * se, mean + futility_z * se
+        out.looks.append(Look(stop, mean, lower, upper, z))
         if log:
-            log(f"validation {stop} pairs: {mean:+.3f} ({mean - half:+.3f}, {mean + half:+.3f}), z {z:.2f}")
-        if mean - half > 0:
+            log(f"validation {stop} pairs: {mean:+.3f} (accept if {lower:+.3f} > 0, futile if {upper:+.3f} < "
+                f"{min_effect:+.3f}), z {z:.2f}")  # fmt: skip
+        if lower > 0:
             out.decision = "accept"
             break
-        if mean + half < min_effect:
+        if upper < min_effect:
             out.decision = "futile"
             break
     return out
