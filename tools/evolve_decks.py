@@ -5,7 +5,8 @@
       [--budget GAMES] [--device cuda] [--envs 256]
 
 Parents are the ``--parent`` deck files, or else the ``--parents`` pool decks of the manifest used least often as
-parents. Per parent: ``informed_children`` from the signal library (6 informed + 2 explore), top-two Thompson
+parents. Per parent: ``informed_children`` from the signal library (6 informed + 2 explore; ``--crossover`` adds
+crossover children of the parent and an archive elite, ``ygorl.build.crossover``), top-two Thompson
 sampling (``--batch`` pairs a batch, at most ``--max-pairs`` child pairs), sequential validation of the chosen child
 on fresh pairs (a look every ``--look`` pairs, at most ``--cap``); the accepted child enters the manifest as a
 probation deck. Every evaluated child's paired difference feeds the card-value model and the calibration table,
@@ -44,6 +45,8 @@ def main() -> int:
     ap.add_argument("--informed", type=int, default=6)
     ap.add_argument("--explore", type=int, default=2)
     ap.add_argument("--max-bundle", type=int, default=3)
+    ap.add_argument("--crossover", type=int, default=0,
+                    help="crossover children per parent: the parent x an archive elite of a far cell (#141)")  # fmt: skip
     ap.add_argument("--diagnose-pairs", type=int, default=0,
                     help="parent pairs played first (opening-hand effects; the signal weighs 0 until calibrated)")  # fmt: skip
     ap.add_argument("--batch", type=int, default=25)
@@ -174,6 +177,7 @@ def main() -> int:
         },  # fmt: skip
     )
     config = RoundConfig(informed=args.informed, explore=args.explore, max_bundle=args.max_bundle,
+                         crossover=args.crossover,
                          diagnose_pairs=args.diagnose_pairs, batch=args.batch, max_pairs=args.max_pairs,
                          look=args.look, cap=args.cap, min_effect=args.min_effect, budget=args.budget, l0=args.l0,
                          l0_min=args.l0_min, seed=args.seed)  # fmt: skip
