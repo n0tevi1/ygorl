@@ -62,6 +62,23 @@ class Query:
     evidence: str  # "filter" | "hintmsg" | "name" | "category" | "procedure"
 
 
+@dataclass(frozen=True, slots=True)
+class EffectFact:
+    """One effect of a script: what it does and when / from where it is activated.
+
+    ``type`` / ``code`` / ``range`` are the constant values of its ``SetType`` / ``SetCode`` / ``SetRange``
+    (0 when absent or not a constant); ``opponent`` is True when a matching or field-group call reached from its
+    target / operation / cost can take cards from the opponent's side (``Duel.SelectTarget(tp, f, tp, 0,
+    LOCATION_ONFIELD, ...)``, ``Duel.GetFieldGroup(tp, 0, LOCATION_MZONE)``).
+    """
+
+    categories: int = 0
+    type: int = 0
+    code: int = 0
+    range: int = 0
+    opponent: bool = False
+
+
 EVIDENCE_RANK = {"procedure": 0, "filter": 1, "hintmsg": 2, "name": 3, "category": 4}
 
 
@@ -76,6 +93,7 @@ class ScriptFacts:
     material_codes: tuple[int, ...] = ()
     material_setcodes: tuple[int, ...] = ()
     stats: dict[str, int] = field(default_factory=dict)
+    effect_facts: tuple[EffectFact, ...] = ()
 
     def category_names(self) -> list[str]:
         consts = _category_table()
@@ -164,8 +182,14 @@ MATERIAL_PROCS = frozenset(
         "Fusion.AddProcMixRep",
     )
 )
-EFFECT_SETTERS = frozenset(("SetCategory", "SetTarget", "SetOperation", "SetCost"))
+# Effect:SetType / SetCode / SetRange -> the effect key they set (when to activate it, and from where)
+TIMING_SETTERS = {"SetType": "type", "SetCode": "code", "SetRange": "range"}
+EFFECT_SETTERS = frozenset(("SetCategory", "SetTarget", "SetOperation", "SetCost", *TIMING_SETTERS))
 _PROC_EFFECTS = frozenset(FUSION_PROCS) | frozenset(RITUAL_PROCS) | frozenset(RITUAL_CODE_PROCS)
+
+
+def _new_effect() -> dict:
+    return {"categories": 0, "refs": set(), "type": 0, "code": 0, "range": 0}
 
 
 def _named(args: tuple, names: tuple) -> dict:
@@ -263,12 +287,12 @@ class _Analyzer:
                 rhs = toks[j + 2 : j + 6]
                 if rhs[:4] == [("name", "Effect"), ("op", "."), ("name", "CreateEffect"), ("op", "(")]:
                     bound[value] = len(effects)
-                    effects.append({"categories": 0, "refs": set()})
+                    effects.append(_new_effect())
                 elif len(rhs) >= 3 and rhs[0][0] == "name" and rhs[1] == ("op", ":") and rhs[2] == ("name", "Clone"):
                     src = bound.get(rhs[0][1])
-                    base = effects[src] if src is not None else {"categories": 0, "refs": set()}
+                    base = effects[src] if src is not None else _new_effect()
                     bound[value] = len(effects)
-                    effects.append({"categories": base["categories"], "refs": set(base["refs"])})
+                    effects.append({**base, "refs": set(base["refs"])})
                 elif len(rhs) >= 3 and rhs[0][1] in ("Fusion", "Ritual") and rhs[1] == ("op", "."):
                     name = f"{rhs[0][1]}.{rhs[2][1]}"
                     if name in _PROC_EFFECTS:
@@ -280,7 +304,7 @@ class _Analyzer:
                             self.cat("CATEGORY_FUSION_SUMMON") if rhs[0][1] == "Fusion" else 0
                         )
                         bound[value] = len(effects)
-                        effects.append({"categories": cats, "refs": self.expr_refs(node)})
+                        effects.append({**_new_effect(), "categories": cats, "refs": self.expr_refs(node)})
             elif nxt == ("op", ":") and toks[j + 2][0] == "name" and toks[j + 2][1] in EFFECT_SETTERS:
                 idx = bound.get(value)
                 if idx is None:
@@ -291,10 +315,15 @@ class _Analyzer:
                     continue
                 if not args:
                     continue
-                if toks[j + 2][1] == "SetCategory":
+                setter = toks[j + 2][1]
+                if setter == "SetCategory":
                     v = lua.const_eval(args[0], self.env)
                     if v is not None:
                         effects[idx]["categories"] |= v
+                elif setter in TIMING_SETTERS:  # the last call wins, as in Lua (a clone may override)
+                    v = lua.const_eval(args[0], self.env)
+                    if v is not None:
+                        effects[idx][TIMING_SETTERS[setter]] = v
                 else:
                     effects[idx]["refs"] |= self.expr_refs(args[0])
         # function -> effects reaching it through the call graph
@@ -311,6 +340,7 @@ class _Analyzer:
                 self.fn_effects.setdefault(f, set()).add(i)
                 stack.extend(graph.get(f, ()))
         self.effect_list = effects
+        self.opponent_effects: set[int] = set()
         for eff in effects:
             self.categories |= eff["categories"]
         # SetOperationInfo(0, CATEGORY_X, g, count, player, loc): locations per effect & category
@@ -324,6 +354,21 @@ class _Analyzer:
                 continue
             for i in self.fn_effects.get(self.script.function_at(pos), ()):
                 self.opinfo[i][cat] = self.opinfo[i].get(cat, 0) | loc
+
+    def field_groups(self) -> None:
+        """Effects reaching ``Duel.GetFieldGroup(Count)(player, own, opponent)`` with an opponent location."""
+        for pos, _name, args in self.script.find_calls({"Duel.GetFieldGroup", "Duel.GetFieldGroupCount"}):
+            if len(args) < 3:
+                continue
+            opp = args[1] if _is_opponent(args[0]) else args[2]
+            if lua.const_eval(opp, self.env):
+                self.opponent_effects |= self.fn_effects.get(self.script.function_at(pos), set())
+
+    def effect_facts(self) -> tuple[EffectFact, ...]:
+        return tuple(
+            EffectFact(e["categories"], e["type"], e["code"], e["range"], i in self.opponent_effects)
+            for i, e in enumerate(self.effect_list)
+        )
 
     def call_categories(self, pos: int) -> tuple[int, set[int]]:
         effs = self.fn_effects.get(self.script.function_at(pos), set())
@@ -378,6 +423,8 @@ class _Analyzer:
             own, opp = args[si], args[oi]
             if _is_opponent(args[pi]):
                 own, opp = opp, own
+            if lua.const_eval(opp, self.env):
+                self.opponent_effects |= self.fn_effects.get(script.function_at(pos), set())
             loc = lua.const_eval(own, self.env)
             if loc == 0:
                 self.stats["opponent_side"] += 1
@@ -504,6 +551,7 @@ def analyze_script(src: str, password: int, consts: dict[str, int]) -> ScriptFac
     except lua.LuaSyntaxError:
         return ScriptFacts(password, stats={"parse_error": 1})
     an.match_calls()
+    an.field_groups()
     an.procedures()
     listed = an.listings()
     queries = tuple(an.queries.values())
@@ -519,4 +567,5 @@ def analyze_script(src: str, password: int, consts: dict[str, int]) -> ScriptFac
         material_codes=tuple(dict.fromkeys(an.material_codes + list(listed.get("material", ())))),
         material_setcodes=listed.get("material_setcode", ()),
         stats=an.stats,
+        effect_facts=an.effect_facts(),
     )
