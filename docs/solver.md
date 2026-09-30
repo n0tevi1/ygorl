@@ -12,6 +12,8 @@ ygorl.solver.demo               线 → 新鲜重放 → 动作下标（验证�
 ygorl.solver.batch              起手抽样、模板、单手求解（含 --fire 变体）、断点续跑与汇总
 tools/solve_openings.py         批量驱动：多进程、每手时间预算、--fire 变体、可续跑
 tools/verify_demos.py           复验示范集文件：每条线从零重放（不需要求解器）
+ygorl.solver.blocking           阻断点（脚本事实）、终场打分、任意牌组的自动目标阶梯（见「阻断场面」）
+tools/solve_blocking.py         任意牌组的阻断场面示范：多进程、自动目标、按终场阻断点选线
 ygorl.engine.replay             读取 .yrp / .yrpX（含 LZMA）、Replay.from_yrp、显式核心种子（seed_words）
 ```
 
@@ -196,6 +198,135 @@ uv run python tools/solve_openings.py tests/decks/snake_eye.ydk --hands 5 --solv
 ```bash
 uv run python tools/verify_demos.py out/demos/solver.jsonl      # 每条线从零重放：动作合法、无 MSG_RETRY、应答一致、终局一致且含目标卡
 ```
+
+## 阻断场面：任意牌组的自动目标（`ygorl.solver.blocking`）
+
+动机：先攻第 1 回合是策略最弱的地方（诊断见 issue #83 一线：10 套测试牌组 × 12 手里，随机探索能到目标场面的 41 手，
+PPO 最好的检查点只到 7 手；自博弈先攻胜率 0.449，而 Master Duel 竞技环境先攻约 0.70）。好玩家先攻铺的是**阻断**（无效、妨害、盖放陷阱、留在手里的手坑），
+不是最大的怪兽。`tests/decks/solver_targets.json` 只覆盖 10 套测试牌组、每套一张终点卡，训练池的 837 套语料牌组没有目标。
+
+### 求解器能优化什么
+
+读求解器 `--help`（固定提交 `e0c7221`）的结论：**它只能「到达目标卡」**，没有可打分的终场。
+
+- 目标是卡片子集：`--target card@zone[:fd]`（场上 `atk`/`def`/`mzone`/`szone`，以及在目标时刻检查的 `hand`/`grave`/`banished`），重复即要求多张；
+  另有线约束（`--summon` 第 n 次召唤、`--resolve` 至少结算某效果 n 次、`--summon-min`、`--material`、`--no-activate`、`--no-chain`、`--guard`）。
+- 搜索的分数是「放上了几张目标卡」（每张 100）加地标 / 配方启发式；到达目标即停。`--optimize` 在到达后继续，但只按**代价**字典序优化（少烧卡、少动作），方向与「多铺阻断」相反。
+- `--hindsight` 把搜索中召唤出的额外卡组怪兽当替代目标来学策略，但不写出这些线；`--fire` 验证的是「被手坑后能否恢复同一终场」，不是终场好坏。
+
+所以目标函数放在我们这边：自动生成**一组**目标、各求一次，再用脚本事实给每条已验证线的终场打分，留分最高的。
+
+### 阻断点：从脚本事实推出（不列卡名）
+
+`ygorl.build.scripts` 的每个效果另记 `EffectFact`：`categories`、`SetType`、`SetCode`、`SetRange` 的常量值，以及 `opponent`——
+效果的 target / operation / cost 调用链里有没有能取对手卡的匹配调用（`Duel.SelectTarget(tp, f, tp, 0, LOCATION_ONFIELD, …)` 这类对手区域参数非 0）或
+`Duel.GetFieldGroup(tp, 0, …)`。一张卡在某处算一个**阻断点**（`interruption`），当且仅当它有一个效果同时满足：
+
+| 条件 | 判定 |
+|------|------|
+| 对手回合可用 | `EFFECT_TYPE_QUICK_O` / `QUICK_F`（发动位置取 `SetRange`：怪兽区 / 魔陷区 / 场地 / 灵摆区 → `field`，手牌 → `hand`，墓地 → `grave`；没有 `SetRange` 时怪兽取怪兽区、魔陷取魔陷区）；或陷阱卡、速攻魔法的 `EFFECT_TYPE_ACTIVATE`（→ `set`，盖放后下回合可发动） |
+| 能打断 | 分类含 `NEGATE` / `DISABLE` / `DISABLE_SUMMON`（记为「无效」`negate`）；或含 `DESTROY` / `REMOVE` / `TODECK` / `TOHAND` / `TOGRAVE` / `CONTROL` / `POSITION` / `RELEASE` 且 `opponent` 为真 |
+
+每张卡每个位置最多一个（无效优先）。抽查：Ash Blossom → 手牌·无效，Infinite Impermanence → 盖放·无效，Baronne de Fleur → 场上·无效，
+S:P Little Knight → 场上·妨害，Called by the Grave → 盖放·妨害；Maxx "C"、Accesscode Talker、I:P Masquerena 不算。
+
+**终场打分**（`board_interruptions`，玩家 0）：表侧怪兽与表侧魔陷按 `field`、盖放魔陷按 `set`、手牌按 `hand`、墓地按 `grave` 计阻断点；里侧怪兽、超量素材不计。
+比较键为（阻断点数，其中无效数）。
+
+### 目标阶梯（`blocking_plan` / `solve_blocking`）
+
+每手先按起手定**底座** `base`：起手里能盖放阻断的陷阱 / 速攻魔法要求 `@szone:fd`（至多 5 张），手坑要求 `@hand`（留着不用）。
+再从卡组取**阻断件** `piece`：场上有阻断点、且不是手坑的怪兽，排序为「引擎件优先（与主卡组共享字段，或脚本的 `listed_names` / 素材与主卡组互相点名）→ 无效优先 → 额外卡组优先」。
+泛用额外怪兽（Baronne、Underworld Goddess）排在系列 boss 之后，因为它们只对部分牌组可达。每手的求解尝试（每次都是完整的 `solve_hand`：求解 + 新鲜重放验证）：
+
+1. `base + piece_i`，i 取前 `--pieces` 个（默认 3）；
+2. 两个件各自解出时，`base + 两件` 再求一次（`--no-pair` 关闭）；
+3. 前面都没解出而 `base` 非空时，只求 `base`（「盖陷阱、留手坑、结束」）。
+
+所有解出的线按终场打分，留最高的一条作记录（`targets` 为它的目标）；`solver.blocking` 记 `base`、`pieces`、每次尝试（目标、状态、耗时、分数）、选中的尝试和终场阻断点。
+记录格式与普通示范集相同，`tools/train_bc.py`、`tools/verify_demos.py` 直接读。
+
+```bash
+nice -n 19 uv run python tools/solve_blocking.py out/corpus/train --sample 20 --hands 8 --solve-ms 10000 --workers 12 \
+  --out out/solver_teacher/pilot.jsonl --summary out/solver_teacher/pilot_summary.json
+```
+
+### 试点（2026-09-30）
+
+语料训练池随机 20 套（`--sample 20 --sample-seed 0`）× 8 手，`--solve-ms 10000`、3 个件 + 组合、12 进程 × 1 线程、`nice -n 19`（机器负载约 80–100 / 32 核），
+不绑定环境（与 `out/why/bb_lam05` 的 PPO 运行一致，默认 MR5 规则）。墙钟 **332 秒**；`verify_demos.py` 独立复验 147 条线（6,286 步）0 失败。
+
+| 指标 | 结果 |
+|------|------|
+| 解出（任一尝试） | **147 / 160（92%）** |
+| 其中到达场上阻断件 | 107 / 160（67%）；其余 40 手是「只有底座」（盖陷阱 / 留手坑） |
+| 每手求解墙钟（各次尝试之和） | 平均 23.5 秒（11–33 秒 / 牌组）；共 538 次尝试 |
+| 终场阻断点 | 平均 2.23，其中无效 1.50 |
+| 未解出 | danger-dark-world-2 的 8 手（卡组没有任何阻断件、起手也没有可盖 / 可留的卡，0 次尝试）；其余 5 手分散 |
+
+终场示例（卡名仅用于显示）：
+
+- orcust：Enlilgirsu + 盖放 Dominus Impulse ×2、Forbidden Droplet、Infinite Impermanence（5 个，4 无效）；
+- hecahands-2：Diabellstar Vengeance、Azamina Ilia Silvia + 盖放 Azamina Aphes、Sinful Spoils of Betrayal - Silvera ×2（5 个）；
+- live-twin-spright：Spright Red、Spright Carrot（场上无效 ×2）+ 手里 Ash Blossom ×2；
+- materiactor-3：Number F0: Utopic Draco Future、Number 3: Cicada King + 手里 Ash；
+- nordic-3：Gorgon, Empress of the Evil Eyed、Serziel + 盖放 Evil Eye Retribution；
+- exodia-3：Red-Eyes Dark Dragoon + 盖放 Future Silence ×2；
+- goblin-biker-2：Fiendsmith's Desirae + D/D/D Wave High King Caesar（组合尝试）。
+
+分牌组的解出率、每手耗时与全部终场在 `out/solver_teacher/pilot_summary.json`。
+
+### 作为第 1 回合的教师：BC 先验 + 只在第 1 回合的 KL
+
+已有的机制（[training.md](training.md)「只在第 1 回合用先验」、[bc.md](bc.md)「补救实验」(c)）直接可用：
+`--bc-prior CKPT --kl-prior C --kl-prior-turns 1` 只对先攻第 1 回合、回合玩家自己的决策行计 `KL(π‖π_prior)`，后面的回合不受先验约束（全状态先验会把策略钉在「不攻击」上）。
+先验的词表必须与 PPO 运行相同，所以先验**从当前策略的 actor 微调**（`train_bc.py --init-from`：沿用检查点的网络、卡片词表与事件窗口），而不是另起一个 BC 网络。
+
+试点上的原型（CPU；hands 0–5 训练、6–7 留出，同牌组未见过的起手）：
+
+| 策略（argmax） | 留出 40 手到达阻断目标（36 手求解器可解） | 留出步准确率 / NLL |
+|------|------|------|
+| Random | 4 / 40 | — |
+| Greedy | 7 / 40 | — |
+| PPO `bb_lam05/update_000400` | 6 / 40 | 0.382 / 1.71 |
+| + BC 微调 4 轮，lr 1e-4（`bc_ft`） | 7 / 40 | 0.396 / 1.22 |
+| + BC 微调 20 轮，lr 3e-4（`bc_ft20`，每轮约 3 秒） | **12 / 40** | 0.469 / 1.14 |
+
+CPU 上的 PPO 冒烟（2 套牌、8 槽 × 16 步、3 次更新）：`--init-from update_000400.pt --bc-prior bc_ft/policy.pt --kl-prior 2 --kl-prior-turns 1` 正常运行，
+`kl_prior` 只在第 1 回合的行上非零（`kl_prior_rows` 76 / 14 / 0）。
+
+GPU 上的实际运行（先在 CPU 上生成全量示范，约 837 × 8 手 × 24 秒 / 16 进程 ≈ 2.8 小时）：
+
+```bash
+# 1. 示范（CPU）：全部训练牌组 × 8 手；hands 8–9 另生成作留出
+nice -n 19 uv run --no-sync python tools/solve_blocking.py out/corpus/train --hands 8 --solve-ms 10000 --workers 16 \
+  --out out/solver_teacher/train.jsonl --summary out/solver_teacher/train_summary.json
+nice -n 19 uv run --no-sync python tools/solve_blocking.py out/corpus/train --sample 100 --first-hand 8 --hands 2 \
+  --solve-ms 10000 --workers 16 --out out/solver_teacher/heldout.jsonl
+# 2. 先验：从当前 actor 微调（CPU 即可，样本约 1.2 万）
+nice -n 19 uv run --no-sync python tools/train_bc.py --train out/solver_teacher/train.jsonl --heldout out/solver_teacher/heldout.jsonl \
+  --init-from out/why/bb_lam05/checkpoints/update_000400.pt --epochs 20 --lr 3e-4 --threads 8 --openings heldout \
+  --out out/solver_teacher/bc_prior
+# 3. PPO（GPU）：与 bb_lam05 相同的配置，从 update_000400 起步，critic 重新预热；对照组去掉 --bc-prior 三个参数
+PYTHONFAULTHANDLER=1 nice -n 19 uv run --no-sync python tools/train_ppo.py out/corpus/train/*.ydk --d-model 64 --layers 1 \
+  --event-length 64 --device cuda --env-threads 4 --pairings all --eval-pairs 1 --eval-pairings 100 --eval-opponents greedy \
+  --keep-best-by greedy --eval-workers 6 --seed 0 --envs 128 --steps 128 --minibatch 2048 --eval-every 50 --lam 0.5 \
+  --init-from out/why/bb_lam05/checkpoints/update_000400.pt --critic-warmup 50 \
+  --bc-prior out/solver_teacher/bc_prior/policy.pt --kl-prior 2.0 --kl-prior-turns 1 \
+  --updates 400 --out out/why/teacher_kl2
+```
+
+看什么：`metrics.jsonl` 的 `first_player_win_rate`（基线 0.449）、对 Greedy 的评估、`train_bc.py --no-train --checkpoint … --openings heldout` 的留出阻断目标到达率；
+系数扫 0.5 / 2.0，另跑一个无先验对照（同样 `--init-from` 与 `--critic-warmup`）。
+
+### 限制（阻断场面）
+
+- 阻断点只看效果的分类、时机与取对象范围：「对手回合特殊召唤」类（Welcome Labrynth）、永续压制（Dimension Shifter）、只在对手召唤时诱发的效果不算；
+  同时有些分类宽松的效果会多算（例如墓地里能除外对手卡的诱发即时效果）。每卡每处最多 1 个，不看次数限制。
+- 求解器到达目标即停，线不会「顺手」再多铺；多个阻断件只靠「组合」一步去争取。只有底座的记录（40 / 160）教的是「盖陷阱、留手坑、结束回合」，
+  对手里有展开件的起手这是保守的；训练时可按 `solver.blocking.attempts[chosen].label == "base"` 过滤或降权。
+- 手坑以 `@hand` 留住：如果它同时是展开需要的消耗（丢弃、素材），这一件就解不出（没有回退为不留的尝试）。
+- 试点不绑定环境（与 bb_lam05 一致）；绑定环境的运行加 `--env`，示范、先验与 PPO 必须同一环境。
 
 ## 限制
 

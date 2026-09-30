@@ -214,3 +214,16 @@ def test_history_lists_read_the_deck_dataset(tmp_path):
     cards = {c: SimpleNamespace(is_extra_deck=c >= 900) for c in (1, 2, 3, 900)}
     lists = history_lists(tmp_path, cards)
     assert [(t, sorted(d.main), d.extra) for t, d in lists] == [("X", [1, 1, 2], (900,)), ("Y", [3], ())]
+
+
+def test_learned_children_go_into_the_factorial_design_first(tmp_path):
+    from tests.test_evolve import BASE, CONFIG, OPPONENTS, Env, make_lab
+
+    lab = make_lab()
+    lab.deck_model, lab.card_pool = Scorer(), [50, 51]
+    config = RoundConfig(**{**CONFIG.__dict__, "evaluation": "factorial", "factorial_k": 4, "factorial_pairs": 20,
+                            "learned": 2})  # fmt: skip
+    ev = Evolution(tmp_path / "s", Env())
+    ev.run_round([Parent("corpus:base", BASE, "Base")], lab, config, OPPONENTS)
+    fac = ev._round_state(1)["results"][0]["factorial"]
+    assert fac["kinds"][:2] == ["learned", "learned"] and len(fac["kinds"]) == 4

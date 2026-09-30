@@ -976,3 +976,19 @@ Pendulum Magician 为 Wisdom-Eye Magician、Oafdragon Magician、Astrograph Sorc
 - 学习的子代（全量模型，单卡、温度 1、典型性换下分，改组合分之前）的样例：Therion −King Regulus +Bull Ain / Duke Yul / Foolish Burial、−Card Destruction +Harpie's Feather Duster；
   Megalith +Fossil Fusion、+Megalith Aratron、额外卡组 +Knightmare Unicorn；Pendulum Magician +Oafdragon Magician、+Star / Time Pendulumgraph。每个亲本打分与抽 8 个子代在 CPU 上不到 1 秒。
 - 待测：每套牌（Therion、Megalith、Pendulum Magician）用学习的子代跑一轮，比较各生成器第一批配对差的均值与接受数（对照 #145 的 r145 轮）。
+
+## 析因评估对逐个筛：每检出一次 +2 pp 的局数（#152，2026-09-30）
+
+[tuning.md](tuning.md)「析因评估」：k 处相容的单卡替换放进一个部分析因设计（k = 4：2^(4−1)，D = ABC，分辨度 IV，8 个变体），所有变体打同样的公共随机数对局，
+主效应由「每对一个固定效应 + 按对聚类的标准误」的回归估出；对照是亲本与每处改动各自一个子代（逐个筛）。
+
+**合成**（`tests/test_factorial.py`，逐局 80% 跟随公共随机数）：等局数（各 1,600 局）下逐个筛的方差 / 析因主效应的方差 = **2.44**（理论 (k + 1) / 2 = 2.5），
+即每检出一次 +2 pp，析因约省到 1 / 2.4 的局数；主效应与交互链无偏（k = 3–6，300 个种子），聚类标准误与实际离散相差 < 15%。
+
+**真实牌组**（`tools/deckevo_factorial.py`）：待 GPU 运行。每套牌 4 个随机合法单卡替换（调卡组的 tech 池），析因 8 个变体 × 200 对（3,200 局），
+逐个筛 5 个卡组 × 320 对（3,200 局），各用自己的评估器种子；报告每处改动每检出 +2 pp（单侧 α = 0.025、功效 0.8）需要的局数与方差比（`parent_free`：亲本对局已有时）。
+变体之间差 1–4 处改动，公共随机数的相关可能低于单卡子代（M1 ρ = 0.84），真实优势以这张表为准。
+
+    nice -n 19 .venv/bin/python tools/deckevo_factorial.py out/why/md_base_s0/checkpoints/update_000400.pt 5 out/deckevo/factorial.json --device cuda --k 4 --pairs 200
+
+CPU 冒烟（机器满载，1 套 Thunder Dragon、4 对、16 个环境，13 分钟）：流程跑通，析因 64 局 / 逐个筛 60 局；4 对的数字没有意义。

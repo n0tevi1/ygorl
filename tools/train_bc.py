@@ -4,7 +4,7 @@ Usage: uv run --extra train python tools/train_bc.py --train out/demos/bc_train.
            [--heldout out/demos/bc_heldout.jsonl] [--out out/bc] [--epochs 12] [--batch-size 64] [--lr 3e-4]
            [--history transformer|lstm|none] [--d-model 128] [--layers 2] [--event-length 128] [--threads 2]
            [--seed 0] [--baselines]
-           [--checkpoint PATH --no-train] [--report PATH] [--openings all|heldout|none] [--sample-openings]
+           [--checkpoint PATH --no-train] [--init-from CKPT] [--report PATH] [--openings all|heldout|none] [--sample-openings]
            [--extra GREEDY.npz --extra-subset all|battle --extra-max N [--extra-heldout GREEDY.npz]]
 
 Replays every verified line of the --train files, encodes each decision of the deck under study with the
@@ -83,6 +83,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="checkpoint to evaluate (default <out>/policy.pt; with --no-train also a PPO checkpoint)",
     )
     parser.add_argument("--no-train", action="store_true", help="evaluate --checkpoint without training")
+    parser.add_argument(
+        "--init-from",
+        type=Path,
+        default=None,
+        help="fine-tune this checkpoint's actor (PPO or policy checkpoint): its network, card vocab and event "
+        "window replace --d-model / --layers / --history / --event-length (the result can be a --bc-prior of a PPO "
+        "run over the same vocab)",
+    )
     parser.add_argument("--report", type=Path, default=None, help="report file (default <out>/report.json)")
     parser.add_argument(
         "--openings",
@@ -155,11 +163,18 @@ def main(argv: list[str] | None = None) -> int:
     report["data"] = {"train": count(train_demos), "heldout": count(heldout_demos),
                       "heldout_hands_also_in_train": hand_overlap(train_demos, heldout_demos)}  # fmt: skip
     t0 = time.time()
+    init = None
     if args.no_train:  # a BC policy checkpoint or a PPO training checkpoint
         from ygorl.train.checkpoint import load_actor
 
         ckpt = load_actor(ckpt_path, args.text_dir)
         net, vocab, event_length = ckpt.net, ckpt.vocab, ckpt.event_length
+    elif args.init_from is not None:  # fine-tune an existing actor: its vocab indexes its ID embeddings
+        from ygorl.train.checkpoint import load_actor
+
+        init = load_actor(args.init_from, args.text_dir)
+        vocab, event_length = init.vocab, init.event_length
+        report["init_from"] = {"path": str(args.init_from), "updates": init.update, "net": init.net_config.to_dict()}
     else:
         vocab = CardVocab.from_db(cards)
         event_length = args.event_length
@@ -191,8 +206,12 @@ def main(argv: list[str] | None = None) -> int:
         from ygorl.nets.text import TextFeatures
 
         text = TextFeatures.load(args.text_dir, vocab) if args.text_dir else None
-        cfg = net_config(args, vocab, text)
-        net = PolicyNet(cfg, text)
+        if init is not None:
+            net = init.net.requires_grad_(True)
+            cfg = net.cfg
+        else:
+            cfg = net_config(args, vocab, text)
+            net = PolicyNet(cfg, text)
         bc = BCConfig(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay,
                       label_smoothing=args.label_smoothing, seed=args.seed)  # fmt: skip
         torch.manual_seed(args.seed)

@@ -50,6 +50,7 @@ from ygorl.build.archive import DESCRIPTORS, DeckArchive
 from ygorl.build.crossover import crossover_children
 from ygorl.build.diagnose import opening_effects
 from ygorl.build.learned import learned_children
+from ygorl.build.factorial import LETTERS, evaluate_edits, place, variant
 from ygorl.build.rules import rule_children
 from ygorl.build.selection import SD_PAIR, screen, sequential_validate, top_two_thompson
 from ygorl.build.signals import Calibration, CardValueModel, Observation, combine_prior, informed_children
@@ -116,6 +117,9 @@ class RoundConfig:
     cold_min_obs: int = 50  # the model's observations of the parent's type below which a round is a cold start
     min_confident_pairs: int = 100  # pairs the leader needs before the search may stop as confident
     multiplicity: bool = True  # Bonferroni: the confident stop's threshold over every candidate chosen among
+    evaluation: str = "thompson"  # "thompson" (children raced, #110) or "factorial" (single edits in one design, #152)
+    factorial_k: int = 4  # edits per fractional factorial
+    factorial_pairs: int = 200  # pairs every variant of the design plays
     seed: int = 0
 
 
@@ -515,6 +519,8 @@ class Evolution:
             raise ValueError("rule children need the association rules (Lab.rules)")
         if config.learned > 0 and lab.deck_model is None:
             raise ValueError("learned children need a deck model (Lab.deck_model)")
+        if config.evaluation not in ("thompson", "factorial"):
+            raise ValueError("evaluation must be thompson or factorial")
         rdir = self.dir / "rounds" / f"{n:04d}"
         _write(rdir / "round.json", _json(state))
         spent = sum(r["games"] for r in state["results"])
@@ -562,6 +568,9 @@ class Evolution:
         protected = set(lab.protected(base)) | unproven
         cold = config.cold_candidates > 0 and self.model.type_evidence(parent.type) < config.cold_min_obs
         pool = lab.pool(parent)
+        if config.evaluation == "factorial":  # #152: its own path (no cold start, crossover, rules, L0 or race)
+            return self._factorial_parent(n, i, parent, lab, config, games, rng, signals, prior, pool, protected,
+                                          engine, say)  # fmt: skip
         if cold:  # single swaps only: half informed by the model (warm start), half random
             half = config.cold_candidates // 2
             children = informed_children(base, parent.type, self.model, pool, legal=lab.legal, is_extra=lab.is_extra,
@@ -679,6 +688,121 @@ class Evolution:
                 "chosen": rows[chosen]["child"] if chosen is not None else None, "children": rows,
                 "games": games.games, "played": games.played}  # fmt: skip
 
+    def _factorial_parent(self, n: int, i: int, parent: Parent, lab: Lab, config: RoundConfig, games: GameLog,
+                          rng: np.random.Generator, signals: dict, prior: dict, pool: Sequence[int],
+                          protected: set[int], engine: set[int], say) -> dict:  # fmt: skip
+        """Evaluation by fractional factorial (#152, ``ygorl.build.factorial``): ``factorial_k`` single edits
+        (``informed_children`` with bundles of one: the informed ones first, then the explore ones; with
+        ``config.learned``, the learned single swaps of the masked deck model before both; each takes its own card copy) in one design on pairs ``0 .. factorial_pairs − 1`` (run 0 is the parent: its diagnosis pairs are
+        reused). The edits with a positive main effect together (the smallest effects left out until legal) are the
+        chosen child, validated on fresh pairs as a raced child is. The signal library learns each main effect as a
+        single-edit observation (every variant plays the same fixed pairs: non-adaptive), not the variants' own
+        differences; every variant is a lineage row carrying the design and the effect estimates."""
+        base, k = parent.deck, config.factorial_k
+        singles = informed_children(base, parent.type, self.model, pool, legal=lab.legal, is_extra=lab.is_extra,
+                                    rng=rng, informed=k, explore=k, max_bundle=1, protected=protected, engine=engine)  # fmt: skip
+        order = [c for c in singles if c.kind == "informed"] + [c for c in singles if c.kind == "explore"]
+        if config.learned > 0:  # #150: learned candidates go in the design first
+            order = learned_children(base, parent.type, lab.deck_model, self.model,
+                                     lab.card_pool if lab.card_pool is not None else pool, legal=lab.legal,
+                                     is_extra=lab.is_extra, rng=np.random.default_rng([config.seed, n, i, 5]),
+                                     children=config.learned, max_bundle=1, protected=lab.protected(base),
+                                     removal=config.learned_removal) + order  # fmt: skip
+        kind_of: dict = {}
+        for c in order:
+            kind_of.setdefault(c.edits[0], c.kind)
+        edits = [pl.edit for pl in place(base, [c.edits[0] for c in order])[0]][:k]
+        fid = f"r{n:04d}-p{i}-factorial"
+        rows: list[dict] = []
+        fac, chosen, validation = None, None, None
+        if edits:
+            fr = evaluate_edits(base, edits, games, legal=lab.legal, pairs=config.factorial_pairs)
+            placed = fr.plan.placed
+            main = fr.main()
+            predicted = [self.model.gain([pl.edit.into], [pl.edit.out], parent.type) for pl in placed]
+            good = sorted((e.term[0] for e in main if e.effect > 0), key=lambda j: -main[j].effect)
+            while good and not lab.legal(variant(base, [placed[j] for j in good])):
+                good.pop()
+            fac = {"id": fid, **fr.to_dict(), "kinds": [kind_of[pl.edit] for pl in placed],
+                   "predicted": [{"mean": m, "sd": sd} for m, sd in predicted],
+                   "chosen_edits": [LETTERS[j] for j in sorted(good)],
+                   "learned": [{"source": "factorial_main", "edit": e.term[0], "into": placed[e.term[0]].edit.into,
+                                "out": placed[e.term[0]].edit.out, "section": placed[e.term[0]].edit.section,
+                                "diff": e.effect, "stderr": e.stderr, "predicted": predicted[e.term[0]][0]}
+                               for e in main if math.isfinite(e.effect) and e.stderr > 0]}  # fmt: skip
+            say(f"parent {parent.id} ({parent.type}): factorial {', '.join(fr.design.generators) or 'full'} over "
+                f"{fr.design.k} edits, {fr.design.runs} runs × {config.factorial_pairs} pairs; main effects "
+                + ", ".join(f"{e.label} {e.effect:+.3f}±{e.stderr:.3f}" for e in main)
+                + (f"; {len(fr.plan.repairs)} repairs" if fr.plan.repairs else ""))  # fmt: skip
+            variants = [(r, [j for j in range(fr.design.k) if fr.plan.levels[r, j] > 0], d)
+                        for r, d in enumerate(fr.plan.decks)]  # fmt: skip
+            if good:
+                best = variant(base, [placed[j] for j in good])
+                if deck_key(best) not in {deck_key(d) for _, _, d in variants}:
+                    variants.append((None, sorted(good), best))
+            seen = {deck_key(base)}
+            for r, on, deck in variants:
+                if deck_key(deck) in seen:
+                    continue  # the parent (run 0), or a repaired run equal to another
+                seen.add(deck_key(deck))
+                c_edits = [placed[j].edit for j in on]
+                j = len(rows)
+                is_best = bool(good) and deck_key(deck) == deck_key(variant(base, [placed[x] for x in good]))
+                if is_best:
+                    chosen = j
+                rows.append({"child": f"r{n:04d}-p{i}-c{j}", "kind": "factorial", "generator": "factorial",
+                             "mate": None, "edits": [{"out": e.out, "into": e.into, "section": e.section}
+                                                     for e in c_edits],
+                             "deck": _deck_json(deck), "l0": None, "screened": False, "screen": None,
+                             "predicted": dict(zip(("mean", "sd"), self.model.gain([e.into for e in c_edits],
+                                                                                   [e.out for e in c_edits],
+                                                                                   parent.type), strict=True)),
+                             "factorial": {"run": r, "levels": [1 if x in on else -1 for x in range(fr.design.k)],
+                                           **{key: fac[key] for key in ("id", "design", "edits", "effects",
+                                                                        "chosen_edits", "repairs", "dropped")}}})  # fmt: skip
+        if chosen is not None:
+            v = sequential_validate(base, _deck_from(rows[chosen]["deck"]), games,
+                                    look=config.look, cap=config.cap, alpha=config.alpha,
+                                    min_effect=config.min_effect, offset=VALIDATION_OFFSET, log=say)  # fmt: skip
+            last = v.looks[-1] if v.looks else None
+            validation = {"pairs": v.pairs, "decision": v.decision, "accepted": v.accepted,
+                          "diff": last.mean if last else None, "lower": last.lower if last else None,
+                          "upper": last.upper if last else None}  # fmt: skip
+        for j, row in enumerate(rows):
+            deck = _deck_from(row["deck"])
+            d = games.differences(deck, base)
+            mean, se = _mean_se(d)
+            design_d = games.differences(deck, base, lambda q: q < config.factorial_pairs)
+            dm, dse = _mean_se(design_d)
+            learned = []
+            if j == chosen:
+                fresh = games.differences(deck, base, lambda q: q >= VALIDATION_OFFSET)
+                learned.append({"source": "validation", "pairs": len(fresh), **_learned(fresh)})
+            row.update({"search": {"pairs": len(design_d), "diff": _finite(dm),
+                                   "ci": [_finite(dm - 1.96 * dse), _finite(dm + 1.96 * dse)]}
+                        if len(design_d) else None,
+                        "validation": validation if j == chosen else None,
+                        "all_pairs": {"pairs": len(d), "diff": _finite(mean), "stderr": _finite(se),
+                                      "note": "design + validation pairs: selection-biased, report only"},
+                        "learned": [x for x in learned if x["pairs"]], "games": 2 * len(games.games_of(deck)),
+                        "accepted": bool(j == chosen and validation and validation["accepted"]),
+                        "stats": {key: _finite(val) for key, val in games.summary(deck).items()},
+                        "objective": _objective(games.pair_scores(deck), config),
+                        "descriptors": _descriptors(lab, deck, games)})  # fmt: skip
+        return {"index": i, "parent": {"id": parent.id, "type": parent.type, "key": deck_key(base)},
+                "evaluation": "factorial", "factorial": fac,
+                "signals": {key: {str(c): val for c, val in sig.items()} for key, sig in signals.items()},
+                "prior": {str(c): val for c, val in prior.items()},
+                "parent_stats": {key: _finite(val) for key, val in games.summary(base).items()},
+                "parent_objective": _objective(games.pair_scores(base), config),
+                "parent_descriptors": _descriptors(lab, base, games),
+                "parent_games": 2 * len(games.games_of(base)), "stop": "factorial",
+                "search_pairs": sum(r["search"]["pairs"] for r in rows if r["search"]),
+                "cold_start": False, "candidates": len(edits), "stop_threshold": None,
+                "engine": sorted(engine), "protected": sorted(protected),
+                "chosen": rows[chosen]["child"] if chosen is not None else None, "children": rows,
+                "games": games.games, "played": games.played}  # fmt: skip
+
     def _apply(self, state: dict, r: dict) -> None:
         """A parent's side effects, idempotent per child id: signal library, archive, manifest, lineage."""
         n = state["round"]
@@ -701,6 +825,13 @@ class Evolution:
                         self.calibration.record("opening_effect", sum(opening.get(c, 0.0) for c in into)
                                                 - sum(opening.get(c, 0.0) for c in out), m["diff"])  # fmt: skip
                 self.signals_applied.add(uid)
+        for m in (r.get("factorial") or {}).get("learned", []):  # #152: main effects as single-edit observations
+            uid = f"{r['factorial']['id']}/{LETTERS[m['edit']]}"
+            if uid in self.signals_applied:
+                continue
+            self.model.add(Observation(parent.type, (m["into"],), (m["out"],), m["diff"], m["stderr"]))
+            self.calibration.record("model_gain", m["predicted"], m["diff"])
+            self.signals_applied.add(uid)
         entries = [(f"r{n:04d}-p{r['index']}", parent.id, parent.deck, r["parent_objective"], r["parent_descriptors"])]
         entries += [(row["child"], self._manifest_id(row) if row["accepted"] else row["child"], _deck_from(row["deck"]),
                      row["objective"], row["descriptors"]) for row in r["children"]]  # fmt: skip
@@ -746,7 +877,7 @@ class Evolution:
         return {"child": row["child"], "round": state["round"], "time": _now(),
                 "parent": {"id": r["parent"]["id"], "type": r["parent"]["type"], "key": r["parent"]["key"]},
                 "kind": row["kind"], "generator": row.get("generator", generator(row["kind"])),
-                "screen": row.get("screen"),
+                "screen": row.get("screen"), "factorial": row.get("factorial"),
                 "mate": row.get("mate"), "edits": row["edits"], "key": deck_key(_deck_from(row["deck"])),
                 "predicted": row["predicted"], "l0": row["l0"], "screened": row["screened"], "search": row["search"],
                 "validation": row["validation"], "all_pairs": row["all_pairs"], "learned": row["learned"],
@@ -775,6 +906,8 @@ class Evolution:
                 "games_per_child": {c["child"]: c["games"] for c in children},
                 "per_parent": [{"parent": r["parent"]["id"], "children": len(r["children"]), "stop": r["stop"],
                                 "cold_start": bool(r.get("cold_start")),
+                                "evaluation": r.get("evaluation", "thompson"),
+                                "effects": (r.get("factorial") or {}).get("effects"),
                                 "search_pairs": r["search_pairs"], "parent_games": r["parent_games"],
                                 "chosen": r["chosen"], "games": r["games"],
                                 "validation": next((c["validation"] for c in r["children"] if c["validation"]), None),
@@ -874,6 +1007,9 @@ def format_report(r: Mapping) -> str:
                      f"chosen {p['chosen']}, " + (f"validation {v['decision']} after {v['pairs']} pairs "
                      f"(diff {v['diff']:+.3f}, lower {v['lower']:+.3f})" if v and v["diff"] is not None
                      else "no validation") + f", {p['games']} games")  # fmt: skip
+        if p.get("effects"):
+            lines.append("    factorial effects: " + ", ".join(f"{e['label']} {e['effect']:+.3f}±{e['stderr']:.3f}"
+                                                               for e in p["effects"] if e["effect"] is not None))  # fmt: skip
     gens = r.get("generators", {}).get("cumulative", {})
     if set(gens) - {"mutation"}:
         lines.append("generators (cumulative): " + "; ".join(
