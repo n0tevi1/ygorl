@@ -41,6 +41,7 @@ import numpy as np
 from ygorl.build.archive import DESCRIPTORS, DeckArchive
 from ygorl.build.crossover import crossover_children
 from ygorl.build.diagnose import opening_effects
+from ygorl.build.rules import rule_children
 from ygorl.build.selection import SD_PAIR, sequential_validate, top_two_thompson
 from ygorl.build.signals import Calibration, CardValueModel, Observation, combine_prior, informed_children
 from ygorl.cards.ydk import Deck, parse_ydk
@@ -59,7 +60,7 @@ MUTATION_KINDS = ("informed", "explore")  # child kinds of the mutation generato
 
 def generator(kind: str) -> str:
     """The generator a child kind belongs to: ``mutation`` for ``informed_children``'s kinds, else the kind itself
-    (``crossover``)."""
+    (``crossover``, ``rules``)."""
     return "mutation" if kind in MUTATION_KINDS else kind
 
 
@@ -83,6 +84,7 @@ class RoundConfig:
     explore: int = 2
     max_bundle: int = 3
     crossover: int = 0  # crossover children per parent (the parent × an archive elite, #141); off by default
+    rules: int = 0  # children from the association rules (ygorl.build.rules; needs Lab.rules), off by default
     diagnose_pairs: int = 0  # the parent's first pairs, played up front (they are the parent's baseline too)
     batch: int = 25
     max_pairs: int = 600
@@ -109,7 +111,8 @@ class Lab:
     per_game=True)``, optionally ``opening_hands``); ``pool(parent)`` the candidate cards; ``descriptors(deck)`` the
     deck-list descriptors (:func:`ygorl.build.archive.deck_descriptors`); ``screen(evaluator, parent, children)`` the
     L0 screen's predicted difference per child (win-rate units, on the evaluator's pairs: common random numbers);
-    ``checkpoint`` what the lineage records about the policy."""
+    ``checkpoint`` what the lineage records about the policy; ``rules`` the association rules
+    (:class:`ygorl.build.rules.DeckRules`) behind the ``RoundConfig.rules`` children."""
 
     evaluator: Callable[[int, Sequence[Opponent]], Any]
     legal: Callable[[Deck], bool]
@@ -119,6 +122,7 @@ class Lab:
     descriptors: Callable[[Deck], Mapping[str, float]] = lambda deck: {}
     screen: Callable[[Any, Deck, Sequence[Deck]], Sequence[float]] | None = None
     checkpoint: Mapping[str, Any] = field(default_factory=dict)
+    rules: Any = None
 
 
 # ------------------------------------------------------------------ files
@@ -469,6 +473,8 @@ class Evolution:
             raise ValueError("l0 must be off, shadow or on")
         if config.l0 != "off" and lab.screen is None:
             raise ValueError(f"l0={config.l0} needs a screen")
+        if config.rules > 0 and lab.rules is None:
+            raise ValueError("rule children need the association rules (Lab.rules)")
         rdir = self.dir / "rounds" / f"{n:04d}"
         _write(rdir / "round.json", _json(state))
         spent = sum(r["games"] for r in state["results"])
@@ -511,17 +517,23 @@ class Evolution:
             prior = combine_prior(signals, self.calibration)
             if prior:  # also in _apply (from the result), so a crash cannot lose it
                 self.model.set_prior({**self.model.prior, **prior})
+        protected = lab.protected(base)
         children = informed_children(base, parent.type, self.model, lab.pool(parent), legal=lab.legal,
                                      is_extra=lab.is_extra, rng=rng, informed=config.informed, explore=config.explore,
-                                     max_bundle=config.max_bundle, protected=lab.protected(base))  # fmt: skip
+                                     max_bundle=config.max_bundle, protected=protected)  # fmt: skip
         mates: dict[int, dict] = {}  # child index -> its second parent (crossover children)
         if config.crossover > 0:
             crossed = crossover_children(base, self.archive, descriptors=lab.descriptors(base), legal=lab.legal,
                                          rng=np.random.default_rng([config.seed, n, i, 2]), n=config.crossover,
-                                         protected=lab.protected(base), exclude=[c.deck for c in children])  # fmt: skip
+                                         protected=protected, exclude=[c.deck for c in children])  # fmt: skip
             for c, m in crossed:
                 mates[len(children)] = {**m.to_dict(), "key": deck_key(m.deck)}
                 children.append(c)
+        if config.rules > 0:  # own random stream: the other children stay as they were without it
+            children += rule_children(base, parent.type, lab.rules, self.model, legal=lab.legal, is_extra=lab.is_extra,
+                                      rng=np.random.default_rng([config.seed, n, i, 3]), children=config.rules,
+                                      max_bundle=config.max_bundle, protected=protected,
+                                      avoid=[c.deck for c in children])  # fmt: skip
         predicted = [self.model.gain([e.into for e in c.edits], [e.out for e in c.edits], parent.type)
                      for c in children]  # fmt: skip
         screen = [None] * len(children)

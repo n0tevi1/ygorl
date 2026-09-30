@@ -2,15 +2,16 @@
 
   uv run python tools/evolve_decks.py --env md-2026-09 --checkpoint CKPT --state out/evo/NAME \\
       [--parent BASE.ydk ...] [--parents 1] [--manifest MANIFEST] [--matrix MATRIX.json] [--nash-share 0.5] \\
-      [--budget GAMES] [--device cuda] [--envs 256]
+      [--budget GAMES] [--rules 0] [--device cuda] [--envs 256]
 
 Parents are the ``--parent`` deck files, or else the ``--parents`` pool decks of the manifest used least often as
 parents. Per parent: ``informed_children`` from the signal library (6 informed + 2 explore; ``--crossover`` adds
 crossover children of the parent and an archive elite, ``ygorl.build.crossover``), top-two Thompson
 sampling (``--batch`` pairs a batch, at most ``--max-pairs`` child pairs), sequential validation of the chosen child
 on fresh pairs (a look every ``--look`` pairs, at most ``--cap``); the accepted child enters the manifest as a
-probation deck. Every evaluated child's paired difference feeds the card-value model and the calibration table,
-every evaluated deck is offered to the MAP-Elites archive, and every child gets a lineage record.
+probation deck. ``--rules N`` adds N children whose additions come from association rules over the environment's
+deck corpus (ygorl.build.rules; off by default). Every evaluated child's paired difference feeds the card-value
+model and the calibration table, every evaluated deck is offered to the MAP-Elites archive, and every child gets a lineage record.
 
 Opponents: the environment's meta decks by share, mixed with the Nash weights of a deck matchup matrix
 (``--matrix``, a ``ygorl-matchup`` file whose decks are meta decks or manifest decks) by ``--nash-share``.
@@ -47,6 +48,10 @@ def main() -> int:
     ap.add_argument("--max-bundle", type=int, default=3)
     ap.add_argument("--crossover", type=int, default=0,
                     help="crossover children per parent: the parent x an archive elite of a far cell (#141)")  # fmt: skip
+    ap.add_argument("--rules", type=int, default=0, help="children from the corpus association rules (0: off)")
+    ap.add_argument("--rule-min-count", type=int, default=3, help="lists a rule needs")
+    ap.add_argument("--rule-min-confidence", type=float, default=0.5)
+    ap.add_argument("--rule-min-lift", type=float, default=2.0)
     ap.add_argument("--diagnose-pairs", type=int, default=0,
                     help="parent pairs played first (opening-hand effects; the signal weighs 0 until calibrated)")  # fmt: skip
     ap.add_argument("--batch", type=int, default=25)
@@ -73,6 +78,7 @@ def main() -> int:
     from ygorl.build.archive import deck_descriptors
     from ygorl.build.control import critic_opening_values, opening_value_screen
     from ygorl.build.evolve import Evolution, Lab, Parent, RoundConfig, file_sha256, format_report, opponent_mix
+    from ygorl.build.rules import DeckRules, RuleConfig
     from ygorl.build.signals import protected_cards
     from ygorl.build.synergy_graph import load_or_build
     from ygorl.build.tuner import PairedEvaluator, tech_pool
@@ -156,6 +162,11 @@ def main() -> int:
             values = lambda sp: critic_opening_values(critic, critic_env, sp, device=device, num_envs=args.envs)  # noqa: E731
             return opening_value_screen(values, ev, base, children, hands=args.l0_hands)
 
+    rules = None
+    if args.rules:
+        cfg = RuleConfig(min_count=args.rule_min_count, min_confidence=args.rule_min_confidence,
+                         min_lift=args.rule_min_lift)  # fmt: skip
+        rules = DeckRules.from_environment(env, cfg)
     lab = Lab(
         evaluator=evaluator,
         legal=lambda d: not env.validate_deck(d, cards),
@@ -175,9 +186,10 @@ def main() -> int:
             "update": pol.update,
             "opponent": str(args.opponent_checkpoint) if args.opponent_checkpoint else None,
         },  # fmt: skip
+        rules=rules,
     )
     config = RoundConfig(informed=args.informed, explore=args.explore, max_bundle=args.max_bundle,
-                         crossover=args.crossover,
+                         crossover=args.crossover, rules=args.rules,
                          diagnose_pairs=args.diagnose_pairs, batch=args.batch, max_pairs=args.max_pairs,
                          look=args.look, cap=args.cap, min_effect=args.min_effect, budget=args.budget, l0=args.l0,
                          l0_min=args.l0_min, seed=args.seed)  # fmt: skip
