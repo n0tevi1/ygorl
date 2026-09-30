@@ -2,7 +2,7 @@
 
 > 设计依据：[design/05-deck-building.md](design/05-deck-building.md)、[design/02-challenges.md](design/02-challenges.md) C8（内层策略作评估器、外层搜索）。
 > 代码：`ygorl.build.tuner`，命令行 `tools/tune_deck.py`；对局走批量评估（[evaluation.md](evaluation.md)「批量评估」）。
-> 组牌进化（#105）：信号库、进化评估器与进化步骤见下文后三节（`ygorl.build.signals` / `selection` / `evolve`，命令行 `tools/evolve_decks.py`）。
+> 组牌进化（#105）：信号库、进化评估器与进化步骤见下文后三节（`ygorl.build.signals` / `selection` / `evolve`，命令行 `tools/evolve_decks.py`）；学习的候选见「掩码卡组模型」（`ygorl.build.deck_model`，`tools/train_deck_model.py`）。
 
 给一套基础卡组，在它附近找「换一张卡」后在当前环境里打得更好的版本。「更好」= 由同一个策略驾驶时，对环境 meta 牌组（按占比抽，由同一或另一策略驾驶）的胜率更高。
 
@@ -243,6 +243,26 @@
   `--revalidate N` 把每个被接受的改动在 N 对**更新的**对局上重打（新评估器种子，对局序号从 2,000,000 起，从未用于搜索或复核），
   报告「复核的差 − 重验的差」（**胜者诅咒**：只接受复核里显著的改动，复核的差平均偏高）。`--from PREV.json` 只重验以前一次运行的接受改动（首轮的 `eval_compare.json` 没记 MVP 的改动，重验不了，要重跑），
   `--evo-state DIR` 另重验一个进化状态里通过复核的子代（清单条目的亲本为 `corpus:<文件名>`）。
+
+### 掩码卡组模型：学习的候选（#150，`ygorl.build.deck_model` / `learned`）
+
+设计 05「5.3 学习型候选与代理」的第一个模型：候选的换上 / 换下由在**牌组历史全集**上做完形填空训练的模型给出，#145 的引擎成员、加入池、规则分层等手写规则降为对照。
+
+- **数据**：`history_lists`：[牌组数据集](data.md)（`out/deck_dataset/<版本>/`，`ygorl.data.deck_dataset`）里的每一份卡表（卡片全部对应、按计数去重，**合法与否都用**：卡片关系不随禁限表变），
+  没有数据集时直接用 `ygorl.data.masterduelmeta` 解析原始历史（同样的 79,889 份、575 个类型）；额外卡组的卡按卡片种类分出。评估按**类型**留出（`split_by_type`：类型名哈希，整类型留出，测的是没见过的系列）。
+- **模型**（`DeckModel`，约 550 万个可训参数）：卡表的每种卡一个 token = 冻结卡文本向量（`tools/build_text_embeddings.py` 的表，默认 `out/views/both`，e5-base 768 维）的线性投影
+  + ID 嵌入（只对训练卡表里出现过的卡生效，没见过的卡只靠文本）+ 份数嵌入（1–3）；不加位置（卡表是集合）；3 层 pre-norm Transformer（256 维、4 头）。
+- **掩码**：每份卡表随机 15% 的卡（至少一张）变成 `[MASK]`：整张卡（token 被替换），或对 2–3 份的卡以 30% 概率只遮其中几份（token 留下剩余份数，另加一个 `[MASK]`）。
+  `[MASK]` 的输出对整个词表（环境卡池 + 历史里的卡，13,860 张）做 softmax，logits = 输出与各卡**输入嵌入**的点积（输入输出共用，罕见卡靠文本定位），再给定卡预测被遮的份数。
+- **打分接口**：`removal_scores(deck)`：每种卡遮一份后 −log P(该卡 | 其余)，越大越「不合群」；`addition_scores(deck, pool)`：整副卡加一个 `[MASK]` 的 log P(卡 | 卡组)，
+  已在卡组里的卡表示「再加一份」。换下打分是一批（卡种数）前向；每个亲本打分并抽 8 个子代在 CPU 上不到 1 秒。
+- **训练**（`tools/train_deck_model.py`）：AdamW（学习率 1e-3、one-cycle）、批 256、40 轮，GPU 上 bfloat16 autocast，批内卡表按大小排序（每 32 批一块）少填充；
+  共享的 Radeon 8060S 上约 1 分钟一轮。`--holdout 0.1` 训练评估用的模型（留出 57 个类型、11,544 份），`--holdout 0` 训练进化用的模型。模型文件带词表、文本表（半精度）与环境戳，放 `out/deckmodel/`，不进 git。
+- **学习的子代**（`learned_children`，谱系 `generator = "learned"`）：每个亲本打分一次；每个子代抽包大小 1–`max_bundle`（冷启动时 1），
+  对得分前 200 的加入卡（环境卡池里、亲本不满 3 份的卡）按 加入分 / 温度 + Gumbel 排序（即按模型的 P(卡 | 卡组) 无放回抽样），对换下卡按 换下分 / 温度 + Gumbel 排序；
+  每张加入卡一份，换下同区域里排序最前、换后仍合法的卡（不换下本包换入的卡，不把换下的卡再换回来）。**只受合法性约束**：不用引擎保护、加入池与受保护卡。预测增益同其它子代（卡片价值模型的均值增益）。
+- 命令行：`tools/evolve_decks.py --learned-generator N --deck-model out/deckmodel/full.pt`（默认 0，关闭）；模型的环境戳必须与 `--env` 一致；模型路径与 sha256 记在轮次的 `checkpoint` 里（续跑要同一个模型）。
+- 评估结果见 [benchmarks.md](benchmarks.md)「掩码卡组模型」。
 
 **默认没做的**：入池前的「最低标准」（POET；太弱的卡组不入池）、试用期复评与淘汰、按格淘汰相似卡组（#113）；新构筑探索模式（spec #105 的补充）。
 

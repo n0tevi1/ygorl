@@ -918,3 +918,47 @@ PIMC 要按信念采样对手的隐藏卡，只会比「直接看真实状态」
 **每次更新 2 个 epoch**（`--epochs 2`，其余同 `bb_lam05`，两个种子 × 400 次更新）：参考小组上第 200 / 400 次 0.552 / 0.587（种子 0）、0.565 / 0.579（种子 1），
 对照（4 个 epoch）第 400 次 0.606 / 0.565；同种子直接对局 0.47 / 0.52。两臂均值 0.583 对 0.586，强度相同；更新阶段计算量减半（上表：更新约占一步的一半）。
 **已采用**（2026-09-30，设计方确认）：`PPOConfig.epochs` 默认 4 → 2，设计 I1 同步。
+
+## 掩码卡组模型：完形填空与已知改动（#150，2026-09-30）
+
+`tools/train_deck_model.py --env md-2026-09`（[tuning.md](tuning.md)「掩码卡组模型」）：牌组数据集 79,889 份卡表、575 个类型；3 层 256 维、约 550 万个可训参数，
+e5-base 卡文本（`out/views/both`）；40 轮、批 256、bfloat16，共享的 Radeon 8060S（同时有其他训练，忙碌 100%）上约 1 分钟一轮：`--holdout 0.1` 24 分钟、`--holdout 0` 30 分钟。
+模型在 `out/deckmodel/{split,full}.pt`，结果 `out/deckmodel/{split,full}{,_known}.json`。
+
+**完形填空**（`--holdout 0.1`：留出 57 个类型的 11,544 份卡表，训练集 518 个类型 68,345 份；每份留出卡表随机遮一种卡的全部份数，按它在其余卡表缺的约 13,850 张词表卡里的名次）：
+
+| 方法 | top-1 | top-5 | top-10 | top-50 | MRR | 任务数 |
+|------|------|------|------|------|------|------|
+| 掩码卡组模型 | **0.273** | **0.491** | **0.596** | **0.773** | **0.378** | 11,544 |
+| 卡片频率（不分类型：训练卡表里跑它的份数） | 0.078 | 0.128 | 0.170 | 0.285 | 0.108 | 11,544 |
+| 掩码卡组模型（同一随机 500 题） | **0.280** | **0.472** | **0.586** | **0.764** | **0.376** | 500 |
+| 关联规则（`ygorl.build.rules`，训练卡表，系列分层；规则没提的卡按频率排在后面） | 0.202 | 0.344 | 0.426 | 0.622 | 0.282 | 500 |
+| 卡片频率（同 500 题） | 0.080 | 0.138 | 0.194 | 0.296 | 0.112 | 500 |
+
+- 规则在 70% 的题里提到了被遮的卡（系列分层对没见过的类型也适用：卡的字段在卡片数据库里）；规则每题约 8 秒（CPU 忙碌，卡表每对前件都要算一次），所以只抽 500 题。
+- 被遮卡的份数（给定卡）：模型预测对 74%。
+- 训练中每 5 轮在另一组 2,000 题上看 top-10：第 5 轮 0.60，第 20 轮 0.64，第 35–40 轮 0.69，已近平台。
+
+**已知改动的名次**（[spikes/deck-evolution.md](spikes/deck-evolution.md)「真实轮次」；卡组 `environments/md-2026-09/artifacts/decks/{therion,megalith-3}.ydk`）。
+加入：在卡组缺的环境卡池卡（约 13,830 张）里的名次，1 = 最该有；换下：在卡组的卡种里的名次，1 = 最不合群。「全量」= `--holdout 0`（进化用），「留出」= `--holdout 0.1`（Therion、Megalith 都在训练集里）；
+规则按类型分层（两个类型各有 83 / 107 份卡表），频率不分类型（换下时最少见的排第一）。
+
+| 改动 | 期望 | 全量模型 | 留出模型 | 关联规则 | 频率 |
+|------|------|------|------|------|------|
+| Megalith + Megalith Anastasis | 好（+3.5 pp） | 102 / 13,824 | 214 | **5** | 4,785 |
+| Therion + Alpha, the Master of Beasts | 好（+2.2 pp） | **161** / 13,840 | **77** | 1,180 | 1,175 |
+| Therion + Rikka Petal | 坏（别的引擎） | 606 | 318 | 898 | 888 |
+| Megalith + Drytron Zeta Aldhibah | 坏（别的引擎） | 366 | 359 | 801 | 785 |
+| Megalith − Preparation of Rites | 坏（引擎核心） | 5 / 34 | 16 / 34 | — | 24 |
+| Therion − Planet Pathfinder | 坏（引擎核心） | 3 / 18 | 4 / 18 | — | 15 |
+| Megalith − Megalith Aratron（换 Anastasis 时换下的） | 好 | 34 / 34 | 27 | — | 12 |
+| Therion − Therion "Empress" Alasia（换 Alpha 时换下的） | 好 | 5 / 18 | 6 | — | 7 |
+
+- **加入**：两个模型都把两张好卡排在两张坏卡前面（全量：102、161 对 366、606；前 1–1.2%），频率与规则都做不到（规则把 Anastasis 排第 5，却把 Alpha 排在 1,180，与坏卡同档）。
+  全量模型给 Therion 的前几名是 Foolish Burial、Harpie's Feather Duster、Maxx "C"；给 Megalith 的是 I:P Masquerena、Cross-Sheep、Gallant Granite、Megalith Portal。
+- **换下没学到「引擎核心」**：Preparation of Rites 与 Planet Pathfinder 都被排在前列（「不合群」），好改动换下的 Aratron 反而最「合群」。换下分量的是「这张卡在类似卡表里常不常见」，
+  不是它在这副牌里的价值：历史里 Therion 卡表多数不跑 Planet Pathfinder（#145 唯一被接受的子代恰好就是换下它，重验 +0.85 pp，不显著），Megalith 的仪式魔法各版本互换。
+  所以进化里换下分只决定候选里换下谁，是否值得仍由配对评估判定；遮全部份数与减去空卡组的边缘概率（PMI）两种换下分的名次差不多（Pathfinder 3–4、Preparation of Rites 5–13）。
+- 学习的子代（全量模型，单卡、温度 1）的样例：Therion −King Regulus +Bull Ain / Duke Yul / Foolish Burial、−Card Destruction +Harpie's Feather Duster；
+  Megalith +Fossil Fusion、+Megalith Aratron、额外卡组 +Knightmare Unicorn；Pendulum Magician +Oafdragon Magician、+Star / Time Pendulumgraph。每个亲本打分与抽 8 个子代在 CPU 上不到 1 秒。
+- 待测：每套牌（Therion、Megalith、Pendulum Magician）用学习的子代跑一轮，比较各生成器第一批配对差的均值与接受数（对照 #145 的 r145 轮）。

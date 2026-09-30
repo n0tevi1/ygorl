@@ -2,7 +2,8 @@
 
   uv run python tools/evolve_decks.py --env md-2026-09 --checkpoint CKPT --state out/evo/NAME \\
       [--parent BASE.ydk ...] [--parents 1] [--manifest MANIFEST] [--matrix MATRIX.json] [--nash-share 0.5] \\
-      [--budget GAMES] [--rules 0] [--warm-start PATH ...] [--device cuda] [--envs 256]
+      [--budget GAMES] [--rules 0] [--learned-generator 0 --deck-model MODEL.pt] [--warm-start PATH ...] \\
+      [--device cuda] [--envs 256]
 
 Parents are the ``--parent`` deck files, or else the ``--parents`` pool decks of the manifest used least often as
 parents. Per parent: ``informed_children`` from the signal library (6 informed + 2 explore; ``--crossover`` adds
@@ -10,7 +11,9 @@ crossover children of the parent and an archive elite, ``ygorl.build.crossover``
 sampling (``--batch`` pairs a batch, at most ``--max-pairs`` child pairs), sequential validation of the chosen child
 on fresh pairs (a look every ``--look`` pairs, at most ``--cap``); the accepted child enters the manifest as a
 probation deck. ``--rules N`` adds N children whose additions come from association rules over the environment's
-deck corpus (ygorl.build.rules; off by default). Every evaluated child's paired difference feeds the card-value
+deck corpus (ygorl.build.rules; off by default). ``--learned-generator N --deck-model MODEL.pt`` adds N children
+whose additions and removals the masked deck model scores (ygorl.build.learned, #150; ``tools/train_deck_model.py``;
+off by default): additions from the environment's whole card pool, no engine protection, legality only. Every evaluated child's paired difference feeds the card-value
 model and the calibration table, every evaluated deck is offered to the MAP-Elites archive, and every child gets a lineage record.
 
 Engine-aware (#145, docs/tuning.md「引擎感知的候选」): additions come from the addition pool (generic cards of
@@ -58,6 +61,9 @@ def main() -> int:
     ap.add_argument("--crossover", type=int, default=0,
                     help="crossover children per parent: the parent x an archive elite of a far cell (#141)")  # fmt: skip
     ap.add_argument("--rules", type=int, default=0, help="children from the corpus association rules (0: off)")
+    ap.add_argument("--learned-generator", type=int, default=0,
+                    help="children from the masked deck model (0: off; needs --deck-model)")  # fmt: skip
+    ap.add_argument("--deck-model", type=Path, default=None, help="masked deck model (tools/train_deck_model.py)")
     ap.add_argument("--rule-min-count", type=int, default=3, help="lists a rule needs")
     ap.add_argument("--rule-min-confidence", type=float, default=0.5)
     ap.add_argument("--rule-min-lift", type=float, default=2.0)
@@ -99,6 +105,8 @@ def main() -> int:
     ap.add_argument("--envs", type=int, default=256)
     ap.add_argument("--threads", type=int, default=8)
     args = ap.parse_args()
+    if args.learned_generator and args.deck_model is None:
+        ap.error("--learned-generator needs --deck-model")
 
     import torch
 
@@ -106,7 +114,8 @@ def main() -> int:
     from ygorl.build import warmstart
     from ygorl.build.control import critic_opening_values, opening_value_screen
     from ygorl.build.deck_engine import addition_pool, deck_engine, generic_roles
-    from ygorl.build.evolve import Evolution, Lab, Parent, RoundConfig, file_sha256, format_report, opponent_mix
+    from ygorl.build.evolve import (Evolution, Lab, Parent, RoundConfig, check_environment, file_sha256, format_report,
+                                    opponent_mix)  # fmt: skip
     from ygorl.build.packages import setcodes_from_db
     from ygorl.build.rules import DeckRules, RuleConfig
     from ygorl.build.signals import protected_cards
@@ -217,6 +226,14 @@ def main() -> int:
         cfg = RuleConfig(min_count=args.rule_min_count, min_confidence=args.rule_min_confidence,
                          min_lift=args.rule_min_lift)  # fmt: skip
         rules = DeckRules.from_environment(env, cfg, setcodes=setcodes_from_db(cards))
+    deck_model = None
+    if args.learned_generator:
+        from ygorl.build.deck_model import load_deck_model
+
+        deck_model = load_deck_model(args.deck_model)  # scored on the CPU: one small batch per parent
+        check_environment(env, deck_model.environment, f"deck model {args.deck_model}")
+        say(f"deck model {args.deck_model}: {len(deck_model.passwords)} cards, trained on "
+            f"{(deck_model.meta or {}).get('lists')} lists")  # fmt: skip
     lab = Lab(
         evaluator=evaluator,
         legal=lambda d: not env.validate_deck(d, cards),
@@ -231,11 +248,18 @@ def main() -> int:
             "sha256": file_sha256(args.checkpoint),
             "update": pol.update,
             "opponent": str(args.opponent_checkpoint) if args.opponent_checkpoint else None,
+            **(
+                {"deck_model": {"path": str(args.deck_model), "sha256": file_sha256(args.deck_model)}}
+                if deck_model is not None
+                else {}
+            ),
         },  # fmt: skip
         rules=rules,
+        deck_model=deck_model,
+        card_pool=env.card_pool,
     )
     config = RoundConfig(informed=args.informed, explore=args.explore, max_bundle=args.max_bundle,
-                         crossover=args.crossover, rules=args.rules,
+                         crossover=args.crossover, rules=args.rules, learned=args.learned_generator,
                          diagnose_pairs=args.diagnose_pairs, batch=args.batch, max_pairs=args.max_pairs,
                          look=args.look, cap=args.cap, min_effect=args.min_effect, budget=args.budget, l0=args.l0,
                          l0_min=args.l0_min, engine_evidence=args.engine_evidence,

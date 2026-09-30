@@ -39,7 +39,7 @@ import json
 import math
 import os
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -49,6 +49,7 @@ import numpy as np
 from ygorl.build.archive import DESCRIPTORS, DeckArchive
 from ygorl.build.crossover import crossover_children
 from ygorl.build.diagnose import opening_effects
+from ygorl.build.learned import learned_children
 from ygorl.build.rules import rule_children
 from ygorl.build.selection import SD_PAIR, screen, sequential_validate, top_two_thompson
 from ygorl.build.signals import Calibration, CardValueModel, Observation, combine_prior, informed_children
@@ -68,7 +69,7 @@ MUTATION_KINDS = ("informed", "explore")  # child kinds of the mutation generato
 
 def generator(kind: str) -> str:
     """The generator a child kind belongs to: ``mutation`` for ``informed_children``'s kinds, else the kind itself
-    (``crossover``, ``rules``)."""
+    (``crossover``, ``rules``, ``learned``)."""
     return "mutation" if kind in MUTATION_KINDS else kind
 
 
@@ -93,6 +94,7 @@ class RoundConfig:
     max_bundle: int = 3
     crossover: int = 0  # crossover children per parent (the parent × an archive elite, #141); off by default
     rules: int = 0  # children from the association rules (ygorl.build.rules; needs Lab.rules), off by default
+    learned: int = 0  # children from the masked deck model (ygorl.build.learned; needs Lab.deck_model), off by default
     diagnose_pairs: int = 0  # the parent's first pairs, played up front (they are the parent's baseline too)
     batch: int = 25
     max_pairs: int = 600
@@ -128,7 +130,9 @@ class Lab:
     ``checkpoint`` what the lineage records about the policy; ``rules`` the association rules
     (:class:`ygorl.build.rules.DeckRules`) behind the ``RoundConfig.rules`` children; ``engine(deck)`` the deck's
     engine members (:func:`ygorl.build.deck_engine.deck_engine`), protected while unproven. ``pool(parent)`` is also
-    the rule children's addition filter."""
+    the rule children's addition filter. ``deck_model`` scores the ``RoundConfig.learned`` children
+    (:func:`ygorl.build.learned.learned_children`), whose additions come from ``card_pool`` (the environment's card
+    pool; None: ``pool(parent)``)."""
 
     evaluator: Callable[[int, Sequence[Opponent]], Any]
     legal: Callable[[Deck], bool]
@@ -140,6 +144,8 @@ class Lab:
     checkpoint: Mapping[str, Any] = field(default_factory=dict)
     rules: Any = None
     engine: Callable[[Deck], set[int]] = lambda deck: set()
+    deck_model: Any = None
+    card_pool: Collection[int] | None = None
 
 
 # ------------------------------------------------------------------ files
@@ -506,6 +512,8 @@ class Evolution:
             raise ValueError(f"l0={config.l0} needs a screen")
         if config.rules > 0 and lab.rules is None:
             raise ValueError("rule children need the association rules (Lab.rules)")
+        if config.learned > 0 and lab.deck_model is None:
+            raise ValueError("learned children need a deck model (Lab.deck_model)")
         rdir = self.dir / "rounds" / f"{n:04d}"
         _write(rdir / "round.json", _json(state))
         spent = sum(r["games"] for r in state["results"])
@@ -575,6 +583,12 @@ class Evolution:
                                       rng=np.random.default_rng([config.seed, n, i, 3]), children=config.rules,
                                       max_bundle=1 if cold else config.max_bundle, protected=protected,
                                       avoid=[c.deck for c in children], allowed=pool, engine=engine)  # fmt: skip
+        if config.learned > 0:  # legality only: no engine protection, no addition pool (#150)
+            children += learned_children(base, parent.type, lab.deck_model, self.model,
+                                         lab.card_pool if lab.card_pool is not None else pool, legal=lab.legal,
+                                         is_extra=lab.is_extra, rng=np.random.default_rng([config.seed, n, i, 5]),
+                                         children=config.learned, max_bundle=1 if cold else config.max_bundle,
+                                         avoid=[c.deck for c in children])  # fmt: skip
         predicted = [self.model.gain([e.into for e in c.edits], [e.out for e in c.edits], parent.type)
                      for c in children]  # fmt: skip
         screen_l0 = [None] * len(children)
