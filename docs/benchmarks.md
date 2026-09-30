@@ -919,6 +919,64 @@ PIMC 要按信念采样对手的隐藏卡，只会比「直接看真实状态」
 对照（4 个 epoch）第 400 次 0.606 / 0.565；同种子直接对局 0.47 / 0.52。两臂均值 0.583 对 0.586，强度相同；更新阶段计算量减半（上表：更新约占一步的一半）。
 **已采用**（2026-09-30，设计方确认）：`PPOConfig.epochs` 默认 4 → 2，设计 I1 同步。
 
+## 掩码卡组模型：完形填空与已知改动（#150，2026-09-30）
+
+`tools/train_deck_model.py --env md-2026-09`（[tuning.md](tuning.md)「掩码卡组模型」）：牌组数据集 79,889 份卡表、575 个类型；3 层 256 维、约 550 万个可训参数，
+e5-base 卡文本（`out/views/both`）；40 轮、批 256、bfloat16，共享的 Radeon 8060S（同时有其他训练，忙碌 100%）上约 1 分钟一轮：`--holdout 0.1` 24 分钟、`--holdout 0` 30 分钟。
+模型在 `out/deckmodel/{split,full}.pt`，结果 `out/deckmodel/{split,full}{,_known}.json`。
+
+**完形填空**（`--holdout 0.1`：留出 57 个类型的 11,544 份卡表，训练集 518 个类型 68,345 份；每份留出卡表随机遮一种卡的全部份数，按它在其余卡表缺的约 13,850 张词表卡里的名次）：
+
+| 方法 | top-1 | top-5 | top-10 | top-50 | MRR | 任务数 |
+|------|------|------|------|------|------|------|
+| 掩码卡组模型 | **0.273** | **0.491** | **0.596** | **0.773** | **0.378** | 11,544 |
+| 卡片频率（不分类型：训练卡表里跑它的份数） | 0.078 | 0.128 | 0.170 | 0.285 | 0.108 | 11,544 |
+| 掩码卡组模型（同一随机 500 题） | **0.280** | **0.472** | **0.586** | **0.764** | **0.376** | 500 |
+| 关联规则（`ygorl.build.rules`，训练卡表，系列分层；规则没提的卡按频率排在后面） | 0.202 | 0.344 | 0.426 | 0.622 | 0.282 | 500 |
+| 卡片频率（同 500 题） | 0.080 | 0.138 | 0.194 | 0.296 | 0.112 | 500 |
+
+- 规则在 70% 的题里提到了被遮的卡（系列分层对没见过的类型也适用：卡的字段在卡片数据库里）；规则每题约 8 秒（CPU 忙碌，卡表每对前件都要算一次），所以只抽 500 题。
+- 被遮卡的份数（给定卡）：模型预测对 74%。
+- 训练中每 5 轮在另一组 2,000 题上看 top-10：第 5 轮 0.60，第 20 轮 0.64，第 35–40 轮 0.69，已近平台。
+
+**已知改动的名次**（[spikes/deck-evolution.md](spikes/deck-evolution.md)「真实轮次」；卡组 `environments/md-2026-09/artifacts/decks/{therion,megalith-3}.ydk`）。
+加入：在卡组缺的环境卡池卡（约 13,830 张）里的名次，1 = 最该有；换下：在卡组的卡种里的名次，1 = 最不合群。「全量」= `--holdout 0`（进化用），「留出」= `--holdout 0.1`（Therion、Megalith 都在训练集里）；
+规则按类型分层（两个类型各有 83 / 107 份卡表），频率不分类型（换下时最少见的排第一）。
+
+| 改动 | 期望 | 全量模型 | 留出模型 | 关联规则 | 频率 |
+|------|------|------|------|------|------|
+| Megalith + Megalith Anastasis | 好（+3.5 pp） | 102 / 13,824 | 214 | **5** | 4,785 |
+| Therion + Alpha, the Master of Beasts | 好（+2.2 pp） | **161** / 13,840 | **77** | 1,180 | 1,175 |
+| Therion + Rikka Petal | 坏（别的引擎） | 606 | 318 | 898 | 888 |
+| Megalith + Drytron Zeta Aldhibah | 坏（别的引擎） | 366 | 359 | 801 | 785 |
+
+换下的名次分三种换下分（`DeckModel.removal_scores(deck, kind)`，见 tuning.md「掩码卡组模型」）：典型性（遮一份后 −log P）/ 支撑（按支撑升序）/ 组合（默认：支撑前三分之一最后）：
+
+| 换下 | 期望 | 全量：典型性 / 支撑 / **组合** | 留出：典型性 / 支撑 / 组合 | 频率 |
+|------|------|------|------|------|
+| Megalith − Preparation of Rites（34 种卡） | 坏（引擎核心） | 5 / 30 / **30** | 16 / 22 / 13 | 24 |
+| Therion − Planet Pathfinder（18 种卡） | 坏（引擎核心） | 3 / 16 / **16** | 4 / 8 / 4 | 15 |
+| Megalith − Megalith Aratron（换 Anastasis 时换下的） | 好 | 34 / 31 / **31** | 27 / 27 / 27 | 12 |
+| Therion − Therion "Empress" Alasia（换 Alpha 时换下的） | 好 | 5 / 7 / **3** | 6 / 3 / 5 | 7 |
+
+全量模型、组合换下分最先换下的卡：Therion：Card Destruction、Therion Stand Up!、Therion "Empress" Alasia、Therion Charge、Therion "Lily" Borea；
+Megalith：Mekk-Knight Crusadia Avramax、Dyna Mondo、Spright Elf、Aussa the Earth Charmer, Immovable、Nekroz of Trishula；
+Pendulum Magician：Stellarknight Delteros、Chronomaly Vimana、Double or Nothing!、Tellarknight Ptolemaeus、Destiny HERO - Celestial。
+全量模型支撑最高的卡：Therion 为 King Regulus、Ash Blossom、Planet Pathfinder、Endless Engine Argyro System；Megalith 为 Megalith Unformed、Hagith、Harpie's Feather Duster、Aratron、Preparation of Rites；
+Pendulum Magician 为 Wisdom-Eye Magician、Oafdragon Magician、Astrograph Sorcerer。
+
+- **加入**：两个模型都把两张好卡排在两张坏卡前面（全量：102、161 对 366、606；前 1–1.2%），频率与规则都做不到（规则把 Anastasis 排第 5，却把 Alpha 排在 1,180，与坏卡同档）。
+  全量模型给 Therion 的前几名是 Foolish Burial、Harpie's Feather Duster、Maxx "C"；给 Megalith 的是 I:P Masquerena、Cross-Sheep、Gallant Granite、Megalith Portal。
+- **典型性换下分没学到「引擎核心」**：Preparation of Rites 与 Planet Pathfinder 都被排在前列，好改动换下的 Aratron 反而最「合群」。典型性量的是「这张卡在类似卡表里常不常见」，
+  不是这副牌对它的依赖：历史里 Therion 卡表多数不跑 Planet Pathfinder（#145 唯一被接受的子代恰好就是换下它，重验 +0.85 pp，不显著）。
+  **支撑**（拿掉它，其余卡的留一对数似然总共降多少）补上了这一点：全量模型里两张引擎核心都排进最不该换下的 3–5 张（支撑前三分之一），组合分因此把它们排在最后，
+  而 Alasia（好改动换下的）排到第 3。只按支撑排会先换下同名系列里可互换的卡（Therion "Bull" Ain、"Duke" Yul：少一张，别的 Therion 照样被预测到），所以默认用组合。
+  Aratron 在三种分下都排在后面（它与 Anastasis 同系列，好改动是系列内的替换，这类价值只能由配对评估给出）。留出模型较弱（Pathfinder 组合排第 4）；进化用全量模型。
+  支撑分的代价：D 种卡要 D² 个集合（Pendulum Magician 52 种，约 2,700 个），CPU 上每个亲本 5–25 秒。
+- 学习的子代（全量模型，单卡、温度 1、典型性换下分，改组合分之前）的样例：Therion −King Regulus +Bull Ain / Duke Yul / Foolish Burial、−Card Destruction +Harpie's Feather Duster；
+  Megalith +Fossil Fusion、+Megalith Aratron、额外卡组 +Knightmare Unicorn；Pendulum Magician +Oafdragon Magician、+Star / Time Pendulumgraph。每个亲本打分与抽 8 个子代在 CPU 上不到 1 秒。
+- 待测：每套牌（Therion、Megalith、Pendulum Magician）用学习的子代跑一轮，比较各生成器第一批配对差的均值与接受数（对照 #145 的 r145 轮）。
+
 ## 析因评估对逐个筛：每检出一次 +2 pp 的局数（#152，2026-09-30）
 
 [tuning.md](tuning.md)「析因评估」：k 处相容的单卡替换放进一个部分析因设计（k = 4：2^(4−1)，D = ABC，分辨度 IV，8 个变体），所有变体打同样的公共随机数对局，

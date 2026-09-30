@@ -39,7 +39,7 @@ import json
 import math
 import os
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -49,6 +49,7 @@ import numpy as np
 from ygorl.build.archive import DESCRIPTORS, DeckArchive
 from ygorl.build.crossover import crossover_children
 from ygorl.build.diagnose import opening_effects
+from ygorl.build.learned import learned_children
 from ygorl.build.factorial import LETTERS, evaluate_edits, place, variant
 from ygorl.build.rules import rule_children
 from ygorl.build.selection import SD_PAIR, screen, sequential_validate, top_two_thompson
@@ -69,7 +70,7 @@ MUTATION_KINDS = ("informed", "explore")  # child kinds of the mutation generato
 
 def generator(kind: str) -> str:
     """The generator a child kind belongs to: ``mutation`` for ``informed_children``'s kinds, else the kind itself
-    (``crossover``, ``rules``)."""
+    (``crossover``, ``rules``, ``learned``)."""
     return "mutation" if kind in MUTATION_KINDS else kind
 
 
@@ -94,6 +95,8 @@ class RoundConfig:
     max_bundle: int = 3
     crossover: int = 0  # crossover children per parent (the parent × an archive elite, #141); off by default
     rules: int = 0  # children from the association rules (ygorl.build.rules; needs Lab.rules), off by default
+    learned: int = 0  # children from the masked deck model (ygorl.build.learned; needs Lab.deck_model), off by default
+    learned_removal: str = "combined"  # the learned children's removal ranking: combined, support or typicality
     diagnose_pairs: int = 0  # the parent's first pairs, played up front (they are the parent's baseline too)
     batch: int = 25
     max_pairs: int = 600
@@ -132,7 +135,9 @@ class Lab:
     ``checkpoint`` what the lineage records about the policy; ``rules`` the association rules
     (:class:`ygorl.build.rules.DeckRules`) behind the ``RoundConfig.rules`` children; ``engine(deck)`` the deck's
     engine members (:func:`ygorl.build.deck_engine.deck_engine`), protected while unproven. ``pool(parent)`` is also
-    the rule children's addition filter."""
+    the rule children's addition filter. ``deck_model`` scores the ``RoundConfig.learned`` children
+    (:func:`ygorl.build.learned.learned_children`), whose additions come from ``card_pool`` (the environment's card
+    pool; None: ``pool(parent)``)."""
 
     evaluator: Callable[[int, Sequence[Opponent]], Any]
     legal: Callable[[Deck], bool]
@@ -144,6 +149,8 @@ class Lab:
     checkpoint: Mapping[str, Any] = field(default_factory=dict)
     rules: Any = None
     engine: Callable[[Deck], set[int]] = lambda deck: set()
+    deck_model: Any = None
+    card_pool: Collection[int] | None = None
 
 
 # ------------------------------------------------------------------ files
@@ -510,6 +517,8 @@ class Evolution:
             raise ValueError(f"l0={config.l0} needs a screen")
         if config.rules > 0 and lab.rules is None:
             raise ValueError("rule children need the association rules (Lab.rules)")
+        if config.learned > 0 and lab.deck_model is None:
+            raise ValueError("learned children need a deck model (Lab.deck_model)")
         if config.evaluation not in ("thompson", "factorial"):
             raise ValueError("evaluation must be thompson or factorial")
         rdir = self.dir / "rounds" / f"{n:04d}"
@@ -584,6 +593,13 @@ class Evolution:
                                       rng=np.random.default_rng([config.seed, n, i, 3]), children=config.rules,
                                       max_bundle=1 if cold else config.max_bundle, protected=protected,
                                       avoid=[c.deck for c in children], allowed=pool, engine=engine)  # fmt: skip
+        if config.learned > 0:  # legality and protected cards only: no engine protection, no addition pool (#150)
+            children += learned_children(base, parent.type, lab.deck_model, self.model,
+                                         lab.card_pool if lab.card_pool is not None else pool, legal=lab.legal,
+                                         is_extra=lab.is_extra, rng=np.random.default_rng([config.seed, n, i, 5]),
+                                         children=config.learned, max_bundle=1 if cold else config.max_bundle,
+                                         avoid=[c.deck for c in children], protected=lab.protected(base),
+                                         removal=config.learned_removal)  # fmt: skip
         predicted = [self.model.gain([e.into for e in c.edits], [e.out for e in c.edits], parent.type)
                      for c in children]  # fmt: skip
         screen_l0 = [None] * len(children)
@@ -676,8 +692,8 @@ class Evolution:
                           rng: np.random.Generator, signals: dict, prior: dict, pool: Sequence[int],
                           protected: set[int], engine: set[int], say) -> dict:  # fmt: skip
         """Evaluation by fractional factorial (#152, ``ygorl.build.factorial``): ``factorial_k`` single edits
-        (``informed_children`` with bundles of one: the informed ones first, then the explore ones; each takes its own
-        card copy) in one design on pairs ``0 .. factorial_pairs − 1`` (run 0 is the parent: its diagnosis pairs are
+        (``informed_children`` with bundles of one: the informed ones first, then the explore ones; with
+        ``config.learned``, the learned single swaps of the masked deck model before both; each takes its own card copy) in one design on pairs ``0 .. factorial_pairs − 1`` (run 0 is the parent: its diagnosis pairs are
         reused). The edits with a positive main effect together (the smallest effects left out until legal) are the
         chosen child, validated on fresh pairs as a raced child is. The signal library learns each main effect as a
         single-edit observation (every variant plays the same fixed pairs: non-adaptive), not the variants' own
@@ -686,7 +702,15 @@ class Evolution:
         singles = informed_children(base, parent.type, self.model, pool, legal=lab.legal, is_extra=lab.is_extra,
                                     rng=rng, informed=k, explore=k, max_bundle=1, protected=protected, engine=engine)  # fmt: skip
         order = [c for c in singles if c.kind == "informed"] + [c for c in singles if c.kind == "explore"]
-        kind_of = {c.edits[0]: c.kind for c in order}
+        if config.learned > 0:  # #150: learned candidates go in the design first
+            order = learned_children(base, parent.type, lab.deck_model, self.model,
+                                     lab.card_pool if lab.card_pool is not None else pool, legal=lab.legal,
+                                     is_extra=lab.is_extra, rng=np.random.default_rng([config.seed, n, i, 5]),
+                                     children=config.learned, max_bundle=1, protected=lab.protected(base),
+                                     removal=config.learned_removal) + order  # fmt: skip
+        kind_of: dict = {}
+        for c in order:
+            kind_of.setdefault(c.edits[0], c.kind)
         edits = [pl.edit for pl in place(base, [c.edits[0] for c in order])[0]][:k]
         fid = f"r{n:04d}-p{i}-factorial"
         rows: list[dict] = []
