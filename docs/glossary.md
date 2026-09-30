@@ -125,3 +125,9 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | crossover child / mate | 交叉子代 / 配偶 | 本轮亲本与一个档案精英（配偶，按格子距离偏向远处格子抽取）按卡表交叉、换入配偶不超过一半差异的子代；以亲本为配对基准，谱系 `generator = "crossover"`（`ygorl.build.crossover`，tuning.md「交叉子代」） |
 | cell distance | 格子距离 | 两组描述符在 MAP-Elites 网格上各维格序号差之和（只算双方都有值的描述符） |
 | descriptor proxy | 描述符代理 | 真值要求解器的描述符的廉价近似：combo 长度 ≈ 检索链深度，卡手率 ≈ 起手没有启动卡的概率（tuning.md「进化步骤」） |
+| engine member | 引擎成员 | 卡组里与本卡组另一张卡有协同图边（任一方向、卡组内扇出 ≤ 500）的非泛用卡，检索者、启动卡与被检索者都算；模型没有证据前进化不换下它（`ygorl.build.deck_engine.deck_engine`，tuning.md「引擎感知的候选」，#145） |
+| addition pool | 加入池 | 进化子代可换入的卡：泛用卡，或在协同图上与亲本的非泛用卡相连（扇出 ≤ 30）的卡（`deck_engine.addition_pool`） |
+| cold-start breadth / screen | 冷启动广度 / 初筛 | 模型对亲本类型证据不足时，一轮生成约 40 个单卡替换、各打一批（25 对），只让第一批最好的几个进前二 Thompson 采样（`ygorl.build.selection.screen`） |
+| signal-library warm start | 信号库热启动 | 把已有的非自适应配对数据（M1、M2 留一、首轮谱系的 `learned`、调卡组对比的复核）作为观测先写进卡片价值模型（`ygorl.build.warmstart`）；与策略的 BC 热启动无关 |
+| multiplicity-aware stop | 多重性校正的停止 | 前二 Thompson 采样判「有把握」要求领先子代至少 100 对，且 P(Δ > 0) > 1 − 0.05 / 候选数（Bonferroni） |
+| winner's curse / re-validation | 胜者诅咒 / 重验 | 只接受复核里显著的改动，复核的差因此平均偏高；在从未用过的新种子上重打被接受的改动来量它（`tools/deckevo_eval_compare.py --revalidate`） |

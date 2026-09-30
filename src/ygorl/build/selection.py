@@ -10,7 +10,11 @@ per-pair difference child minus parent.
   batches by top-two Thompson sampling from the children's Gaussian posteriors on their difference (prior: each
   child's predicted gain, e.g. :meth:`ygorl.build.signals.CardValueModel.gain`; likelihood: the observed paired
   differences with the pooled empirical per-pair variance). It stops once the child with the highest posterior mean
-  has ``P(diff > 0) > confidence``, or when the pair budget is spent.
+  has ``P(diff > 0) > 1 - (1 - confidence) / multiplicity`` and at least ``min_pairs`` pairs (#145: without the two
+  guards a null child among 8 stopped the search after one batch about 10% of the time), or when the pair budget is
+  spent.
+- :func:`screen`: cold-start breadth (#145): many single swaps play one batch each, the best few by paired
+  difference go on to the search.
 - :func:`sequential_validate`: the chosen child and its parent on fresh pairs (never used by the search), a look
   every ``look`` pairs up to ``cap``, with one-sided repeated confidence bounds from Lan-DeMets O'Brien-Fleming alpha
   spending (:func:`obrien_fleming_bounds`). Accept when the lower bound is above 0; stop as futile when a looser
@@ -61,6 +65,7 @@ class Race:
     rounds: int
     stop: str  # "confident", "budget" or "empty"
     sd_pair: float  # the pooled per-pair standard deviation used by the last posterior
+    threshold: float = 0.95  # the P(diff > 0) the stop needed (confidence corrected for multiplicity)
 
 
 def _differences(child: Sequence[float], base: Sequence[float]) -> np.ndarray:
@@ -88,7 +93,7 @@ def top_two_thompson(base: Deck, children: Sequence[Deck], evaluator, *,
                      prior: Sequence[tuple[float, float]] | None = None, batch: int = 25, max_pairs: int = 600,
                      batches_per_round: int = 4, confidence: float = 0.95, top_two: float = 0.5,
                      sd_pair: float = SD_PAIR, prior_pairs: float = 10.0, base_scores: Sequence[float] = (),
-                     rng: np.random.Generator | None = None,
+                     min_pairs: int = 0, multiplicity: int = 1, rng: np.random.Generator | None = None,
                      log: Callable[[str], None] | None = None) -> Race:  # fmt: skip
     """Allocate ``batch``-pair batches of paired games among ``children`` of ``base`` by top-two Thompson sampling.
 
@@ -97,17 +102,21 @@ def top_two_thompson(base: Deck, children: Sequence[Deck], evaluator, *,
     posterior sample with probability ``top_two``, else the top of a resample that differs) and plays them in one
     ``evaluator.play`` call, together with the parent's pairs the children need (``base_scores``: parent pairs
     already played, e.g. by the diagnosis, with the same evaluator settings). Stops when the child with the highest
-    posterior mean has ``P(diff > 0) > confidence`` or ``max_pairs`` child pairs have been played (the first batch of
-    every child is always played)."""
+    posterior mean has ``P(diff > 0) > 1 - (1 - confidence) / multiplicity`` (Bonferroni over the ``multiplicity``
+    candidates the search chose among, e.g. every child a screen looked at) and at least ``min_pairs`` pairs, or
+    ``max_pairs`` child pairs have been played (the first batch of every child is always played)."""
     rng = rng if rng is not None else np.random.default_rng(0)
     n = len(children)
     prior = list(prior) if prior is not None else [(0.0, 0.05)] * n
     if len(prior) != n or any(not s > 0 for _, s in prior):
         raise ValueError("one prior (mean, positive sd) per child")
+    if multiplicity < 1:
+        raise ValueError("multiplicity must be at least 1")
+    threshold = 1 - (1 - confidence) / multiplicity
     base_s = list(base_scores)
     scores: list[list[float]] = [[] for _ in range(n)]
     if n == 0:
-        return Race(None, [], scores, base_s, 0, 0, "empty", sd_pair)
+        return Race(None, [], scores, base_s, 0, 0, "empty", sd_pair, threshold)
 
     def play(counts: dict[int, int]) -> None:
         jobs = [(children[i], range(len(scores[i]), len(scores[i]) + c * batch)) for i, c in counts.items()]
@@ -132,7 +141,8 @@ def top_two_thompson(base: Deck, children: Sequence[Deck], evaluator, *,
         if log:
             log(f"round {rounds}: {played} child pairs, best child {best} {mean[best]:+.3f} ± {sd[best]:.3f} "
                 f"(P>0 {p_pos:.3f}), sd/pair {pooled:.3f}, {evaluator.games} games")  # fmt: skip
-        stop = "confident" if p_pos > confidence else "budget" if played + batch > max_pairs else None
+        sure = p_pos > threshold and len(scores[best]) >= min_pairs
+        stop = "confident" if sure else "budget" if played + batch > max_pairs else None
         if stop:
             break
         counts = {}
@@ -146,7 +156,44 @@ def top_two_thompson(base: Deck, children: Sequence[Deck], evaluator, *,
         d = _differences(scores[i], base_s)
         arms.append(Arm(i, len(scores[i]), float(d.mean()) if len(d) else math.nan, prior[i][0], prior[i][1],
                         float(mean[i]), float(sd[i]), _N.cdf(mean[i] / sd[i]), float(p_best[i])))  # fmt: skip
-    return Race(best, arms, scores, base_s, played, rounds, stop, pooled)
+    return Race(best, arms, scores, base_s, played, rounds, stop, pooled, threshold)
+
+
+@dataclass
+class Screen:
+    """Result of :func:`screen`: ``kept`` are indices into the screened children, best first."""
+
+    kept: list[int]
+    diffs: list[float]  # per child, the mean paired difference on the screen's pairs (NaN when none is finite)
+    pairs: int
+    base_scores: list[float]
+
+
+def screen(base: Deck, children: Sequence[Deck], evaluator, *, pairs: int = 25, keep: int = 4,
+           base_scores: Sequence[float] = (), tiebreak: Sequence[float] | None = None,
+           rng: np.random.Generator | None = None) -> Screen:  # fmt: skip
+    """Cold-start breadth (#145): every child plays pairs ``0 .. pairs - 1`` (one call, with the parent's pairs it
+    still lacks), and the ``keep`` children with the highest mean paired difference go on, best first. Ties (25 pairs
+    give few distinct values) go to the higher ``tiebreak`` (e.g. the predicted gain), then to a random order.
+    The pairs are the search's first batch: a search that follows reuses them (a game log plays nothing twice), and
+    every screened child's first batch is non-adaptive data for the signal library."""
+    rng = rng if rng is not None else np.random.default_rng(0)
+    base_s = list(base_scores)
+    jobs = [(c, range(pairs)) for c in children]
+    if len(base_s) < pairs:
+        jobs.append((base, range(len(base_s), pairs)))
+    out = evaluator.play(jobs) if jobs else []
+    if len(base_s) < pairs:
+        base_s.extend(np.asarray(out[-1], dtype=float).tolist())
+    diffs = []
+    for i in range(len(children)):
+        d = _differences(np.asarray(out[i], dtype=float), base_s[:pairs])
+        diffs.append(float(d.mean()) if len(d) else math.nan)
+    tb = list(tiebreak) if tiebreak is not None else [0.0] * len(children)
+    noise = rng.random(len(children))
+    order = sorted(range(len(children)),
+                   key=lambda i: (-(diffs[i] if math.isfinite(diffs[i]) else -math.inf), -tb[i], noise[i]))  # fmt: skip
+    return Screen(order[:keep], diffs, pairs, base_s)
 
 
 def _top_two(mean: np.ndarray, sd: np.ndarray, beta: float, rng: np.random.Generator, tries: int = 100) -> int:
@@ -277,5 +324,5 @@ def sequential_validate(base: Deck, child: Deck, evaluator, *, look: int = 100, 
     return out
 
 
-__all__ = ["SD_PAIR", "Arm", "Look", "Race", "Validation", "obrien_fleming_bounds", "sequential_validate",
-           "top_two_thompson"]  # fmt: skip
+__all__ = ["SD_PAIR", "Arm", "Look", "Race", "Screen", "Validation", "obrien_fleming_bounds", "screen",
+           "sequential_validate", "top_two_thompson"]  # fmt: skip

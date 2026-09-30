@@ -80,7 +80,10 @@ def make_lab(fail_after=None, played=None):
                checkpoint={"path": "ckpt.pt", "sha256": "abc", "update": 400})  # fmt: skip
 
 
-CONFIG = RoundConfig(informed=4, explore=2, batch=10, max_pairs=120, look=40, cap=200, archive_min_pairs=10, seed=7)
+# the bundled (non-cold-start) path; cold start has its own tests
+CONFIG = RoundConfig(
+    informed=4, explore=2, batch=10, max_pairs=120, look=40, cap=200, archive_min_pairs=10, seed=7, cold_candidates=0
+)
 OPPONENTS = [Opponent("meta", Deck(main=(5,) * 40), 1.0)]
 PARENTS = [Parent("corpus:base", BASE, "Base")]
 
@@ -312,7 +315,7 @@ def test_the_signal_library_learns_only_unbiased_differences(tmp_path):
     lab = make_lab()
     lab.evaluator = lambda seed, opponents: Games(seed, effects=effects, copy=0.8)
     config = RoundConfig(informed=4, explore=2, max_bundle=1, batch=10, max_pairs=60, look=20, cap=40,
-                         archive_min_pairs=10)  # fmt: skip
+                         archive_min_pairs=10, cold_candidates=0)  # fmt: skip
     learned, chosen_all, chosen_fresh = [], [], []
     for seed in range(40):
         ev = Evolution(tmp_path / str(seed), Env())
@@ -434,3 +437,54 @@ def test_crossover_is_off_by_default(tmp_path):
     report = again.run_round(PARENTS, make_lab(), CONFIG, OPPONENTS)
     assert set(report["generators"]["cumulative"]) == {"mutation"}
     assert not any(r["kind"] == "crossover" for r in again.lineage())
+
+
+def test_engine_members_are_protected_until_the_model_has_evidence(tmp_path):
+    lab = make_lab()
+    lab.engine = lambda deck: {1, 2, 10}
+    ev, report = run(tmp_path / "a", lab=lab)
+    (result,) = ev._round_state(1)["results"]
+    assert {1, 2, 10} <= set(result["protected"]) and result["engine"] == [1, 2, 10]
+    assert all(e["out"] not in (1, 2, 10) for r in ev.lineage() for e in r["edits"])
+    # two observations of card 1 in the parent's type: 1 may go out now (after every non-engine card), 2 and 10 not
+    ev = Evolution(tmp_path / "b", Env())
+    for _ in range(2):
+        ev.model.add(Observation("Base", (50,), (1,), 0.0, 0.05))
+    ev.run_round(PARENTS, lab, CONFIG, OPPONENTS)
+    (result,) = ev._round_state(1)["results"]
+    assert 1 not in result["protected"] and {2, 10} <= set(result["protected"])
+
+
+def test_a_cold_start_round_screens_many_single_swaps_then_bundles_once_evidence_exists(tmp_path):
+    config = RoundConfig(**{**CONFIG.__dict__, "cold_candidates": 12, "cold_keep": 3, "cold_min_obs": 5})
+    ev, report = run(tmp_path, config=config)
+    (p,) = report["per_parent"]
+    assert p["cold_start"] and "(cold start)" in (tmp_path / "rounds" / "0001" / "report.txt").read_text()
+    lineage = ev.lineage()
+    assert len(lineage) == report["children"] >= 10
+    assert all(len(r["edits"]) == 1 for r in lineage)  # single swaps only
+    assert all(r["screen"]["pairs"] == CONFIG.batch for r in lineage)
+    assert sum(r["screen"]["kept"] for r in lineage) == 3 == sum(r["search"] is not None for r in lineage)
+    assert all(r["search"] is None for r in lineage if not r["screen"]["kept"])
+    # every screened child's first batch feeds the signal library (non-adaptive), the chosen child's validation too
+    assert all(r["learned"][0]["source"] == "first_batch" for r in lineage)
+    assert len(ev.model.observations) == len(lineage) + 1
+    # the multiplicity counts every screened child
+    assert ev._round_state(1)["results"][0]["candidates"] == len(lineage)
+    assert ev._round_state(1)["results"][0]["stop_threshold"] == pytest.approx(1 - 0.05 / len(lineage))
+    g = report["generators"]["round"]["mutation"]
+    assert g["first_batch_children"] == len(lineage) and g["first_batch_mean"] is not None
+    # the model now has evidence about the type: the next round bundles
+    report2 = ev.run_round(PARENTS, make_lab(), config, OPPONENTS)
+    assert not report2["per_parent"][0]["cold_start"]
+    assert any(len(r["edits"]) > 1 for r in ev.lineage() if r["round"] == 2)
+
+
+def test_warm_start_adds_each_observation_once(tmp_path):
+    ev = Evolution(tmp_path, Env())
+    items = [("warm:m2:x:0", Observation("Base", (65957473,), (1,), -0.05, 0.01)),
+             ("warm:m2:x:1", Observation("Base", (65957473,), (2,), 0.01, 0.01))]  # fmt: skip
+    assert ev.warm_start(items) == 2 and ev.warm_start(items) == 0
+    again = Evolution(tmp_path, Env())
+    assert len(again.model.observations) == 2 and again.warm_start(items) == 0
+    assert again.model.evidence(1, "Base") == 1 and again.model.type_evidence("Base") == 2
