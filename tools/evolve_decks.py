@@ -22,6 +22,11 @@ swaps at one batch each and races the best ``--cold-keep``. ``--warm-start PATH`
 evolution state or lineage, a tuner comparison; ygorl.build.warmstart) adds earlier paired data to the model first,
 each observation once.
 
+``--eval factorial`` (#152, docs/tuning.md「析因评估」) replaces the children and the race: ``--factorial-k`` single
+edits (informed first, then explore) are played as one fractional factorial design (resolution IV where possible) on
+``--factorial-pairs`` pairs; the edits with a positive main effect together are validated; each main effect feeds the
+card-value model as a single-edit observation, and the design with its effect estimates goes into the lineage.
+
 Opponents: the environment's meta decks by share, mixed with the Nash weights of a deck matchup matrix
 (``--matrix``, a ``ygorl-matchup`` file whose decks are meta decks or manifest decks) by ``--nash-share``.
 The checkpoint, the matrix and the state (manifest, archive, signal library) must all belong to ``--env``.
@@ -90,6 +95,11 @@ def main() -> int:
                     help="pairs the leader needs before the search stops as confident")  # fmt: skip
     ap.add_argument("--no-multiplicity", action="store_true",
                     help="confident stop at P > 0.95 regardless of the number of candidates")  # fmt: skip
+    ap.add_argument("--eval", dest="evaluation", choices=("thompson", "factorial"), default="thompson",
+                    help="children raced by top-two Thompson sampling, or single edits in one fractional factorial "
+                    "(#152)")  # fmt: skip
+    ap.add_argument("--factorial-k", type=int, default=4, help="edits per fractional factorial (--eval factorial)")
+    ap.add_argument("--factorial-pairs", type=int, default=200, help="pairs every variant of the design plays")
     ap.add_argument("--warm-start", type=Path, action="append", default=[],
                     help="earlier paired data for the card-value model (repeatable; ygorl.build.warmstart)")  # fmt: skip
     ap.add_argument("--warm-start-inflate", type=float, default=1.0,
@@ -241,7 +251,8 @@ def main() -> int:
                          l0_min=args.l0_min, engine_evidence=args.engine_evidence,
                          cold_candidates=args.cold_candidates, cold_keep=args.cold_keep,
                          cold_min_obs=args.cold_min_obs, min_confident_pairs=args.min_confident_pairs,
-                         multiplicity=not args.no_multiplicity, seed=args.seed)  # fmt: skip
+                         multiplicity=not args.no_multiplicity, evaluation=args.evaluation,
+                         factorial_k=args.factorial_k, factorial_pairs=args.factorial_pairs, seed=args.seed)  # fmt: skip
     say(f"parents: {', '.join(f'{p.id} ({p.type})' for p in parents)}; {len(opponents)} opponents"
         + (f" (Nash share {args.nash_share})" if nash else " (meta shares)"))  # fmt: skip
     report = evo.run_round(parents, lab, config, opponents, log=say)
