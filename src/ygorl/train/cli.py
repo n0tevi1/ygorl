@@ -54,6 +54,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--evolved-power", "evolved_power",
            "evolved decks are drawn with weight x (1 - p) ** power, p the policy's score piloting it"),
         _f("--env", "env", "environment (rules; stamped into checkpoints)", metavar="PATH|VERSION"),
+        _f("--log-games", "log_games", "append one record per finished game (decks, first player, winner, turns, "
+           "reason, update, environment) to RUN/games.jsonl.gz"),
     )),
     ("environment and rollout", (
         _f("--envs", "num_envs", "environment slots = rollout columns B"),
