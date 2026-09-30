@@ -385,6 +385,22 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 | `metrics.jsonl` | 每次更新一行：更新号、行数、决策数、收集 / 更新秒数、决策/秒、行/秒、结束局数、自博弈 / 快照局数、对快照胜率、自博弈先攻胜率、截断与错误局数、终局原因、平均局长，§8.2 的损失指标，累计计数 |
 | `eval.jsonl` | 每次评估每个基线一行：局数、胜 / 负 / 平、胜率与 Wilson 区间、终局原因、耗时、是否新 best |
 | `checkpoints/latest.pt`、`checkpoints/update_N.pt`、`best.pt` | 最新（每 `checkpoint_every` 次）、每次评估的、keep-best |
+| `games.jsonl.gz` | 仅 `--log-games`（`log_games`，默认关）：每局结束一行，见下 |
+
+**对局日志**（`--log-games`，#149）：给学习型组牌的 Δ 代理（[设计 05 §5.3](design/05-deck-building.md)）攒标签。每次更新把这批 rollout 里结束的每一局
+追加一行到 `games.jsonl.gz`（每次更新一个 gzip 成员，`gzip.open` 可直接逐行读）：
+
+```json
+{"update": 12, "decks": ["branded", "evo-0003"], "evolved": 1, "first": 0, "winner": 1, "turns": 7, "reason": "win",
+ "truncated": false, "opponent": null, "learner": null, "seed": 123, "environment": "md-2026-09", "fingerprint": "65ca…"}
+```
+
+`decks` 是牌组 a、b：语料牌组用 `.ydk` 文件名（路径在 `config.json` 的 `decks`），进化牌组用清单 id（`evolved` 标出发下去的那套是 a 还是 b，
+清单路径是 `config.json` 的 `deck_pool`；作对手的 history 牌组也是清单 id）；`first`、`winner`、`learner` 都是牌组下标（0 = a、1 = b），
+`winner` 为 null 表示无胜者；`truncated` 为真的局（上限截断、引擎错误）不是训练意义上的胜负；`opponent` 为 null 是自博弈，否则是快照 id，
+`learner` 是学习者所用牌组。`update` 是这批对局所喂的那次更新：下棋的策略是 `update - 1` 次更新后的（`--overlap` 时 `update - 2`）。
+开销：md-2026-09 的 6 套 meta 牌组、32 槽 × 64 步、`max_decisions=40`（为了多出局）跑 4 次更新共 407 局，写日志合计 6 ms（约 16 µs/局，
+占训练时间 0.01%），压缩后约 17 字节/局。
 
 ### 8.6 默认规模与吞吐
 

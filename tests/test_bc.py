@@ -333,3 +333,20 @@ def test_greedy_demonstrations_record_later_turns(db, vocab, data, tmp_path):
     longer, _ = record_games(specs[:1], GreedyAgent, vocab, event_length=48)
     with pytest.raises(ValueError, match="event length"):
         concat([got, longer])
+
+
+def test_train_bc_fine_tunes_an_existing_actor(vocab, tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("train_bc", HERE.parent / "tools" / "train_bc.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    base = save_checkpoint(tmp_path / "base.pt", tiny_net(vocab), vocab, event_length=24)
+    out = tmp_path / "ft"
+    assert tool.main(["--train", str(DEMO_FILE), "--init-from", str(base), "--epochs", "1", "--openings", "none",
+                      "--out", str(out), "--threads", "1"]) == 0  # fmt: skip
+    ckpt = load_checkpoint(out / "policy.pt")
+    # the base network, vocab and event window carry over (--d-model etc. are ignored), and the weights moved
+    assert ckpt.event_length == 24 and ckpt.net.cfg == load_checkpoint(base).net.cfg
+    before = load_checkpoint(base).net.state_dict()
+    assert any(not torch.equal(v, before[k]) for k, v in ckpt.net.state_dict().items())

@@ -121,6 +121,45 @@ md-2026-09（2026-09-24 抓取）：历史卡表 86,295 份、576 个类型，�
 291 个类型 3 份、42 个 2 份、64 个 1 份），20 个 meta 类型全部在内。来源前几位：Legend Anthology 116、N/R Festival 86、Theme Chronicle 78、Master V 57、
 Master I 56。冒烟 2,042 局，0 异常、0 脚本错误、0 未知消息。`.ydk` 共约 4 MB，进 git。
 
+## 牌组数据集（`out/deck_dataset/<版本>/`）
+
+学习型组牌模型（[设计 05 §5.3](design/05-deck-building.md) 的掩码卡组模型与 Δ 代理，#149 / #150）需要的是牌组历史全集，而不是每类型 3 份的语料。
+`tools/build_deck_dataset.py <版本>`（`ygorl.data.deck_dataset`）从 `tools/build_deck_corpus.py --fetch` 已下载的原始历史（`--raw-dir`，
+默认 `out/deck_corpus/raw`）构建，写到 `out/deck_dataset/<版本>/`（`--out` 可改）：
+
+- **收录**：卡片全部对应到卡密的每一份卡表（排位、比赛、活动都算）；同一张卡表（主 + 额外计数相同）只留最新的一份，`copies` 记历史里的份数。
+  去重跨类型：同一张卡表被标成两个类型时保留最新那份的类型。
+- **不合法的也保留**：`legal` 与 `problems`（违规代码：`forbidden`、`over_limit`、`not_in_pool`……）是相对 `meta.json` 里环境戳的合法性；
+  卡片关系不随禁限表变化，模型自己决定用不用。
+- **格式**：`decks.npz`（无 pickle）是按日期从新到旧的 CSR 卡片计数矩阵加逐卡表的元数据列，`meta.json` 是格式版本、环境戳、原始文件的
+  来源与 sha256、统计。读取用 `load_deck_dataset(dir)` → `DeckDataset`（全量约 0.2 秒）：
+
+| 数组 | 形状 / 类型 | 含义 |
+|------|------|------|
+| `passwords` | int64 [V] | 出现过的全部卡密，升序 |
+| `indptr` / `indices` / `counts` | int64 [N+1] / int32 [nnz] / int8 [nnz] | 第 i 份卡表：`passwords[indices[indptr[i]:indptr[i+1]]]` 各 `counts[...]` 张（主 + 额外卡组合在一起，额外卡组的卡由卡片种类决定）；`matrix()` 给 `scipy.sparse.csr_matrix` [N, V] |
+| `types` / `type` | str [K] / int32 [N] | masterduelmeta 的卡组类型名（升序）与每份卡表的类型下标；`type_name(i)` |
+| `date` | str [N] | 创建日期 YYYY-MM-DD |
+| `kind` / `source` / `event` | str [N] | `ranked` 或 `tournament`；排位 / 比赛类型名（Master I、Dice Rally、Meta Weekly……）；比赛自己的名字（`customTournamentName`，可空） |
+| `url` / `weight` / `copies` | str / float32 / int32 [N] | 来源页；masterduelmeta 的 `statsWeight`（0 = 不计入其统计）；历史里相同卡表的份数 |
+| `legal` / `problems` | bool / str [N] | 在环境下是否合法；违规代码，逗号分隔 |
+| `n_main` / `n_extra` | int16 [N] | 主 / 额外卡组张数 |
+
+md-2026-09（原始历史 2026-09-24 抓取，2022-01-21 至 2026-09-24）：原始 86,295 份，无法对应 0 份，重复 6,406 份，**收录 79,889 份**、
+**575 个类型**（Dragonmaid Eldlich 的卡表全部与更新的其它类型卡表相同，去重后消失）、9,061 种卡；在 md-2026-09 下**合法 6,444 份（8.1%）**，
+覆盖 397 个类型；违规代码按卡表计：forbidden 65,394、over_limit 64,641、not_in_pool 1,081、main_too_small 24。每类型卡表数中位数 27
+（最少 1、最多 2,727）。排位 67,443、比赛 12,446；来源前几位：Master I 14,074、Master V 11,363、Platinum I 6,137、Duelist Cup DLv. Max 6,123、
+Community Tournaments 6,055。`decks.npz` **6.1 MB**，构建约 40 秒（峰值内存 3.6 GB，主要是读 369 MB 的原始 JSON）。数据集留在 `out/` 不进 git
+（重新生成只需原始历史与构建脚本；卡表 URL 含投稿者用户名）。
+
+**其它公开来源（可行性，仅调查）**：只考虑允许使用、且有 API 的来源，不抓网页。
+
+- **YGOPRODECK**：[API 文档](https://ygoprodeck.com/api-guide/) 只有卡片（`cardinfo`）、卡包、系列、随机卡与数据库版本，**没有卡组 / 比赛卡表的端点**；
+  站内卡组库只有网页，不可用。（限速 20 次/秒，要求本地缓存。）
+- **masterduelmeta 用户投稿卡组**：同上，没有公开 API（`top-decks` 已全量使用）。
+- 结论：目前没有可用的第二来源；8 万份 MD 卡表已远多于每类型 3 份。若以后需要，TCG 的同类站点或官方赛事卡表须先确认有文档化的 API 与使用条款，
+  且其禁限表与卡池不同，只能作卡片关系的预训练数据、合法性按本环境重算。
+
 ## Yugipedia 关系（`relations.json`）
 
 四个 SMW 属性：`Archetype support`（支援某系列）、`Anti-support`（反支援）、`Archseries related`（与某系列相关）以及 `Archseries`
@@ -167,6 +206,7 @@ Master I 56。冒烟 2,042 局，0 异常、0 脚本错误、0 未知消息。`.
 | `ygorl.data.ygoprodeck` | `fetch_md_cards`、`parse_md_pool` |
 | `ygorl.data.masterduelmeta` | `fetch_cards` / `fetch_articles` / `fetch_top_decks`；`parse_banlist`、`last_banlist_update`、`parse_top_decks`、`summarize_types`（份额与 medoid） |
 | `ygorl.data.corpus` | `select_lists`：牌组语料的每类型选取（中心卡表 + 最远点）；驱动脚本 `tools/build_deck_corpus.py` |
+| `ygorl.data.deck_dataset` | `build_deck_dataset`、`DeckDataset`（`save`、`cards`、`matrix`）、`load_deck_dataset`：牌组数据集；驱动脚本 `tools/build_deck_dataset.py` |
 | `ygorl.data.yugipedia` | `fetch_property`、`parse_property`、`relations` |
 | `ygorl.data.build` | `BuildOptions`、`build`（抓取 → 解析 → 写入 → 校验）、校对报告 |
 
@@ -176,3 +216,5 @@ Master I 56。冒烟 2,042 局，0 异常、0 脚本错误、0 未知消息。`.
 无法对应的卡、禁限状态的各种写法与冲突、窗口过滤与权重、medoid 选择、Yugipedia 空结果与倒排；抓取器用假的 HTTP 对象测翻页、窗口截止、
 SMW 偏移上限检测与重试 / `Retry-After`；离线构建端到端（校验、份额、人工修正、校对状态的保留与失效、参数沿用、手工替换的原始文件、
 缺文件报错）、`ygorl env build / check` 命令行，以及仓库快照通过 T0.4 校验。真正联网的两个测试默认跳过，`YGORL_NETWORK_TESTS=1` 时运行。
+`tests/test_deck_dataset.py`：同一套小型原始文件上的牌组数据集：跳过无法对应的卡表、跨类型去重留最新、按日期排序、合法性标记、保存 / 读取往返、
+格式校验，以及 `tools/build_deck_dataset.py` 端到端。

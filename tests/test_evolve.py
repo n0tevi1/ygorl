@@ -488,3 +488,37 @@ def test_warm_start_adds_each_observation_once(tmp_path):
     again = Evolution(tmp_path, Env())
     assert len(again.model.observations) == 2 and again.warm_start(items) == 0
     assert again.model.evidence(1, "Base") == 1 and again.model.type_evidence("Base") == 2
+
+
+def test_factorial_evaluation_records_the_design_and_learns_main_effects(tmp_path):
+    config = RoundConfig(**{**CONFIG.__dict__, "evaluation": "factorial", "factorial_k": 4, "factorial_pairs": 60})
+    ev, report = run(tmp_path, config=config)
+    (p,) = report["per_parent"]
+    assert p["evaluation"] == "factorial" and p["stop"] == "factorial"
+    assert [e["label"] for e in p["effects"]] == ["A", "B", "C", "D", "AB = CD", "AC = BD", "AD = BC"]
+    lines = ev.lineage()
+    assert len(lines) == report["children"] >= 7  # the design's variants but the parent (+ the chosen combination)
+    runs = sorted(r["factorial"]["run"] for r in lines if r["factorial"]["run"] is not None)
+    assert runs == list(range(1, 8))
+    for r in lines:
+        f = r["factorial"]
+        assert r["generator"] == "factorial" and f["design"]["generators"] == ["D = ABC"]
+        assert f["design"]["resolution"] == 4 and len(f["edits"]) == 4 and len(f["effects"]) == 7
+        assert [e["into"] for e in r["edits"]] == [f["edits"][j]["into"] for j, x in enumerate(f["levels"]) if x > 0]
+        assert r["learned"] == [] or r["validation"]  # variants teach nothing on their own: the main effects do
+    # the +12 pp card is found by its main effect, and the chosen combination is validated and accepted
+    edits = lines[0]["factorial"]["edits"]
+    main = {edits[e["term"][0]]["into"]: e for e in lines[0]["factorial"]["effects"] if len(e["term"]) == 1}
+    if 50 in main:
+        assert main[50]["effect"] > 0.05
+    chosen = [r for r in lines if r["validation"]]
+    assert len(chosen) == 1 and report["accepted"] == int(chosen[0]["accepted"])
+    # one single-edit observation per main effect, plus the validated child's fresh pairs
+    again = Evolution(tmp_path, Env())
+    singles = [o for o in again.model.observations if len(o.into) == 1 and o.stderr < 0.1]
+    assert len(again.model.observations) == 4 + 1 and len(singles) >= 4
+    assert again.calibration.report()["model_gain"]["pairs"] == 4
+    from ygorl.build.warmstart import load
+
+    ids = [uid for uid, _ in load(tmp_path)]
+    assert sum("-factorial/" in uid for uid in ids) == 4 and len(ids) == len(set(ids)) == 5

@@ -2,6 +2,7 @@
 configured share of the deals, weighted toward the decks the policy pilots badly; no live evolved deck = the fixed
 pool, bit for bit; the pool state survives checkpoints."""
 
+import gzip
 import json
 import shutil
 from collections import Counter
@@ -200,3 +201,26 @@ def test_the_evolved_pool_defaults_follow_the_spec():
     cfg = replace(small_cfg(), deck_pool="x.json")
     assert cfg.evolved_share == 0.3 and cfg.deck_pool_every > 0
     assert TrainConfig.from_dict(cfg.to_dict()) == cfg
+
+
+def test_log_games_writes_one_record_per_finished_game(tmp_path):
+    """--log-games: games.jsonl.gz gets one line per finished game, with deck-side first player and winner."""
+    path = manifest(tmp_path, {"e1": ("labrynth", "active")})
+    cfg = replace(small_cfg(deck_pool=str(path), evolved_share=0.5, deck_pool_every=1, log_games=True,
+                            selfplay_fraction=0.5), snapshot_every=1)  # fmt: skip
+    trainer = Trainer(cfg, tmp_path / "run", log=None)
+    trainer.train(max_updates=3)
+    with gzip.open(tmp_path / "run" / "games.jsonl.gz", "rt") as f:
+        games = [json.loads(line) for line in f]
+    assert len(games) == trainer.counters["games"] > 0
+    assert {g["update"] for g in games} <= {1, 2, 3}
+    names = {"snake_eye", "kashtira", "e1"}
+    for g in games:
+        assert set(g["decks"]) <= names and g["first"] in (0, 1) and g["winner"] in (0, 1, None)
+        assert g["evolved"] is None or g["decks"][g["evolved"]] == "e1"
+        assert (g["opponent"] is None) == (g["learner"] is None)
+        assert g["turns"] >= 0 and g["reason"] and g["environment"] is None
+    assert any(g["evolved"] is not None for g in games)
+    quiet = Trainer(small_cfg(), tmp_path / "run2", log=None)  # off by default
+    quiet.train(max_updates=1)
+    assert not (tmp_path / "run2" / "games.jsonl.gz").exists()
