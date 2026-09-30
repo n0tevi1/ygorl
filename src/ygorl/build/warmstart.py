@@ -13,7 +13,8 @@ twice adds nothing (:meth:`ygorl.build.evolve.Evolution.warm_start`):
   uses, so a short run cannot claim zero error);
 - **lineage** (an evolution state directory or its ``lineage.jsonl``): each child's ``learned`` entries, the
   non-adaptive pairs only (its first batch, and the validation of a chosen child). The search's later pairs and the
-  ``all_pairs`` estimate are selection-biased and never used;
+  ``all_pairs`` estimate are selection-biased and never used. A factorial design's main effects (#152, each variant's
+  ``factorial`` field) are single-edit observations, taken once per design;
 - **tuner comparison** (``tools/deckevo_eval_compare.py`` JSON): the fresh-pair validation of each arm's validated
   edits (the evolution arm's chosen child; the MVP arm's finalists when the file logs them). Its Thompson arm
   estimates are search pairs, never used. Files written before the edits were logged give only the evolution arm;
@@ -89,8 +90,10 @@ def from_m1(data: Mapping, name: str = "m1", inflate: float = 1.0) -> list[tuple
 
 def from_lineage(records: Iterable[Mapping], name: str = "lineage",
                  inflate: float = 1.0) -> list[tuple[str, Observation]]:  # fmt: skip
-    """The ``learned`` (non-adaptive) entries of lineage records (module docstring)."""
+    """The ``learned`` (non-adaptive) entries of lineage records, and the main effects of factorial designs (#152:
+    every variant of a design carries it; each main effect once) (module docstring)."""
     out = []
+    designs: set[str] = set()
     for r in records:
         into = [e["into"] for e in r["edits"]]
         outs = [e["out"] for e in r["edits"]]
@@ -98,6 +101,15 @@ def from_lineage(records: Iterable[Mapping], name: str = "lineage",
             o = _obs(r["parent"]["type"], into, outs, m.get("diff"), m.get("stderr"), inflate)
             if o is not None:
                 out.append((f"warm:lineage:{name}:{r['child']}/{m['source']}", o))
+        fac = r.get("factorial")
+        if fac and fac["id"] not in designs:
+            designs.add(fac["id"])
+            for e in fac["effects"]:
+                if len(e["term"]) == 1:
+                    edit = fac["edits"][e["term"][0]]
+                    o = _obs(r["parent"]["type"], (edit["into"],), (edit["out"],), e["effect"], e["stderr"], inflate)
+                    if o is not None:
+                        out.append((f"warm:lineage:{name}:{fac['id']}/{edit['letter']}", o))
     return out
 
 
