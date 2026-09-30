@@ -131,3 +131,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | signal-library warm start | 信号库热启动 | 把已有的非自适应配对数据（M1、M2 留一、首轮谱系的 `learned`、调卡组对比的复核）作为观测先写进卡片价值模型（`ygorl.build.warmstart`）；与策略的 BC 热启动无关 |
 | multiplicity-aware stop | 多重性校正的停止 | 前二 Thompson 采样判「有把握」要求领先子代至少 100 对，且 P(Δ > 0) > 1 − 0.05 / 候选数（Bonferroni） |
 | winner's curse / re-validation | 胜者诅咒 / 重验 | 只接受复核里显著的改动，复核的差因此平均偏高；在从未用过的新种子上重打被接受的改动来量它（`tools/deckevo_eval_compare.py --revalidate`） |
+| fractional factorial design / variant | 部分析因设计 / 变体 | 把 k 处相容改动按 2^(k−p) 个两水平组合（变体）同时评估，所有变体打同样的公共随机数对局，一次回归估出各改动的效应（`ygorl.build.factorial`，tuning.md「析因评估」，#152） |
+| main effect / interaction | 主效应 / 交互效应 | 主效应：有这处改动的平均得分 − 没有的（对其它改动取值平均）；交互 AB：B 在与不在时 A 的效应之差的一半 |
+| alias / resolution | 别名 / 分辨度 | 部分析因里列完全相同（带符号）、分不开的效应互为别名（如 AB = CD）；分辨度 = 定义关系里最短词的长度，IV 表示主效应不与两两交互混杂 |
+| legality repair (factorial) | 合法性修复（析因） | 单独合法、合起来不合法的变体留下最少的改动使其合法，估计用实际打的水平；被去掉的记在 `repairs` |
