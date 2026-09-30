@@ -6,12 +6,16 @@ the rules only *propose* edits; which proposals pay off is left to Thompson allo
 
 - :class:`DeckRules`: the corpus as a list × card presence matrix. Rules have one or two antecedent cards (no full
   Apriori: pairs are enough, and they are computed per query, only for antecedents in the queried deck). A type's
-  lists are used alone when the type has at least ``min_type_lists`` of them, otherwise all lists (the global
-  fallback: md-2026-09 has at most 3 lists per type). Type-conditional frequencies ("``k`` of the type's ``n`` lists
-  run C") are rules with an empty antecedent. :meth:`DeckRules.from_environment` caches per environment stamp.
-- :func:`rule_children`: children of a parent deck whose additions are cards the rules predict and the parent lacks,
-  each paired with the removal the card-value model draws lowest (never a protected card, never an antecedent of the
-  rules that proposed the bundle), 1 to ``max_bundle`` edits a child, repaired to legality.
+  lists are used alone when the type has at least ``min_type_lists`` of them; otherwise (md-2026-09 has at most 3
+  lists per type) the lists of the queried cards' **archetype** when the rules know the cards' setcodes (#145: lists
+  with at least ``archetype_min_cards`` distinct cards of a base setcode that as many of the queried cards carry;
+  the global rules proposed other engines' cards), else all lists (the global fallback). Type-conditional
+  frequencies ("``k`` of the type's ``n`` lists run C") are rules with an empty antecedent.
+  :meth:`DeckRules.from_environment` caches per environment stamp.
+- :func:`rule_children`: children of a parent deck whose additions are cards the rules predict, the parent lacks
+  and the addition pool allows (``allowed``, #145), one copy each, each paired with the removal the card-value model
+  draws lowest (never a protected card, never an antecedent of the rules that proposed the bundle; the parent's
+  engine members after every other card), 1 to ``max_bundle`` edits a child, repaired to legality.
 - :meth:`DeckRules.complete`: package completion for new-build exploration (#113): a partial package's usual
   missing members.
 """
@@ -25,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ygorl.build.deck_engine import archetypes
 from ygorl.build.signals import CardValueModel, Child
 from ygorl.build.tuner import Edit, apply
 from ygorl.cards.ydk import Deck, load_ydk
@@ -57,8 +62,9 @@ class RuleConfig:
     min_support: float = 0.0  # share of the stratum's lists (min_count usually binds first)
     min_confidence: float = 0.5
     min_lift: float = 2.0
-    min_type_lists: int = 20  # a type with fewer lists uses the global rules
+    min_type_lists: int = 20  # a type with fewer lists uses its archetype's lists (or the global rules)
     min_type_count: int = 2  # a type-conditional frequency needs this many of the type's lists
+    archetype_min_cards: int = 2  # distinct cards of a base setcode that make it an archetype of a deck / list
 
 
 @dataclass(frozen=True)
@@ -79,10 +85,14 @@ _CACHE: dict[tuple, DeckRules] = {}
 
 
 class DeckRules:
-    """Association rules over ``lists`` (``(deck type, deck)`` pairs); card presence, not copies, defines the rules."""
+    """Association rules over ``lists`` (``(deck type, deck)`` pairs); card presence, not copies, defines the rules.
+    ``setcodes`` (``password -> setcodes``, e.g. :func:`ygorl.build.packages.setcodes_from_db`) enables the
+    archetype strata."""
 
-    def __init__(self, lists: Sequence[tuple[str, Deck]], config: RuleConfig | None = None) -> None:
+    def __init__(self, lists: Sequence[tuple[str, Deck]], config: RuleConfig | None = None, *,
+                 setcodes: Mapping[int, Iterable[int]] | None = None) -> None:  # fmt: skip
         self.config = config or RuleConfig()
+        self.setcodes = {int(c): tuple(v) for c, v in setcodes.items()} if setcodes is not None else None
         index: dict[int, int] = {}
         rows = []
         for _, deck in lists:
@@ -97,30 +107,50 @@ class DeckRules:
         self.types = np.array([t for t, _ in lists], dtype=object)
         self.count = self.present.sum(0)  # lists per card
         self.p = self.count / max(len(lists), 1)
+        self.bases = [{sc & 0xFFF for sc in (self.setcodes or {}).get(int(c), ())} for c in self.cards]
 
     def __len__(self) -> int:
         return len(self.types)
 
     @classmethod
-    def from_environment(cls, env, config: RuleConfig | None = None) -> DeckRules:
-        """Rules over ``env``'s deck corpus, cached per environment stamp (and corpus file, and settings)."""
+    def from_environment(cls, env, config: RuleConfig | None = None, *,
+                         setcodes: Mapping[int, Iterable[int]] | None = None) -> DeckRules:  # fmt: skip
+        """Rules over ``env``'s deck corpus, cached per environment stamp (and corpus file, settings, and whether
+        ``setcodes`` are given)."""
         path = Path(env.artifact_path("deck_corpus.json"))
         st = path.stat()
-        key = (json.dumps(env.stamp(), sort_keys=True), str(path), st.st_mtime_ns, st.st_size, config or RuleConfig())
+        key = (json.dumps(env.stamp(), sort_keys=True), str(path), st.st_mtime_ns, st.st_size, config or RuleConfig(),
+               setcodes is not None)  # fmt: skip
         if key not in _CACHE:
             corpus = json.loads(path.read_text())
-            _CACHE[key] = cls([(e["type"], load_ydk(path.parent / e["file"])) for e in corpus["decks"]], config)
+            _CACHE[key] = cls([(e["type"], load_ydk(path.parent / e["file"])) for e in corpus["decks"]], config,
+                              setcodes=setcodes)  # fmt: skip
         return _CACHE[key]
 
     # -- strata
-    def stratum(self, deck_type: str | None) -> tuple[str, np.ndarray]:
+    def stratum(self, deck_type: str | None, cards: Iterable[int] | None = None) -> tuple[str, np.ndarray]:
         """(name, row mask) of the lists rules for ``deck_type`` are mined over: the type's own lists when it has
-        ``min_type_lists`` of them, else every list."""
+        ``min_type_lists`` of them; else, with setcodes and ``cards`` (the queried deck or package), the lists of
+        their archetypes (:meth:`archetype_rows`) when there are any; else every list."""
         if deck_type is not None:
             rows = self.types == deck_type
             if rows.sum() >= max(self.config.min_type_lists, 1):
                 return deck_type, rows
+        if cards is not None and self.setcodes is not None:
+            arch = archetypes(cards, self.setcodes, min_cards=self.config.archetype_min_cards)
+            if arch:
+                rows = self.archetype_rows(arch)
+                if rows.any():
+                    return "archetype:" + "+".join(f"{b:#x}" for b in sorted(arch)), rows
         return GLOBAL, np.ones(len(self), dtype=bool)
+
+    def archetype_rows(self, bases: Iterable[int]) -> np.ndarray:
+        """Lists with at least ``archetype_min_cards`` distinct cards carrying one of the base setcodes ``bases``."""
+        want = set(bases)
+        cols = [j for j, b in enumerate(self.bases) if b & want]
+        if not cols:
+            return np.zeros(len(self), dtype=bool)
+        return self.present[:, cols].sum(1) >= self.config.archetype_min_cards
 
     def frequencies(self, deck_type: str) -> dict[int, float]:
         """Type-conditional card frequencies: share of ``deck_type``'s lists that run each card (empty for an unknown
@@ -154,7 +184,7 @@ class DeckRules:
         when it is more confident than both of its one-card rules), plus ``deck_type``'s frequency rules; sorted by
         lift, then confidence."""
         have = {int(c) for c in cards}
-        name, rows = self.stratum(deck_type)
+        name, rows = self.stratum(deck_type, have)
         m = self.present[rows]
         n = len(m)
         out = self._type_rules(deck_type, have)
@@ -228,7 +258,7 @@ class DeckRules:
         run (one rule with the package as antecedent); when fewer than ``min_count`` lists run all of it, the best
         one- or two-card rule per missing card. Sorted by confidence, then lift."""
         pkg = {int(c) for c in package}
-        name, rows = self.stratum(deck_type)
+        name, rows = self.stratum(deck_type, pkg)
         cols = [self.col.get(c) for c in pkg]
         n = int(rows.sum())
         if pkg and None not in cols and n:
@@ -254,19 +284,27 @@ class DeckRules:
 def rule_children(base: Deck, deck_type: str, rules: DeckRules, model: CardValueModel, *,
                   legal: Callable[[Deck], bool], is_extra: Callable[[int], bool], rng: np.random.Generator,
                   children: int = 2, max_bundle: int = 3, protected: Iterable[int] = (),
-                  avoid: Iterable[Deck] = ()) -> list[Child]:  # fmt: skip
+                  avoid: Iterable[Deck] = (), allowed: Iterable[int] | None = None, copies: int = 1,
+                  engine: Iterable[int] = ()) -> list[Child]:  # fmt: skip
     """Up to ``children`` children of ``base`` whose additions come from the association rules, distinct from each
-    other, from ``base`` and from ``avoid``. Per child: draw a bundle size (1..``max_bundle``) and an order of the
-    proposed cards (Gumbel keys on the log of :attr:`Proposal.weight`: the better-backed card tends to go first, repeated calls spread
-    over the proposals); each proposed card goes in its typical number of copies while the bundle has room, each
-    copy taking out the card of the same section the card-value model draws lowest (one Thompson draw per child).
+    other, from ``base`` and from ``avoid``. Only cards in ``allowed`` (the engine-aware addition pool,
+    :func:`ygorl.build.deck_engine.addition_pool`; every card when None) are proposed. Per child: draw a bundle size
+    (1..``max_bundle``) and an order of the proposed cards (Gumbel keys on the log of :attr:`Proposal.weight`: the
+    better-backed card tends to go first, repeated calls spread over the proposals); each proposed card goes in its
+    typical number of copies, at most ``copies`` (one by default, #145: two copies of an off-engine card took out
+    two copies of a core card), while the bundle has room, each copy taking out the card of the same section the
+    card-value model draws lowest (one Thompson draw per child; ``engine`` cards only after every other card).
     Protected cards and the antecedents of the bundle's rules are never taken out, nor a card the bundle put in.
     Legality repair: a swap that leaves the deck illegal tries the next-lowest removal; a card no removal makes legal
     is dropped. Children are kind ``"rules"``, predicted gain = the model's mean gain of the bundle."""
     proposals = rules.additions(base, deck_type)
+    if allowed is not None:
+        ok = set(allowed)
+        proposals = {c: p for c, p in proposals.items() if c in ok}
     if not proposals or children <= 0:
         return []
     protected = set(protected)
+    engine = set(engine)
     seen = {_key(base), *(_key(d) for d in avoid)}
     order_cards = list(proposals)
     logw = np.log([proposals[c].weight for c in order_cards])
@@ -283,10 +321,11 @@ def rule_children(base: Deck, deck_type: str, rules: DeckRules, model: CardValue
                 break
             section = "extra" if is_extra(c) else "main"
             added = False
-            for _copy in range(min(rules.typical_copies(c, deck_type), size - len(edits))):
+            for _copy in range(min(rules.typical_copies(c, deck_type), copies, size - len(edits))):
                 cards = getattr(deck, section)
                 stay = keep | set(proposals[c].rule.antecedent) | {e.into for e in edits}
-                outs = sorted((o for o in dict.fromkeys(cards) if o not in stay), key=lambda o: draw.get(o, 0.0))
+                outs = sorted((o for o in dict.fromkeys(cards) if o not in stay),
+                              key=lambda o: (o in engine, draw.get(o, 0.0)))  # fmt: skip
                 for o in outs:
                     e = Edit(o, c, section)
                     cand = apply(deck, e)

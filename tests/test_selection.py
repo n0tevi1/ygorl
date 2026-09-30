@@ -5,7 +5,7 @@ import zlib
 import numpy as np
 import pytest
 
-from ygorl.build.selection import obrien_fleming_bounds, sequential_validate, top_two_thompson
+from ygorl.build.selection import obrien_fleming_bounds, screen, sequential_validate, top_two_thompson
 from ygorl.cards.ydk import Deck
 
 
@@ -118,6 +118,63 @@ def test_thompson_prior_breaks_ties_and_null_children_run_out_the_budget():
     assert top_two_thompson(BASE, [], PairedGames({})).stop == "empty"
     with pytest.raises(ValueError):
         top_two_thompson(BASE, decks(2), PairedGames({}), prior=[(0.0, 0.0), (0.0, 1.0)])
+
+
+@pytest.mark.parametrize("games", [PairedGames, DiscretePairs])
+def test_the_safer_stop_rarely_calls_a_neutral_child_confident(games):
+    """#145: P(diff > 0) > 0.95 alone stopped the search on one of 8 neutral children in about 40% of the races (the
+    first real rounds stopped after 25-150 pairs, then failed validation). With 100 pairs on the leader and the
+    Bonferroni threshold 1 - 0.05 / 8, false stops fall to at most 5%."""
+    old = new = 0
+    seeds = 300
+    for seed in range(seeds):
+        kw = dict(rng=np.random.default_rng(seed))
+        old += top_two_thompson(BASE, decks(8), games({}, seed=seed), **kw).stop == "confident"
+        race = top_two_thompson(BASE, decks(8), games({}, seed=seed), min_pairs=100, multiplicity=8, **kw)
+        new += race.stop == "confident"
+        assert race.threshold == pytest.approx(1 - 0.05 / 8)
+        if race.stop == "confident":
+            assert len(race.scores[race.best]) >= 100
+    assert old / seeds > 0.2 and new / seeds <= 0.05
+
+
+def test_the_safer_stop_still_finds_a_real_gain():
+    effects = {"c0": 0.0, "c1": -0.02, "c2": 0.01, "c3": 0.08, "c4": 0.0, "c5": -0.04, "c6": -0.01, "c7": 0.01}
+    hits = 0
+    for seed in range(50):
+        race = top_two_thompson(BASE, decks(8), PairedGames(effects, seed=seed), rng=np.random.default_rng(seed),
+                                min_pairs=100, multiplicity=8)  # fmt: skip
+        hits += race.best == 3
+    assert hits >= 45
+    with pytest.raises(ValueError):
+        top_two_thompson(BASE, decks(2), PairedGames({}), multiplicity=0)
+
+
+@pytest.mark.parametrize("games", [PairedGames, DiscretePairs])
+def test_cold_start_screen_then_race_rarely_stops_on_neutral_children(games):
+    """40 neutral single swaps at 25 pairs, the best 4 raced: the screen picks the luckiest, so their first batch is
+    biased upward; the multiplicity (every screened child) and the 100-pair minimum keep false stops at most 5%."""
+    stops = 0
+    seeds = 200
+    for seed in range(seeds):
+        ev = games({}, seed=seed)
+        kids = decks(40)
+        s = screen(BASE, kids, ev, pairs=25, keep=4, rng=np.random.default_rng(seed))
+        race = top_two_thompson(BASE, [kids[i] for i in s.kept], ev, base_scores=s.base_scores, min_pairs=100,
+                                multiplicity=40, rng=np.random.default_rng(seed))  # fmt: skip
+        stops += race.stop == "confident"
+    assert stops / seeds <= 0.05
+
+
+def test_the_screen_keeps_the_best_first_batches_in_one_call():
+    effects = {"c3": 0.3, "c7": 0.2}
+    ev = PairedGames(effects, seed=0)
+    s = screen(BASE, decks(10), ev, pairs=25, keep=2, base_scores=[0.5] * 5)
+    assert s.kept == [3, 7] and s.pairs == 25 and len(s.base_scores) == 25 and len(s.diffs) == 10
+    assert len(ev.calls) == 1 and ("base", 5, 25) in ev.calls[0]  # the parent only plays the pairs it lacks
+    # ties go to the tiebreak (e.g. the predicted gain)
+    flat = screen(BASE, decks(3), PairedGames({}, noise=0.0, parent_noise=0.0), keep=1, tiebreak=[0.0, 0.2, 0.1])
+    assert flat.kept == [1]
 
 
 def test_obrien_fleming_bounds_match_the_textbook_and_hold_alpha():

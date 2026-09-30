@@ -121,9 +121,13 @@ def test_rule_children_are_legal_protected_and_distinct():
             assert e.into in proposals and e.into != 6  # the banned card is dropped, not forced in
             assert e.out not in (21, 20, 1, 2)  # protected, legality repair (20 drawn lowest), antecedents of 3
             assert e.section == "main"
-    # 3 goes in with more than one copy (typically three) when the bundle has room; 11 (drawn low) goes out first
-    assert any([e.into for e in k.edits].count(3) >= 2 for k in kids)
+    # one copy of a new card per bundle (#145); 11 (drawn low) goes out first
+    assert all(len({e.into for e in k.edits}) == len(k.edits) for k in kids)
     assert all(k.edits[0].out == 11 for k in kids)
+    # with more copies allowed, 3 goes in with more than one (typically three) when the bundle has room
+    more = rule_children(PARENT, "Z", rules, model, legal=legal_40, is_extra=lambda pw: pw >= 900,
+                         rng=np.random.default_rng(0), children=4, max_bundle=3, protected={21}, copies=3)  # fmt: skip
+    assert any([e.into for e in k.edits].count(3) >= 2 for k in more)
     # nothing to propose: no children
     empty = rule_children(PARENT, "C", DeckRules(CORPUS[-2:]), model, legal=legal_40, is_extra=lambda pw: False,
                           rng=np.random.default_rng(0))  # fmt: skip
@@ -153,3 +157,32 @@ def test_rule_children_in_the_evolution_step_record_their_generator(tmp_path):
     assert g["children"] == len(rows) and g["accepted_rate"] == g["accepted"] / g["children"]
     assert sum(x["children"] for x in report["generators"]["round"].values()) == report["children"]
     assert "rules " in (tmp_path / "s" / "rounds" / "0001" / "report.txt").read_text()
+
+
+def test_rule_children_only_add_cards_the_addition_pool_allows_and_spare_the_engine():
+    rules = DeckRules(CORPUS, RuleConfig(min_type_lists=100, min_lift=1.2, min_count=2, min_confidence=0.3))
+    model = CardValueModel(prior={11: -0.5, 12: -0.4})
+    kw = dict(legal=legal_40, is_extra=lambda pw: pw >= 900, children=4, max_bundle=3, protected={21})
+    kids = rule_children(PARENT, "Z", rules, model, rng=np.random.default_rng(0), allowed={5}, **kw)
+    assert kids and all(e.into == 5 for k in kids for e in k.edits)
+    assert rule_children(PARENT, "Z", rules, model, rng=np.random.default_rng(0), allowed=set(), **kw) == []
+    # engine cards go out only after every other card: 11 and 12 are drawn lowest, but they are engine members
+    spared = rule_children(PARENT, "Z", rules, model, rng=np.random.default_rng(0), engine={11, 12}, **kw)
+    assert spared and all(e.out not in (11, 12) for k in spared for e in k.edits)
+
+
+def test_rules_use_the_archetype_stratum_when_types_have_few_lists():
+    # setcode 0x10 marks cards 1, 2, 3 (archetype X); 0x2010 is a sub-archetype of the same base; 5 and 7 have others
+    setcodes = {1: (0x10,), 2: (0x2010,), 3: (0x10,), 5: (0x20,), 7: (0x30,)}
+    r = DeckRules(CORPUS, RuleConfig(min_type_lists=100, min_lift=1.0, min_count=2, min_confidence=0.3),
+                  setcodes=setcodes)  # fmt: skip
+    name, rows = r.stratum("A", [1, 2, 99])
+    assert name == "archetype:0x10" and rows.sum() == 4  # only the A lists run two X cards
+    # the global fallback proposed 5 (B lists run 1 and 5); inside the archetype nothing runs 5
+    assert 5 in DeckRules(CORPUS, r.config).additions(Deck(main=(1, 2, 40)))
+    props = r.additions(Deck(main=(1, 2, 40)))
+    assert 3 in props and 5 not in props and props[3].rule.stratum == "archetype:0x10"
+    # no archetype in the queried cards (one X card only), or no setcodes: every list, as before
+    assert r.stratum("A", [1, 5])[0] == GLOBAL and DeckRules(CORPUS).stratum("A", [1, 2])[0] == GLOBAL
+    # a type with enough lists still uses its own
+    assert DeckRules(CORPUS, RuleConfig(min_type_lists=4), setcodes=setcodes).stratum("A", [1, 2])[0] == "A"

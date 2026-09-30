@@ -15,7 +15,8 @@ evaluations themselves, and the cheap signals only enter as a calibrated prior:
 - :func:`informed_children`: children of a parent deck. An informed child is a bundle of 1 to ``max_bundle`` edits
   in the same direction (each takes out a card the model rates low and puts in one it rates higher), chosen on a
   Thompson draw from the model so repeated calls spread over the plausible edits; explore children are random legal
-  swaps. Protected cards (win conditions, searched targets) are never taken out.
+  swaps. Protected cards (win conditions, searched targets, and the engine members the model has no evidence
+  about, #145) are never taken out; a bundle puts in at most one copy of a card.
 """
 
 from __future__ import annotations
@@ -146,6 +147,15 @@ class CardValueModel:
         var = float(x @ cov @ x) + sum((k * sd) ** 2 for k, _, sd in free.values())
         return m, float(math.sqrt(max(var, 0.0)))
 
+    def evidence(self, card: int, deck_type: str) -> int:
+        """Observations of ``deck_type`` that swap ``card`` in or out (how much the model knows about the card in
+        that type; engine members stay protected until they have some, #145)."""
+        return sum(1 for o in self.observations if o.deck_type == deck_type and (card in o.into or card in o.out))
+
+    def type_evidence(self, deck_type: str) -> int:
+        """Observations of ``deck_type`` (a round with fewer runs its cold-start breadth, #145)."""
+        return sum(1 for o in self.observations if o.deck_type == deck_type)
+
     def value(self, card: int, deck_type: str) -> tuple[float, float]:
         """Posterior mean and standard deviation of one copy of ``card`` in a deck of ``deck_type`` (absolute values
         are only as sure as the prior; compare cards with :meth:`gain`)."""
@@ -272,15 +282,18 @@ class Child:
 
 def informed_children(base: Deck, deck_type: str, model: CardValueModel, pool: Iterable[int], *,
                       legal: Callable[[Deck], bool], is_extra: Callable[[int], bool], rng: np.random.Generator,
-                      informed: int = 6, explore: int = 2, max_bundle: int = 3,
-                      protected: Iterable[int] = ()) -> list[Child]:  # fmt: skip
+                      informed: int = 6, explore: int = 2, max_bundle: int = 3, protected: Iterable[int] = (),
+                      engine: Iterable[int] = ()) -> list[Child]:  # fmt: skip
     """Up to ``informed`` bundled children and ``explore`` random-swap children of ``base``, all legal and distinct.
     Each informed child draws the card values once (Thompson), then pairs the lowest-drawn cards of the deck with
     the highest-drawn candidates of the same section, keeping only pairs with a positive drawn gain and a legal
     result, until the bundle (1..``max_bundle``, drawn) is full; a bundle never takes out a card it put in or puts
-    back one it took out. May return fewer children when the deck has few legal improving edits."""
+    back one it took out, and puts in at most one copy of a card. ``engine`` cards (the parent's engine members that
+    are not protected) are taken out only after every other card (generic slots first, #145). May return fewer
+    children when the deck has few legal improving edits."""
     pool = [c for c in dict.fromkeys(pool)]
     protected = set(protected)
+    engine = set(engine)
     seen: set[tuple] = {_key(base)}
     out: list[Child] = []
     for _ in range(informed * 4):
@@ -289,15 +302,15 @@ def informed_children(base: Deck, deck_type: str, model: CardValueModel, pool: I
         draw = model.sample([*base.main, *base.extra, *pool], deck_type, rng)
         size = int(rng.integers(1, max_bundle + 1))
         deck, edits = base, []
-        outs = sorted(
-            (c for c in dict.fromkeys((*base.main, *base.extra)) if c not in protected), key=lambda c: draw[c]
-        )
+        outs = sorted((c for c in dict.fromkeys((*base.main, *base.extra)) if c not in protected),
+                      key=lambda c: (c in engine, draw[c]))  # fmt: skip
         for o in outs:
             if len(edits) >= size:
                 break
             section = "extra" if o in base.extra else "main"
-            ins = sorted((c for c in pool if is_extra(c) == (section == "extra") and draw[c] > draw[o] and c != o),
-                         key=lambda c: -draw[c])  # fmt: skip
+            used = {e.into for e in edits}
+            ins = sorted((c for c in pool if is_extra(c) == (section == "extra") and draw[c] > draw[o] and c != o
+                          and c not in used), key=lambda c: -draw[c])  # fmt: skip
             for i in ins:
                 e = Edit(o, i, section)
                 cand = apply(deck, e)

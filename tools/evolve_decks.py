@@ -2,7 +2,7 @@
 
   uv run python tools/evolve_decks.py --env md-2026-09 --checkpoint CKPT --state out/evo/NAME \\
       [--parent BASE.ydk ...] [--parents 1] [--manifest MANIFEST] [--matrix MATRIX.json] [--nash-share 0.5] \\
-      [--budget GAMES] [--rules 0] [--device cuda] [--envs 256]
+      [--budget GAMES] [--rules 0] [--warm-start PATH ...] [--device cuda] [--envs 256]
 
 Parents are the ``--parent`` deck files, or else the ``--parents`` pool decks of the manifest used least often as
 parents. Per parent: ``informed_children`` from the signal library (6 informed + 2 explore; ``--crossover`` adds
@@ -12,6 +12,15 @@ on fresh pairs (a look every ``--look`` pairs, at most ``--cap``); the accepted 
 probation deck. ``--rules N`` adds N children whose additions come from association rules over the environment's
 deck corpus (ygorl.build.rules; off by default). Every evaluated child's paired difference feeds the card-value
 model and the calibration table, every evaluated deck is offered to the MAP-Elites archive, and every child gets a lineage record.
+
+Engine-aware (#145, docs/tuning.md「引擎感知的候选」): additions come from the addition pool (generic cards of
+``--generic-pool`` and cards connected to the parent in the synergy graph, fanout <= ``--addition-fanout``;
+``--pool tech`` restores the old tech pool); the parent's engine members (in-deck edges, fanout <=
+``--engine-fanout``) are protected until the model has ``--engine-evidence`` observations of them. While the model
+has fewer than ``--cold-min-obs`` observations of the parent's type, a round screens ``--cold-candidates`` single
+swaps at one batch each and races the best ``--cold-keep``. ``--warm-start PATH`` (repeatable: M1 / M2 JSON, an
+evolution state or lineage, a tuner comparison; ygorl.build.warmstart) adds earlier paired data to the model first,
+each observation once.
 
 Opponents: the environment's meta decks by share, mixed with the Nash weights of a deck matchup matrix
 (``--matrix``, a ``ygorl-matchup`` file whose decks are meta decks or manifest decks) by ``--nash-share``.
@@ -66,7 +75,25 @@ def main() -> int:
     ap.add_argument("--l0-hands", type=int, default=256)
     ap.add_argument("--meta-top", type=int, default=60)
     ap.add_argument("--generic-pool", type=Path, default=ROOT / "tests" / "data" / "generic_pool.json",
-                    help="generic cards with roles (the hand-trap descriptor)")  # fmt: skip
+                    help="generic cards with roles (the hand-trap descriptor, the addition pool's generic cards)")  # fmt: skip
+    ap.add_argument("--pool", choices=("engine", "tech"), default="engine",
+                    help="addition pool: engine-aware (#145) or the tuner's tech pool (the first rounds)")  # fmt: skip
+    ap.add_argument("--engine-fanout", type=int, default=500, help="fanout limit of in-deck edges (engine members)")
+    ap.add_argument("--addition-fanout", type=int, default=30, help="fanout limit of edges to cards the deck lacks")
+    ap.add_argument("--engine-evidence", type=int, default=2,
+                    help="observations of an engine member before it may be taken out")  # fmt: skip
+    ap.add_argument("--cold-candidates", type=int, default=40, help="single swaps screened at cold start (0: off)")
+    ap.add_argument("--cold-keep", type=int, default=4, help="screened children raced at cold start")
+    ap.add_argument("--cold-min-obs", type=int, default=50,
+                    help="model observations of the parent's type below which a round is a cold start")  # fmt: skip
+    ap.add_argument("--min-confident-pairs", type=int, default=100,
+                    help="pairs the leader needs before the search stops as confident")  # fmt: skip
+    ap.add_argument("--no-multiplicity", action="store_true",
+                    help="confident stop at P > 0.95 regardless of the number of candidates")  # fmt: skip
+    ap.add_argument("--warm-start", type=Path, action="append", default=[],
+                    help="earlier paired data for the card-value model (repeatable; ygorl.build.warmstart)")  # fmt: skip
+    ap.add_argument("--warm-start-inflate", type=float, default=1.0,
+                    help="multiply the warm-start standard errors (data from another checkpoint)")  # fmt: skip
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cpu")
     ap.add_argument("--envs", type=int, default=256)
@@ -76,8 +103,11 @@ def main() -> int:
     import torch
 
     from ygorl.build.archive import deck_descriptors
+    from ygorl.build import warmstart
     from ygorl.build.control import critic_opening_values, opening_value_screen
+    from ygorl.build.deck_engine import addition_pool, deck_engine, generic_roles
     from ygorl.build.evolve import Evolution, Lab, Parent, RoundConfig, file_sha256, format_report, opponent_mix
+    from ygorl.build.packages import setcodes_from_db
     from ygorl.build.rules import DeckRules, RuleConfig
     from ygorl.build.signals import protected_cards
     from ygorl.build.synergy_graph import load_or_build
@@ -132,11 +162,31 @@ def main() -> int:
     pool_decks = {p.id: p.deck for p in evo.pool("probation", "active", "history")}
     opponents = opponent_mix(meta, nash=nash, decks=pool_decks, nash_share=args.nash_share)
 
-    graph = load_or_build()
-    traps = {
-        int(c["password"]) for c in json.loads(args.generic_pool.read_text())["cards"] if c.get("role") == "hand_trap"
-    }
+    # one graph for protection, descriptors (both filter to fanout <= 30), engines and additions
+    graph = load_or_build(max_fanout=max(args.engine_fanout, args.addition_fanout, 100)).restrict(env.card_pool,
+                                                                                                  env.stamp())  # fmt: skip
+    generic = generic_roles(args.generic_pool)
+    traps = {c for c, role in generic.items() if role == "hand_trap"}
     meta_decks = [m.deck for m in env.meta_decks]
+
+    def engine(deck):
+        return set(deck_engine(deck, graph, generic=generic, max_fanout=args.engine_fanout).members)
+
+    def pool(p):
+        tech = tech_pool(p.deck, [d for t, d in lists if t == p.type and d.counts() != p.deck.counts()], meta_decks,
+                         meta_top=args.meta_top)  # fmt: skip
+        if args.pool == "tech":
+            return tech
+        return addition_pool(p.deck, graph, generic=generic, candidates=tech, pool=env.card_pool,
+                             max_fanout=args.addition_fanout)  # fmt: skip
+
+    for p in parents:
+        eng = deck_engine(p.deck, graph, generic=generic, max_fanout=args.engine_fanout)
+        say(f"{p.id}: engine {len(eng)} cards ({'; '.join(sorted(cards[c].name for c in eng.members))}), starters "
+            f"{'; '.join(cards[c].name for c in eng.starters)}; addition pool {len(pool(p))} cards")  # fmt: skip
+    for path in args.warm_start:
+        items = warmstart.load(path, inflate=args.warm_start_inflate)
+        say(f"warm start {path}: {evo.warm_start(items)} of {len(items)} observations new")
     device = torch.device(args.device)
     net_a = pol.net.to(device)
     net_b = net_a if opp is pol else opp.net.to(device)
@@ -166,18 +216,14 @@ def main() -> int:
     if args.rules:
         cfg = RuleConfig(min_count=args.rule_min_count, min_confidence=args.rule_min_confidence,
                          min_lift=args.rule_min_lift)  # fmt: skip
-        rules = DeckRules.from_environment(env, cfg)
+        rules = DeckRules.from_environment(env, cfg, setcodes=setcodes_from_db(cards))
     lab = Lab(
         evaluator=evaluator,
         legal=lambda d: not env.validate_deck(d, cards),
         is_extra=lambda pw: cards[pw].is_extra_deck if pw in cards else False,
-        pool=lambda p: tech_pool(
-            p.deck,
-            [d for t, d in lists if t == p.type and d.counts() != p.deck.counts()],
-            meta_decks,
-            meta_top=args.meta_top,
-        ),  # fmt: skip
+        pool=pool,
         protected=lambda d: protected_cards(d, graph),
+        engine=engine if args.pool == "engine" else (lambda d: set()),
         descriptors=lambda d: deck_descriptors(d, hand_traps=traps, graph=graph),
         screen=screen,
         checkpoint={
@@ -192,7 +238,10 @@ def main() -> int:
                          crossover=args.crossover, rules=args.rules,
                          diagnose_pairs=args.diagnose_pairs, batch=args.batch, max_pairs=args.max_pairs,
                          look=args.look, cap=args.cap, min_effect=args.min_effect, budget=args.budget, l0=args.l0,
-                         l0_min=args.l0_min, seed=args.seed)  # fmt: skip
+                         l0_min=args.l0_min, engine_evidence=args.engine_evidence,
+                         cold_candidates=args.cold_candidates, cold_keep=args.cold_keep,
+                         cold_min_obs=args.cold_min_obs, min_confident_pairs=args.min_confident_pairs,
+                         multiplicity=not args.no_multiplicity, seed=args.seed)  # fmt: skip
     say(f"parents: {', '.join(f'{p.id} ({p.type})' for p in parents)}; {len(opponents)} opponents"
         + (f" (Nash share {args.nash_share})" if nash else " (meta shares)"))  # fmt: skip
     report = evo.run_round(parents, lab, config, opponents, log=say)

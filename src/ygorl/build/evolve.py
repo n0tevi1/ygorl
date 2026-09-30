@@ -18,6 +18,14 @@ top-two Thompson sampling → sequential validation of the chosen child → ever
 into the card-value model and the calibration table, every evaluated deck into the archive, the accepted child into
 the manifest, and a lineage record per child.
 
+Engine-aware (#145): the parent's engine members (``Lab.engine``) are protected while the model has fewer than
+``engine_evidence`` observations of them in the parent's type, and go out after every other card once it has.
+While the model has fewer than ``cold_min_obs`` observations of the parent's type (**cold start**), a round makes
+``cold_candidates`` single swaps instead of bundles and crossover, plays one batch of each (:func:`screen`), and
+races the best ``cold_keep``. The search stops as confident only with ``min_confident_pairs`` pairs on the leader and
+a Bonferroni threshold over every candidate it chose among (``multiplicity``).
+:meth:`Evolution.warm_start` adds earlier paired data (``ygorl.build.warmstart``) to the model, once per id.
+
 Resuming: every game result is appended to the round's game log as it arrives, and the round replays
 deterministically (fixed seeds per round and parent), so a rerun after a crash reads the games it already has
 instead of playing them. A parent's result is written to ``round.json`` before its side effects, which are
@@ -42,7 +50,7 @@ from ygorl.build.archive import DESCRIPTORS, DeckArchive
 from ygorl.build.crossover import crossover_children
 from ygorl.build.diagnose import opening_effects
 from ygorl.build.rules import rule_children
-from ygorl.build.selection import SD_PAIR, sequential_validate, top_two_thompson
+from ygorl.build.selection import SD_PAIR, screen, sequential_validate, top_two_thompson
 from ygorl.build.signals import Calibration, CardValueModel, Observation, combine_prior, informed_children
 from ygorl.cards.ydk import Deck, parse_ydk
 from ygorl.data.environment import EnvironmentConfigError
@@ -99,6 +107,12 @@ class RoundConfig:
     l0_min: float = -0.02  # children the screen predicts below this (win-rate units) are removed
     archive_min_pairs: int = 20  # a deck with fewer pairs is not offered to the archive
     archive_z: float = 1.645  # the archive objective is the win rate's one-sided lower bound at this z
+    engine_evidence: int = 2  # an engine member is protected until the model has this many observations of it (#145)
+    cold_candidates: int = 40  # single swaps screened per parent while its type's evidence is thin (0: off)
+    cold_keep: int = 4  # screened children that go on to the search
+    cold_min_obs: int = 50  # the model's observations of the parent's type below which a round is a cold start
+    min_confident_pairs: int = 100  # pairs the leader needs before the search may stop as confident
+    multiplicity: bool = True  # Bonferroni: the confident stop's threshold over every candidate chosen among
     seed: int = 0
 
 
@@ -112,7 +126,9 @@ class Lab:
     deck-list descriptors (:func:`ygorl.build.archive.deck_descriptors`); ``screen(evaluator, parent, children)`` the
     L0 screen's predicted difference per child (win-rate units, on the evaluator's pairs: common random numbers);
     ``checkpoint`` what the lineage records about the policy; ``rules`` the association rules
-    (:class:`ygorl.build.rules.DeckRules`) behind the ``RoundConfig.rules`` children."""
+    (:class:`ygorl.build.rules.DeckRules`) behind the ``RoundConfig.rules`` children; ``engine(deck)`` the deck's
+    engine members (:func:`ygorl.build.deck_engine.deck_engine`), protected while unproven. ``pool(parent)`` is also
+    the rule children's addition filter."""
 
     evaluator: Callable[[int, Sequence[Opponent]], Any]
     legal: Callable[[Deck], bool]
@@ -123,6 +139,7 @@ class Lab:
     screen: Callable[[Any, Deck, Sequence[Deck]], Sequence[float]] | None = None
     checkpoint: Mapping[str, Any] = field(default_factory=dict)
     rules: Any = None
+    engine: Callable[[Deck], set[int]] = lambda deck: set()
 
 
 # ------------------------------------------------------------------ files
@@ -387,6 +404,20 @@ class Evolution:
     def check_checkpoint(self, stamp: Mapping | None, path: str | Path = "checkpoint") -> None:
         check_environment(self.env, stamp, f"checkpoint {path}")
 
+    def warm_start(self, items: Sequence[tuple[str, Observation]]) -> int:
+        """Add earlier paired observations (``ygorl.build.warmstart.load``) to the card-value model, each id once
+        (a rerun or a resumed round adds nothing twice); saves the signal library. Returns how many were new."""
+        new = 0
+        for uid, obs in items:
+            if uid in self.signals_applied:
+                continue
+            self.model.add(obs)
+            self.signals_applied.add(uid)
+            new += 1
+        if new:
+            self._save()
+        return new
+
     # -- saving
     def _save(self) -> None:
         _write(self.dir / "signals.json", _json({"format": SIGNALS_FORMAT, "version": 1, "environment": self.stamp,
@@ -517,12 +548,22 @@ class Evolution:
             prior = combine_prior(signals, self.calibration)
             if prior:  # also in _apply (from the result), so a crash cannot lose it
                 self.model.set_prior({**self.model.prior, **prior})
-        protected = lab.protected(base)
-        children = informed_children(base, parent.type, self.model, lab.pool(parent), legal=lab.legal,
-                                     is_extra=lab.is_extra, rng=rng, informed=config.informed, explore=config.explore,
-                                     max_bundle=config.max_bundle, protected=protected)  # fmt: skip
+        engine = set(lab.engine(base))
+        unproven = {c for c in engine if self.model.evidence(c, parent.type) < config.engine_evidence}
+        protected = set(lab.protected(base)) | unproven
+        cold = config.cold_candidates > 0 and self.model.type_evidence(parent.type) < config.cold_min_obs
+        pool = lab.pool(parent)
+        if cold:  # single swaps only: half informed by the model (warm start), half random
+            half = config.cold_candidates // 2
+            children = informed_children(base, parent.type, self.model, pool, legal=lab.legal, is_extra=lab.is_extra,
+                                         rng=rng, informed=half, explore=config.cold_candidates - half, max_bundle=1,
+                                         protected=protected, engine=engine)  # fmt: skip
+        else:
+            children = informed_children(base, parent.type, self.model, pool, legal=lab.legal, is_extra=lab.is_extra,
+                                         rng=rng, informed=config.informed, explore=config.explore,
+                                         max_bundle=config.max_bundle, protected=protected, engine=engine)  # fmt: skip
         mates: dict[int, dict] = {}  # child index -> its second parent (crossover children)
-        if config.crossover > 0:
+        if config.crossover > 0 and not cold:
             crossed = crossover_children(base, self.archive, descriptors=lab.descriptors(base), legal=lab.legal,
                                          rng=np.random.default_rng([config.seed, n, i, 2]), n=config.crossover,
                                          protected=protected, exclude=[c.deck for c in children])  # fmt: skip
@@ -532,23 +573,38 @@ class Evolution:
         if config.rules > 0:  # own random stream: the other children stay as they were without it
             children += rule_children(base, parent.type, lab.rules, self.model, legal=lab.legal, is_extra=lab.is_extra,
                                       rng=np.random.default_rng([config.seed, n, i, 3]), children=config.rules,
-                                      max_bundle=config.max_bundle, protected=protected,
-                                      avoid=[c.deck for c in children])  # fmt: skip
+                                      max_bundle=1 if cold else config.max_bundle, protected=protected,
+                                      avoid=[c.deck for c in children], allowed=pool, engine=engine)  # fmt: skip
         predicted = [self.model.gain([e.into for e in c.edits], [e.out for e in c.edits], parent.type)
                      for c in children]  # fmt: skip
-        screen = [None] * len(children)
+        screen_l0 = [None] * len(children)
         if config.l0 != "off" and children:
-            screen = [float(s) for s in lab.screen(ev, base, [c.deck for c in children])]
-        screened = [s is not None and s < config.l0_min for s in screen]
+            screen_l0 = [float(x) for x in lab.screen(ev, base, [c.deck for c in children])]
+        screened = [x is not None and x < config.l0_min for x in screen_l0]
         keep = [j for j in range(len(children)) if not (config.l0 == "on" and screened[j])]
         say(f"parent {parent.id} ({parent.type}): {len(children)} children"
+            + (" (cold start: single swaps, screened)" if cold else "")
+            + f", {len(engine)} engine cards ({len(unproven)} protected)"
             + (f", L0 would remove {sum(screened)}" if config.l0 != "off" else ""))  # fmt: skip
+        candidates = len(keep)  # every child the search chooses among, a screened-out one too
+        screen_rows: dict[int, dict] = {}
+        if cold and len(keep) > config.cold_keep:
+            s = screen(base, [children[j].deck for j in keep], games, pairs=config.batch, keep=config.cold_keep,
+                       base_scores=base_scores, tiebreak=[predicted[j][0] for j in keep],
+                       rng=np.random.default_rng([config.seed, n, i, 4]))  # fmt: skip
+            for r, j in enumerate(keep):
+                screen_rows[j] = {"pairs": s.pairs, "diff": _finite(s.diffs[r]), "kept": r in s.kept}
+            base_scores = s.base_scores
+            say(f"screen: {len(keep)} children at {s.pairs} pairs, kept "
+                + ", ".join(f"c{keep[r]} {s.diffs[r]:+.3f}" for r in s.kept))  # fmt: skip
+            keep = [keep[r] for r in s.kept]
         race = top_two_thompson(base, [children[j].deck for j in keep], games,
                                 prior=[(m, max(sd, 1e-3)) for m, sd in (predicted[j] for j in keep)],
                                 batch=config.batch, max_pairs=config.max_pairs,
                                 batches_per_round=config.batches_per_round, confidence=config.confidence,
-                                base_scores=base_scores, rng=np.random.default_rng([config.seed, n, i, 1]),
-                                log=say)  # fmt: skip
+                                base_scores=base_scores, min_pairs=config.min_confident_pairs,
+                                multiplicity=max(candidates, 1) if config.multiplicity else 1,
+                                rng=np.random.default_rng([config.seed, n, i, 1]), log=say)  # fmt: skip
         chosen = keep[race.best] if race.best is not None else None
         validation = None
         if chosen is not None:
@@ -566,7 +622,7 @@ class Evolution:
             d = games.differences(c.deck, base)
             mean, se = _mean_se(d)
             learned = []  # the non-adaptive data only (module docstring): what the signal library learns from
-            if a is not None:
+            if a is not None or j in screen_rows:  # every screened or raced child played the first batch
                 first = games.differences(c.deck, base, lambda k: k < config.batch)
                 learned.append({"source": "first_batch", "pairs": len(first), **_learned(first)})
             if j == chosen:
@@ -584,7 +640,8 @@ class Evolution:
                          "mate": mates.get(j),
                          "edits": [{"out": e.out, "into": e.into, "section": e.section} for e in c.edits],
                          "deck": _deck_json(c.deck), "predicted": {"mean": predicted[j][0], "sd": predicted[j][1]},
-                         "l0": screen[j], "screened": screened[j], "search": search,
+                         "l0": screen_l0[j], "screened": screened[j], "screen": screen_rows.get(j),
+                         "search": search,
                          "validation": validation if j == chosen else None,
                          "all_pairs": {"pairs": len(d), "diff": _finite(mean), "stderr": _finite(se),
                                        "note": "search + validation pairs: selection-biased, report only"},
@@ -601,6 +658,8 @@ class Evolution:
                 "parent_objective": _objective(games.pair_scores(base), config),
                 "parent_descriptors": _descriptors(lab, base, games),
                 "parent_games": 2 * len(games.games_of(base)), "stop": race.stop, "search_pairs": race.pairs,
+                "cold_start": cold, "candidates": candidates, "stop_threshold": race.threshold,
+                "engine": sorted(engine), "protected": sorted(protected),
                 "chosen": rows[chosen]["child"] if chosen is not None else None, "children": rows,
                 "games": games.games, "played": games.played}  # fmt: skip
 
@@ -671,6 +730,7 @@ class Evolution:
         return {"child": row["child"], "round": state["round"], "time": _now(),
                 "parent": {"id": r["parent"]["id"], "type": r["parent"]["type"], "key": r["parent"]["key"]},
                 "kind": row["kind"], "generator": row.get("generator", generator(row["kind"])),
+                "screen": row.get("screen"),
                 "mate": row.get("mate"), "edits": row["edits"], "key": deck_key(_deck_from(row["deck"])),
                 "predicted": row["predicted"], "l0": row["l0"], "screened": row["screened"], "search": row["search"],
                 "validation": row["validation"], "all_pairs": row["all_pairs"], "learned": row["learned"],
@@ -698,6 +758,7 @@ class Evolution:
                 "l0_would_remove": sum(bool(c["screened"]) for c in children),
                 "games_per_child": {c["child"]: c["games"] for c in children},
                 "per_parent": [{"parent": r["parent"]["id"], "children": len(r["children"]), "stop": r["stop"],
+                                "cold_start": bool(r.get("cold_start")),
                                 "search_pairs": r["search_pairs"], "parent_games": r["parent_games"],
                                 "chosen": r["chosen"], "games": r["games"],
                                 "validation": next((c["validation"] for c in r["children"] if c["validation"]), None),
@@ -737,16 +798,24 @@ def _objective(scores: np.ndarray, config: RoundConfig, prior_pairs: float = 10.
 
 
 def _by_generator(children: Sequence[Mapping]) -> dict[str, dict]:
-    """Per generator: children evaluated, chosen for validation, accepted, and the accepted share (lineage records or
-    round rows)."""
+    """Per generator: children evaluated, chosen for validation, accepted, the accepted share, and the candidate
+    quality: the mean first-batch paired difference (non-adaptive, #145) over the children that have one (lineage
+    records or round rows)."""
     out: dict[str, dict] = {}
+    first: dict[str, list[float]] = {}
     for c in children:
-        g = out.setdefault(c.get("generator") or generator(c["kind"]), {"children": 0, "chosen": 0, "accepted": 0})
+        name = c.get("generator") or generator(c["kind"])
+        g = out.setdefault(name, {"children": 0, "chosen": 0, "accepted": 0})
         g["children"] += 1
         g["chosen"] += c.get("validation") is not None
         g["accepted"] += bool(c["accepted"])
-    for g in out.values():
+        first.setdefault(name, []).extend(m["diff"] for m in c.get("learned", [])
+                                          if m["source"] == "first_batch" and m.get("diff") is not None)  # fmt: skip
+    for name, g in out.items():
         g["accepted_rate"] = g["accepted"] / g["children"]
+        f = first.get(name, [])
+        g["first_batch_mean"] = float(np.mean(f)) if f else None
+        g["first_batch_children"] = len(f)
     return dict(sorted(out.items()))
 
 
@@ -784,14 +853,17 @@ def format_report(r: Mapping) -> str:
         lines.append(f"L0 screen ({r['l0']}): would remove {r['l0_would_remove']} children")
     for p in r["per_parent"]:
         v = p["validation"]
-        lines.append(f"  {p['parent']}: {p['children']} children, search {p['search_pairs']} pairs ({p['stop']}), "
+        lines.append(f"  {p['parent']}: {p['children']} children" + (" (cold start)" if p.get("cold_start") else "")
+                     + f", search {p['search_pairs']} pairs ({p['stop']}), "
                      f"chosen {p['chosen']}, " + (f"validation {v['decision']} after {v['pairs']} pairs "
                      f"(diff {v['diff']:+.3f}, lower {v['lower']:+.3f})" if v and v["diff"] is not None
                      else "no validation") + f", {p['games']} games")  # fmt: skip
     gens = r.get("generators", {}).get("cumulative", {})
     if set(gens) - {"mutation"}:
-        lines.append("generators (cumulative): " + "; ".join(f"{k} {g['accepted']}/{g['children']} accepted "
-                                                            f"({g['chosen']} validated)" for k, g in gens.items()))  # fmt: skip
+        lines.append("generators (cumulative): " + "; ".join(
+            f"{k} {g['accepted']}/{g['children']} accepted ({g['chosen']} validated"
+            + (f", first batch {g['first_batch_mean']:+.3f}" if g.get("first_batch_mean") is not None else "") + ")"
+            for k, g in gens.items()))  # fmt: skip
     c = r["cumulative"]
     gpa = f"{c['games_per_accepted']:.0f}" if c["games_per_accepted"] else "n/a"
     lines.append(f"cumulative: {c['games']} games, {c['accepted']} accepted, {gpa} games per accepted edit")
