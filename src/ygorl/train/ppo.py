@@ -64,7 +64,7 @@ class PPOConfig:
     lr: float = 1e-3
     adam_eps: float = 1e-5
     max_grad_norm: float = 0.5
-    epochs: int = 4  # over the 16,384-row batch in 2,048-row minibatches (target_kl may stop earlier)
+    epochs: int = 2  # over the 16,384-row batch in 2,048-row minibatches (target_kl may stop earlier); design I1: 2 = 4 in strength
     minibatch_size: int = 2048  # 8 minibatches per epoch of the 16,384-row default batch (design I1)
     adv_norm: str = "standard"  # normalize_advantages mode, over the whole rollout
 
