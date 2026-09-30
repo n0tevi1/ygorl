@@ -98,6 +98,8 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `environment` | 环境 | 格式 + 卡池 + 禁限表 + 规则 + meta + 版本 |
 | `meta` / meta pool | 环境主流卡组 / meta 池 | |
 | `deck corpus` | 牌组语料 | 环境下合法的历史卡表（每个类型至多 3 份，含娱乐 / 活动卡组），`artifacts/deck_corpus.json`（`ygorl.data.corpus`） |
+| `deck dataset` | 牌组数据集 | masterduelmeta 历史里卡片全部对应的每一份卡表（按计数去重，含不合法的，带合法性标记），学习型组牌模型的训练数据，`out/deck_dataset/<版本>/`（`ygorl.data.deck_dataset`） |
+| `game log` | 对局日志 | 训练时每局结束一行的记录（双方牌组、先攻、胜者、回合、更新号、环境戳），`--log-games` → 运行目录 `games.jsonl.gz` |
 | `deck tuning` / `tuner` | 调卡组 | 给定一套牌，找单卡替换后对环境 meta 更强的版本（`ygorl.build.tuner`，[tuning.md](tuning.md)） |
 | `package` | 引擎包 | 协同图上的连通卡组组件（T5.4） |
 | `genotype` | 基因型 | 引擎包份数 + 泛用槽 + 额外卡组（T5.5） |

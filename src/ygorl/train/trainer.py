@@ -8,13 +8,15 @@ arena path, ``policy:<checkpoint>`` vs ``greedy`` / ``random``) with keep-best: 
 win rate against ``keep_best_by`` is copied to ``best.pt`` and pinned in the pool.
 
 Run directory: ``config.json``, ``vocab.json`` (``CardVocab.save``), ``metrics.jsonl`` (one line per update),
-``eval.jsonl`` (one line per evaluation and opponent), ``checkpoints/latest.pt`` + ``checkpoints/update_N.pt``
+``eval.jsonl`` (one line per evaluation and opponent), ``games.jsonl.gz`` (with ``log_games``: one line per finished
+game, :meth:`Trainer._log_games`), ``checkpoints/latest.pt`` + ``checkpoints/update_N.pt``
 (the evaluated ones), ``best.pt``.
 """
 
 from __future__ import annotations
 
 import copy
+import gzip
 import json
 import shutil
 import statistics
@@ -126,6 +128,9 @@ class TrainConfig:
     # speed pressure, a diagnostic arm for now (design T6 conflicts with C3): won / lost games end in
     # +/- turn_discount ** turns instead of +/- 1; 1.0 = off (docs/spikes/reward-signal.md R5)
     turn_discount: float = 1.0
+    # append one record per finished game to games.jsonl.gz (decks, first player, winner, turns, reason, update,
+    # environment): labels for the deck surrogate (design 05 §5.3); off by default
+    log_games: bool = False
 
     def __post_init__(self) -> None:
         if self.keep_best_by and self.keep_best_by not in self.eval_opponents:
@@ -384,6 +389,8 @@ class Trainer:
         c["truncated"] += sum(g.truncated for g in ro.games)
         c["errors"] += sum(g.reason == "error" for g in ro.games)
         self._log_errors(ro.games)
+        if cfg.log_games:
+            self._log_games(ro.games)
         for g in ro.games:
             if g.learner_score is not None and not g.truncated:
                 self.pool.record(g.assignment.opponent, g.learner_score)
@@ -424,6 +431,38 @@ class Trainer:
                                     "first": getattr(spec, "first", None), "info": dict(g.assignment.info),
                                     "error": str(g.result.get("error", "")), "decisions": g.result.get("decisions"),
                                     "responses": [bytes(r).hex() for r in g.result.get("responses", [])]}) + "\n")  # fmt: skip
+
+    def _log_games(self, games) -> None:
+        """Append one line per finished game to ``games.jsonl.gz`` (a gzip member per update)::
+
+            {"update": 12, "decks": ["branded", "evo-0003"], "evolved": 1, "first": 0, "winner": 1, "turns": 7,
+             "reason": "win", "truncated": false, "opponent": null, "learner": null, "seed": 123,
+             "environment": "md-2026-09", "fingerprint": "..."}
+
+        ``decks`` are deck a and b: a corpus deck's name is its .ydk stem (the path is in config.json ``decks``), an
+        evolved deck's is its manifest id (``evolved``: which of the two it is; the manifest is config.json
+        ``deck_pool``; a manifest's history decks, dealt as opponents only, also carry their ids). ``first`` and
+        ``winner`` are deck indices (0 = a, 1 = b; ``winner`` as the engine reported it, null = none; ``truncated``:
+        cut by a limit or an error, not a result for training). ``update`` is the update the games' rollout fed: the
+        policy that played them is the one after ``update - 1`` updates (``update - 2`` with ``overlap_collect``).
+        ``opponent`` is null in self-play, else the pool snapshot id, and ``learner`` the learner's deck index."""
+        stamp = self.environment.stamp() if self.environment is not None else {}
+        env = {"environment": stamp.get("environment"), "fingerprint": stamp.get("fingerprint")}
+        lines = []
+        for g in games:
+            a, spec = g.assignment, g.assignment.spec
+            info = a.info
+            evolved = info.get("evolved")
+            lines.append(json.dumps({
+                "update": self.learner.updates, "decks": [info.get("deck_a"), info.get("deck_b")],
+                "evolved": None if evolved is None else spec.deck_of_seat(info["evolved_seat"]),
+                "first": spec.first, "winner": None if g.winner is None else spec.deck_of_seat(g.winner),
+                "turns": int(g.result.get("turns", 0)), "reason": g.reason, "truncated": g.truncated,
+                "opponent": a.opponent, "learner": None if a.opponent is None else spec.deck_of_seat(a.learner_seat),
+                "seed": getattr(spec, "seed", None), **env}))  # fmt: skip
+        if lines:
+            with gzip.open(self.run_dir / "games.jsonl.gz", "at", compresslevel=6) as f:
+                f.write("\n".join(lines) + "\n")
 
     @staticmethod
     def _rollout_stats(ro: Rollout, update_s: float) -> dict:
