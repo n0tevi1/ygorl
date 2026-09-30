@@ -134,5 +134,6 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | multiplicity-aware stop | 多重性校正的停止 | 前二 Thompson 采样判「有把握」要求领先子代至少 100 对，且 P(Δ > 0) > 1 − 0.05 / 候选数（Bonferroni） |
 | winner's curse / re-validation | 胜者诅咒 / 重验 | 只接受复核里显著的改动，复核的差因此平均偏高；在从未用过的新种子上重打被接受的改动来量它（`tools/deckevo_eval_compare.py --revalidate`） |
 | masked deck model | 掩码卡组模型 | 卡表上的集合 Transformer（卡 token = 冻结卡文本 + ID 嵌入 + 份数），在牌组历史全集上遮住卡（或其中几份）预测被遮的卡与份数；给进化打换下 / 换上分（`ygorl.build.deck_model`，tuning.md「掩码卡组模型」，#150） |
-| removal score / addition score | 换下分 / 换上分 | 掩码卡组模型的打分：遮一份后 −log P(该卡 \| 其余)（越大越不合群）/ 加一个 `[MASK]` 的 log P(卡 \| 卡组)（越大越该有） |
+| removal score / addition score | 换下分 / 换上分 | 掩码卡组模型的打分：换下分默认是典型性与支撑的组合（越大越先换下）/ 加一个 `[MASK]` 的 log P(卡 \| 卡组)（越大越该有） |
+| typicality / support | 典型性 / 支撑 | 换下分的两部分：遮一份后 −log P(该卡 \| 其余)（越大越不合群）/ 拿掉这张卡后其余卡的留一对数似然之和降多少（其余卡对它的依赖）；组合时支撑前三分之一的卡最后换下 |
 | fill-in accuracy | 完形填空准确率 | 遮住留出卡表的一种卡（全部份数），它在其余卡表缺的卡里排进前 k 的比例；按类型留出评估泛化到没见过的系列 |

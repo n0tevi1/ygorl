@@ -254,14 +254,19 @@
   + ID 嵌入（只对训练卡表里出现过的卡生效，没见过的卡只靠文本）+ 份数嵌入（1–3）；不加位置（卡表是集合）；3 层 pre-norm Transformer（256 维、4 头）。
 - **掩码**：每份卡表随机 15% 的卡（至少一张）变成 `[MASK]`：整张卡（token 被替换），或对 2–3 份的卡以 30% 概率只遮其中几份（token 留下剩余份数，另加一个 `[MASK]`）。
   `[MASK]` 的输出对整个词表（环境卡池 + 历史里的卡，13,860 张）做 softmax，logits = 输出与各卡**输入嵌入**的点积（输入输出共用，罕见卡靠文本定位），再给定卡预测被遮的份数。
-- **打分接口**：`removal_scores(deck)`：每种卡遮一份后 −log P(该卡 | 其余)，越大越「不合群」；`addition_scores(deck, pool)`：整副卡加一个 `[MASK]` 的 log P(卡 | 卡组)，
-  已在卡组里的卡表示「再加一份」。换下打分是一批（卡种数）前向；每个亲本打分并抽 8 个子代在 CPU 上不到 1 秒。
+- **加入分**：`addition_scores(deck, pool)`：整副卡加一个 `[MASK]` 的 log P(卡 | 卡组)，已在卡组里的卡表示「再加一份」。
+- **换下分**（`removal_scores(deck, kind)`，越大越先换下）由两部分组成：
+  - **典型性**（`typicality_scores`）：遮一份后 −log P(该卡 | 其余)，越大越「不合群」。只用它会把引擎核心排在前面（Planet Pathfinder、Preparation of Rites：历史卡表里常被换掉的变体卡，却是这副牌的引擎）；
+  - **支撑**（`support_scores`）：拿掉这张卡的全部份数后，其余每张卡的留一对数似然（同上，遮一份）之和降多少，即其余卡对它的依赖；D 种卡要 D² 个集合（CPU 上每副 5–25 秒）；
+  - **组合**（默认 `kind="combined"`）：支撑在本卡组前三分之一（`SUPPORT_SHARE`）的卡最后换下，按支撑升序；其余的卡先换下，按典型性降序；分数是离末尾的位置（第一名 D 分，最后一名 1 分），
+    温度 1 的 Gumbel 抽样只会交换相邻的几名。`"support"`（支撑取负）与 `"typicality"` 可选，供对照。名次见 benchmarks.md。
 - **训练**（`tools/train_deck_model.py`）：AdamW（学习率 1e-3、one-cycle）、批 256、40 轮，GPU 上 bfloat16 autocast，批内卡表按大小排序（每 32 批一块）少填充；
   共享的 Radeon 8060S 上约 1 分钟一轮。`--holdout 0.1` 训练评估用的模型（留出 57 个类型、11,544 份），`--holdout 0` 训练进化用的模型。模型文件带词表、文本表（半精度）与环境戳，放 `out/deckmodel/`，不进 git。
 - **学习的子代**（`learned_children`，谱系 `generator = "learned"`）：每个亲本打分一次；每个子代抽包大小 1–`max_bundle`（冷启动时 1），
   对得分前 200 的加入卡（环境卡池里、亲本不满 3 份的卡）按 加入分 / 温度 + Gumbel 排序（即按模型的 P(卡 | 卡组) 无放回抽样），对换下卡按 换下分 / 温度 + Gumbel 排序；
-  每张加入卡一份，换下同区域里排序最前、换后仍合法的卡（不换下本包换入的卡，不把换下的卡再换回来）。**只受合法性约束**：不用引擎保护、加入池与受保护卡。预测增益同其它子代（卡片价值模型的均值增益）。
-- 命令行：`tools/evolve_decks.py --learned-generator N --deck-model out/deckmodel/full.pt`（默认 0，关闭）；模型的环境戳必须与 `--env` 一致；模型路径与 sha256 记在轮次的 `checkpoint` 里（续跑要同一个模型）。
+  每张加入卡一份，换下同区域里排序最前、换后仍合法的卡（不换下本包换入的卡，不把换下的卡再换回来）。**受保护的卡**（胜利条件、检索目标，`protected_cards`）不换下；
+  不用引擎保护与加入池。预测增益同其它子代（卡片价值模型的均值增益）。
+- 命令行：`tools/evolve_decks.py --learned-generator N --deck-model out/deckmodel/full.pt [--learned-removal combined|support|typicality]`（默认 0，关闭；换下分默认组合）；模型的环境戳必须与 `--env` 一致；模型路径与 sha256 记在轮次的 `checkpoint` 里（续跑要同一个模型）。
 - 评估结果见 [benchmarks.md](benchmarks.md)「掩码卡组模型」。
 
 **默认没做的**：入池前的「最低标准」（POET；太弱的卡组不入池）、试用期复评与淘汰、按格淘汰相似卡组（#113）；新构筑探索模式（spec #105 的补充）。

@@ -949,16 +949,30 @@ e5-base 卡文本（`out/views/both`）；40 轮、批 256、bfloat16，共享�
 | Therion + Alpha, the Master of Beasts | 好（+2.2 pp） | **161** / 13,840 | **77** | 1,180 | 1,175 |
 | Therion + Rikka Petal | 坏（别的引擎） | 606 | 318 | 898 | 888 |
 | Megalith + Drytron Zeta Aldhibah | 坏（别的引擎） | 366 | 359 | 801 | 785 |
-| Megalith − Preparation of Rites | 坏（引擎核心） | 5 / 34 | 16 / 34 | — | 24 |
-| Therion − Planet Pathfinder | 坏（引擎核心） | 3 / 18 | 4 / 18 | — | 15 |
-| Megalith − Megalith Aratron（换 Anastasis 时换下的） | 好 | 34 / 34 | 27 | — | 12 |
-| Therion − Therion "Empress" Alasia（换 Alpha 时换下的） | 好 | 5 / 18 | 6 | — | 7 |
+
+换下的名次分三种换下分（`DeckModel.removal_scores(deck, kind)`，见 tuning.md「掩码卡组模型」）：典型性（遮一份后 −log P）/ 支撑（按支撑升序）/ 组合（默认：支撑前三分之一最后）：
+
+| 换下 | 期望 | 全量：典型性 / 支撑 / **组合** | 留出：典型性 / 支撑 / 组合 | 频率 |
+|------|------|------|------|------|
+| Megalith − Preparation of Rites（34 种卡） | 坏（引擎核心） | 5 / 30 / **30** | 16 / 22 / 13 | 24 |
+| Therion − Planet Pathfinder（18 种卡） | 坏（引擎核心） | 3 / 16 / **16** | 4 / 8 / 4 | 15 |
+| Megalith − Megalith Aratron（换 Anastasis 时换下的） | 好 | 34 / 31 / **31** | 27 / 27 / 27 | 12 |
+| Therion − Therion "Empress" Alasia（换 Alpha 时换下的） | 好 | 5 / 7 / **3** | 6 / 3 / 5 | 7 |
+
+全量模型、组合换下分最先换下的卡：Therion：Card Destruction、Therion Stand Up!、Therion "Empress" Alasia、Therion Charge、Therion "Lily" Borea；
+Megalith：Mekk-Knight Crusadia Avramax、Dyna Mondo、Spright Elf、Aussa the Earth Charmer, Immovable、Nekroz of Trishula；
+Pendulum Magician：Stellarknight Delteros、Chronomaly Vimana、Double or Nothing!、Tellarknight Ptolemaeus、Destiny HERO - Celestial。
+全量模型支撑最高的卡：Therion 为 King Regulus、Ash Blossom、Planet Pathfinder、Endless Engine Argyro System；Megalith 为 Megalith Unformed、Hagith、Harpie's Feather Duster、Aratron、Preparation of Rites；
+Pendulum Magician 为 Wisdom-Eye Magician、Oafdragon Magician、Astrograph Sorcerer。
 
 - **加入**：两个模型都把两张好卡排在两张坏卡前面（全量：102、161 对 366、606；前 1–1.2%），频率与规则都做不到（规则把 Anastasis 排第 5，却把 Alpha 排在 1,180，与坏卡同档）。
   全量模型给 Therion 的前几名是 Foolish Burial、Harpie's Feather Duster、Maxx "C"；给 Megalith 的是 I:P Masquerena、Cross-Sheep、Gallant Granite、Megalith Portal。
-- **换下没学到「引擎核心」**：Preparation of Rites 与 Planet Pathfinder 都被排在前列（「不合群」），好改动换下的 Aratron 反而最「合群」。换下分量的是「这张卡在类似卡表里常不常见」，
-  不是它在这副牌里的价值：历史里 Therion 卡表多数不跑 Planet Pathfinder（#145 唯一被接受的子代恰好就是换下它，重验 +0.85 pp，不显著），Megalith 的仪式魔法各版本互换。
-  所以进化里换下分只决定候选里换下谁，是否值得仍由配对评估判定；遮全部份数与减去空卡组的边缘概率（PMI）两种换下分的名次差不多（Pathfinder 3–4、Preparation of Rites 5–13）。
-- 学习的子代（全量模型，单卡、温度 1）的样例：Therion −King Regulus +Bull Ain / Duke Yul / Foolish Burial、−Card Destruction +Harpie's Feather Duster；
+- **典型性换下分没学到「引擎核心」**：Preparation of Rites 与 Planet Pathfinder 都被排在前列，好改动换下的 Aratron 反而最「合群」。典型性量的是「这张卡在类似卡表里常不常见」，
+  不是这副牌对它的依赖：历史里 Therion 卡表多数不跑 Planet Pathfinder（#145 唯一被接受的子代恰好就是换下它，重验 +0.85 pp，不显著）。
+  **支撑**（拿掉它，其余卡的留一对数似然总共降多少）补上了这一点：全量模型里两张引擎核心都排进最不该换下的 3–5 张（支撑前三分之一），组合分因此把它们排在最后，
+  而 Alasia（好改动换下的）排到第 3。只按支撑排会先换下同名系列里可互换的卡（Therion "Bull" Ain、"Duke" Yul：少一张，别的 Therion 照样被预测到），所以默认用组合。
+  Aratron 在三种分下都排在后面（它与 Anastasis 同系列，好改动是系列内的替换，这类价值只能由配对评估给出）。留出模型较弱（Pathfinder 组合排第 4）；进化用全量模型。
+  支撑分的代价：D 种卡要 D² 个集合（Pendulum Magician 52 种，约 2,700 个），CPU 上每个亲本 5–25 秒。
+- 学习的子代（全量模型，单卡、温度 1、典型性换下分，改组合分之前）的样例：Therion −King Regulus +Bull Ain / Duke Yul / Foolish Burial、−Card Destruction +Harpie's Feather Duster；
   Megalith +Fossil Fusion、+Megalith Aratron、额外卡组 +Knightmare Unicorn；Pendulum Magician +Oafdragon Magician、+Star / Time Pendulumgraph。每个亲本打分与抽 8 个子代在 CPU 上不到 1 秒。
 - 待测：每套牌（Therion、Megalith、Pendulum Magician）用学习的子代跑一轮，比较各生成器第一批配对差的均值与接受数（对照 #145 的 r145 轮）。

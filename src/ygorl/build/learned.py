@@ -2,10 +2,12 @@
 
 :func:`learned_children` is the ``learned`` child generator of the evolution step (``RoundConfig.learned``). Its
 additions come from the model's addition scores (how much a card belongs in the parent) and its removals from the
-model's removal scores (how out of place each of the parent's cards is), in place of the hand-written engine
-members, addition pool and rule strata of #145, which stay as the control. Only legality constrains the edits.
+model's removal scores (by default "combined": atypical cards first, the cards the rest of the deck relies on most
+last; ``removal`` selects "support" or the plain "typicality"), in place of the hand-written engine members, addition
+pool and rule strata of #145, which stay as the control. Legality and the protected cards (win conditions, search
+targets: :func:`ygorl.build.signals.protected_cards`) constrain the edits.
 
-The scorer is anything with ``removal_scores(deck)`` and ``addition_scores(deck, pool)`` (``password -> score``,
+The scorer is anything with ``removal_scores(deck, kind)`` and ``addition_scores(deck, pool)`` (``password -> score``,
 higher = more out of place / belongs more), e.g. :class:`ygorl.build.deck_model.DeckModel`; this module does not
 need PyTorch.
 """
@@ -26,7 +28,7 @@ MAX_COPIES = 3
 
 
 class DeckScorer(Protocol):
-    def removal_scores(self, deck: Deck) -> Mapping[int, float]: ...
+    def removal_scores(self, deck: Deck, kind: str = "combined") -> Mapping[int, float]: ...
 
     def addition_scores(self, deck: Deck, pool: Iterable[int]) -> Mapping[int, float]: ...
 
@@ -34,12 +36,13 @@ class DeckScorer(Protocol):
 def learned_children(base: Deck, deck_type: str, scorer: DeckScorer, model: CardValueModel, pool: Iterable[int], *,
                      legal: Callable[[Deck], bool], is_extra: Callable[[int], bool], rng: np.random.Generator,
                      children: int = 4, max_bundle: int = 3, avoid: Iterable[Deck] = (), temperature: float = 1.0,
-                     top: int = 200) -> list[Child]:  # fmt: skip
+                     top: int = 200, protected: Iterable[int] = (),
+                     removal: str = "combined") -> list[Child]:  # fmt: skip
     """Up to ``children`` children of ``base``, distinct from each other, from ``base`` and from ``avoid``. The deck
     is scored once. Per child: draw a bundle size (1..``max_bundle``), an order of the ``top`` best-scored additions
     (cards of ``pool`` below 3 copies in ``base``; Gumbel keys on addition score / ``temperature``: a sample from the
     model's P(card | deck), so repeated calls spread over the plausible cards) and an order of the removals (Gumbel
-    keys on removal score / ``temperature``). Each addition goes in one copy, taking out the first removal of the same
+    keys on the ``removal`` score / ``temperature``; ``protected`` cards never go out). Each addition goes in one copy, taking out the first removal of the same
     section that leaves the deck legal (never a card the bundle put in, nor the card itself; a card the bundle took out
     is not put back); an addition no removal makes legal is skipped. Children are kind ``"learned"``, predicted gain = the card-value model's mean gain."""
     if children <= 0:
@@ -47,7 +50,8 @@ def learned_children(base: Deck, deck_type: str, scorer: DeckScorer, model: Card
     counts = base.counts()
     adds = scorer.addition_scores(base, [c for c in dict.fromkeys(pool) if counts.get(c, 0) < MAX_COPIES])
     adds = {c: s for c, s in adds.items() if np.isfinite(s)}
-    rems = {c: s for c, s in scorer.removal_scores(base).items() if np.isfinite(s)}
+    protected = set(protected)
+    rems = {c: s for c, s in scorer.removal_scores(base, removal).items() if np.isfinite(s) and c not in protected}
     if not adds or not rems:
         return []
     add_cards = sorted(adds, key=lambda c: (-adds[c], c))[:top]

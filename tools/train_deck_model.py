@@ -46,6 +46,8 @@ KNOWN_EDITS = [
     ("megalith-3", "Megalith", "remove", 25726386, "good"),  # Megalith Aratron (out for Anastasis)
     ("therion", "Therion", "remove", 48806195, "good"),  # Therion "Empress" Alasia (out for Alpha)
 ]
+TOP_DECKS = ("therion", "megalith-3", "pendulum-magician-3")  # decks whose top additions and removals are reported
+REMOVALS = ("typicality", "support", "combined")  # DeckModel.removal_scores kinds
 
 
 def main() -> int:
@@ -173,7 +175,14 @@ def main() -> int:
 
     known = []
     names = {pw: c.name for pw, c in cards.items()}
-    decks: dict[str, Deck] = {}
+    decks: dict[str, Deck] = {s: load_ydk(env.artifact_path("decks", f"{s}.ydk")) for s in TOP_DECKS}
+    cache: dict[tuple, dict] = {}
+
+    def removal(stem, deck, kind):
+        if (stem, kind) not in cache:
+            cache[stem, kind] = model.removal_scores(deck, kind)
+        return cache[stem, kind]
+
     for stem, deck_type, kind, card, expected in KNOWN_EDITS:
         path = env.artifact_path("decks", f"{stem}.ydk")
         deck = decks.setdefault(stem, load_ydk(path))
@@ -188,9 +197,9 @@ def main() -> int:
             row = {m: _rank(s, card) for m, s in (("model", add), ("frequency", fs), ("rules", rs))}
             row["of"] = len(cand)
         else:
-            rem = model.removal_scores(deck)
             fs = {c: -freq_score[model.index[c]] for c in have}  # rarest first
-            row = {"model": _rank(rem, card), "frequency": _rank(fs, card), "of": len(have)}
+            row = {k: _rank(removal(stem, deck, k), card) for k in REMOVALS}
+            row |= {"frequency": _rank(fs, card), "of": len(have)}
         known.append({"deck": stem, "type": deck_type, "type_in_training": in_train, "kind": kind, "card": card,
                       "name": names.get(card, str(card)), "expected": expected, "ranks": row})  # fmt: skip
         say(f"{stem} {'+' if kind == 'add' else '-'}{names.get(card, card)} ({expected}): "
@@ -199,13 +208,14 @@ def main() -> int:
     results["top"] = {}
     for stem, deck in decks.items():
         add = model.addition_scores(deck, [c for c in env.card_pool if c not in deck.counts()])
-        rem = model.removal_scores(deck)
         results["top"][stem] = {
             "additions": [[names.get(c, str(c)), round(v, 3)] for c, v in sorted(add.items(), key=lambda x: -x[1])[:10]],
-            "removals": [[names.get(c, str(c)), round(v, 3)] for c, v in sorted(rem.items(), key=lambda x: -x[1])[:10]],
+            **{f"removals_{k}": [[names.get(c, str(c)), round(v, 3)] for c, v in
+                                 sorted(removal(stem, deck, k).items(), key=lambda x: -x[1])[:10]] for k in REMOVALS},
         }  # fmt: skip
-        say(f"{stem}: top additions {results['top'][stem]['additions'][:5]}; top removals "
-            f"{results['top'][stem]['removals'][:5]}")  # fmt: skip
+        say(f"{stem}: top additions {[n for n, _ in results['top'][stem]['additions'][:5]]}")
+        for k in REMOVALS:
+            say(f"  first removals ({k}): {[n for n, _ in results['top'][stem][f'removals_{k}'][:5]]}")
     out = args.results or (args.load or args.out).with_suffix(".json")
     out.write_text(json.dumps(results, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     say(f"wrote {out} ({time.time() - t0:.0f} s)")

@@ -13,7 +13,8 @@ on fresh pairs (a look every ``--look`` pairs, at most ``--cap``); the accepted 
 probation deck. ``--rules N`` adds N children whose additions come from association rules over the environment's
 deck corpus (ygorl.build.rules; off by default). ``--learned-generator N --deck-model MODEL.pt`` adds N children
 whose additions and removals the masked deck model scores (ygorl.build.learned, #150; ``tools/train_deck_model.py``;
-off by default): additions from the environment's whole card pool, no engine protection, legality only. Every evaluated child's paired difference feeds the card-value
+off by default): additions from the environment's whole card pool, removals by ``--learned-removal`` (default
+combined: atypical cards first, the cards the rest relies on last), no engine protection; protected cards stay. Every evaluated child's paired difference feeds the card-value
 model and the calibration table, every evaluated deck is offered to the MAP-Elites archive, and every child gets a lineage record.
 
 Engine-aware (#145, docs/tuning.md「引擎感知的候选」): additions come from the addition pool (generic cards of
@@ -64,6 +65,8 @@ def main() -> int:
     ap.add_argument("--learned-generator", type=int, default=0,
                     help="children from the masked deck model (0: off; needs --deck-model)")  # fmt: skip
     ap.add_argument("--deck-model", type=Path, default=None, help="masked deck model (tools/train_deck_model.py)")
+    ap.add_argument("--learned-removal", choices=("combined", "support", "typicality"), default="combined",
+                    help="the learned children's removal ranking (ygorl.build.deck_model.DeckModel.removal_scores)")  # fmt: skip
     ap.add_argument("--rule-min-count", type=int, default=3, help="lists a rule needs")
     ap.add_argument("--rule-min-confidence", type=float, default=0.5)
     ap.add_argument("--rule-min-lift", type=float, default=2.0)
@@ -260,6 +263,7 @@ def main() -> int:
     )
     config = RoundConfig(informed=args.informed, explore=args.explore, max_bundle=args.max_bundle,
                          crossover=args.crossover, rules=args.rules, learned=args.learned_generator,
+                         learned_removal=args.learned_removal,
                          diagnose_pairs=args.diagnose_pairs, batch=args.batch, max_pairs=args.max_pairs,
                          look=args.look, cap=args.cap, min_effect=args.min_effect, budget=args.budget, l0=args.l0,
                          l0_min=args.l0_min, engine_evidence=args.engine_evidence,

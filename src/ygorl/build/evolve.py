@@ -95,6 +95,7 @@ class RoundConfig:
     crossover: int = 0  # crossover children per parent (the parent × an archive elite, #141); off by default
     rules: int = 0  # children from the association rules (ygorl.build.rules; needs Lab.rules), off by default
     learned: int = 0  # children from the masked deck model (ygorl.build.learned; needs Lab.deck_model), off by default
+    learned_removal: str = "combined"  # the learned children's removal ranking: combined, support or typicality
     diagnose_pairs: int = 0  # the parent's first pairs, played up front (they are the parent's baseline too)
     batch: int = 25
     max_pairs: int = 600
@@ -583,12 +584,13 @@ class Evolution:
                                       rng=np.random.default_rng([config.seed, n, i, 3]), children=config.rules,
                                       max_bundle=1 if cold else config.max_bundle, protected=protected,
                                       avoid=[c.deck for c in children], allowed=pool, engine=engine)  # fmt: skip
-        if config.learned > 0:  # legality only: no engine protection, no addition pool (#150)
+        if config.learned > 0:  # legality and protected cards only: no engine protection, no addition pool (#150)
             children += learned_children(base, parent.type, lab.deck_model, self.model,
                                          lab.card_pool if lab.card_pool is not None else pool, legal=lab.legal,
                                          is_extra=lab.is_extra, rng=np.random.default_rng([config.seed, n, i, 5]),
                                          children=config.learned, max_bundle=1 if cold else config.max_bundle,
-                                         avoid=[c.deck for c in children])  # fmt: skip
+                                         avoid=[c.deck for c in children], protected=lab.protected(base),
+                                         removal=config.learned_removal)  # fmt: skip
         predicted = [self.model.gain([e.into for e in c.edits], [e.out for e in c.edits], parent.type)
                      for c in children]  # fmt: skip
         screen_l0 = [None] * len(children)

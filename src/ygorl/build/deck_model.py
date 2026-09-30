@@ -13,13 +13,16 @@ history (every distinct masterduelmeta list whose cards all map, legal now or no
   some of its copies (its token keeps the rest, a ``[MASK]`` token is added). A ``[MASK]`` token predicts the card
   (a softmax over the vocab, logits = the token's output against the cards' own input embeddings, so a card's text
   places it even when it is rare) and, given the card, its masked copies (1-3).
-- **Scores**: :meth:`DeckModel.removal_scores` (how out of place each card is: ``-log P(card | the rest)`` with one
-  copy of it masked) and :meth:`DeckModel.addition_scores` (``log P(card | the deck)`` of a ``[MASK]`` added to the
-  whole deck; a card the deck already runs means one more copy). :func:`ygorl.build.learned.learned_children` turns
-  them into evolution children.
+- **Scores**: :meth:`DeckModel.addition_scores` (``log P(card | the deck)`` of a ``[MASK]`` added to the whole deck;
+  a card the deck already runs means one more copy) and :meth:`DeckModel.removal_scores`, from two parts:
+  typicality (:meth:`DeckModel.typicality_scores`, ``-log P(card | the rest)`` with one copy masked: the card is
+  unusual in such lists) and support (:meth:`DeckModel.support_scores`, how much the other cards' likelihood drops
+  without it: the rest relies on it). Typicality alone ranks engine cores as removable (a variant card is atypical
+  and still the engine), so the default ("combined") keeps the most-supporting third for last.
+  :func:`ygorl.build.learned.learned_children` turns the scores into evolution children.
 
-The data source is :func:`history_lists` (the raw history through the ``ygorl.data.masterduelmeta`` readers), kept
-behind one function so it can switch to a dataset loader later. :func:`split_by_type` holds out whole deck types.
+The data source is :func:`history_lists` (the deck dataset of ``ygorl.data.deck_dataset``, else the raw history
+through the ``ygorl.data.masterduelmeta`` readers). :func:`split_by_type` holds out whole deck types.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from ygorl.cards.ydk import Deck
 
 FORMAT = "ygorl-deck-model"
 MAX_COPIES = 3
+SUPPORT_SHARE = 1 / 3  # the share of a deck's cards the combined removal score keeps for last (most support)
 _CARD, _MASK, _PAD = 0, 1, 2  # token kinds
 
 
@@ -257,19 +261,67 @@ class DeckModel(nn.Module):
     def _tokens(self, deck: Deck) -> list[tuple[int, int]]:
         return [(self.index[c], min(n, MAX_COPIES)) for c, n in sorted(deck.counts().items()) if c in self.index]
 
-    def removal_scores(self, deck: Deck) -> dict[int, float]:
-        """Per distinct card of ``deck``: how out of place one copy of it is, ``-log P(card | the rest)`` with that
-        copy masked (higher: more out of place). Cards outside the vocab are left out."""
+    def _leave_one_out(self, toks: Sequence[tuple[int, int]]) -> list[list[tuple[int, int]]]:
+        """Per token: the set with one copy of it masked (the token dropped, or its copies lowered by one)."""
+        return [[t if j != i else (t[0], t[1] - 1) for j, t in enumerate(toks) if j != i or t[1] > 1]
+                for i in range(len(toks))]  # fmt: skip
+
+    def typicality_scores(self, deck: Deck) -> dict[int, float]:
+        """Per distinct card of ``deck``: how out of place (atypical) one copy of it is, ``-log P(card | the rest)``
+        with that copy masked (higher: more out of place). Cards outside the vocab are left out."""
         was = self.training
         self.eval()
         toks = self._tokens(deck)
         if not toks:
             return {}
-        sets = [[t if j != i else (t[0], t[1] - 1) for j, t in enumerate(toks) if j != i or t[1] > 1]
-                for i in range(len(toks))]  # fmt: skip
-        logp, _ = self._sets(sets)
+        logp, _ = self._sets(self._leave_one_out(toks))
         self.train(was)
         return {self.passwords[c]: float(-logp[i, c]) for i, (c, _) in enumerate(toks)}
+
+    def support_scores(self, deck: Deck, batch: int = 1024) -> dict[int, float]:
+        """Per distinct card ``c`` of ``deck``: how much the rest of the deck relies on it, the drop in the other
+        cards' summed leave-one-out log-likelihood (each card ``o`` scored with one copy masked, as in
+        :meth:`typicality_scores`) when every copy of ``c`` leaves the context. D² sets for D distinct cards (about
+        2,700 for a 52-card-kind deck: seconds on the CPU)."""
+        was = self.training
+        self.eval()
+        toks = self._tokens(deck)
+        sets, keys = [], []
+        for drop in [None, *(c for c, _ in toks)]:
+            rest = [t for t in toks if t[0] != drop]
+            sets += self._leave_one_out(rest)
+            keys += [(drop, o) for o, _ in rest]
+        ll: dict[tuple, float] = {}
+        for s in range(0, len(sets), batch):
+            logp, _ = self._sets(sets[s : s + batch])
+            for r, (drop, o) in enumerate(keys[s : s + batch]):
+                ll[drop, o] = float(logp[r, o])
+        self.train(was)
+        return {self.passwords[c]: sum(ll[None, o] - ll[c, o] for o, _ in toks if o != c) for c, _ in toks}
+
+    def removal_scores(self, deck: Deck, kind: str = "combined") -> dict[int, float]:
+        """Per distinct card of ``deck``: how removable it is (higher: take it out first). ``kind``:
+
+        - ``"typicality"``: :meth:`typicality_scores` (the card is atypical here);
+        - ``"support"``: minus :meth:`support_scores` (the rest does not rely on it);
+        - ``"combined"`` (default): the cards whose support is in the deck's top ``SUPPORT_SHARE`` (the ones the rest
+          relies on most) go last, by support; the others first, by typicality. The score is the position from the
+          end (D for the first card, 1 for the last), so a Gumbel draw at temperature 1 swaps neighbours only.
+        """
+        if kind == "typicality":
+            return self.typicality_scores(deck)
+        sup = self.support_scores(deck)
+        if kind == "support":
+            return {c: -v for c, v in sup.items()}
+        if kind != "combined":
+            raise ValueError(f"unknown removal score {kind!r} (combined, support or typicality)")
+        typ = self.typicality_scores(deck)
+        cards = sorted(sup)
+        by_support = sorted(cards, key=lambda c: (-sup[c], c))
+        keep = set(by_support[: int(len(cards) * SUPPORT_SHARE)])
+        order = sorted((c for c in cards if c not in keep), key=lambda c: (-typ[c], c))
+        order += sorted(keep, key=lambda c: (sup[c], c))
+        return {c: float(len(order) - k) for k, c in enumerate(order)}
 
     def addition_scores(self, deck: Deck, pool: Iterable[int]) -> dict[int, float]:
         """Per card of ``pool`` in the vocab: how much it belongs in ``deck``, ``log P(card | deck)`` of a ``[MASK]``
@@ -401,5 +453,5 @@ def fill_in_tasks(lists: Sequence[tuple[str, Deck]], index: Mapping[int, int], s
     return out
 
 
-__all__ = ["FORMAT", "DeckModel", "DeckModelConfig", "fill_in_tasks", "held_out", "history_lists", "load_deck_model",
+__all__ = ["FORMAT", "SUPPORT_SHARE", "DeckModel", "DeckModelConfig", "fill_in_tasks", "held_out", "history_lists", "load_deck_model",
            "load_text_table", "ranks", "split_by_type", "topk", "train_deck_model"]  # fmt: skip

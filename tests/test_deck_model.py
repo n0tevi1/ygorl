@@ -60,10 +60,19 @@ def test_the_model_learns_a_planted_co_occurrence(trained):
     # an intruder of the other core is the most out of place card
     filler = deck.main[-1]  # one copy of a random filler card
     intruder = Deck(main=tuple(11 if c == filler else c for c in deck.main), extra=deck.extra)
-    rem = trained.removal_scores(intruder)
-    assert set(rem) == set(intruder.counts())
-    assert max(rem, key=rem.get) == 11
-    assert all(rem[11] > rem[c] for c in CORE["X"])
+    for kind in ("typicality", "support", "combined"):
+        rem = trained.removal_scores(intruder, kind)
+        assert set(rem) == set(intruder.counts())
+        assert all(rem[11] > rem[c] for c in CORE["X"]), kind
+    assert trained.removal_scores(intruder, "typicality") == trained.typicality_scores(intruder)
+    # the core cards support each other; the intruder supports nothing: the core is the least removable
+    sup = trained.support_scores(intruder)
+    assert min(sup[c] for c in CORE["X"]) > sup[11]
+    comb = trained.removal_scores(intruder)
+    assert sorted(comb.values()) == [float(k) for k in range(1, len(comb) + 1)]  # positions from the end
+    assert comb[11] == len(comb) and max(comb[c] for c in CORE["X"]) <= len(comb) // 3 + 1
+    with pytest.raises(ValueError, match="unknown removal"):
+        trained.removal_scores(intruder, "nope")
 
 
 def test_interface_shapes_and_masking():
@@ -104,7 +113,7 @@ def test_save_and_load_keep_the_scores(trained, tmp_path):
     deck = corpus(1)[0][1]
     assert back.meta == {"lists": 120} and back.environment == {"environment": "md-test"}
     assert back.passwords == trained.passwords and torch.equal(back.seen, trained.seen)
-    a, b = trained.removal_scores(deck), back.removal_scores(deck)
+    a, b = trained.typicality_scores(deck), back.typicality_scores(deck)
     assert a.keys() == b.keys() and all(a[k] == pytest.approx(b[k], abs=1e-4) for k in a)
     with pytest.raises(ValueError, match="not a"):
         torch.save({"format": "x"}, tmp_path / "bad.pt")
@@ -129,10 +138,16 @@ def test_ranks_exclude_present_cards_and_count_ties_against_the_target():
 
 
 class Scorer:
-    """A stand-in model: card 50 belongs most, 51 next; card 12 is the most out of place, then 13."""
+    """A stand-in model: card 50 belongs most, 51 next; card 12 is the most removable, then 13 (``"typicality"``:
+    card 14 first)."""
 
-    def removal_scores(self, deck):
-        return {c: {12: 5.0, 13: 4.0}.get(c, 0.0) for c in deck.counts()}
+    def __init__(self):
+        self.kinds = []
+
+    def removal_scores(self, deck, kind="combined"):
+        self.kinds.append(kind)
+        top = {14: 6.0} if kind == "typicality" else {}
+        return {c: {12: 5.0, 13: 4.0, **top}.get(c, 0.0) for c in deck.counts()}
 
     def addition_scores(self, deck, pool):
         return {c: {50: 0.0, 51: -1.0, 901: -2.0}.get(c, -30.0) for c in pool}
@@ -155,6 +170,15 @@ def test_learned_children_follow_the_scores_and_stay_legal():
         assert all((e.section == "extra") == (e.into >= 900) for e in k.edits)
     assert learned_children(BASE, "Base", Scorer(), CardValueModel(), [50], legal=legal, is_extra=lambda pw: False,
                             rng=np.random.default_rng(0), children=0) == []  # fmt: skip
+    kw = dict(legal=legal, is_extra=lambda pw: pw >= 900, children=4, max_bundle=1, temperature=0.1)
+    # protected cards never go out; the removal ranking is selectable
+    kept = learned_children(BASE, "Base", Scorer(), CardValueModel(), [50, 51], rng=np.random.default_rng(0),
+                            protected={12}, **kw)  # fmt: skip
+    assert kept and all(e.out != 12 for k in kept for e in k.edits) and kept[0].edits[0].out == 13
+    scorer = Scorer()
+    typ = learned_children(BASE, "Base", scorer, CardValueModel(), [50, 51], rng=np.random.default_rng(0),
+                           removal="typicality", **kw)  # fmt: skip
+    assert scorer.kinds == ["typicality"] and typ[0].edits[0].out == 14
 
 
 def test_learned_children_in_the_evolution_step_record_their_generator(tmp_path):
@@ -168,6 +192,7 @@ def test_learned_children_in_the_evolution_step_record_their_generator(tmp_path)
     lab.card_pool = [50, 51]
     ev = Evolution(tmp_path / "s", Env())
     report = ev.run_round([Parent("corpus:base", BASE, "Base")], lab, config, OPPONENTS)
+    assert lab.deck_model.kinds and set(lab.deck_model.kinds) == {"combined"}
     rows = [r for r in ev.lineage() if r["generator"] == "learned"]
     assert rows and all(r["kind"] == "learned" for r in rows)
     assert all({e["into"] for e in r["edits"]} <= {50, 51} for r in rows)
