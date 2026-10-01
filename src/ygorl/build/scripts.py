@@ -70,6 +70,14 @@ class EffectFact:
     (0 when absent or not a constant); ``opponent`` is True when a matching or field-group call reached from its
     target / operation / cost can take cards from the opponent's side (``Duel.SelectTarget(tp, f, tp, 0,
     LOCATION_ONFIELD, ...)``, ``Duel.GetFieldGroup(tp, 0, LOCATION_MZONE)``).
+
+    ``count_code`` is the code of a hard once-per-turn limit (``SetCountLimit(1, id)``: one use per card *name*),
+    0 without one. ``acts`` is False when the operation never touches a card or a chain -- no negation, destroy,
+    banish, send, return, control or position change, no ``EFFECT_DISABLE`` -- e.g. a player lock (Droll & Lock
+    Bird) or a draw engine; True when there is no operation to read. ``requires`` lists filters of monsters the
+    controller must control for the effect to be usable: own-monster-zone matching calls in its condition or target
+    (``Duel.IsExistingTarget(f, tp, LOCATION_MZONE, 0, ...)``), and the ``IsExists`` filter of a condition about
+    the chain's targets (``CHAININFO_TARGET_CARDS``: "targets a ... you control").
     """
 
     categories: int = 0
@@ -77,6 +85,9 @@ class EffectFact:
     code: int = 0
     range: int = 0
     opponent: bool = False
+    count_code: int = 0
+    acts: bool = True
+    requires: tuple = ()
 
 
 EVIDENCE_RANK = {"procedure": 0, "filter": 1, "hintmsg": 2, "name": 3, "category": 4}
@@ -184,12 +195,27 @@ MATERIAL_PROCS = frozenset(
 )
 # Effect:SetType / SetCode / SetRange -> the effect key they set (when to activate it, and from where)
 TIMING_SETTERS = {"SetType": "type", "SetCode": "code", "SetRange": "range"}
-EFFECT_SETTERS = frozenset(("SetCategory", "SetTarget", "SetOperation", "SetCost", *TIMING_SETTERS))
+# setters whose function argument is recorded per role (condition functions do not feed ``refs``)
+ROLE_SETTERS = {"SetTarget": "target", "SetOperation": "operation", "SetCost": "cost", "SetCondition": "condition"}
+EFFECT_SETTERS = frozenset(("SetCategory", "SetTarget", "SetOperation", "SetCost", "SetCondition", "SetCountLimit",
+                            *TIMING_SETTERS))  # fmt: skip
+# what an operation must do to interrupt anything: names (methods or constants) that touch cards or the chain
+ACTING_NAMES = frozenset((
+    "NegateActivation", "NegateEffect", "NegateSummon", "NegateRelatedChain", "ChangeChainOperation", "Destroy",
+    "Remove", "SendtoHand", "SendtoDeck", "SendtoGrave", "SendtoExtraP", "GetControl", "ChangePosition", "Release",
+    "Overlay", "SwapControl", "RemoveUntil", "EFFECT_DISABLE", "EFFECT_DISABLE_EFFECT", "EFFECT_CANNOT_TRIGGER",
+))  # fmt: skip
 _PROC_EFFECTS = frozenset(FUSION_PROCS) | frozenset(RITUAL_PROCS) | frozenset(RITUAL_CODE_PROCS)
 
 
 def _new_effect() -> dict:
-    return {"categories": 0, "refs": set(), "type": 0, "code": 0, "range": 0}
+    return {"categories": 0, "refs": set(), "type": 0, "code": 0, "range": 0, "count_code": 0,
+            "roles": {}, "inline": {}}  # fmt: skip
+
+
+def _copy_effect(base: dict) -> dict:
+    return {**base, "refs": set(base["refs"]), "roles": {k: set(v) for k, v in base["roles"].items()},
+            "inline": {k: list(v) for k, v in base["inline"].items()}}  # fmt: skip
 
 
 def _named(args: tuple, names: tuple) -> dict:
@@ -292,7 +318,7 @@ class _Analyzer:
                     src = bound.get(rhs[0][1])
                     base = effects[src] if src is not None else _new_effect()
                     bound[value] = len(effects)
-                    effects.append({**base, "refs": set(base["refs"])})
+                    effects.append(_copy_effect(base))
                 elif len(rhs) >= 3 and rhs[0][1] in ("Fusion", "Ritual") and rhs[1] == ("op", "."):
                     name = f"{rhs[0][1]}.{rhs[2][1]}"
                     if name in _PROC_EFFECTS:
@@ -320,14 +346,25 @@ class _Analyzer:
                     v = lua.const_eval(args[0], self.env)
                     if v is not None:
                         effects[idx]["categories"] |= v
+                elif setter == "SetCountLimit":  # (count[, code[, flags]]); code may be {id, k}
+                    code = args[1] if len(args) > 1 else None
+                    if isinstance(code, Table):
+                        pos = code.positional()
+                        code = pos[0] if pos else None
+                    v = lua.const_eval(code, self.env) if code is not None else None
+                    effects[idx]["count_code"] = v or 0
+                elif setter == "SetCondition":
+                    self._role(effects[idx], "condition", args[0])
                 elif setter in TIMING_SETTERS:  # the last call wins, as in Lua (a clone may override)
                     v = lua.const_eval(args[0], self.env)
                     if v is not None:
                         effects[idx][TIMING_SETTERS[setter]] = v
                 else:
                     effects[idx]["refs"] |= self.expr_refs(args[0])
+                    self._role(effects[idx], ROLE_SETTERS[setter], args[0])
         # function -> effects reaching it through the call graph
         graph = {name: self.function_refs(*fn.body) for name, fn in self.script.functions.items()}
+        self.graph = graph
         self.fn_effects: dict[str, set[int]] = {}
         for i, eff in enumerate(effects):
             stack = list(eff["refs"])
@@ -355,6 +392,73 @@ class _Analyzer:
             for i in self.fn_effects.get(self.script.function_at(pos), ()):
                 self.opinfo[i][cat] = self.opinfo[i].get(cat, 0) | loc
 
+    def _role(self, eff: dict, role: str, node) -> None:
+        """Record the function(s) of a ``SetTarget`` / ``SetOperation`` / ``SetCost`` / ``SetCondition`` call."""
+        eff["roles"][role] = self.expr_refs(node)
+        eff["inline"][role] = [n.body for n in _walk(node) if isinstance(n, FuncExpr)]
+
+    def _spans(self, eff: dict, *roles: str) -> list[tuple[int, int]]:
+        """Token ranges of the functions an effect's ``roles`` reach (named functions closed over calls)."""
+        stack = [f for r in roles for f in eff["roles"].get(r, ())]
+        spans = [b for r in roles for b in eff["inline"].get(r, ())]
+        for b in list(spans):
+            stack.extend(self.function_refs(*b))
+        seen: set[str] = set()
+        while stack:
+            f = stack.pop()
+            if f in seen or f not in self.script.functions:
+                continue
+            seen.add(f)
+            spans.append(self.script.functions[f].body)
+            stack.extend(self.graph.get(f, ()))
+        return spans
+
+    def _acts(self, eff: dict) -> bool:
+        if not eff["roles"].get("operation") and not eff["inline"].get("operation"):
+            return True
+        toks = self.script.tokens
+        for a, b in self._spans(eff, "operation"):
+            for j in range(a, min(b, len(toks))):
+                if toks[j][0] == "name" and (toks[j][1] in ACTING_NAMES or toks[j][1].startswith("Negate")):
+                    return True
+        return False
+
+    def _requires(self, eff: dict, calls: list) -> tuple:
+        """Filters of own monsters the effect's condition / target need (see :class:`EffectFact`)."""
+        spans = self._spans(eff, "condition", "target")
+        if not spans:
+            return ()
+        inside = lambda pos: any(a <= pos < b for a, b in spans)  # noqa: E731
+        toks = self.script.tokens
+        mzone = self.K["LOCATION_MZONE"]
+        out: list = []
+        for pos, name, args in calls:
+            fi, pi, si, oi, xi = MATCH_CALLS[name]
+            if len(args) <= oi or not inside(pos) or (pos and toks[pos - 1] == ("name", "not")):
+                continue
+            own, opp = args[si], args[oi]
+            if _is_opponent(args[pi]):
+                own, opp = opp, own
+            if lua.const_eval(own, self.env) != mzone or lua.const_eval(opp, self.env) != 0:
+                continue
+            flt = self.comp.compile_value(args[fi], args[xi:])
+            out.append(flt if is_constrained(flt) else ANY)
+        for a, b in self._spans(eff, "condition"):
+            body = toks[a : min(b, len(toks))]
+            if ("name", "CHAININFO_TARGET_CARDS") not in body:
+                continue
+            for j in range(a, min(b, len(toks)) - 1):
+                if toks[j] == ("name", "IsExists") and toks[j - 1] == ("op", ":"):
+                    try:
+                        fargs, _ = lua.parse_args(toks, j + 1)
+                    except lua.LuaSyntaxError:
+                        continue
+                    if fargs:
+                        flt = self.comp.compile_value(fargs[0], fargs[3:])
+                        if is_constrained(flt):
+                            out.append(flt)
+        return tuple(dict.fromkeys(out))
+
     def field_groups(self) -> None:
         """Effects reaching ``Duel.GetFieldGroup(Count)(player, own, opponent)`` with an opponent location."""
         for pos, _name, args in self.script.find_calls({"Duel.GetFieldGroup", "Duel.GetFieldGroupCount"}):
@@ -365,8 +469,18 @@ class _Analyzer:
                 self.opponent_effects |= self.fn_effects.get(self.script.function_at(pos), set())
 
     def effect_facts(self) -> tuple[EffectFact, ...]:
+        calls = self.script.find_calls(set(MATCH_CALLS))
         return tuple(
-            EffectFact(e["categories"], e["type"], e["code"], e["range"], i in self.opponent_effects)
+            EffectFact(
+                e["categories"],
+                e["type"],
+                e["code"],
+                e["range"],
+                i in self.opponent_effects,
+                e["count_code"],
+                self._acts(e),
+                self._requires(e, calls),
+            )  # fmt: skip
             for i, e in enumerate(self.effect_list)
         )
 

@@ -93,6 +93,8 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `interruption` | 阻断点 / 妨害 | 能在对手回合打断对手的一张卡：场上表侧的诱发即时效果、盖放的陷阱或速攻魔法、手里的手坑、墓地的诱发即时效果，效果须无效或能处理对手的卡（`ygorl.solver.blocking`，solver.md「阻断场面」） |
 | blocking board | 阻断场面 | 先攻第 1 回合结束时阻断点多的场面；求解器示范的自动目标（solver.md） |
 | piece | 阻断件 | 卡组里能作为求解器目标的场上阻断怪兽（`blocking.Piece`） |
+| survival score | 存活分 | 先攻第 1 回合的一条线在真实对手、当前策略下打完对手第 2 回合后，先攻方第 3 回合开始时的打分：场上怪兽、手牌、LP，减对手场上卡数（`ygorl.solver.survival`，solver.md「存活场面」） |
+| strict interruption count | 严格阻断点 | 去掉只抽卡 / 只锁玩家的效果、检查「需控制某怪兽」的简单条件、同名卡一回合一次只计一次的阻断点（`board_interruptions(strict=True)`） |
 
 ## 组牌与评估
 

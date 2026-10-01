@@ -1,4 +1,4 @@
-"""``policy:<checkpoint.pt>``: a trained PPO checkpoint as an :class:`~ygorl.agents.base.Agent` (T4b.4).
+"""``policy:<checkpoint.pt>``: a trained PPO or BC checkpoint as an :class:`~ygorl.agents.base.Agent` (T4b.4).
 
 The network reads the C++ encoder's observations (docs/encoding.md), which need the engine state and the
 whole event stream, while the Agent protocol only hands over a :class:`DecisionPoint`. The adapter keeps a
@@ -35,11 +35,11 @@ if TYPE_CHECKING:
 def _load(path: str, mtime: float):
     import torch
 
-    from ygorl.train.checkpoint import load_policy
+    from ygorl.train.checkpoint import load_actor
 
     if mp.current_process().name != "MainProcess":
         torch.set_num_threads(1)
-    return load_policy(path)
+    return load_actor(path)
 
 
 def load_cached(path: str | Path):
