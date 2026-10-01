@@ -33,16 +33,22 @@ class DeckScorer(Protocol):
     def addition_scores(self, deck: Deck, pool: Iterable[int]) -> Mapping[int, float]: ...
 
 
+REMOVAL_TEMPERATURE = 4.0  # rank points: the top ~4-6 removable cards share the draws
+
+
 def learned_children(base: Deck, deck_type: str, scorer: DeckScorer, model: CardValueModel, pool: Iterable[int], *,
                      legal: Callable[[Deck], bool], is_extra: Callable[[int], bool], rng: np.random.Generator,
                      children: int = 4, max_bundle: int = 3, avoid: Iterable[Deck] = (), temperature: float = 1.0,
-                     top: int = 200, protected: Iterable[int] = (),
-                     removal: str = "combined") -> list[Child]:  # fmt: skip
+                     top: int = 200, protected: Iterable[int] = (), removal: str = "combined",
+                     removal_temperature: float = REMOVAL_TEMPERATURE) -> list[Child]:  # fmt: skip
     """Up to ``children`` children of ``base``, distinct from each other, from ``base`` and from ``avoid``. The deck
     is scored once. Per child: draw a bundle size (1..``max_bundle``), an order of the ``top`` best-scored additions
     (cards of ``pool`` below 3 copies in ``base``; Gumbel keys on addition score / ``temperature``: a sample from the
     model's P(card | deck), so repeated calls spread over the plausible cards) and an order of the removals (Gumbel
-    keys on the ``removal`` score / ``temperature``; ``protected`` cards never go out). Each addition goes in one copy, taking out the first removal of the same
+    keys on the ``removal`` score / ``removal_temperature``; ``protected`` cards never go out). The combined removal
+    score is a rank position (one point per place), so at temperature 1 the top-ranked card took about two thirds of the
+    draws and a round tested nearly the same removal eight times; the default ``REMOVAL_TEMPERATURE`` spreads the draws
+    over the top few removable cards. Each addition goes in one copy, taking out the first removal of the same
     section that leaves the deck legal (never a card the bundle put in, nor the card itself; a card the bundle took out
     is not put back); an addition no removal makes legal is skipped. Children are kind ``"learned"``, predicted gain = the card-value model's mean gain."""
     if children <= 0:
@@ -57,7 +63,7 @@ def learned_children(base: Deck, deck_type: str, scorer: DeckScorer, model: Card
     add_cards = sorted(adds, key=lambda c: (-adds[c], c))[:top]
     add_s = np.array([adds[c] for c in add_cards]) / temperature
     rem_cards = sorted(rems)
-    rem_s = np.array([rems[c] for c in rem_cards]) / temperature
+    rem_s = np.array([rems[c] for c in rem_cards]) / removal_temperature
     seen = {_key(base), *(_key(d) for d in avoid)}
     out: list[Child] = []
     for _ in range(children * 4):
