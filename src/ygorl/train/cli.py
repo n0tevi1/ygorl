@@ -97,6 +97,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            "lambda of the critic's Q / V targets only (default: --lam); 1.0 = game results"),
         _f("--clip", "ppo.clip", "PPO ratio clip"),
         _f("--entropy", "ppo.entropy_coef", "entropy coefficient (design: 0.05-0.2)"),
+        _f("--entropy-free-turns", "ppo.entropy_free_turns",
+           "no entropy bonus on the turn player's own decisions up to this turn (0: off)"),
         _f("--kl-ref", "ppo.kl_ref_coef", "KL coefficient to the EMA reference"),
         _f("--ema", "ppo.reference_ema", "reference EMA rate per update"),
         _f("--q-coef", "ppo.q_coef", "Q-head loss coefficient"),

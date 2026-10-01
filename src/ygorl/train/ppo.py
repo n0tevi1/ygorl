@@ -49,6 +49,9 @@ class PPOConfig:
     critic_lam: float | None = None  # λ of the Q / V targets only (None: lam); 1.0 trains the critic on game results
     clip: float = 0.2  # PPO ratio clip
     entropy_coef: float = 0.05  # design I1: 0.05-0.2
+    # > 0: no entropy bonus on the turn player's own decisions up to this turn. Turn-1 combos are 20-40 decisions
+    # whose policy-gradient signal is mostly noise, so the bonus alone spreads their probability (docs/training.md)
+    entropy_free_turns: int = 0
     kl_ref_coef: float = 0.05  # KL(π‖π_ref) to the EMA reference (design I8)
     reference_ema: float = 0.02  # reference <- (1 - τ) reference + τ θ after every update
     kl_prior_coef: float = 0.0  # KL(π‖π_prior) to a BC prior checkpoint, when one is given (design I4)
@@ -81,6 +84,8 @@ class PPOConfig:
             raise ValueError("reference_ema must be in [0, 1]")
         if self.epochs < 1 or self.minibatch_size < 1:
             raise ValueError("epochs and minibatch_size must be at least 1")
+        if self.entropy_free_turns < 0:
+            raise ValueError("entropy_free_turns must be >= 0 (0 = off)")
         if self.kl_prior_turns < 0:
             raise ValueError("kl_prior_turns must be >= 0 (0 = every row)")
         if self.target_kl is not None and not self.target_kl > 0:
@@ -290,9 +295,14 @@ class PPOLearner:
         return (g[:, 2] == 1) & (g[:, 3] <= turns)
 
     @staticmethod
-    def entropy(logits: Tensor, mask: Tensor) -> Tensor:
+    def entropy(logits: Tensor, mask: Tensor, rows: Tensor | None = None) -> Tensor:
+        """Mean over rows of the policy entropy over legal candidates; with ``rows`` (bool ``[n]``) the other rows
+        count as 0."""
         logp = torch.log_softmax(logits, -1)
-        return -_masked_mean_rows(logp.exp() * logp, mask).mean()
+        per_row = -_masked_mean_rows(logp.exp() * logp, mask)
+        if rows is not None:
+            per_row = torch.where(rows, per_row, torch.zeros((), dtype=per_row.dtype, device=per_row.device))
+        return per_row.mean()
 
     @torch.no_grad()
     def _score(self, module: nn.Module, obs, n: int) -> Tensor:
@@ -332,6 +342,8 @@ class PPOLearner:
         ref_logits = self._score(self.reference, obs, n) if cfg.kl_ref_coef > 0 else None
         prior_logits = self._score(self.prior, obs, n) if self.prior is not None and cfg.kl_prior_coef > 0 else None
         prior_rows = self.prior_rows(obs, cfg.kl_prior_turns) if prior_logits is not None else None
+        early = self.prior_rows(obs, cfg.entropy_free_turns)  # rows without the entropy bonus (None: all have it)
+        ent_rows = None if early is None else ~early
         laps.lap("reference")
 
         model.train()
@@ -351,7 +363,7 @@ class PPOLearner:
                 logp = torch.log_softmax(logits, -1)
                 policy_loss, extra = self.objective.loss(ObjectiveInputs(logp, actions[idx], old_logp[idx], adv[idx],
                                                                          q_targets[idx], m, idx))  # fmt: skip
-                ent = self.entropy(logits, m)
+                ent = self.entropy(logits, m, None if ent_rows is None else ent_rows[idx])
                 loss = policy_loss - cfg.entropy_coef * ent
                 kl_ref = self.kl(logits, ref_logits[idx], m) if ref_logits is not None else torch.zeros(())
                 kl_prior = (self.kl(logits, prior_logits[idx], m, None if prior_rows is None else prior_rows[idx])

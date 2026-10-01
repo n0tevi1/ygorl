@@ -454,3 +454,25 @@ def test_pinned_snapshots_stay_and_get_their_share_of_pool_games():
     alone = SnapshotPool(capacity=2, pinned_share=0.5)
     only = alone.pin(model, tag="bc")
     assert {alone.sample(rng) for _ in range(20)} == {only}
+
+
+def test_entropy_bonus_can_skip_early_turn_rows():
+    """``entropy_free_turns``: no entropy bonus on the turn player's own decisions up to that turn (rows count 0)."""
+    with pytest.raises(ValueError):
+        PPOConfig(entropy_free_turns=-1)
+    logits = torch.randn(4, 3)
+    mask = torch.ones(4, 3, dtype=torch.bool)
+    rows = torch.tensor([False, True, True, False])
+    per_row = [float(PPOLearner.entropy(logits[i : i + 1], mask[i : i + 1])) for i in range(4)]
+    assert float(PPOLearner.entropy(logits, mask, rows)) == pytest.approx((per_row[1] + per_row[2]) / 4, rel=1e-5)
+    assert float(PPOLearner.entropy(logits, mask)) == pytest.approx(sum(per_row) / 4, rel=1e-5)
+    # in an update (Nim rows: turn 1 above pile 8, turn 5 otherwise): skipping turn 1 changes the result, a limit
+    # past every row's turn removes the bonus entirely (same as entropy_coef 0)
+    base = dict(epochs=1, minibatch_size=1024, kl_ref_coef=0.0)
+    full, _ = _update_with_prior(PPOConfig(**base))
+    skip1, _ = _update_with_prior(PPOConfig(**base, entropy_free_turns=1))
+    skip_all, _ = _update_with_prior(PPOConfig(**base, entropy_free_turns=5))
+    none, _ = _update_with_prior(PPOConfig(**base, entropy_coef=0.0))
+    assert any(not torch.equal(a, b) for a, b in zip(full.parameters(), skip1.parameters()))
+    for a, b in zip(skip_all.parameters(), none.parameters()):
+        torch.testing.assert_close(a, b)
