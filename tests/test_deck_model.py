@@ -158,7 +158,7 @@ def test_learned_children_follow_the_scores_and_stay_legal():
 
     kids = learned_children(BASE, "Base", Scorer(), CardValueModel(), [50, 51, 52, 1, 901], legal=legal,
                             is_extra=lambda pw: pw >= 900, rng=np.random.default_rng(0), children=6,
-                            max_bundle=2, temperature=0.1)  # fmt: skip
+                            max_bundle=2, temperature=0.1, removal_temperature=0.1)  # fmt: skip
     assert kids and all(k.kind == "learned" and legal(k.deck) for k in kids)
     keys = {(tuple(sorted(k.deck.main)), k.deck.extra) for k in kids}
     assert len(keys) == len(kids)
@@ -170,7 +170,9 @@ def test_learned_children_follow_the_scores_and_stay_legal():
         assert all((e.section == "extra") == (e.into >= 900) for e in k.edits)
     assert learned_children(BASE, "Base", Scorer(), CardValueModel(), [50], legal=legal, is_extra=lambda pw: False,
                             rng=np.random.default_rng(0), children=0) == []  # fmt: skip
-    kw = dict(legal=legal, is_extra=lambda pw: pw >= 900, children=4, max_bundle=1, temperature=0.1)
+    kw = dict(
+        legal=legal, is_extra=lambda pw: pw >= 900, children=4, max_bundle=1, temperature=0.1, removal_temperature=0.1
+    )
     # protected cards never go out; the removal ranking is selectable
     kept = learned_children(BASE, "Base", Scorer(), CardValueModel(), [50, 51], rng=np.random.default_rng(0),
                             protected={12}, **kw)  # fmt: skip
@@ -227,3 +229,28 @@ def test_learned_children_go_into_the_factorial_design_first(tmp_path):
     ev.run_round([Parent("corpus:base", BASE, "Base")], lab, config, OPPONENTS)
     fac = ev._round_state(1)["results"][0]["factorial"]
     assert fac["kinds"][:2] == ["learned", "learned"] and len(fac["kinds"]) == 4
+
+
+def test_learned_removals_spread_over_the_top_of_the_ranking():
+    """The combined removal score is a rank (one point per place): at the default removal temperature a round's
+    children take out several different top-ranked cards, not nearly always the first one."""
+    from collections import Counter
+
+    from tests.test_evolve import BASE, legal
+
+    class Ranked:
+        def removal_scores(self, deck, kind="combined"):
+            cards = sorted(deck.counts())
+            return {c: float(len(cards) - k) for k, c in enumerate(cards)}  # a rank, like "combined"
+
+        def addition_scores(self, deck, pool):
+            return {c: -float(k) for k, c in enumerate(pool)}
+
+    pool = list(range(50, 60))
+    kw = dict(legal=legal, is_extra=lambda pw: pw >= 900, children=24, max_bundle=1)
+    kids = learned_children(BASE, "Base", Ranked(), CardValueModel(), pool, rng=np.random.default_rng(0), **kw)
+    outs = Counter(k.edits[0].out for k in kids)
+    assert len(kids) >= 12 and outs.most_common(1)[0][1] <= len(kids) * 0.5 and len(outs) >= 4
+    cold = learned_children(BASE, "Base", Ranked(), CardValueModel(), pool, rng=np.random.default_rng(0),
+                            removal_temperature=0.25, **kw)  # fmt: skip
+    assert Counter(k.edits[0].out for k in cold).most_common(1)[0][1] >= len(cold) * 0.6

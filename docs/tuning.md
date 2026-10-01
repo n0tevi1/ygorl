@@ -268,6 +268,8 @@
   对得分前 200 的加入卡（环境卡池里、亲本不满 3 份的卡）按 加入分 / 温度 + Gumbel 排序（即按模型的 P(卡 | 卡组) 无放回抽样），对换下卡按 换下分 / 温度 + Gumbel 排序；
   每张加入卡一份，换下同区域里排序最前、换后仍合法的卡（不换下本包换入的卡，不把换下的卡再换回来）。**受保护的卡**（胜利条件、检索目标，`protected_cards`）不换下；
   不用引擎保护与加入池。预测增益同其它子代（卡片价值模型的均值增益）。
+- 换下的抽样温度（`removal_temperature`，默认 4）：组合换下分是名次（每差一位差 1 分），温度为 1 时排第一的卡约占三分之二的抽样，
+  第一次带学习型生成器的进化（r150）里一轮 8 个子代有 7 个换下同一张卡（Therion 的 Card Destruction）；温度 4 让抽样分散到排在前面的 4–6 张卡上。
 - 命令行：`tools/evolve_decks.py --learned-generator N --deck-model out/deckmodel/full.pt [--learned-removal combined|support|typicality]`（默认 0，关闭；换下分默认组合）；模型的环境戳必须与 `--env` 一致；模型路径与 sha256 记在轮次的 `checkpoint` 里（续跑要同一个模型）。
 - 与析因评估（`--eval factorial`，下节）可组合：学习的单卡替换排在设计的改动最前面（其后是有依据的、探索的），`factorial.kinds` 记每处改动来自哪个生成器。
 - 评估结果见 [benchmarks.md](benchmarks.md)「掩码卡组模型」。
