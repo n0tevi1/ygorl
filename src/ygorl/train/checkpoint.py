@@ -227,12 +227,26 @@ def _ppo(path: str | Path, text_dir: str | Path | None):
     return state, cfg, vocab, _tables(cfg, vocab, text_dir or state["config"].get("text_dir"), path)
 
 
+def _seat_prefixes(state: dict) -> tuple[str, ...]:
+    """Key prefixes of the actor-critic(s) in ``learner.model``: ``""``, or one per seat for a seat-split run
+    (``TrainConfig.seat_split``: a :class:`~ygorl.nets.seat_split.SeatSplit`, ``nets.0.`` / ``nets.1.``)."""
+    return ("nets.0.", "nets.1.") if state["config"].get("seat_split") else ("",)
+
+
 def load_policy(path: str | Path, text_dir: str | Path | None = None) -> LoadedPolicy:
-    """The actor of a PPO checkpoint."""
+    """The actor of a PPO checkpoint; of a seat-split run, a :class:`~ygorl.nets.seat_split.SeatSplit` of the two
+    seats' actors (it dispatches each decision by the seat, ``policy:`` agents and batched play use it as is)."""
+    from ygorl.nets.seat_split import SeatSplit
+
     state, cfg, vocab, text = _ppo(path, text_dir)
-    net = PolicyNet(cfg, text)
     model = state["learner"]["model"]
-    net.load_state_dict({k[len(ACTOR_PREFIX) :]: v for k, v in model.items() if k.startswith(ACTOR_PREFIX)})
+    nets = []
+    for prefix in _seat_prefixes(state):
+        net = PolicyNet(cfg, text)
+        head = prefix + ACTOR_PREFIX
+        net.load_state_dict({k[len(head) :]: v for k, v in model.items() if k.startswith(head)})
+        nets.append(net)
+    net = nets[0] if len(nets) == 1 else SeatSplit(*nets)
     return LoadedPolicy(_frozen(net), vocab, int(state["config"]["event_length"]), cfg, state.get("environment"),
                         int(state["learner"]["updates"]), Path(path))  # fmt: skip
 
@@ -262,7 +276,12 @@ def load_actor_critic(path: str | Path, text_dir: str | Path | None = None) -> L
         raise ValueError(f"{path}: not a PPO checkpoint (a policy checkpoint has no critic)")
     state, cfg, vocab, text = _ppo(path, text_dir)
     critic = CriticConfig.from_train_config(state["config"])
-    model = build_actor_critic(cfg, text, critic)
+    if len(_seat_prefixes(state)) == 2:
+        from ygorl.nets.seat_split import SeatSplit
+
+        model = SeatSplit(build_actor_critic(cfg, text, critic), build_actor_critic(cfg, text, critic))
+    else:
+        model = build_actor_critic(cfg, text, critic)
     model.load_state_dict(state["learner"]["model"])
     return LoadedActorCritic(_frozen(model), critic, vocab, int(state["config"]["event_length"]), cfg,
                              state.get("environment"), int(state["learner"]["updates"]), Path(path))  # fmt: skip

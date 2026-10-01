@@ -309,6 +309,17 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 - 预热的更新也计入更新数与数据量。结束时的更新数记在 `counters["critic_warmup_done"]`，续训不会重新预热。
 - 每次更新的统计里有 `critic_warmup`（1 = 这次只训了 critic）。
 
+**先后手分网**（`--seat-split`，默认关闭；#83 的强度实验）：自博弈里先攻胜率约 0.43，Master Duel 实战约 0.70。先攻该做阻断、撑过对手回合，
+后攻该做解场，一个共用网络（只靠 `globals[1]` 是否先攻区分）可能分不开两种打法，第 1 回合的噪声梯度也会互相干扰。开启后模型是
+`ygorl.nets.seat_split.SeatSplit`：两份结构相同的 actor-critic，都从 `--init-from` 热启动；每一行按观测的 `globals[1]`（视角方是否先攻）
+分派，先攻方的决策用网络 0，后攻方的用网络 1。收集、快照池对手（快照存两份网络，对手座位用快照的同座位网络）和评估都经过这个分派，
+不需要改动。更新由 `ppo.SeatSplitLearner` 做：优势与 Q / V 目标先在整个 rollout 上算一次（自博弈中两座位的行交错在同一列里，
+沿用 §1 的符号约定），然后两个 `PPOLearner` 各自只用本座位的行，各有自己的优化器、EMA 参考、target-KL 早停与 critic 预热。
+每次更新的总行数不变，由两份网络分；统计的主键是两者按行数加权的平均，`seat0/…`、`seat1/…` 是各自的值。检查点在
+`learner.model` 里存 `nets.0.` / `nets.1.` 两份权重（`config["seat_split"]`），`load_actor` / `policy:` agent 读到的是同样分派的
+`SeatSplit`，所以 `ygorl strength`、`tools/diagnose_losses.py --vs self` 照常可用；`diagnose_losses.py --second CKPT` 让先攻方用
+CHECKPOINT、后攻方用 CKPT，用于交叉对局（例如分网的先攻网络对对照的后攻方）。
+
 **按回合折扣**（`--turn-discount G`，默认 1.0 = 关闭；快赢压力 T6，与设计 C3 冲突，目前只作诊断臂，见 [spikes/reward-signal.md](spikes/reward-signal.md) R5）：
 - 分出胜负的对局，终局奖励从 ±1 改为 ±G^回合数：早赢奖励大、晚赢奖励小；输的一方拖得越久，负奖励的绝对值越小。截断局仍为 0。
 - 与「每过一回合折扣一次」只差按行所在回合 t 的系数 G^t。这个系数对同一局面的所有候选动作相同，不改变该局面上的梯度方向，只改变不同回合之间的权重。

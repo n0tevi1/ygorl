@@ -38,6 +38,7 @@ from ygorl.eval.arena import derive_seed
 from ygorl.nets.actor_critic import ActorCritic
 from ygorl.nets.config import NetConfig
 from ygorl.nets.gemm import use_split_k
+from ygorl.nets.seat_split import SeatSplit
 from ygorl.nets.text import TextFeatures
 from ygorl.train.checkpoint import (
     CriticConfig,
@@ -51,7 +52,7 @@ from ygorl.train.checkpoint import (
     vocab_to_text,
     warm_start,
 )
-from ygorl.train.ppo import PPOConfig, PPOLearner
+from ygorl.train.ppo import PPOConfig, PPOLearner, SeatSplitLearner
 from ygorl.train.rollout import Rollout, RolloutCollector, RolloutStalled
 from ygorl.train.selfplay import DeckPool, EvolvedDecks, SelfPlaySchedule, SnapshotPool
 
@@ -131,6 +132,10 @@ class TrainConfig:
     # append one record per finished game to games.jsonl.gz (decks, first player, winner, turns, reason, update,
     # environment): labels for the deck surrogate (design 05 §5.3); off by default
     log_games: bool = False
+    # two actor-critics, one per seat (ygorl.nets.seat_split): net 0 plays the first player's decisions, net 1 the
+    # second player's; each trains on its own rows with its own optimizer (ppo.SeatSplitLearner); both start from
+    # init_from. Snapshots and checkpoints hold the pair (docs/training.md「先后手分网」)
+    seat_split: bool = False
 
     def __post_init__(self) -> None:
         if self.keep_best_by and self.keep_best_by not in self.eval_opponents:
@@ -199,7 +204,7 @@ class Trainer:
         torch.manual_seed(derive_seed(cfg.seed, 0))
         self.model = self._new_model()
         if init is not None:
-            added = warm_start(self.model.actor, init)
+            added = self._warm_start(init)
             added = f"; new card views start fresh: {added}" if added else ""
             self.log(f"initialized the actor from {cfg.init_from} (the critic starts fresh{added})")
         signature = Signature.of(self.vocab, cfg.event_length)
@@ -210,7 +215,7 @@ class Trainer:
                 raise ValueError(f"{cfg.bc_prior}: the run and the prior differ: {'; '.join(why)}; the prior would "
                                  "read other cards from the same indices")  # fmt: skip
             prior = loaded.net.to(self.device)
-        self.learner = PPOLearner(self.model, cfg.ppo, prior)
+        self.learner = (SeatSplitLearner if cfg.seat_split else PPOLearner)(self.model, cfg.ppo, prior)
         self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share, cfg.pool_sampling, cfg.pfsp_power)
         for path in cfg.pin_opponents:
             pinned = load_actor(path, cfg.text_dir)
@@ -248,8 +253,21 @@ class Trainer:
             self._restore(state)
         (self.run_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
 
-    def _new_model(self) -> ActorCritic:
-        return use_split_k(build_actor_critic(self.net_config, self._text, self.cfg.critic)).to(self.device)
+    def _new_model(self) -> ActorCritic | SeatSplit:
+        def build() -> ActorCritic:
+            return use_split_k(build_actor_critic(self.net_config, self._text, self.cfg.critic))
+
+        model = SeatSplit(build(), build()) if self.cfg.seat_split else build()
+        return model.to(self.device)
+
+    def _warm_start(self, init) -> list[str]:
+        """Copy the loaded actor into the model's actor(s): both seats' nets start from the same actor, or from
+        their own seat's when ``init`` is a seat-split checkpoint itself."""
+        if not self.cfg.seat_split:
+            return warm_start(self.model.actor, init)
+        sources = init.net.nets if isinstance(init.net, SeatSplit) else (init.net, init.net)
+        added = [warm_start(net.actor, replace(init, net=src)) for net, src in zip(self.model.nets, sources)]
+        return added[0]
 
     # -- persistence ----------------------------------------------------------------------------------
     @classmethod

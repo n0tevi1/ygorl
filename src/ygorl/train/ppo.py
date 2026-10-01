@@ -310,24 +310,42 @@ class PPOLearner:
                         bootstrap_mask=ro.bootstrap_mask, truncated=ro.truncated, vrpo_mode=cfg.vrpo_mode,
                         normalize=cfg.adv_norm, target_lam=cfg.critic_lam)  # fmt: skip
 
-    def update(self, ro: Rollout, policy: bool = True) -> dict[str, float]:
+    def update(self, ro: Rollout, policy: bool = True, *, rows: Tensor | None = None,
+               est: Estimate | None = None) -> dict[str, float]:  # fmt: skip
         """One PPO update on ``ro``. ``policy=False`` (critic warm-up): only the Q / V losses, and only parameters the
-        policy does not use are stepped, so the policy (actor and shared trunk) stays exactly as it was."""
+        policy does not use are stepped, so the policy (actor and shared trunk) stays exactly as it was.
+
+        ``rows`` (bool ``[T, B]``): train on these rows only (:class:`SeatSplitLearner`: one seat's rows); ``est``:
+        targets already computed on the whole rollout (default: :meth:`targets`)."""
         cfg, model = self.cfg, self.model
         dev = next(model.parameters()).device
         laps = _Laps(dev if self.timing else None)
-        est = self.targets(ro)  # on the CPU with the rollout's per-row data; the batch tensors go to the model
+        if est is None:
+            est = self.targets(ro)  # on the CPU with the rollout's per-row data; the batch tensors go to the model
         laps.lap("targets")
         adv = self.objective.prepare(ro, est).reshape(-1).float().to(dev)
         q_targets = est.q_targets.reshape(-1).float().to(dev)
         v_targets = est.v_targets.reshape(-1).float().to(dev)
         actions = ro.actions.reshape(-1).to(dev)
         old_logp = ro.log_probs.reshape(-1).to(dev)
+        full_mask = ro.action_mask.reshape(actions.shape[0], -1)
+        taken_q = ro.q.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1).reshape(-1)
+        obs, privileged, sel = ro.obs, ro.privileged, None
+        if rows is not None:
+            sel = rows.reshape(-1).to(dev).nonzero().squeeze(1)
+            adv, q_targets, v_targets, actions, old_logp = (x[sel] for x in (adv, q_targets, v_targets, actions,
+                                                                             old_logp))  # fmt: skip
+            obs, privileged = _index(obs, sel), _index(privileged, sel)
+            full_mask, taken_q = full_mask[sel.cpu()], taken_q[sel.cpu()]
+        n = actions.shape[0]
+        if n == 0:  # no rows of this seat in the rollout: nothing to learn from, the reference still moves
+            self.updates += 1
+            self.update_reference()
+            return {"rows": 0}
         # Cut the rollout's padding once (nets.policy.trim_padding): every minibatch then gathers from the smaller
         # tensors, and logits / masks only span the rollout's longest action list (same values, see tests).
-        obs = trim_padding(ro.obs)
-        mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]].to(dev)
-        n = actions.shape[0]
+        obs = trim_padding(obs)
+        mask = full_mask[:, : obs["action_mask"].shape[1]].to(dev)
         laps.lap("setup")
         ref_logits = self._score(self.reference, obs, n) if cfg.kl_ref_coef > 0 else None
         prior_logits = self._score(self.prior, obs, n) if self.prior is not None and cfg.kl_prior_coef > 0 else None
@@ -345,12 +363,13 @@ class PPOLearner:
             laps.lap("setup")
             for start in range(0, n, cfg.minibatch_size):
                 idx = perm[start : start + cfg.minibatch_size]
-                out = model(_index(obs, idx), _index(ro.privileged, idx))
+                out = model(_index(obs, idx), _index(privileged, idx))
                 logits = out.logits.float()
                 m = mask[idx]
                 logp = torch.log_softmax(logits, -1)
                 policy_loss, extra = self.objective.loss(ObjectiveInputs(logp, actions[idx], old_logp[idx], adv[idx],
-                                                                         q_targets[idx], m, idx))  # fmt: skip
+                                                                         q_targets[idx], m,
+                                                                         idx if sel is None else sel[idx]))  # fmt: skip
                 ent = self.entropy(logits, m)
                 loss = policy_loss - cfg.entropy_coef * ent
                 kl_ref = self.kl(logits, ref_logits[idx], m) if ref_logits is not None else torch.zeros(())
@@ -386,7 +405,6 @@ class PPOLearner:
         self.update_reference()
         laps.lap("ema")
         stats = {k: v / steps for k, v in sums.items()}
-        taken_q = ro.q.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1).reshape(-1)
         stats["q_explained_var"] = _explained_variance(taken_q, q_targets)
         stats["adv_mean"], stats["adv_std"] = float(adv.mean()), float(adv.std(correction=0))
         stats["rows"] = n
@@ -420,10 +438,73 @@ class PPOLearner:
         self.updates = int(state["updates"])
 
 
+class SeatSplitLearner:
+    """PPO for a :class:`ygorl.nets.seat_split.SeatSplit` of two actor-critics (``TrainConfig.seat_split``): one
+    :class:`PPOLearner` per net (own optimizer, EMA reference, target-KL stop), each updated on its own seat's rows
+    only (first-player rows: ``globals[1] == 1``). The targets are computed once on the whole rollout (VRPO /
+    GAE chains run through both seats' rows in self-play), with the Q / V each row's own net gave at acting time.
+
+    Stats: the main keys are row-weighted means of the two updates, ``seat<i>/<key>`` the per-net values.
+    """
+
+    SEAT_KEYS = ("entropy", "kl_ref", "policy_loss", "q_loss", "v_loss", "approx_kl", "clip_frac", "grad_norm",
+                 "minibatches", "early_stop", "rows", "q_explained_var", "adv_mean")  # fmt: skip
+
+    def __init__(self, model: nn.Module, cfg: PPOConfig, prior: nn.Module | None = None) -> None:
+        self.model = model
+        self.cfg = cfg
+        self.learners = [PPOLearner(net, cfg, prior) for net in model.nets]
+
+    @property
+    def updates(self) -> int:
+        return self.learners[0].updates
+
+    @property
+    def timing(self) -> bool:
+        return self.learners[0].timing
+
+    @timing.setter
+    def timing(self, on: bool) -> None:
+        for lr in self.learners:
+            lr.timing = on
+
+    def update(self, ro: Rollout, policy: bool = True) -> dict[str, float]:
+        from ygorl.nets.seat_split import first_player_rows
+
+        est = self.learners[0].targets(ro)
+        first = first_player_rows(ro.obs).reshape(ro.shape)
+        per = [lr.update(ro, policy, rows=sel, est=est) for lr, sel in zip(self.learners, (first, ~first))]
+        n = sum(s["rows"] for s in per)
+        stats: dict[str, float] = {}
+        for key in {k for s in per for k in s}:
+            vals = [(s[key], s["rows"]) for s in per if key in s and s["rows"]]
+            if not vals or key == "rows":
+                continue
+            if key.startswith("rows/"):
+                stats[key] = sum(v for v, _ in vals)
+            else:
+                stats[key] = sum(v * w for v, w in vals) / max(1, sum(w for _, w in vals))
+        stats["rows"] = n
+        taken_q = ro.q.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1).reshape(-1)
+        stats["q_explained_var"] = _explained_variance(taken_q, est.q_targets.reshape(-1).float())
+        for i, s in enumerate(per):
+            stats.update({f"seat{i}/{k}": s[k] for k in self.SEAT_KEYS if k in s})
+        return stats
+
+    def state_dict(self) -> dict:
+        return {"model": self.model.state_dict(), "updates": self.updates,
+                "seats": [lr.state_dict() for lr in self.learners]}  # fmt: skip
+
+    def load_state_dict(self, state: dict) -> None:
+        for lr, s in zip(self.learners, state["seats"], strict=True):
+            lr.load_state_dict(s)
+
+
 def _explained_variance(pred: Tensor, target: Tensor) -> float:
     var = float(target.var(correction=0))
     return float("nan") if var == 0 else 1.0 - float((target - pred.to(target)).var(correction=0)) / var
 
 
 __all__ = ["ClippedSurrogate", "ObjectiveInputs", "PPOConfig", "PPOLearner", "PolicyGradient", "PolicyObjective",
+           "SeatSplitLearner",
            "available_objectives", "register_objective"]  # fmt: skip

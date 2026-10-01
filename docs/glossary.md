@@ -85,6 +85,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 |--------|------|------|
 | BC / warm start | 行为克隆 / 热启动 | 用求解器与 Greedy 示范预训练，再接 PPO（bc.md） |
 | `target_kl` | 按 KL 提前停 | 一次更新内 minibatch 的 `approx_kl` 超过 1.5 × 目标即停（training.md） |
+| seat split | 先后手分网 | 先攻方与后攻方各用一份 actor-critic，各自只用本座位的行训练（`--seat-split`，`ygorl.nets.seat_split.SeatSplit`，training.md §8.2） |
 | pinned opponent | 固定对手 | `--pin` 钉进快照池的固定策略，不被逐出、不入 `state_dict` |
 | lethal search / `lethal:<agent>` | 致死搜索 | 影子对局上推演本回合，找到赢下来的线就照走（T4e.1，evaluation.md） |
 | PIMC | 完美信息蒙特卡洛 | 按信念采样对手隐藏信息后在每个样本里搜索（T4e.1 阶段 C） |
