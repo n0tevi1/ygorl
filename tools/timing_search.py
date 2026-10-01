@@ -36,7 +36,13 @@ more rollouts); ``--salt`` gives fresh rollout seeds.
 
 Usage: tools/timing_search.py CHECKPOINT SPECS R OUT.json [DECK_DIR] [--turn 2] [--max-j 8] [--device cuda]
            [--envs 512] [--no-search] [--control CONTROL.npy] [--demos OUT.npz --demo-rollouts 8]
-           [--games LIST.json] [--salt N]"""
+           [--games LIST.json] [--salt N]
+       tools/timing_search.py CHECKPOINT SPECS 0 OUT.json [DECK_DIR] --effect [--turn 2] [--lines 3] [--conts 12]
+           [--max-targets 3] [--pairs 3] [--games LIST.json]
+
+``--effect`` replaces the timing plans by the interruption-effect / choke-point analysis of
+tools/interruption_effect.py on the same situations: what each legal interruption (card, effect, follow-up
+choice; also pairs of them) does to the opponent's turn and to the win rate, against passing the whole turn."""
 
 from __future__ import annotations
 
@@ -94,6 +100,25 @@ class Job:
         self.demo_rows = []  # (obs, action) of the searcher's opportunity decisions (demonstration rollouts)
 
 
+def build_specs(deck_dir: Path, n_specs: int):
+    """The games (random corpus pairings, each with both first players) and their (first, second) deck names."""
+    deck_paths = sorted(deck_dir.glob("*.ydk"))
+    decks = [load_ydk(p) for p in deck_paths]
+    rng = np.random.default_rng(0)
+    specs, names = [], []
+    for i in range(n_specs):
+        a, b = rng.choice(len(decks), 2, replace=False)
+        s = derive_seed(7, i)
+        da = replace(decks[a], main=tuple(shuffle_deck(decks[a].main, s, 0)))
+        db = replace(decks[b], main=tuple(shuffle_deck(decks[b].main, s, 1)))
+        for first in (0, 1):
+            specs.append(GameSpec(seed=s, deck_a=da, deck_b=db, first=first,
+                                  config=DuelConfig(max_decisions=4000, shuffle_decks=False)))  # fmt: skip
+            pair = (deck_paths[a].stem, deck_paths[b].stem)
+            names.append(pair if first == 0 else pair[::-1])  # (first player's deck, second player's deck)
+    return specs, names
+
+
 def main():  # noqa: C901 - one search loop
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("checkpoint")
@@ -111,29 +136,25 @@ def main():  # noqa: C901 - one search loop
     ap.add_argument("--demo-rollouts", type=int, default=8)
     ap.add_argument("--games", type=Path, help="JSON list of real-game indices to search (default: all)")
     ap.add_argument("--salt", type=int, default=0, help="> 0: fresh rollout seeds (same real games and situations)")
+    ap.add_argument("--effect", action="store_true", help="interruption-effect / choke-point analysis (see above)")
+    ap.add_argument("--lines", type=int, default=3, help="--effect: opponent lines (turn seeds) per situation")
+    ap.add_argument("--conts", type=int, default=8, help="--effect: continuations per line and plan (two halves)")
+    ap.add_argument("--max-targets", type=int, default=3, help="--effect: follow-up choices tried per activation")
+    ap.add_argument("--pairs", type=int, default=3, help="--effect: best singles extended by a second interruption")
     args = ap.parse_args()
     if args.turn % 2:
         ap.error("--turn must be an opponent's turn of the first player (even)")
+    if args.effect:
+        from interruption_effect import effect_main
+
+        return effect_main(args)
     ckpt, n_specs, r, out, turn = args.checkpoint, args.specs, args.r, args.out, args.turn
     device = torch_device(args.device)
     cards = default_cards()
     pol = load_actor(ckpt)
     net = pol.net.to(device).eval()
     vocab = pol.vocab
-    deck_paths = sorted(args.deck_dir.glob("*.ydk"))
-    decks = [load_ydk(p) for p in deck_paths]
-    rng = np.random.default_rng(0)
-    specs, names = [], []
-    for i in range(n_specs):
-        a, b = rng.choice(len(decks), 2, replace=False)
-        s = derive_seed(7, i)
-        da = replace(decks[a], main=tuple(shuffle_deck(decks[a].main, s, 0)))
-        db = replace(decks[b], main=tuple(shuffle_deck(decks[b].main, s, 1)))
-        for first in (0, 1):
-            specs.append(GameSpec(seed=s, deck_a=da, deck_b=db, first=first,
-                                  config=DuelConfig(max_decisions=4000, shuffle_decks=False)))  # fmt: skip
-            pair = (deck_paths[a].stem, deck_paths[b].stem)
-            names.append(pair if first == 0 else pair[::-1])  # (first player's deck, second player's deck)
+    specs, names = build_specs(args.deck_dir, n_specs)
     plans = ["policy", "never", *range(1, args.max_j + 1)]
     env = EncodedVecEnv(args.envs, 8, cards=cards, vocab=vocab, event_length=pol.event_length, skip_forced=True)
     real_jobs = [Job(sp, [], seed=derive_seed(8, i)) for i, sp in enumerate(specs)]
