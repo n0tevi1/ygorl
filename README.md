@@ -55,6 +55,7 @@
 - [调卡组](docs/tuning.md)：给定一套牌的单卡替换局部搜索：候选卡（同类型卡表 + meta 常见卡）、公共随机数的配对比较、逐轮淘汰，对手为环境 meta（T6.2）。
 - [术语表](docs/glossary.md)：代码标识符与中文术语对照（卡片、区域、对局流程、引擎、组牌）。
 - [训练规模与训练信号](docs/scaling.md)：为什么从零训练进展小、先前项目（ygo-agent、DouZero、Suphx 等）的做法、扩规模与训练信号的选项及其与设计的冲突点。
+- [离线神谕价值网络](docs/oracle-value.md)：在百万级自博弈局面上离线回归终局结果的价值网络（可读双方接下来的抽牌）、与 PPO critic 的解释方差对比、分支动作差、势函数塑形 / 基线接入 PPO 的设计。
 - [工程计划](docs/eng-plan.md)：里程碑 M0–M6、任务清单、依赖、验收标准、推进顺序。GitHub issues 与任务一一对应。
 
 ## 快速开始
@@ -229,11 +230,11 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── data/                # Environment 加载与校验；数据抓取与环境构建（fetch、cardmap、ygoprodeck、masterduelmeta、yugipedia、build）
 │   ├── engine/              # 消息解码、动作模型、单局 Duel、卡片查询解析（query.py）、回放（含 .yrp / .yrpX 读取）、分支探索（branch.py）、课程模式（curriculum.py）、残局构造（puzzle.py）、逐步推进与快照（duel.py 的 DuelSession）、主机追踪器（tracker.py 的 DuelTracker）；constants.py 为生成文件
 │   ├── env/                 # 向量化环境：VecDuelEnv（C++ 线程池）、DuelEnv、run_games、paired_specs；driver.py 为槽位上整局对弈的对局驱动（规格队列、开局失败、槽位复用、决策批、放弃对局）；encoding.py 参考编码器；privileged.py 训练态对手真值与信念头目标；belief_prior.py 公开证据、meta 卡表与 HDT 式过滤（信念头的先验、输入特征与基线）；events.py 事件 token 流参考实现；encoded.py 为 C++ 步进的 EncodedVecEnv；observer.py 为 DecisionPoint 的观测（参考编码器 + 事件流，与 EncodedVecEnv 一致）
-│   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）、actor_critic（PolicyNet + 特权 Q / V critic）、belief（信念头、掩码损失、BeliefPolicy）、agent（检查点读写、PolicyAgent 用的 NetPolicy）
+│   ├── nets/                # 策略网络（PyTorch，train 可选依赖）：config、text（冻结文本表）、batch（观测拼批）、encoders、history（GTrXL / LSTM）、heads、policy（PolicyNet）、actor_critic（PolicyNet + 特权 Q / V critic）、belief（信念头、掩码损失、BeliefPolicy）、agent（检查点读写、PolicyAgent 用的 NetPolicy）、oracle_value（离线神谕价值网络 OracleValueNet）
 │   ├── eval/                # 评估：配对种子 Arena、对局矩阵与 Nash / alpha-rank、信念头校准指标与基线
 │   ├── solver/              # combo 求解器封装（combo_solver.py）、目标场面（targets.py）、线的重放验证与示范集格式（demo.py）、起手批量求解（batch.py）
 │   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）、rollout.py（EncodedVecEnv 上的 rollout 收集）、ppo.py（PPO 更新与可插拔策略目标）、selfplay.py（快照池 + keep-best、牌组池、配对发局）、trainer.py（训练循环、评估、续训、日志）、cli.py（训练配置的命令行：每个字段一个参数）、checkpoint.py、toy.py（玩具博弈 Nim）、bc.py（求解器示范的行为克隆预热与评估）、heuristic_demos.py（启发式 agent 第 2 回合起的决策 → BC 样本）
-├── tools/                   # 开发脚本：提交前检查（presubmit.sh：ruff 格式化 + lint）、PPO 自博弈训练（train_ppo.py）、combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）、任意牌组的阻断场面示范（solve_blocking.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、代理模型实验（surrogate_experiment：标注 + 留出集误差）、漏斗第一层评估与验收实验（funnel_eval.py、validate_funnel.py）、预算研究（funnel_budget.py）、压力测试、确定性扫描、YGOPRODECK 核对、MD 禁限表交叉核对（crosscheck_banlist.py）、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、行为克隆训练与评估（train_bc.py）、Greedy 示范录制（greedy_demos.py）、BC 对 Random 失败的根因诊断（diagnose_bc.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验、组牌进化的先行测量与评估器对照（deckevo_*.py：M1–M5、每接受一次改动的对局数与被接受改动的重验、析因评估与逐个筛的对照）、组牌进化的一轮（evolve_decks.py）、牌组数据集构建（build_deck_dataset.py：masterduelmeta 全部历史卡表 → out/deck_dataset/<版本>/）、掩码卡组模型的训练与评估（train_deck_model.py → out/deckmodel/）；tsan/ 为 ThreadSanitizer 检查
+├── tools/                   # 开发脚本：提交前检查（presubmit.sh：ruff 格式化 + lint）、PPO 自博弈训练（train_ppo.py）、combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）、任意牌组的阻断场面示范（solve_blocking.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、代理模型实验（surrogate_experiment：标注 + 留出集误差）、漏斗第一层评估与验收实验（funnel_eval.py、validate_funnel.py）、预算研究（funnel_budget.py）、压力测试、确定性扫描、YGOPRODECK 核对、MD 禁限表交叉核对（crosscheck_banlist.py）、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、行为克隆训练与评估（train_bc.py）、Greedy 示范录制（greedy_demos.py）、BC 对 Random 失败的根因诊断（diagnose_bc.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验、组牌进化的先行测量与评估器对照（deckevo_*.py：M1–M5、每接受一次改动的对局数与被接受改动的重验、析因评估与逐个筛的对照）、组牌进化的一轮（evolve_decks.py）、牌组数据集构建（build_deck_dataset.py：masterduelmeta 全部历史卡表 → out/deck_dataset/<版本>/）、掩码卡组模型的训练与评估（train_deck_model.py → out/deckmodel/）、离线神谕价值网络的数据收集 / 训练 / 分支动作差（vn_collect.py、vn_train.py、vn_branch.py → out/vn/）；tsan/ 为 ThreadSanitizer 检查
 ├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组及其求解目标（solver_targets.json），data/ 放测试数据（含代理引擎包、泛用卡池）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
@@ -247,6 +248,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── training.md          # 策略训练：优势估计与特权 critic 的公式、符号约定、rollout 数据布局；PPO 自博弈训练循环
 │   ├── benchmarks.md        # 基准结果（实测数字、commit、日期）
 │   ├── scaling.md           # 训练规模与训练信号：现状、先前项目、选项
+│   ├── oracle-value.md      # 离线神谕价值网络：数据、训练、与 PPO critic 的对比、动作差、接入 PPO 的设计
 │   ├── environments.md      # environments/<version>/ 目录规范
 │   ├── data.md              # 数据抓取、禁限表校对流程、环境快照统计
 │   ├── replays.md           # 回放格式、.yrpX 导出与 .yrp / .yrpX 读取

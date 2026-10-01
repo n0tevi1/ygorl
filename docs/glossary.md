@@ -84,6 +84,8 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | 标识符 | 中文 | 说明 |
 |--------|------|------|
 | BC / warm start | 行为克隆 / 热启动 | 用求解器与 Greedy 示范预训练，再接 PPO（bc.md） |
+| oracle value network / `OracleValueNet` | 离线神谕价值网络（VN） | 在自博弈对局上离线监督回归终局结果 z 的状态价值网络，可额外读双方接下来的抽牌（`my_next` / `op_next`）；只用于训练（oracle-value.md） |
+| potential-based shaping | 势函数奖励塑形 | 每步加 β·(c_t·Φ(s_{t+1}) − Φ(s_t))，Φ 取行动座位视角；γ = 1 时回报只差 −β·Φ(s_t)，不改最优策略（oracle-value.md） |
 | `target_kl` | 按 KL 提前停 | 一次更新内 minibatch 的 `approx_kl` 超过 1.5 × 目标即停（training.md） |
 | pinned opponent | 固定对手 | `--pin` 钉进快照池的固定策略，不被逐出、不入 `state_dict` |
 | lethal search / `lethal:<agent>` | 致死搜索 | 影子对局上推演本回合，找到赢下来的线就照走（T4e.1，evaluation.md） |
