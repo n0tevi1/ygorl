@@ -4,7 +4,7 @@ ygorl.build.coevolve; docs/tuning.md「共同进化循环」).
   .venv/bin/python tools/coevolve.py --env md-2026-09 --checkpoint CKPT --state DIR \\
       --deck therion=BASE.ydk ... [--cycles 3] [--updates 50] --deck-model MODEL.pt \\
       [--paired SRC[@CKPT] ...] [--warm-start PATH ...] [--learned-generator 8] [--rules 2] \\
-      [--value-model-weight 0.5] [--device cuda] [--envs 256] [--evolve-arg=--budget=20000 ...]
+      [--value-model-weight 0] [--device cuda] [--envs 256] [--evolve-arg=--budget=20000 ...]
 
 Each cycle: one round of ``tools/evolve_decks.py`` on the current version of every ``--deck`` (state ``DIR/evo``; its
 manifest ``DIR/evo/manifest.json`` is the training's deck pool), a training segment continuing ``--checkpoint`` to
@@ -160,8 +160,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--warm-start", action="append", default=[], help="card-value model warm start (evolve_decks)")
     ap.add_argument("--learned-generator", type=int, default=8)
     ap.add_argument("--rules", type=int, default=0)
-    ap.add_argument("--value-model-weight", type=float, default=0.5,
-                    help="the value model's weight in the round until it is calibrated")  # fmt: skip
+    ap.add_argument("--value-model-weight", type=float, default=0.0,
+                    help="the value model's weight until the calibration table has evidence (default 0: the table "
+                    "decides; a positive weight is an experiment: it ranked worse than the card-value model in "
+                    "cross-validation)")  # fmt: skip
     ap.add_argument("--no-initial-fit", action="store_true", help="no value model in the first round")
     ap.add_argument("--evolve-arg", action="append", default=[], help="extra evolve_decks.py argument (repeatable)")
     ap.add_argument("--fit-arg", action="append", default=[], help="extra fit_value_model.py argument (repeatable)")

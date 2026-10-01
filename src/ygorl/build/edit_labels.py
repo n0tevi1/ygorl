@@ -32,7 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ygorl.build.tuner import Edit, apply
-from ygorl.build.warmstart import BLANK, FUTILITY_Z, parse_edit, pooled_stderr
+from ygorl.build.warmstart import (BLANK, FUTILITY_Z, content_key, lineage_key, parse_edit, pooled_stderr,
+                                   round_states)  # fmt: skip
 from ygorl.cards.ydk import Deck, load_ydk, parse_ydk
 
 _UPDATE = re.compile(r"update_0*(\d+)\.pt$")
@@ -118,6 +119,7 @@ class PairedLabel:
     stderr: float
     checkpoint: CheckpointRef
     source: str = ""  # m1, m2, lineage, compare, factorial, revalidation
+    games: str = ""  # identity of the games measured (unique() keeps one label per identity)
 
     @property
     def child(self) -> Deck:
@@ -165,12 +167,18 @@ class _Reader:
     def deck(self, file: str) -> Deck:
         return load_ydk(self.artifacts / file)
 
-    def add(self, uid, parent, deck_type, edits, diff, stderr, ckpt, source) -> None:
+    def add(self, uid, parent, deck_type, edits, diff, stderr, ckpt, source, games: str | None = None) -> None:
+        """A label; its games' identity is ``games`` (a lineage entry with its round's seed and pairs) or else its
+        content (the parent's card counts, the edits, the checkpoint, the difference and standard error)."""
         edits = tuple(edits)
         if not edits or not _ok(diff, stderr) or not _legal_edits(parent, edits):
             self.skipped += 1
             return
-        self.out.append(PairedLabel(uid, parent, str(deck_type), edits, float(diff), float(stderr), ckpt, source))
+        counts = sorted(parent.counts().items())
+        key = games or content_key(counts, [e.into for e in edits], [e.out for e in edits],
+                                   f"{ckpt.run}@{ckpt.update}", diff, stderr)  # fmt: skip
+        self.out.append(PairedLabel(uid, parent, str(deck_type), edits, float(diff), float(stderr), ckpt, source,
+                                    key))  # fmt: skip
 
     def ckpt(self, data: Mapping) -> CheckpointRef:
         if self.checkpoint is not None:
@@ -285,6 +293,7 @@ def _lineage_parent(state: Path | None, rec: Mapping, r: _Reader) -> Deck | None
 
 
 def _lineage(r: _Reader, records: Sequence[Mapping], state: Path | None, name: str) -> None:
+    rounds = round_states(state) if state is not None else {}
     designs: set[str] = set()
     cache: dict[tuple, Deck | None] = {}
     for rec in records:
@@ -301,7 +310,7 @@ def _lineage(r: _Reader, records: Sequence[Mapping], state: Path | None, name: s
         edits = [Edit(e["out"], e["into"], e["section"]) for e in rec["edits"]]
         for m in rec.get("learned", []):
             r.add(f"lineage:{name}:{rec['child']}/{m['source']}", parent, t, edits, m.get("diff"), m.get("stderr"), ck,
-                  "lineage")  # fmt: skip
+                  "lineage", lineage_key(rec, m, rounds))  # fmt: skip
         fac = rec.get("factorial")
         if fac and fac["id"] not in designs:
             designs.add(fac["id"])
@@ -309,7 +318,8 @@ def _lineage(r: _Reader, records: Sequence[Mapping], state: Path | None, name: s
                 if len(e["term"]) == 1:
                     x = fac["edits"][e["term"][0]]
                     r.add(f"lineage:{name}:{fac['id']}/{x['letter']}", parent, t,
-                          [Edit(x["out"], x["into"], x["section"])], e["effect"], e["stderr"], ck, "lineage")  # fmt: skip
+                          [Edit(x["out"], x["into"], x["section"])], e["effect"], e["stderr"], ck, "lineage",
+                          lineage_key(rec, {"source": "factorial", "letter": x["letter"]}, rounds))  # fmt: skip
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -356,16 +366,15 @@ def paired_labels(path: str | Path, artifacts: str | Path, *,
 
 
 def unique(labels: Iterable[PairedLabel]) -> list[PairedLabel]:
-    """The first label of each id (the same file given twice counts once) and of each measurement: the same edit of
-    the same parent under the same policy with the same difference and standard error is one set of games read
-    twice (rounds and comparisons rerun with the same seed replay the same games: #145 and #150 share their
-    cold-start children's first batches)."""
+    """The first label of each id (the same file given twice counts once) and of each set of games
+    (``PairedLabel.games``): rounds and comparisons rerun with the same seed replay the same games (#145 and #150
+    share their cold-start children's first batches), and those count once."""
     seen: set = set()
     out = []
     for lab in labels:
-        same = (lab.edit_key, lab.checkpoint, round(lab.diff, 9), round(lab.stderr, 9))
-        if lab.id not in seen and same not in seen:
-            seen.update((lab.id, same))
+        games = ("games", lab.games) if lab.games else None  # "": unknown, the id alone decides
+        if lab.id not in seen and (games is None or games not in seen):
+            seen.update((lab.id, games))
             out.append(lab)
     return out
 

@@ -425,15 +425,23 @@ class Evolution:
 
     def warm_start(self, items: Sequence[tuple[str, Observation]]) -> int:
         """Add earlier paired observations (``ygorl.build.warmstart.load``) to the card-value model, each id once
-        (a rerun or a resumed round adds nothing twice); saves the signal library. Returns how many were new."""
-        new = 0
+        (a rerun or a resumed round adds nothing twice) and each set of games once (``Observation.games``: two
+        sources that replayed the same games, e.g. rounds rerun with the same seed, count once); saves the signal
+        library. Returns how many were new."""
+        new, marked = 0, 0
         for uid, obs in items:
-            if uid in self.signals_applied:
+            games = f"games:{obs.games}" if obs.games else None
+            if uid in self.signals_applied or (games is not None and games in self.signals_applied):
+                if games is not None and games not in self.signals_applied:  # applied before games were keyed
+                    self.signals_applied.add(games)
+                    marked += 1
                 continue
             self.model.add(obs)
             self.signals_applied.add(uid)
+            if games is not None:
+                self.signals_applied.add(games)
             new += 1
-        if new:
+        if new or marked:
             self._save()
         return new
 

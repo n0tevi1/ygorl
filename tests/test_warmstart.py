@@ -97,3 +97,44 @@ def test_the_tuner_comparison_gives_fresh_validations_only(tmp_path):
     assert (fin.into, fin.out, fin.diff, fin.stderr) == ((2,), (1,), 0.05, 0.015)
     with pytest.raises(ValueError):
         load(write(tmp_path, "x.json", {"what": 1}))
+
+
+def _rerun_states(tmp_path):
+    """Two evolution states that played the same games (one round, same seed, as #145 and #150 did) and a third
+    with the same lineage but another seed in its round.json: same numbers, different games."""
+    import shutil
+
+    from tests.test_evolve import run
+
+    run(tmp_path / "r145")
+    run(tmp_path / "r150")
+    shutil.copytree(tmp_path / "r145", tmp_path / "other")
+    rj = tmp_path / "other" / "rounds" / "0001" / "round.json"
+    data = json.loads(rj.read_text())
+    data["config"]["seed"] += 1
+    rj.write_text(json.dumps(data))
+    return [tmp_path / n for n in ("r145", "r150", "other")]
+
+
+def test_states_that_replayed_the_same_games_warm_start_once(tmp_path):
+    from ygorl.build.evolve import Evolution
+    from tests.test_evolve import Env
+
+    r145, r150, other = _rerun_states(tmp_path)
+    a, b, c = load(r145), load(r150), load(other)
+    assert len(a) == len(b) == len(c) > 0
+    assert [o.games for _, o in a] == [o.games for _, o in b]  # same games, different ids
+    assert {u for u, _ in a}.isdisjoint(u for u, _ in b)
+    assert not {o.games for _, o in a} & {o.games for _, o in c}  # another seed: other games, though equal numbers
+    ev = Evolution(tmp_path / "warm", Env())
+    assert ev.warm_start(a) == len(a) and ev.warm_start(b) == 0 and ev.warm_start(c) == len(c)
+    assert len(Evolution(tmp_path / "warm", Env()).model.observations) == 2 * len(a)
+
+
+def test_files_without_seeds_are_keyed_by_content(tmp_path):
+    a = load(write(tmp_path, "eval_compare.json", COMPARE_OLD))
+    b = load(write(tmp_path, "eval_compare_r145.json", COMPARE_OLD))
+    assert [o.games for _, o in a] == [o.games for _, o in b] and a[0][0] != b[0][0]
+    changed = json.loads(json.dumps(COMPARE_OLD))
+    changed["parents"][0]["evo"]["diff"] = 0.01
+    assert load(write(tmp_path, "c.json", changed))[0][1].games != a[0][1].games

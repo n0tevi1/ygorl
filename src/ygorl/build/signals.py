@@ -45,6 +45,7 @@ class Observation:
     out: tuple[int, ...]
     diff: float
     stderr: float
+    games: str = ""  # identity of the games measured (ygorl.build.warmstart.games_key); "" = unknown
 
 
 class CardValueModel:

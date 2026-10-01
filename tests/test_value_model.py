@@ -227,10 +227,16 @@ def test_paired_labels_read_lineage_and_factorial_files_and_drop_replayed_measur
     assert len(labels) == learned and skipped == 0
     assert all(lab.parent.main == BASE.main and lab.checkpoint.update == 400 for lab in labels)
     assert all(lab.source == "lineage" for lab in labels)
-    # a second state replaying the same games (same seed) gives the same measurements: counted once
+    # a second state replaying the same games (same seed, as #145 and #150) counts once; equal numbers from another
+    # seed (its round.json) are other games and count again
     run(tmp_path / "again")
     again, _ = paired_labels(tmp_path / "again", tmp_path)
-    assert len(unique(labels + again)) == len(labels)
+    assert [x.games for x in again] == [x.games for x in labels] and len(unique(labels + again)) == len(labels)
+    rj = tmp_path / "again" / "rounds" / "0001" / "round.json"
+    rj.write_text(json.dumps({**json.loads(rj.read_text()), "config": {**json.loads(rj.read_text())["config"],
+                                                                       "seed": 8}}))  # fmt: skip
+    other, _ = paired_labels(tmp_path / "again", tmp_path)
+    assert len(unique(labels + other)) == 2 * len(labels)
     # the factorial measurement: main effects and one-at-a-time differences of the same edits
     (tmp_path / "decks").mkdir()
     (tmp_path / "decks" / "base.ydk").write_text(BASE.to_ydk())
