@@ -107,9 +107,10 @@ def main():
     used2 = [x for x in games if x["prompts"].get("0:2", [0, 0, 0])[1] > 0]
     act2 = [x for x in used2 if x["prompts"]["0:2"][2] > 0]
     pas2 = [x for x in used2 if x["prompts"]["0:2"][2] == 0]
-    wr = lambda xs: (
-        np.mean([0.5 if x["winner"] is None else float(x["winner"] == 0) for x in xs]) if xs else float("nan")
-    )  # noqa: E731
+
+    def wr(xs):
+        return np.mean([0.5 if x["winner"] is None else float(x["winner"] == 0) for x in xs]) if xs else float("nan")
+
     print(f"first player had an activation available on turn 2 in {len(used2)}/{len(games)} games; "
           f"activated at least once in {len(act2)} (win {wr(act2):.3f}), never in {len(pas2)} (win {wr(pas2):.3f}); "
           f"first-player win overall {wr(games):.3f}")  # fmt: skip
