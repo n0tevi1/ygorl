@@ -3,14 +3,18 @@
 Plays a policy checkpoint on random corpus deck pairings, both first players:
 
 - ``--vs greedy`` (arena path, CPU workers): the policy against the one-ply Greedy baseline;
-- ``--vs self`` (batched path): the policy against itself, to see how much the deck matchup alone decides.
+- ``--vs self`` (batched path): the policy against itself, to see how much the deck matchup alone decides;
+  ``by first`` is then the first player's win rate. With ``--second CKPT`` the first player's decisions use
+  CHECKPOINT and the second player's CKPT (cross-play, e.g. a seat-split run's first-player net against a control's
+  second player: ``ygorl.nets.seat_split``); a seat-split checkpoint plays each seat with its own net anyway.
 
 Writes one JSON line per game (decks, who went first, winner, end reason, turns, decisions, LP) and prints loss
 breakdowns: by first / second, by the turn the game ended, by end reason, by the policy's deck and the opponent's
 deck (worst decks with enough games), by the final LP gap, and for ``--vs self`` the share of outcome variance the
 deck pairing explains.
 
-Usage: tools/diagnose_losses.py CHECKPOINT --vs greedy|self [--pairings N] [--out games.jsonl] [--workers W]
+Usage: tools/diagnose_losses.py CHECKPOINT --vs greedy|self [--second CKPT] [--pairings N] [--out games.jsonl]
+       [--workers W]
 """
 
 from __future__ import annotations
@@ -51,7 +55,7 @@ def play_greedy(ckpt, decks, pairs, workers, seed):
     return out
 
 
-def play_self(ckpt, decks, pairs, seed, device):
+def play_self(ckpt, decks, pairs, seed, device, second=None):
     import torch
 
     from ygorl.env.encoded import EncodedVecEnv
@@ -59,7 +63,15 @@ def play_self(ckpt, decks, pairs, seed, device):
     from ygorl.train.checkpoint import load_actor
 
     pol = load_actor(ckpt)
-    net = pol.net.to(device)
+    net = pol.net
+    if second is not None:
+        from ygorl.nets.seat_split import SeatSplit
+
+        other = load_actor(second)
+        if why := pol.signature.mismatches(other.signature):
+            raise SystemExit(f"{second}: cannot play on {ckpt}'s observations: {'; '.join(why)}")
+        net = SeatSplit(net, other.net)  # first player's decisions: ckpt, second player's: second
+    net = net.to(device)
     config = DuelConfig(max_decisions=4000)
     specs, meta = [], []
     for k, (a, b) in enumerate(pairs):
@@ -142,12 +154,20 @@ def main():
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--device", default="cuda")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument(
+        "--second",
+        default=None,
+        metavar="CKPT",
+        help="--vs self: the second player's decisions use this checkpoint (the first player's CHECKPOINT)",
+    )
     p.add_argument("--out", default=None)
     args = p.parse_args()
+    if args.second is not None and args.vs != "self":
+        p.error("--second needs --vs self")
     decks = [load_ydk(f) for f in sorted(Path(args.decks).glob("*.ydk"))]
     pairs = pairings(decks, args.pairings, args.seed)
     games = (play_greedy(args.checkpoint, decks, pairs, args.workers, args.seed) if args.vs == "greedy"
-             else play_self(args.checkpoint, decks, pairs, args.seed, args.device))  # fmt: skip
+             else play_self(args.checkpoint, decks, pairs, args.seed, args.device, args.second))  # fmt: skip
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text("".join(json.dumps(x) + "\n" for x in games))

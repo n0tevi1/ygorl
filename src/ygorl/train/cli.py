@@ -123,6 +123,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            "critic is fresh (0 = off)", metavar="N"),
         _f("--critic-warmup-ev", "critic_warmup_ev", "Q explained variance that ends the critic warm-up",
            metavar="EV"),
+        _f("--seat-split", "seat_split", "two actor-critics, one for the first player's decisions and one for the "
+           "second player's, each trained on its own rows (both from --init-from)"),
         _f("--turn-discount", "turn_discount", "speed pressure: a decided game's terminal reward is +/- G ** turns "
            "(1.0 = off; a diagnostic arm, design T6 vs C3)", metavar="G"),
     )),

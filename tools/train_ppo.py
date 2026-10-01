@@ -84,7 +84,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(f"run directory: {trainer.run_dir}")
     print(json.dumps(dataclasses.asdict(trainer.net_config)))
-    print(trainer.model.actor.parameter_report())
+    model = trainer.model.nets[0] if trainer.cfg.seat_split else trainer.model
+    print(
+        model.actor.parameter_report() + ("\n(x2: seat-split, one network per seat)" if trainer.cfg.seat_split else "")
+    )
     from ygorl.train.rollout import RolloutStalled
 
     try:
