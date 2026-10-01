@@ -14,6 +14,8 @@ tools/solve_openings.py         批量驱动：多进程、每手时间预算、
 tools/verify_demos.py           复验示范集文件：每条线从零重放（不需要求解器）
 ygorl.solver.blocking           阻断点（脚本事实）、终场打分、任意牌组的自动目标阶梯（见「阻断场面」）
 tools/solve_blocking.py         任意牌组的阻断场面示范：多进程、自动目标、按终场阻断点选线
+ygorl.solver.survival           真实对手 + 当前策略打完对手第 2 回合的终场评估器与选线（见「存活场面」）
+tools/solve_survival.py         按第 2 回合后的存活选线的示范：多候选（阻断阶梯 + boss + 多条线）、配对样本、可续跑、校准报告
 ygorl.engine.replay             读取 .yrp / .yrpX（含 LZMA）、Replay.from_yrp、显式核心种子（seed_words）
 ```
 
@@ -327,6 +329,105 @@ PYTHONFAULTHANDLER=1 nice -n 19 uv run --no-sync python tools/train_ppo.py out/c
   对手里有展开件的起手这是保守的；训练时可按 `solver.blocking.attempts[chosen].label == "base"` 过滤或降权。
 - 手坑以 `@hand` 留住：如果它同时是展开需要的消耗（丢弃、素材），这一件就解不出（没有回退为不留的尝试）。
 - 试点不绑定环境（与 bb_lam05 一致）；绑定环境的运行加 `--env`，示范、先验与 PPO 必须同一环境。
+
+## 存活场面：按对手第 2 回合打分选线（`ygorl.solver.survival`）
+
+动机：阻断场面的教师（上节）把策略锚在「多铺阻断点」上（`out/why/teacher_kl2`：BC 先验 + `--kl-prior-turns 1`，阻断场面 44% 对对照 15%），
+先攻胜率却没涨（0.422 对 0.443）。对局阅读（`tools/game_trace.py`）的结论：阻断点数与先攻胜率无关；能预测胜负的是第 1 回合的怪兽数、
+**挺过对手第 2 回合的怪兽数**、第 3 回合的攻击；斩杀全是战斗伤害；被锚住的策略拿怪兽换盖卡和手坑、手牌打空。
+所以不再数阻断点，而是**真的打一遍对手的回合**再打分。
+
+### 评估器（`play_line` / `survival_score`）
+
+- **在真实对局里重放示范线**：用记录自己的起点（加载顺序 = 起手在顶、核心种子字、玩家规则），清掉 `DUEL_PSEUDO_SHUFFLE`（与 `build.first_turn.replay_line` 相同），
+  对手换成**真实卡组**（语料随机一套，主卡组按 `order_seed` 洗）。线的每一步在伪洗牌对局里重放、按「做了什么」（种类、卡、区域）匹配到真实对局的候选
+  （`first_turn.match_action`）；第 1 回合里对手的每个决策由策略做（会发手坑）。某一步匹配不到（手坑打断、真实洗牌后检索 / 硬币不同）就记为 `deviated`，
+  先攻剩下的第 1 回合交给策略打完。
+- **策略打第 2 回合**：同一个检查点（默认 `out/why/bb_lam05/checkpoints/update_000400.pt`）双方都用，一个 `CheckpointAgent` 与对局 lockstep。
+  第 3 回合开始时读场面（`board_features`）：先攻的怪兽数、存活数（第 1 回合末的怪兽仍在场的张数）、手牌、LP、严格阻断点；对手场上卡数。
+- **配对样本**：每手 N 个对手样本（卡组、洗牌、策略种子由手的种子决定），同一手的所有候选线打同一组样本；前 `--to-end` 个样本打到终局，用于校准。
+- **打分**：`survival_score` = 怪兽 + 0.5×手牌 + 6×LP/8000 + 0.5×严格阻断点 − 0.6×对手场上卡 + 2（活着）；第 2 回合被斩杀只剩对手场面项。
+  权重来自试点 12,989 局的 logistic 回归（每单位系数：怪兽 0.33、存活 0.32、LP 0.26/千、手牌 0.15、严格阻断点 0.15、对手场面 −0.21；按怪兽 = 1 缩放取整；
+  存活与怪兽高度相关，只留怪兽）。试点自己用的是 `PILOT_WEIGHTS`（LP 1、对手场面 −0.25、无阻断点项）。
+
+### 候选线与选线（`solve_survival` / `tools/solve_survival.py`）
+
+每手的求解尝试（每次都是完整求解 + 新鲜重放验证，`--lines K` 每次保留 K 条线）：阻断阶梯（底座 + 前 `--pieces` 个件、两件组合、无件可解时只求底座，
+按**严格**计数定底座与件），外加 `--bosses` 个**纯 boss** 目标（与主卡组同系列 / 互相点名的额外卡组怪兽，按攻击力，不带底座）。所有互不相同的已验证线都是候选；
+另用同一组样本跑一次「策略自己打第 1 回合」作参照。记录只保留平均分最高的一条线（同分看严格阻断点），格式与示范集相同（`train_bc.py` 直接读）；
+`solver.survival` 记每个候选（尝试、目标、终场、旧 / 严格阻断点、评估均值）、选中的、**旧工具会选的**（各阻断尝试的第一条线里阻断点最多的）、策略参照；
+每个样本一行写进 `<out>.samples.jsonl`。`--report OUT.jsonl [--weights JSON]` 汇总一个输出（可换权重重算校准与留出选线）。
+
+### 严格阻断点（`board_interruptions(strict=True)`）
+
+`EffectFact` 另记 `count_code`（`SetCountLimit(1, id)` 的卡名一回合一次）、`acts`（操作链里有没有无效 / 破坏 / 除外 / 送去 / 回手 / 回卡组 / 控制权 / 表示形式 /
+`EFFECT_DISABLE` 之类，成本不算）、`requires`（条件或对象函数里「自己怪兽区」的匹配调用的过滤器，以及「对象是自己的 … 怪兽」型条件里 `IsExists` 的过滤器）。
+严格计数：去掉 `acts` 为假（玩家锁：Droll & Lock Bird）或只抽卡（Mulcharmy Fuwalos / Purulia、Future Silence）的效果；有 `requires` 的效果只在己方场上有满足过滤器的表侧怪兽时计
+（Xyz Reflect 要超量怪兽、Dragonmaid Tidying 要龙族）；同一 `count_code` 只计一次（两张 Ash 计 1）。1,484 张有旧阻断点的卡里 39 张丢掉某处、263 张带条件。
+旧计数仍是默认（`strict=False`），`solve_blocking` 不变。
+
+### 试点（2026-10-01）
+
+与阻断试点同样的 20 套 × 8 手（`--sample 20 --sample-seed 0`），`--solve-ms 10000 --lines 3 --pieces 3 --bosses 2 --samples 8 --to-end 8`，12 进程，墙钟 20 分钟
+（每手求解 30 秒 + 评估 57 秒）；输出 `out/solver_teacher/survival/pilot*.json(l)`。
+
+| 指标 | 新选择 | 旧选择（阻断点最多） |
+|------|------|------|
+| 解出 | 156 / 160（boss 目标补上了 danger-dark-world-2 这类无阻断件的牌组） | 147 / 160 |
+| 与旧选择不同 | 112 / 147 | — |
+| 第 1 回合终场：怪兽 / 手牌 / 盖放魔陷 | 1.56 / 2.27 / 0.53 | 1.49 / 2.05 / 0.67 |
+| 旧 / 严格阻断点 | 1.55 / 1.36 | 2.27 / 2.03 |
+| 第 3 回合开始：怪兽 / 存活 / 手牌 / LP | 1.11 / 0.86 / 3.15 / 6,816 | 0.78 / 0.63 / 2.88 / 6,528 |
+
+选中的标签：件 63、boss 56、底座 25、组合 12。候选平均 9.4 条 / 手；35% 的样本线没走完（大多在真实洗牌后匹配不到）。
+
+**预测力**（12,989 局打到终局，先攻胜率 0.47）：单局分数对胜负的 AUC 0.70（Pearson 0.35）；单项 AUC：第 2 回合后怪兽 0.67、存活 0.67、LP 0.67、
+严格阻断点 0.57、手牌 0.51，第 1 回合末的阻断点 0.53、怪兽 0.57；logistic 全部特征 AUC 0.73。按线平均：分数与胜率 Pearson 0.32（1,624 条线）；
+同一手里分最高的线比分最低的胜率高 0.14。
+
+**留出选线**（前 4 个样本选线，后 4 个样本上的胜率；147 手配对）：
+
+| 选法 | 胜率 |
+|------|------|
+| 试点权重选的线 | 0.463（比旧选择 +0.009，95% CI −0.03…+0.05） |
+| 拟合权重（现默认）选的线 | 0.473（+0.020，CI −0.01…+0.06；权重在同一批局上拟合，略乐观） |
+| 旧选择（阻断点最多） | 0.449 |
+| 随机候选 | 0.444 |
+| 策略自己的第 1 回合 | 0.418 |
+
+旧选择几乎等于随机候选——阻断点数确实不预测胜负；按存活选能多赢一点，但 4 个样本选线噪声大，差距在误差内。
+
+### 全量与训练
+
+```bash
+# 1. 示范（CPU，约 837×8 手 × 87 秒 / 12 进程 ≈ 14 小时；可续跑；--to-end 2 留一点校准局）
+YGORL_COMBO_SOLVER=… CUDA_VISIBLE_DEVICES= nice -n 19 uv run --no-sync python tools/solve_survival.py out/corpus/train \
+  --checkpoint out/why/bb_lam05/checkpoints/update_000400.pt --hands 8 --solve-ms 10000 --lines 3 --samples 8 --to-end 2 \
+  --workers 12 --out out/solver_teacher/survival/train.jsonl --summary out/solver_teacher/survival/train_summary.json
+CUDA_VISIBLE_DEVICES= nice -n 19 uv run --no-sync python tools/solve_survival.py out/corpus/train --sample 100 --first-hand 8 --hands 2 \
+  --checkpoint out/why/bb_lam05/checkpoints/update_000400.pt --samples 8 --workers 12 --out out/solver_teacher/survival/heldout.jsonl
+# 2. 先验：从当前 actor 微调（与 teacher_kl2 的先验同样的参数）
+CUDA_VISIBLE_DEVICES= nice -n 19 uv run --no-sync python tools/train_bc.py --train out/solver_teacher/survival/train.jsonl \
+  --heldout out/solver_teacher/survival/heldout.jsonl --init-from out/why/bb_lam05/checkpoints/update_000400.pt \
+  --epochs 20 --lr 3e-4 --threads 8 --openings heldout --out out/solver_teacher/survival/bc_prior
+# 3. PPO（GPU）：与 teacher_kl2 相同的参数，只换先验
+PYTHONFAULTHANDLER=1 nice -n 19 uv run --no-sync python tools/train_ppo.py out/corpus/train/*.ydk --d-model 64 --layers 1 \
+  --event-length 64 --device cuda --env-threads 4 --pairings all --eval-pairs 1 --eval-pairings 100 --eval-opponents greedy \
+  --keep-best-by greedy --eval-workers 6 --seed 0 --envs 128 --steps 128 --minibatch 2048 --eval-every 50 --lam 0.5 \
+  --init-from out/why/bb_lam05/checkpoints/update_000400.pt --critic-warmup 50 \
+  --bc-prior out/solver_teacher/survival/bc_prior/policy.pt --kl-prior 2.0 --kl-prior-turns 1 \
+  --updates 400 --out out/why/survival_kl2
+```
+
+看什么：`first_player_win_rate`（teacher_kl2 0.422、对照 0.443）、`tools/game_trace.py` 的第 1 回合怪兽数与第 2 回合存活数、对 Greedy 的评估。
+
+### 限制（存活场面）
+
+- 评估器是**当前策略**打的第 2 回合：策略的弱点（不会解场、不会斩杀）会被当成场面的强度；策略变强后要用新检查点重跑。
+- 示范线是伪洗牌下的线，真实对局里 35% 走不完（洗牌后检索顺序、硬币 / 骰子用的核心随机数随洗牌而变、对手手坑）；BC 学的仍是伪洗牌线本身。
+- 8 个样本 / 线、胜负噪声大：留出选线的提升在误差内；全量训练集的选择本身带噪声。
+- 严格计数的条件只认简单形式（自己怪兽区的匹配调用、「对象是自己的…」）；更复杂的条件、软一回合一次、以及效果之间的共享次数仍不看。
+- 只在一手的候选线之间选；求解器到达目标即停，线不会为「多留手牌」而优化。
 
 ## 限制
 

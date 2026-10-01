@@ -13,6 +13,11 @@ that ends on a **blocking** board -- cards that can stop the opponent's turn -- 
   board has the most interruptions.
 
 No card is named in this module: everything comes from the scripts' constants.
+
+``strict=True`` (the survival pipeline, ``ygorl.solver.survival``) counts more carefully: effects that only draw or
+lock (no negation, no card moved -- ``EffectFact.acts``) are dropped, an effect whose condition or target needs a
+monster of its controller (``EffectFact.requires``: "if you control a Dragon", "when ... targets an Xyz monster you
+control") counts only when the board has one, and a hard once-per-turn effect counts once per card name.
 """
 
 from __future__ import annotations
@@ -37,6 +42,8 @@ DISRUPT_CATEGORIES = ("CATEGORY_DESTROY", "CATEGORY_REMOVE", "CATEGORY_TODECK", 
 class Interruption:
     where: str  # WHERE
     negate: bool  # a negation (NEGATE_CATEGORIES), else a disruption of the opponent's cards
+    count_code: int = 0  # hard once-per-turn code (strict only): one use per name
+    requires: tuple = ()  # filters of monsters its controller must control (strict only)
 
 
 @cache
@@ -69,23 +76,27 @@ def script_facts(password: int) -> ScriptFacts | None:
     return analyze_script(path.read_text(encoding="utf-8", errors="replace"), password, _K())
 
 
-def interruptions_from_facts(facts: ScriptFacts, card_type: int) -> tuple[Interruption, ...]:
+def interruptions_from_facts(facts: ScriptFacts, card_type: int, strict: bool = False) -> tuple[Interruption, ...]:
     """Where a card with these script facts and this ``TYPE_*`` mask interrupts the opponent's turn.
 
     An effect counts when it can be used during the opponent's turn -- a quick effect (``EFFECT_TYPE_QUICK_O`` /
     ``QUICK_F``), or the activation of a trap or a quick-play spell once set -- and it negates, or removes /
     neutralises cards and can take the opponent's (:data:`DISRUPT_CATEGORIES` with ``EffectFact.opponent``).
-    At most one interruption per place (``where``); a negation wins over a disruption.
+    At most one interruption per place (``where``); a negation wins over a disruption. With ``strict``, effects
+    that do not act on cards (``EffectFact.acts``) or draw without negating are skipped, and the interruption
+    carries the effect's once-per-turn code and requirements (an effect without requirements wins a tie).
     """
     K = _K()
     quick = K["EFFECT_TYPE_QUICK_O"] | K["EFFECT_TYPE_QUICK_F"]
     negate_mask, disrupt_mask = _mask(NEGATE_CATEGORIES), _mask(DISRUPT_CATEGORIES)
     settable = bool(card_type & K["TYPE_TRAP"]) or bool(card_type & K["TYPE_SPELL"] and card_type & K["TYPE_QUICKPLAY"])
     monster = bool(card_type & K["TYPE_MONSTER"])
-    found: dict[str, bool] = {}
+    found: dict[str, Interruption] = {}
     for eff in facts.effect_facts:
         negate = bool(eff.categories & negate_mask)
         if not negate and not (eff.categories & disrupt_mask and eff.opponent):
+            continue
+        if strict and (not eff.acts or (eff.categories & K["CATEGORY_DRAW"] and not negate)):
             continue
         places: list[str] = []
         if eff.type & quick:
@@ -99,28 +110,80 @@ def interruptions_from_facts(facts: ScriptFacts, card_type: int) -> tuple[Interr
         elif eff.type & K["EFFECT_TYPE_ACTIVATE"] and settable:
             places.append("set")
         for w in places:
-            found[w] = found.get(w, False) or negate
-    return tuple(Interruption(w, found[w]) for w in WHERE if w in found)
+            new = Interruption(w, negate, eff.count_code, eff.requires) if strict else Interruption(w, negate)
+            old = found.get(w)
+            if old is None or (new.negate, not new.requires) > (old.negate, not old.requires):
+                found[w] = new
+    return tuple(found[w] for w in WHERE if w in found)
 
 
 @cache
-def _card_interruptions(password: int, card_type: int) -> tuple[Interruption, ...]:
+def _card_interruptions(password: int, card_type: int, strict: bool = False) -> tuple[Interruption, ...]:
     facts = script_facts(password)
-    return interruptions_from_facts(facts, card_type) if facts is not None else ()
+    return interruptions_from_facts(facts, card_type, strict) if facts is not None else ()
 
 
-def card_interruptions(password: int, cards) -> tuple[Interruption, ...]:
+def card_interruptions(password: int, cards, strict: bool = False) -> tuple[Interruption, ...]:
     """:func:`interruptions_from_facts` of a card (alternate artworks read the original's script)."""
     code = cards.canonical(password)
     card = cards.get(code)
-    return _card_interruptions(code, card.type) if card is not None else ()
+    return _card_interruptions(code, card.type, strict) if card is not None else ()
 
 
-def _at(password: int, where: str, cards) -> Interruption | None:
-    for i in card_interruptions(password, cards):
+def _at(password: int, where: str, cards, strict: bool = False) -> Interruption | None:
+    for i in card_interruptions(password, cards, strict):
         if i.where == where:
             return i
     return None
+
+
+def card_matches(flt, card) -> bool | None:
+    """Whether ``card`` (a :class:`~ygorl.cards.cdb.Card`) passes a script filter; None when it cannot be told."""
+    from ygorl.build.filters import And, Not, Or, Pred, _compare, setcode_matches
+
+    if isinstance(flt, Pred):
+        k, a = flt.kind, flt.args
+        if k == "any":
+            return True
+        if k == "none":
+            return False
+        if k == "setcard":
+            return any(setcode_matches(sc, q) for q in a for sc in card.setcodes if sc)
+        if k == "code":
+            return card.password in a or (card.alias in a if card.alias else False)
+        if k == "type_any":
+            return bool(card.type & a[0])
+        if k == "type_all":
+            return card.type & a[0] == a[0]
+        if k == "type_eq":
+            return card.type == a[0]
+        if k == "race":
+            return bool(card.race & a[0])
+        if k == "attribute":
+            return bool(card.attribute & a[0])
+        if k in ("level", "rank", "link"):
+            kind = "link" if card.is_link else "rank" if card.is_xyz else "level"
+            return kind == k and _compare(a)(card.level)
+        if k == "attack":
+            return _compare(a)(card.attack)
+        if k == "defense":
+            return not card.is_link and _compare(a)(card.defense)
+        return None
+    if isinstance(flt, Not):
+        v = card_matches(flt.item, card)
+        return None if v is None else not v
+    vals = [card_matches(f, card) for f in flt.items]
+    if isinstance(flt, And):
+        return False if False in vals else (None if None in vals else True)
+    if isinstance(flt, Or):
+        return True if True in vals else (None if None in vals else False)
+    return None
+
+
+def requirements_met(requires: tuple, monsters: Sequence[int], cards) -> bool:
+    """Every filter of ``requires`` is passed by one of ``monsters`` (face-up monsters' passwords); unknown passes."""
+    have = [cards[cards.canonical(c)] for c in monsters if cards.canonical(c) in cards]
+    return all(any(card_matches(f, c) is not False for c in have) for f in requires)
 
 
 @dataclass
@@ -139,20 +202,31 @@ class BoardScore:
                 "pieces": [[c, w, n] for c, w, n in self.pieces]}  # fmt: skip
 
 
-def board_interruptions(board: Mapping, cards, player: int = 0) -> BoardScore:
+def board_interruptions(board: Mapping, cards, player: int = 0, strict: bool = False) -> BoardScore:
     """Score ``board`` (a ``targets.board_summary`` dict) for ``player``.
 
     Face-up monsters and face-up spells / traps count their ``field`` interruptions, set spells / traps their
     ``set`` ones (a trap or quick-play spell whose activation interrupts), cards in hand their ``hand`` ones
     (hand traps kept), cards in the graveyard their ``grave`` ones. Face-down monsters and materials do not count.
+    With ``strict`` (see the module docstring): requirements are checked against the face-up monsters of
+    ``player`` and a hard once-per-turn effect counts once per code.
     """
     from ygorl.engine import constants as C
 
     side = board["players"][player]
     score = BoardScore()
+    faceup = [c["code"] for c in side.get("mzone", []) if c["position"] & C.POS_FACEUP]
+    used: set[int] = set()
 
     def add(code: int, where: str) -> None:
-        hit = _at(code, where, cards)
+        hit = _at(code, where, cards, strict)
+        if hit is not None and strict:
+            if hit.requires and not requirements_met(hit.requires, faceup, cards):
+                return
+            if hit.count_code:
+                if hit.count_code in used:
+                    return
+                used.add(hit.count_code)
         if hit is not None:
             score.interruptions += 1
             score.negates += hit.negate
@@ -195,7 +269,7 @@ def _names(code: int) -> set[int]:
     return set() if facts is None else {*facts.listed_names, *facts.material_codes}
 
 
-def deck_pieces(main: Sequence[int], extra: Sequence[int], cards) -> list[Piece]:
+def deck_pieces(main: Sequence[int], extra: Sequence[int], cards, strict: bool = False) -> list[Piece]:
     """The deck's field interrupters: monsters whose quick effect interrupts from the monster zone, best first.
 
     Order: *engine* pieces first -- the piece shares an archetype (``setcodes``) with a main deck card, or its
@@ -211,25 +285,26 @@ def deck_pieces(main: Sequence[int], extra: Sequence[int], cards) -> list[Piece]
         card = cards.get(code)
         if card is None or not card.is_monster:
             continue
-        hit = _at(code, "field", cards)
-        if hit is None or _at(code, "hand", cards) is not None:
+        hit = _at(code, "field", cards, strict)
+        if hit is None or _at(code, "hand", cards, strict) is not None:
             continue  # hand traps are kept in hand (the plan's base), not summoned
         engine = bool(set(card.setcodes) & main_sets) or code in main_names or bool(_names(code) & main_codes)
         out[code] = Piece(code, hit.negate, code in extra_codes, engine, str(code))
     return sorted(out.values(), key=Piece.rank)
 
 
-def blocking_plan(main: Sequence[int], extra: Sequence[int], hand: Sequence[int], cards) -> BlockingPlan:
+def blocking_plan(main: Sequence[int], extra: Sequence[int], hand: Sequence[int], cards,
+                  strict: bool = False) -> BlockingPlan:  # fmt: skip
     """Solver targets for a blocking first turn from ``hand`` (see the module docstring)."""
     base: list[str] = []
     sets = 0
     for code in hand:
-        if _at(code, "set", cards) is not None and sets < 5:
+        if _at(code, "set", cards, strict) is not None and sets < 5:
             base.append(f"{cards.canonical(code)}@szone:fd")
             sets += 1
-        elif _at(code, "hand", cards) is not None:
+        elif _at(code, "hand", cards, strict) is not None:
             base.append(f"{cards.canonical(code)}@hand")
-    return BlockingPlan(base, deck_pieces(main, extra, cards))
+    return BlockingPlan(base, deck_pieces(main, extra, cards, strict))
 
 
 # ------------------------------------------------------------------ one hand: the target ladder
@@ -320,5 +395,5 @@ def solve_blocking(job, pieces: int = 3, pair: bool = True, cards=None, scripts=
 
 
 __all__ = ["BlockingPlan", "BoardScore", "Interruption", "Piece", "blocking_plan", "board_interruptions",
-           "card_interruptions", "deck_pieces", "interruptions_from_facts", "script_facts", "script_path",
-           "solve_blocking"]  # fmt: skip
+           "card_interruptions", "card_matches", "deck_pieces", "interruptions_from_facts", "requirements_met",
+           "script_facts", "script_path", "solve_blocking"]  # fmt: skip
