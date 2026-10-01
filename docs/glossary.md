@@ -138,6 +138,9 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | winner's curse / re-validation | 胜者诅咒 / 重验 | 只接受复核里显著的改动，复核的差因此平均偏高；在从未用过的新种子上重打被接受的改动来量它（`tools/deckevo_eval_compare.py --revalidate`） |
 | masked deck model | 掩码卡组模型 | 卡表上的集合 Transformer（卡 token = 冻结卡文本 + ID 嵌入 + 份数），在牌组历史全集上遮住卡（或其中几份）预测被遮的卡与份数；给进化打换下 / 换上分（`ygorl.build.deck_model`，tuning.md「掩码卡组模型」，#150） |
 | removal score / addition score | 换下分 / 换上分 | 掩码卡组模型的打分：换下分默认是典型性与支撑的组合（越大越先换下）/ 加一个 `[MASK]` 的 log P(卡 \| 卡组)（越大越该有） |
+| edit-value model | 改动价值模型 | 预测一处改动（换下 / 换上）对当前环境胜率的变化 Δ 与不确定度：掩码卡组模型的卡组表示上的小 MLP 集成，标签为配对评估（按 1 / 标准误² 与标签年龄加权），训练对局作辅助损失；按校准表的权重进入 Thompson 先验与学习候选的排序（`ygorl.build.value_model`，tuning.md「改动价值模型」，#151） |
+| label age | 标签年龄 | 一条标签的策略检查点比目标策略早多少次更新（另一条训练线记为固定的 `foreign_age`）；权重 0.5^(年龄 / 半衰期)，同时作为模型输入（`ygorl.build.edit_labels.Clock`） |
+| co-evolution loop | 共同进化循环 | 进化一轮 → 接受的卡组进牌组池清单 → 一段 RL 训练（`--deck-pool`、`--log-games`）→ 用新的配对评估与对局日志重拟合改动价值模型，循环往复，可中断续跑（`tools/coevolve.py`，`ygorl.build.coevolve`） |
 | typicality / support | 典型性 / 支撑 | 换下分的两部分：遮一份后 −log P(该卡 \| 其余)（越大越不合群）/ 拿掉这张卡后其余卡的留一对数似然之和降多少（其余卡对它的依赖）；组合时支撑前三分之一的卡最后换下 |
 | fill-in accuracy | 完形填空准确率 | 遮住留出卡表的一种卡（全部份数），它在其余卡表缺的卡里排进前 k 的比例；按类型留出评估泛化到没见过的系列 |
 | fractional factorial design / variant | 部分析因设计 / 变体 | 把 k 处相容改动按 2^(k−p) 个两水平组合（变体）同时评估，所有变体打同样的公共随机数对局，一次回归估出各改动的效应（`ygorl.build.factorial`，tuning.md「析因评估」，#152） |
