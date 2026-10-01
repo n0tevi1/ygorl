@@ -235,8 +235,8 @@ def main():
                 parent = e["parent"]
                 if parent.startswith("corpus:"):
                     pdeck = load_ydk(env.artifacts_dir / "decks" / f"{parent.split(':', 1)[1]}.ydk")
-                elif parent in by_id:
-                    pdeck = load_ydk(state / by_id[parent]["file"])
+                elif parent.split(":", 1)[-1] in by_id:  # a manifest deck, by id or as a parent file (file:<id>)
+                    pdeck = load_ydk(state / by_id[parent.split(":", 1)[-1]]["file"])
                 else:
                     print(f"{state}: {e['id']}: parent {parent} not found, skipped", flush=True)
                     continue

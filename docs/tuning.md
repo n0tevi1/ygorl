@@ -4,6 +4,7 @@
 > 代码：`ygorl.build.tuner`，命令行 `tools/tune_deck.py`；对局走批量评估（[evaluation.md](evaluation.md)「批量评估」）。
 > 组牌进化（#105）：信号库、进化评估器与进化步骤见下文后三节（`ygorl.build.signals` / `selection` / `evolve`，命令行 `tools/evolve_decks.py`）；
 > 一组改动的部分析因评估见「析因评估」（`ygorl.build.factorial`，#152）；学习的候选见「掩码卡组模型」（`ygorl.build.deck_model`，`tools/train_deck_model.py`）。
+> 学习的改动估值见「改动价值模型」（`ygorl.build.value_model`，`tools/fit_value_model.py`，#151），与 RL 训练交替的循环见「共同进化循环」（`tools/coevolve.py`）。
 
 给一套基础卡组，在它附近找「换一张卡」后在当前环境里打得更好的版本。「更好」= 由同一个策略驾驶时，对环境 meta 牌组（按占比抽，由同一或另一策略驾驶）的胜率更高。
 
@@ -307,6 +308,53 @@
 5. **谱系**：每个变体（除亲本）一行，`kind` / `generator` = `factorial`，`factorial` 字段记设计（k、p、变体数、生成元、分辨度、定义关系、设计矩阵）、本行的设计行号与水平、
    各改动（字母、换下 / 换上、所换的份）、全部效应估计与标准误、修复与丢掉的改动、选中的改动；`search` 是本行在设计对局上的配对差。热启动（`warmstart`）从谱系按设计各读一次主效应。
    报告的每个亲本另有 `evaluation` 与 `effects`，文本报告列出效应。
+
+### 改动价值模型：学习的改动估值（#151，`ygorl.build.value_model` / `edit_labels`）
+
+设计 05「5.3 学习型候选与代理」的 Δ 代理：卡片价值模型（`CardValueModel`）是一阶的（换上的卡的价值 − 换下的，按类型），改动价值模型在掩码卡组模型的表示里读改动，
+预测「子代 − 亲本」对环境对手分布的胜率差 Δ 与它的不确定度。
+
+- **标签**（`ygorl.build.edit_labels`）：
+  - **配对评估** `PairedLabel`（亲本卡表、原位改动、差、标准误、策略检查点）：`paired_labels` 读热启动读的全部来源（M1、M2、谱系 / 进化状态、调卡组对比），另读析因测量
+    （`tools/deckevo_factorial.py`：每个设计的主效应，加上同样改动的逐个筛差，是独立的两次测量）与重验（`--revalidate`：MVP 臂被接受的改动、`--evo-state` 的被接受子代）。
+    只取非自适应的对局（谱系的 `learned`、析因主效应；不取 `search` 与 `all_pairs`）。谱系的亲本卡表取自该轮的 `round.json`。
+  - **去重**（`unique`）：同一亲本、同一组改动、同一检查点、差与标准误都相同的是**同一批对局读了两次**——同种子重跑的轮次与对比重放同样的对局
+    （#145 与 #150 的冷启动子代共用第一批，旧 `eval_compare.json` 的进化臂与 `eval_compare_r145.json` 的相同）。md-2026-09 的现有数据 479 条里 129 条是这样的重复，去掉后 350 条。
+    （信号库热启动按来源 id 去重，同时给 `r145-*` 与 `r150-*` 时这些观测会算两到三次。）
+  - **训练对局** `GameRecord`：`read_game_log(运行目录)` 读 `--log-games` 的 `games.jsonl.gz`，语料牌组经 `config.json` 的 `decks`、进化牌组经它的 `deck_pool` 清单解析成卡表；
+    截断局、无胜者、解析不到的牌组、续训重放的重复行（同一更新、种子、牌组、先攻）都不算。一局的策略是 `update − 1` 次更新后的（`overlap_collect` 时 `update − 2`）。
+- **标签年龄**（`Clock`）：检查点 = （运行目录，更新号）。同一训练线（目标运行目录或 `same` 列出的续训目录）里年龄 = 两者更新号之差，别的训练线或未知更新号记 `foreign_age`（默认 400）；
+  权重 = 0.5^(年龄 / `half_life`)（默认 200），年龄（以半衰期计）同时是模型的一个输入，预测时取 0（目标策略）。
+- **特征**（`DeckModelFeatures`，掩码卡组模型冻结，按卡表缓存）：亲本表示 z(亲本)（编码器输出按份数加权平均，不遮卡）、z(子代) − z(亲本)、换上卡的卡嵌入之和 − 换下卡的、
+  掩码模型自己对改动的分（换上卡的 log P(卡 | 亲本)、换下卡的典型性、支撑与组合换下名次 / D，按改动求和）、改动数、年龄。256 维表示下共 3 × 256 + 6 列，输入标准化。
+- **模型**（`fit`，`ValueModelConfig`）：每个成员 = 一层 16 个单元的 MLP（dropout 0.2，权重 L2 罚 0.03）+ β × (s(子代) − s(亲本))，s 是 z 上的线性「卡组强度」头；
+  标签按 `clock.weight / 标准误²` 加权的平方误差（目标以 2 pp 为单位）。**集成**：8 个成员各在一份自助样本上、各用自己的种子训练；预测 = 成员均值，
+  标准差 = √(成员方差 + σ₀²)，σ₀² = 每条标签在没见过它的成员上的残差² − 标准误² 的加权均值（袋外，下限 0.5 pp）。可选的逐卡一阶项（`card_terms`，每张标签里出现过的卡一个值）默认关闭。
+- **训练对局作先验**（`aux_weight`，默认 0.3）：P(a 胜 b) = σ(s(a) − s(b) ± 先攻项) 的交叉熵（按标签年龄加权、每步抽 2,048 局）训练同一个强度头；
+  Δ 经 β 用到强度差：量大、有混杂的对局结果决定「哪些卡组强」，配对标签决定其中多少能用到一处改动上。
+- **评估**（`cross_validate` / `summarize`，`tools/fit_value_model.py --cv`）：留一套亲本卡组（`--folds deck`，默认）或按改动分的 5 折（`--folds random`，同一改动的各次测量在同一折）；
+  同一折上另报卡片价值模型（只用训练折的标签热启动，标准误同样除以 √年龄权重）与掩码模型的分（加入分、组合换下名次、两者在卡组内的名次之和；不拟合）。结果见 [benchmarks.md](benchmarks.md)「改动价值模型」。
+- **进化步骤里**（`Lab.value_model`、`--value-model VM.pt`）：
+  - 每个子代的预测（均值、标准差）与卡片价值模型的按**校准权重** w 混合成前二 Thompson 采样（与冷启动筛的同分排序）的先验（`blend_prior`）：均值 = w·价值模型 + (1 − w)·卡片价值模型，方差同样按 w 混合；
+  - w 来自校准表的信号 `value_model`：每个子代的（预测，第一批配对差）一对（析因模式：每个主效应一对）；不足 20 对时用 `--value-model-weight`（默认 0），之后为 Spearman（95% 区间不含 0 时，否则 0），与其它信号同一机制；
+  - w > 0 时学习的子代多抽 `--value-model-oversample`（默认 3）倍，按价值模型的一次 Thompson 抽样（均值 + 标准差 × z）留前 `--learned-generator` 个；w = 0 时一切与没有价值模型时逐位相同（预测只记录、只进校准表）；
+  - 谱系多 `value_model`（预测）与 `prior`（实际用的先验与 w）；轮次的 `checkpoint` 记下价值模型的路径与 sha256（续跑要同一个）。价值模型记录它拟合时的掩码卡组模型（路径与 sha256），`--deck-model` 不给时用它，不一致报错。
+- 命令行：`tools/fit_value_model.py --env md-2026-09 --deck-model out/deckmodel/full.pt --target-checkpoint CKPT --paired SRC[@CKPT] ... [--games RUN ...] [--same-run DIR] --out VM.pt`；
+  `@CKPT` 给文件里没记检查点的来源（M2）。模型文件放 `out/valuemodel/`，不进 git。
+
+### 共同进化循环（#151，`tools/coevolve.py`，`ygorl.build.coevolve`）
+
+设计 05「与 RL 共同进化」：进化出的卡组经牌组池清单进入训练 → 策略学会驾驶它们 → 新的对局与配对评估更新价值模型 → 价值模型给下一轮排候选。`CoEvolution` 在一个状态目录里按阶段推进：
+
+1. **拟合 0**：用已有的配对数据为起始策略拟合价值模型（`DIR/valuemodel/cycle_00.pt`）。
+2. 每个循环 c：
+   - **进化**：`tools/evolve_decks.py` 跑一轮（状态 `DIR/evo`，第 c 轮），亲本是每个 `--deck` 槽位的当前版本、当前策略与价值模型；被接受的子代进清单（`DIR/evo/manifest.json`），并**替换**它所在槽位的亲本；
+   - **训练**：`coevolve.py train-segment` 在 `DIR/train` 里把策略续训到第 `起点 + c × --updates` 次更新（`Trainer.resume` 加 `deck_pool` 与 `log_games`），存 `update_N.pt`；
+   - **重拟合**：`tools/fit_value_model.py` 用 `--paired` 来源 + `DIR/evo` 的谱系 + `DIR/train` 的对局日志，为新策略拟合（`--same-run` 把起始运行与 `DIR/train` 当作同一条训练线，旧标签按年龄降权）。
+3. **续跑**：`DIR/coevo.json` 记每个完成的阶段（原子写）；重跑同一命令跳过已完成的，未完成的阶段自己续：进化轮从对局日志续（已完成的轮次只读结果、不重跑；轮次数与循环对不上就报错），
+   训练从 `DIR/train/checkpoints/latest.pt` 续到同一个目标更新号（日志里重放的局由 `read_game_log` 去重），拟合是确定的。第一次运行的设置被保留。各阶段输出在 `DIR/logs/`。
+4. **汇总**（`DIR/summary.json`）：每个循环的进化局数、接受数与复核差之和，**每 +1 pp 复核增益的局数**；复核本身有选择（只接受显著的），无偏的增益要再用 `tools/deckevo_eval_compare.py --evo-state DIR/evo --revalidate 1000` 重验。
+
 
 **默认没做的**：入池前的「最低标准」（POET；太弱的卡组不入池）、试用期复评与淘汰、按格淘汰相似卡组（#113）；新构筑探索模式（spec #105 的补充）。
 
