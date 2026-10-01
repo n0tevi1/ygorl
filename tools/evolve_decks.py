@@ -2,8 +2,8 @@
 
   uv run python tools/evolve_decks.py --env md-2026-09 --checkpoint CKPT --state out/evo/NAME \\
       [--parent BASE.ydk ...] [--parents 1] [--manifest MANIFEST] [--matrix MATRIX.json] [--nash-share 0.5] \\
-      [--budget GAMES] [--rules 0] [--learned-generator 0 --deck-model MODEL.pt] [--warm-start PATH ...] \\
-      [--device cuda] [--envs 256]
+      [--budget GAMES] [--rules 0] [--learned-generator 0 --deck-model MODEL.pt] [--value-model VM.pt] \\
+      [--warm-start PATH ...] [--device cuda] [--envs 256]
 
 Parents are the ``--parent`` deck files, or else the ``--parents`` pool decks of the manifest used least often as
 parents. Per parent: ``informed_children`` from the signal library (6 informed + 2 explore; ``--crossover`` adds
@@ -25,6 +25,11 @@ has fewer than ``--cold-min-obs`` observations of the parent's type, a round scr
 swaps at one batch each and races the best ``--cold-keep``. ``--warm-start PATH`` (repeatable: M1 / M2 JSON, an
 evolution state or lineage, a tuner comparison; ygorl.build.warmstart) adds earlier paired data to the model first,
 each observation once.
+
+``--value-model VM.pt`` (#151, ``tools/fit_value_model.py``; needs the deck model it was fitted with, by default
+the one it records) predicts every child's win-rate change: the prediction is mixed into the Thompson prior and ranks
+``--value-model-oversample`` times as many learned candidates as are kept, by its calibrated weight (Spearman of its
+predictions with the first batches once there are 20; ``--value-model-weight`` before; 0 = card-value model alone).
 
 ``--eval factorial`` (#152, docs/tuning.md「析因评估」) replaces the children and the race: ``--factorial-k`` single
 edits (informed first, then explore) are played as one fractional factorial design (resolution IV where possible) on
@@ -109,6 +114,13 @@ def main() -> int:
                     "(#152)")  # fmt: skip
     ap.add_argument("--factorial-k", type=int, default=4, help="edits per fractional factorial (--eval factorial)")
     ap.add_argument("--factorial-pairs", type=int, default=200, help="pairs every variant of the design plays")
+    ap.add_argument("--value-model", type=Path, default=None,
+                    help="edit-value model (tools/fit_value_model.py, #151): its predictions enter the Thompson prior "
+                    "and rank the learned candidates, weighted by the calibration table")  # fmt: skip
+    ap.add_argument("--value-model-weight", type=float, default=0.0,
+                    help="the value model's weight until the calibration table has enough of its pairs")  # fmt: skip
+    ap.add_argument("--value-model-oversample", type=int, default=3,
+                    help="learned candidates drawn per learned child kept (ranked by the value model)")  # fmt: skip
     ap.add_argument("--warm-start", type=Path, action="append", default=[],
                     help="earlier paired data for the card-value model (repeatable; ygorl.build.warmstart)")  # fmt: skip
     ap.add_argument("--warm-start-inflate", type=float, default=1.0,
@@ -240,13 +252,28 @@ def main() -> int:
                          min_lift=args.rule_min_lift)  # fmt: skip
         rules = DeckRules.from_environment(env, cfg, setcodes=setcodes_from_db(cards))
     deck_model = None
-    if args.learned_generator:
+    if args.value_model is not None and args.deck_model is None:  # the deck model the value model was fitted with
+        meta = torch.load(args.value_model, map_location="cpu", weights_only=True).get("meta", {})
+        args.deck_model = Path(meta["deck_model"]["path"])
+    if args.learned_generator or args.value_model is not None:
         from ygorl.build.deck_model import load_deck_model
 
         deck_model = load_deck_model(args.deck_model)  # scored on the CPU: one small batch per parent
         check_environment(env, deck_model.environment, f"deck model {args.deck_model}")
         say(f"deck model {args.deck_model}: {len(deck_model.passwords)} cards, trained on "
             f"{(deck_model.meta or {}).get('lists')} lists")  # fmt: skip
+    value_model = None
+    if args.value_model is not None:
+        from ygorl.build.value_model import load_value_model
+
+        value_model = load_value_model(args.value_model, deck_model)
+        want = (value_model.meta.get("deck_model") or {}).get("sha256")
+        if want and want != file_sha256(args.deck_model):
+            raise SystemExit(
+                f"{args.value_model} was fitted with another deck model ({value_model.meta['deck_model']})"
+            )
+        say(f"value model {args.value_model}: {len(value_model.nets)} members, sigma0 {value_model.sigma0:.4f}, "
+            f"target {value_model.clock.run} @ {value_model.clock.update}")  # fmt: skip
     lab = Lab(
         evaluator=evaluator,
         legal=lambda d: not env.validate_deck(d, cards),
@@ -266,10 +293,16 @@ def main() -> int:
                 if deck_model is not None
                 else {}
             ),
+            **(
+                {"value_model": {"path": str(args.value_model), "sha256": file_sha256(args.value_model)}}
+                if value_model is not None
+                else {}
+            ),
         },  # fmt: skip
         rules=rules,
         deck_model=deck_model,
         card_pool=env.card_pool,
+        value_model=value_model,
     )
     config = RoundConfig(informed=args.informed, explore=args.explore, max_bundle=args.max_bundle,
                          crossover=args.crossover, rules=args.rules, learned=args.learned_generator,
@@ -280,7 +313,9 @@ def main() -> int:
                          cold_candidates=args.cold_candidates, cold_keep=args.cold_keep,
                          cold_min_obs=args.cold_min_obs, min_confident_pairs=args.min_confident_pairs,
                          multiplicity=not args.no_multiplicity, evaluation=args.evaluation,
-                         factorial_k=args.factorial_k, factorial_pairs=args.factorial_pairs, seed=args.seed)  # fmt: skip
+                         factorial_k=args.factorial_k, factorial_pairs=args.factorial_pairs,
+                         value_model_weight=args.value_model_weight,
+                         value_model_oversample=args.value_model_oversample, seed=args.seed)  # fmt: skip
     say(f"parents: {', '.join(f'{p.id} ({p.type})' for p in parents)}; {len(opponents)} opponents"
         + (f" (Nash share {args.nash_share})" if nash else " (meta shares)"))  # fmt: skip
     report = evo.run_round(parents, lab, config, opponents, log=say)

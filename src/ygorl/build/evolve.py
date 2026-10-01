@@ -25,6 +25,9 @@ While the model has fewer than ``cold_min_obs`` observations of the parent's typ
 races the best ``cold_keep``. The search stops as confident only with ``min_confident_pairs`` pairs on the leader and
 a Bonferroni threshold over every candidate it chose among (``multiplicity``).
 :meth:`Evolution.warm_start` adds earlier paired data (``ygorl.build.warmstart``) to the model, once per id.
+With an edit-value model (``Lab.value_model``, #151), each child's predicted Δ is blended into the Thompson prior
+and ranks the learned candidates, by the weight the calibration table gives it (:func:`blend_prior`); at weight 0
+the round is the same as without it.
 
 Resuming: every game result is appended to the round's game log as it arrives, and the round replays
 deterministically (fixed seeds per round and parent), so a rerun after a crash reads the games it already has
@@ -120,6 +123,8 @@ class RoundConfig:
     evaluation: str = "thompson"  # "thompson" (children raced, #110) or "factorial" (single edits in one design, #152)
     factorial_k: int = 4  # edits per fractional factorial
     factorial_pairs: int = 200  # pairs every variant of the design plays
+    value_model_weight: float = 0.0  # the edit-value model's weight until the calibration table has enough pairs
+    value_model_oversample: int = 3  # learned candidates drawn per learned child kept, ranked by the value model
     seed: int = 0
 
 
@@ -137,7 +142,9 @@ class Lab:
     engine members (:func:`ygorl.build.deck_engine.deck_engine`), protected while unproven. ``pool(parent)`` is also
     the rule children's addition filter. ``deck_model`` scores the ``RoundConfig.learned`` children
     (:func:`ygorl.build.learned.learned_children`), whose additions come from ``card_pool`` (the environment's card
-    pool; None: ``pool(parent)``)."""
+    pool; None: ``pool(parent)``). ``value_model`` (``predict(parent, [edits, ...]) -> [(mean, sd), ...]``, e.g.
+    :class:`ygorl.build.value_model.EditValueModel`, #151) predicts each child's Δ: blended into the Thompson prior
+    and ranking the learned candidates by its calibrated weight (:func:`blend_prior`)."""
 
     evaluator: Callable[[int, Sequence[Opponent]], Any]
     legal: Callable[[Deck], bool]
@@ -151,6 +158,7 @@ class Lab:
     engine: Callable[[Deck], set[int]] = lambda deck: set()
     deck_model: Any = None
     card_pool: Collection[int] | None = None
+    value_model: Any = None
 
 
 # ------------------------------------------------------------------ files
@@ -417,15 +425,23 @@ class Evolution:
 
     def warm_start(self, items: Sequence[tuple[str, Observation]]) -> int:
         """Add earlier paired observations (``ygorl.build.warmstart.load``) to the card-value model, each id once
-        (a rerun or a resumed round adds nothing twice); saves the signal library. Returns how many were new."""
-        new = 0
+        (a rerun or a resumed round adds nothing twice) and each set of games once (``Observation.games``: two
+        sources that replayed the same games, e.g. rounds rerun with the same seed, count once); saves the signal
+        library. Returns how many were new."""
+        new, marked = 0, 0
         for uid, obs in items:
-            if uid in self.signals_applied:
+            games = f"games:{obs.games}" if obs.games else None
+            if uid in self.signals_applied or (games is not None and games in self.signals_applied):
+                if games is not None and games not in self.signals_applied:  # applied before games were keyed
+                    self.signals_applied.add(games)
+                    marked += 1
                 continue
             self.model.add(obs)
             self.signals_applied.add(uid)
+            if games is not None:
+                self.signals_applied.add(games)
             new += 1
-        if new:
+        if new or marked:
             self._save()
         return new
 
@@ -593,15 +609,20 @@ class Evolution:
                                       rng=np.random.default_rng([config.seed, n, i, 3]), children=config.rules,
                                       max_bundle=1 if cold else config.max_bundle, protected=protected,
                                       avoid=[c.deck for c in children], allowed=pool, engine=engine)  # fmt: skip
+        vm_weight = self._value_weight(lab, config)
         if config.learned > 0:  # legality and protected cards only: no engine protection, no addition pool (#150)
-            children += learned_children(base, parent.type, lab.deck_model, self.model,
-                                         lab.card_pool if lab.card_pool is not None else pool, legal=lab.legal,
-                                         is_extra=lab.is_extra, rng=np.random.default_rng([config.seed, n, i, 5]),
-                                         children=config.learned, max_bundle=1 if cold else config.max_bundle,
-                                         avoid=[c.deck for c in children], protected=lab.protected(base),
-                                         removal=config.learned_removal)  # fmt: skip
+            drawn = learned_children(base, parent.type, lab.deck_model, self.model,
+                                     lab.card_pool if lab.card_pool is not None else pool, legal=lab.legal,
+                                     is_extra=lab.is_extra, rng=np.random.default_rng([config.seed, n, i, 5]),
+                                     children=config.learned * self._oversample(config, vm_weight),
+                                     max_bundle=1 if cold else config.max_bundle, avoid=[c.deck for c in children],
+                                     protected=lab.protected(base), removal=config.learned_removal)  # fmt: skip
+            children += self._rank_learned(lab, base, drawn, config.learned, vm_weight,
+                                           np.random.default_rng([config.seed, n, i, 6]))  # fmt: skip
         predicted = [self.model.gain([e.into for e in c.edits], [e.out for e in c.edits], parent.type)
                      for c in children]  # fmt: skip
+        values = self._value_predictions(lab, base, [c.edits for c in children])
+        priors = [blend_prior(p, v, vm_weight) for p, v in zip(predicted, values, strict=True)]
         screen_l0 = [None] * len(children)
         if config.l0 != "off" and children:
             screen_l0 = [float(x) for x in lab.screen(ev, base, [c.deck for c in children])]
@@ -615,7 +636,7 @@ class Evolution:
         screen_rows: dict[int, dict] = {}
         if cold and len(keep) > config.cold_keep:
             s = screen(base, [children[j].deck for j in keep], games, pairs=config.batch, keep=config.cold_keep,
-                       base_scores=base_scores, tiebreak=[predicted[j][0] for j in keep],
+                       base_scores=base_scores, tiebreak=[priors[j][0] for j in keep],
                        rng=np.random.default_rng([config.seed, n, i, 4]))  # fmt: skip
             for r, j in enumerate(keep):
                 screen_rows[j] = {"pairs": s.pairs, "diff": _finite(s.diffs[r]), "kept": r in s.kept}
@@ -624,7 +645,7 @@ class Evolution:
                 + ", ".join(f"c{keep[r]} {s.diffs[r]:+.3f}" for r in s.kept))  # fmt: skip
             keep = [keep[r] for r in s.kept]
         race = top_two_thompson(base, [children[j].deck for j in keep], games,
-                                prior=[(m, max(sd, 1e-3)) for m, sd in (predicted[j] for j in keep)],
+                                prior=[(m, max(sd, 1e-3)) for m, sd in (priors[j] for j in keep)],
                                 batch=config.batch, max_pairs=config.max_pairs,
                                 batches_per_round=config.batches_per_round, confidence=config.confidence,
                                 base_scores=base_scores, min_pairs=config.min_confident_pairs,
@@ -665,6 +686,8 @@ class Evolution:
                          "mate": mates.get(j),
                          "edits": [{"out": e.out, "into": e.into, "section": e.section} for e in c.edits],
                          "deck": _deck_json(c.deck), "predicted": {"mean": predicted[j][0], "sd": predicted[j][1]},
+                         "value_model": _pair(values[j]),
+                         "prior": {"mean": priors[j][0], "sd": priors[j][1], "weight": vm_weight},
                          "l0": screen_l0[j], "screened": screened[j], "screen": screen_rows.get(j),
                          "search": search,
                          "validation": validation if j == chosen else None,
@@ -702,12 +725,15 @@ class Evolution:
         singles = informed_children(base, parent.type, self.model, pool, legal=lab.legal, is_extra=lab.is_extra,
                                     rng=rng, informed=k, explore=k, max_bundle=1, protected=protected, engine=engine)  # fmt: skip
         order = [c for c in singles if c.kind == "informed"] + [c for c in singles if c.kind == "explore"]
+        vm_weight = self._value_weight(lab, config)
         if config.learned > 0:  # #150: learned candidates go in the design first
-            order = learned_children(base, parent.type, lab.deck_model, self.model,
+            drawn = learned_children(base, parent.type, lab.deck_model, self.model,
                                      lab.card_pool if lab.card_pool is not None else pool, legal=lab.legal,
                                      is_extra=lab.is_extra, rng=np.random.default_rng([config.seed, n, i, 5]),
-                                     children=config.learned, max_bundle=1, protected=lab.protected(base),
-                                     removal=config.learned_removal) + order  # fmt: skip
+                                     children=config.learned * self._oversample(config, vm_weight), max_bundle=1,
+                                     protected=lab.protected(base), removal=config.learned_removal)  # fmt: skip
+            order = self._rank_learned(lab, base, drawn, config.learned, vm_weight,
+                                       np.random.default_rng([config.seed, n, i, 6])) + order  # fmt: skip
         kind_of: dict = {}
         for c in order:
             kind_of.setdefault(c.edits[0], c.kind)
@@ -720,15 +746,18 @@ class Evolution:
             placed = fr.plan.placed
             main = fr.main()
             predicted = [self.model.gain([pl.edit.into], [pl.edit.out], parent.type) for pl in placed]
+            values = self._value_predictions(lab, base, [[pl.edit] for pl in placed])
             good = sorted((e.term[0] for e in main if e.effect > 0), key=lambda j: -main[j].effect)
             while good and not lab.legal(variant(base, [placed[j] for j in good])):
                 good.pop()
             fac = {"id": fid, **fr.to_dict(), "kinds": [kind_of[pl.edit] for pl in placed],
                    "predicted": [{"mean": m, "sd": sd} for m, sd in predicted],
+                   "value_model": [_pair(v) for v in values], "value_model_weight": vm_weight,
                    "chosen_edits": [LETTERS[j] for j in sorted(good)],
                    "learned": [{"source": "factorial_main", "edit": e.term[0], "into": placed[e.term[0]].edit.into,
                                 "out": placed[e.term[0]].edit.out, "section": placed[e.term[0]].edit.section,
-                                "diff": e.effect, "stderr": e.stderr, "predicted": predicted[e.term[0]][0]}
+                                "diff": e.effect, "stderr": e.stderr, "predicted": predicted[e.term[0]][0],
+                                "value_model": None if values[e.term[0]] is None else values[e.term[0]][0]}
                                for e in main if math.isfinite(e.effect) and e.stderr > 0]}  # fmt: skip
             say(f"parent {parent.id} ({parent.type}): factorial {', '.join(fr.design.generators) or 'full'} over "
                 f"{fr.design.k} edits, {fr.design.runs} runs × {config.factorial_pairs} pairs; main effects "
@@ -803,6 +832,35 @@ class Evolution:
                 "chosen": rows[chosen]["child"] if chosen is not None else None, "children": rows,
                 "games": games.games, "played": games.played}  # fmt: skip
 
+    def _value_weight(self, lab: Lab, config: RoundConfig) -> float:
+        """The edit-value model's weight in the prior and the ranking (#151): ``config.value_model_weight`` until the
+        calibration table has ``min_pairs`` of its (predicted, first batch) pairs, then their Spearman when its 95%
+        interval excludes 0, else 0 (like every signal). 0 without a value model."""
+        if lab.value_model is None:
+            return 0.0
+        self.calibration.defaults["value_model"] = float(config.value_model_weight)
+        return max(float(self.calibration.weight("value_model")), 0.0)
+
+    @staticmethod
+    def _oversample(config: RoundConfig, weight: float) -> int:
+        return max(int(config.value_model_oversample), 1) if weight > 0 else 1
+
+    @staticmethod
+    def _value_predictions(lab: Lab, base: Deck, edits: Sequence[Sequence]) -> list[tuple[float, float] | None]:
+        if lab.value_model is None or not edits:
+            return [None] * len(edits)
+        return [(float(m), float(sd)) for m, sd in lab.value_model.predict(base, [list(e) for e in edits])]
+
+    def _rank_learned(self, lab: Lab, base: Deck, drawn: list, keep: int, weight: float,
+                      rng: np.random.Generator) -> list:  # fmt: skip
+        """The ``keep`` learned candidates to evaluate: with a value model of positive weight, the best by one
+        Thompson draw from its predictions (mean + sd · z); otherwise the first ``keep`` drawn (unchanged)."""
+        if weight <= 0 or len(drawn) <= keep:
+            return drawn[:keep]
+        pred = self._value_predictions(lab, base, [c.edits for c in drawn])
+        draw = np.array([m + sd * z for (m, sd), z in zip(pred, rng.standard_normal(len(pred)), strict=True)])
+        return [drawn[j] for j in np.argsort(-draw, kind="stable")[:keep]]
+
     def _apply(self, state: dict, r: dict) -> None:
         """A parent's side effects, idempotent per child id: signal library, archive, manifest, lineage."""
         n = state["round"]
@@ -821,6 +879,8 @@ class Evolution:
                 self.model.add(Observation(parent.type, into, out, m["diff"], m["stderr"]))
                 if m["source"] == "first_batch":  # one (predicted, measured) pair per child, taken before selection
                     self.calibration.record("model_gain", row["predicted"]["mean"], m["diff"])
+                    if row.get("value_model"):  # #151: the edit-value model's prediction, calibrated the same way
+                        self.calibration.record("value_model", row["value_model"]["mean"], m["diff"])
                     if opening:  # cards swapped in were never in this deck's openings: count them as average (0)
                         self.calibration.record("opening_effect", sum(opening.get(c, 0.0) for c in into)
                                                 - sum(opening.get(c, 0.0) for c in out), m["diff"])  # fmt: skip
@@ -831,6 +891,8 @@ class Evolution:
                 continue
             self.model.add(Observation(parent.type, (m["into"],), (m["out"],), m["diff"], m["stderr"]))
             self.calibration.record("model_gain", m["predicted"], m["diff"])
+            if m.get("value_model") is not None:
+                self.calibration.record("value_model", m["value_model"], m["diff"])
             self.signals_applied.add(uid)
         entries = [(f"r{n:04d}-p{r['index']}", parent.id, parent.deck, r["parent_objective"], r["parent_descriptors"])]
         entries += [(row["child"], self._manifest_id(row) if row["accepted"] else row["child"], _deck_from(row["deck"]),
@@ -879,7 +941,8 @@ class Evolution:
                 "kind": row["kind"], "generator": row.get("generator", generator(row["kind"])),
                 "screen": row.get("screen"), "factorial": row.get("factorial"),
                 "mate": row.get("mate"), "edits": row["edits"], "key": deck_key(_deck_from(row["deck"])),
-                "predicted": row["predicted"], "l0": row["l0"], "screened": row["screened"], "search": row["search"],
+                "predicted": row["predicted"], "value_model": row.get("value_model"), "prior": row.get("prior"),
+                "l0": row["l0"], "screened": row["screened"], "search": row["search"],
                 "validation": row["validation"], "all_pairs": row["all_pairs"], "learned": row["learned"],
                 "games": row["games"],
                 "checkpoint": state["checkpoint"], "environment": state["environment"], "accepted": row["accepted"],
@@ -924,6 +987,20 @@ class Evolution:
                 "pool": pool_diversity([p.deck for p in self.pool()]),
                 "calibration": {k: {**v, "ci": [_finite(x) for x in v["ci"]], "spearman": _finite(v["spearman"])}
                                 for k, v in self.calibration.report().items()}}  # fmt: skip
+
+
+def blend_prior(card: tuple[float, float], value: tuple[float, float] | None, weight: float) -> tuple[float, float]:
+    """The Thompson prior of a child (#151): the card-value model's (mean, sd) and the edit-value model's, mixed by
+    the value model's calibrated weight ``w``: mean = w·value + (1 − w)·card, variance = w·sd_value² + (1 − w)·sd_card².
+    Weight 0 (or no value model) is the card-value model alone."""
+    if value is None or weight <= 0:
+        return card
+    w = min(float(weight), 1.0)
+    return (w * value[0] + (1 - w) * card[0], math.sqrt(w * value[1] ** 2 + (1 - w) * card[1] ** 2))
+
+
+def _pair(v: tuple[float, float] | None) -> dict | None:
+    return None if v is None else {"mean": v[0], "sd": v[1]}
 
 
 def mix_fingerprint(opponents: Sequence[Opponent], checkpoint: Mapping) -> str:
@@ -1032,5 +1109,5 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
-__all__ = ["DESCRIPTORS", "Evolution", "GameLog", "Lab", "Opponent", "Parent", "RoundConfig", "check_environment",
+__all__ = ["DESCRIPTORS", "Evolution", "GameLog", "Lab", "Opponent", "Parent", "RoundConfig", "blend_prior", "check_environment",
            "deck_key", "file_sha256", "format_report", "generator", "opponent_mix", "pool_diversity"]  # fmt: skip

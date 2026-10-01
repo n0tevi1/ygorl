@@ -992,3 +992,45 @@ Pendulum Magician 为 Wisdom-Eye Magician、Oafdragon Magician、Astrograph Sorc
     nice -n 19 .venv/bin/python tools/deckevo_factorial.py out/why/md_base_s0/checkpoints/update_000400.pt 5 out/deckevo/factorial.json --device cuda --k 4 --pairs 200
 
 CPU 冒烟（机器满载，1 套 Thunder Dragon、4 对、16 个环境，13 分钟）：流程跑通，析因 64 局 / 逐个筛 60 局；4 对的数字没有意义。
+
+## 改动价值模型：留出的配对评估上的排序（#151，2026-09-30）
+
+[tuning.md](tuning.md)「改动价值模型」：掩码卡组模型（`out/deckmodel/full.pt`，冻结）的表示上的 8 个 MLP 的集成，标签按 1 / 标准误² 与标签年龄加权
+（目标策略 `md_base_s0` 第 400 次更新；`bb_lam05` 的 M1 / M2 / 调卡组对比是另一条训练线，按 400 次更新计，权重 1/4）。默认设置，没有按下表调参。
+没有训练对局日志（`--log-games` 是新的），辅助损失只在合成数据上测过。
+
+**数据**：M1、M2（`bb_lam05` 第 1,200 次）、两次调卡组对比与重验、析因测量、`r111` / `r145` / `r150` 三套牌的谱系；479 条去掉同一批对局的重复读取后 **350 条**、5 套亲本
+（Therion 95、Megalith 96、Pendulum Magician 94、Exodia 32、Fur Hire 33）；谱系的第一批 184 条（标准误中位数约 3.3 pp），标准误 ≤ 1.5 pp 的 138 条。
+
+    tools/fit_value_model.py --env md-2026-09 --deck-model out/deckmodel/full.pt \
+        --target-checkpoint out/why/md_base_s0/checkpoints/update_000400.pt \
+        --paired out/deckevo/m2.json@out/why/bb_lam05/checkpoints/update_001200.pt --paired out/deckevo/m1.json \
+        --paired out/deckevo/eval_compare.json --paired out/deckevo/eval_compare_r145.json \
+        --paired out/deckevo/revalidate_evo_r145.json --paired out/deckevo/factorial.json \
+        --paired out/evo/r111-therion ... --paired out/evo/r150-pendulum-magician-3 \
+        --cv out/valuemodel/cv_deck.json [--folds random]
+
+**留一套亲本卡组**（每折拟合一次，预测没见过的那套牌；Spearman 与实测 Δ；「卡组内」按标签数加权平均；「前 20%」= 每套牌按该分排在前 20% 的改动的实测 Δ − 该套牌的平均）：
+
+| 方法 | 全部（350） | 卡组内 | 标准误 ≤ 1.5 pp（138） | 前 20% |
+|------|------|------|------|------|
+| 改动价值模型 | +0.06 | +0.15 | +0.11 | +0.94 pp |
+| 卡片价值模型（同样的训练折热启动） | **+0.19** | **+0.19** | **+0.30** | +0.54 pp |
+| 掩码模型加入分 | +0.06 | +0.07 | +0.18 | +0.00 pp |
+| 掩码模型组合换下名次 | +0.02 | −0.02 | +0.25 | +0.17 pp |
+| 两者的卡组内名次之和 | +0.03 | +0.04 | +0.27 | −0.12 pp |
+
+**按改动分的 5 折**（同一套牌的其它改动在训练集里：共同进化循环里反复进化同几套牌，更接近这种情形）：改动价值模型 +0.23 / 卡组内 +0.24 / 精确子集 +0.25 / 前 20% +0.68 pp；
+卡片价值模型 +0.32 / +0.29 / +0.40 / +1.19 pp（掩码模型的分不拟合，同上表）。
+
+- **改动价值模型不比卡片价值模型好**：留一套牌时全部标签的 Spearman 差 −0.13（自助法 95% 区间 −0.24 到 −0.01），按改动分折时 −0.10（−0.19 到 0.00）。
+  各套牌：Therion −0.00 对 +0.01、Megalith +0.02 对 +0.10、Pendulum Magician +0.22 对 +0.36、Exodia +0.50 对 +0.53、Fur Hire +0.40 对 +0.19。
+  卡片价值模型在留出的卡组上靠的是跨卡组共享的卡效应（泛用卡、M2 的空白卡），价值模型的卡嵌入差没能学到同样多。
+- 掩码模型的分单独几乎不预测 Δ（全部 ≤ 0.06），只在精确子集（多是 M2 留一与析因）上有 0.18–0.27：「换下这张卡伤不伤」它有点信息，「换上哪张好」没有。
+- 不确定度大体校准：留出标签落在 ±1.96·√(预测标准差² + 标签标准误²) 内的比例 95.7%（按改动分折 96.3%）；预测标准差中位数约 2.9 pp。
+- 设置敏感性（留一套牌）：去重前的 479 条上试过约 10 种（只用掩码分、加卡嵌入差、去掉亲本表示、线性、L2 0.01–10、训练步数、逐卡一阶项），全部标签的 Spearman 在 −0.15 到 +0.10 之间（卡片价值模型 0.17–0.20）；
+  去重后的默认与加逐卡一阶项为 0.06 与 0.12。没有一种追上卡片价值模型。
+- 合成数据（`tests/test_value_model.py`）：已知 Δ = 卡向量的线性函数时留出 Spearman > 0.8；**策略漂移**（旧检查点 300 条改动全部反号、新检查点 60 条较噪的标签）下按年龄降权并以年龄为输入的模型 0.97，
+  不看检查点的模型 −0.95，只用新标签 0.98。
+- 因此进化里价值模型的权重交给校准表：`evolve_decks.py` 与 `coevolve.py` 都默认 `--value-model-weight 0`（只记录与校准），校准表在 20 对后认可（Spearman 的区间不含 0）才进先验与排序；
+  给正的权重是试验（上表里它排得不如卡片价值模型）。循环的「每 +1 pp 复核增益的局数」对照 #145（16,350 局 / 次接受，+0.85 pp 重验）待 GPU 运行。

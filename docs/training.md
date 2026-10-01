@@ -401,6 +401,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 `learner` 是学习者所用牌组。`update` 是这批对局所喂的那次更新：下棋的策略是 `update - 1` 次更新后的（`--overlap` 时 `update - 2`）。
 开销：md-2026-09 的 6 套 meta 牌组、32 槽 × 64 步、`max_decisions=40`（为了多出局）跑 4 次更新共 407 局，写日志合计 6 ms（约 16 µs/局，
 占训练时间 0.01%），压缩后约 17 字节/局。
+读取：`ygorl.build.edit_labels.read_game_log`（解析牌组名、去掉截断局与续训重放的重复行），用作改动价值模型的辅助损失（[tuning.md](tuning.md)「改动价值模型」，#151）。
 
 ### 8.6 默认规模与吞吐
 
