@@ -193,3 +193,14 @@ python tools/evaluate_response_reranker.py --pilot out/research/response-diagnos
 ```
 
 第二条命令完成后再次运行已确认复用全部 6 个格子，无新增对局。改变代码/权重/环境时 manifest 拒绝原目录，需使用新的输出目录。
+
+
+### 合并前复核（2026-10-02）
+
+重新运行完整 `tools/presubmit.sh --test`：**1,365 passed / 3 skipped**，ROCm GPU 测试实际运行通过。
+剩余跳过为两个需显式启用的网络测试和一个快照前置条件测试。补齐了本地 worktree 的 LFLists 测试输入，
+并修复新增回应测试的可选 torch 收集方式：有 torch 时四项通过，无 torch 时正常跳过，符合 CI core/train 两组分工。
+全套测试运行中的唯一代码变动是该测试模块的 import guard；其四项测试及无 torch 收集另行复核，运行时实现未改。
+GitHub 当时没有生成 check/workflow run 记录，本次记录的是本地全量通过，不宣称 hosted CI 已成功。
+日志与 native/source 指纹位于 `out/research/merge-validation-2026-10-02/{presubmit.log,provenance.json}`。
+#170 与 #171 已按依赖顺序合入 main，#172 继续保留已验证的实验结论和训练门槛，研究 issues 不因工具合并而关闭。
