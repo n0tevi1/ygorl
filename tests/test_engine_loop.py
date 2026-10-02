@@ -2,6 +2,7 @@
 host (C++ HostDuel / HostPool, the C++ DuelPool, the Python tracker); so does a single core call whose scripts run
 past their instruction budget; a rollout that stops receiving events raises."""
 
+import json
 import time
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from ygorl.cards.cdb import CardDB
 from ygorl.cards.ydk import load_ydk
 from ygorl.engine import constants as C
 from ygorl.engine import tracker as tracker_module
-from ygorl.engine.duel import Duel, DuelConfig, default_cards, expand_seed
+from ygorl.engine.duel import Duel, DuelConfig, default_cards, default_scripts, expand_seed
 from ygorl.env import GameSpec, run_games
 from ygorl.env.encoded import EncodedVecEnv, chooser
 
@@ -134,11 +135,35 @@ def test_a_nested_script_search_stops_at_once_past_its_budget(tiny_script_budget
     core.new_card(1, 0, NESTED, 1, C.LOCATION_DECK, 0, C.POS_FACEDOWN_DEFENSE)
     core.start()
     t = time.time()
-    with pytest.raises(_core.ScriptBudgetExceeded):
+    with pytest.raises(_core.ScriptBudgetExceeded) as error:
         for _ in range(50):
             core.process()
+    assert "stack traceback:" in str(error.value)
+    assert f"c{NESTED}.lua" in str(error.value)
+    assert len(str(error.value)) < 8400
     assert time.time() - t < 5 and len(core.pop_logs()) < 1000
     core.close()
+
+
+@pytest.mark.parametrize("case", json.loads((Path(__file__).parent / "data/material-budget-replays.json").read_text())["cases"],
+                         ids=lambda case: case["name"])  # fmt: skip
+def test_real_material_searches_report_the_original_lua_trace(case, db):
+    """#169: real MD failures replay without a checkpoint, inference, or stochastic policy sampling."""
+    old = _core.set_max_script_steps(100000)
+    try:
+        host = _core.HostDuel(db.to_core(), default_scripts(), [])
+        host.start(case["core_seed"], case["rule_flags"], (8000, 5, 1), (8000, 5, 1),
+                   case["loaded_decks"], 200, 4000)  # fmt: skip
+        for action in case["actions"]:
+            assert not host.done()
+            host.act(action)
+        result = host.result()
+        assert result["reason"] == "error" and result["winner"] is None
+        assert (result["turns"], result["decisions"]) == (case["turns"], case["decisions"])
+        assert "stack traceback:" in result["error"] and case["source"] in result["error"]
+        assert len(result["error"]) < 8400
+    finally:
+        _core.set_max_script_steps(old)
 
 
 class SilentEnv:

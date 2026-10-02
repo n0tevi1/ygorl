@@ -155,6 +155,18 @@ print(result.summary())
   所以同一局重放结果不变。装载脚本等其它核心调用不计预算。实测（2,000 局随机对打，语料卡组）：单次调用超过 30 万条指令的局占 8%，
   超过 300 万条的占 0.55%，超过 3,000 万条的占 0.1%，超过 1 亿条的占 0.05%（即被截断的比例）；`_core.script_steps_peak()`
   报告本进程见过的最大值。剩下的兜底仍是训练收集器的看门狗（[training.md](training.md)）。
+  #169 的复现确认了融合与同调素材搜索均可耗尽预算。异常消息现在附上本次 `process()` 的第一条 Lua traceback（最多 8 KiB），
+  让批量结果也能定位昂贵调用；后续 unwind 日志不冒充最初根因，预算与胜负规则保持不变。
+  `tests/data/material-budget-replays.json` 保存两个真实失败的装载牌序和动作前缀，可在无检查点/无 GPU 的测试中复现。
+  `tools/replay_panel_game.py --manifest MANIFEST --candidate ctrl --opponent league --pairing 47 --game 0 --out trace.json`
+  可从 #170 的逐局矩阵重建网络采样并与 Python 主机锁步记录；检查点内容必须与 manifest 相同。
+  `--script-budget-thousands` 是单进程诊断覆盖值，默认仍为 100000，退出后恢复原值；结果另记预算与实际 core 哈希。
+  2026-10-02 预算消融：Lunalight Fusion 的固定失败前缀在 2 倍预算后继续，Kewl Tune Mix 在 5 倍后继续，
+  说明至少这些调用是有限但昂贵的搜索。原 panel 的 12 个错误局以 5 倍预算隔离重试，11 局正常结束；
+  base vs league / pairing 73 / game 0 仍在 T10、第 333 个决策超限，首栈为 `proc_synchro.lua:1303`
+  → `CreateHandMaterialEffect` 检查 → `CheckP42` 递归。12 条重试动作前缀都在原预算下复现相同回合、决策数和 LP。
+  因此不能宣称已修复搜索复杂度，也不据此提高默认预算。数据在 `out/research/response-diagnostics-2026-10-02/`
+  的 `budget-sweep.json`、`retry-500k/summary.json` 与 `retry-prefix-verification.json`。
 - 课程模式（`DuelConfig.curriculum / learner`）让主机在学习方回合替对手作答「放弃」类决策，并过滤对手的非手牌发动；增广开局标志 `augmented_start` 随 `DecisionPoint` 下发。见 [curriculum.md](curriculum.md)。
 - **洗牌在主机侧**：核心开局不洗卡组（EDOPro 由主机洗好再加卡）。`shuffle_deck(cards, seed, player)` 是 splitmix64 + 无偏 Fisher–Yates，有黄金向量测试锁定，供 M2 的 C++ 实现逐位复现。
 
