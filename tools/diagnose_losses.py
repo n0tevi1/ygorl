@@ -3,12 +3,12 @@
 Plays a policy checkpoint on random corpus deck pairings, both first players:
 
 - ``--vs greedy`` (arena path, CPU workers): the policy against the one-ply Greedy baseline;
-- ``--vs self`` (batched path): the policy against itself, to see how much the deck matchup alone decides.
+- ``--vs self`` (batched path): the policy against itself, with pooled first-player scoring.
 
 Writes one JSON line per game (decks, who went first, winner, end reason, turns, decisions, LP) and prints loss
 breakdowns: by first / second, by the turn the game ended, by end reason, by the policy's deck and the opponent's
-deck (worst decks with enough games), by the final LP gap, and for ``--vs self`` the share of outcome variance the
-deck pairing explains.
+deck (worst decks with enough games), by the final LP gap, and descriptive pairing-mean spread. Two games per
+pairing cannot separate deck strength, opening-hand randomness and seat effects.
 
 Usage: tools/diagnose_losses.py CHECKPOINT --vs greedy|self [--pairings N] [--out games.jsonl] [--workers W]
 """
@@ -26,6 +26,7 @@ import numpy as np
 from ygorl.agents.registry import make_agent
 from ygorl.cards.ydk import load_ydk
 from ygorl.engine.duel import DuelConfig
+from ygorl.eval.agent_matrix import ERROR_REASONS
 from ygorl.eval.arena import Arena, derive_seed
 
 
@@ -44,7 +45,7 @@ def play_greedy(ckpt, decks, pairs, workers, seed):
     out = []
     for (k, a, b, _), r in zip(specs, records, strict=True):
         # agent a = policy on deck a; record.first: 0 = deck/agent a went first
-        score = None if r.reason == "exception" else (0.5 if r.winner is None else float(r.winner == 0))
+        score = None if r.reason in ERROR_REASONS else (0.5 if r.winner is None else float(r.winner == 0))
         out.append({"pairing": k, "deck": decks[a].name, "opp_deck": decks[b].name, "first": r.first == 0,
                     "score": score, "reason": r.reason, "win_reason": r.win_reason, "turns": r.turns,
                     "decisions": r.decisions, "lp": list(r.lp)})  # fmt: skip
@@ -71,7 +72,7 @@ def play_self(ckpt, decks, pairs, seed, device):
         records, _ = play_policies(env, specs, net, device=device)
     out = []
     for (k, a, b), sp, r in zip(meta, specs, records, strict=True):
-        score = None if r.reason == "exception" else (0.5 if r.winner is None else float(r.winner == 0))
+        score = None if r.reason in ERROR_REASONS else (0.5 if r.winner is None else float(r.winner == 0))
         out.append({"pairing": k, "deck": decks[a].name, "opp_deck": decks[b].name, "first": sp.first == 0,
                     "score": score, "reason": r.reason, "win_reason": r.win_reason, "turns": r.turns,
                     "decisions": r.decisions, "lp": list(r.lp)})  # fmt: skip
@@ -83,7 +84,10 @@ def _agent(spec, seed):
 
 
 def report(games, vs):
-    g = [x for x in games if x["score"] is not None]
+    g = [x for x in games if x["score"] is not None and x["reason"] not in ERROR_REASONS]
+    if not g:
+        print(f"0 games (errors {len(games)}); no valid outcomes")
+        return
     s = np.array([x["score"] for x in g])
     print(f"{len(g)} games (errors {len(games) - len(g)}), policy score {s.mean():.3f}")
 
@@ -97,6 +101,9 @@ def report(games, vs):
         )
 
     split("first", lambda x: "first" if x["first"] else "second")
+    if vs == "self":
+        first_scores = [x["score"] if x["first"] else 1 - x["score"] for x in g]
+        print(f"  pooled first-player score {np.mean(first_scores):.3f} (n={len(g)})")
     split("end turn", lambda x: "1-2" if x["turns"] <= 2 else "3-4" if x["turns"] <= 4 else "5-6" if x["turns"] <= 6
           else "7-10" if x["turns"] <= 10 else "11+")  # fmt: skip
     losses = [x for x in g if x["score"] == 0.0]
@@ -120,17 +127,24 @@ def report(games, vs):
             by[x[side]].append(x["score"])
         rows = sorted(((np.mean(v), len(v), k) for k, v in by.items() if len(v) >= 6))
         print(f"  worst {side}s (≥6 games): " + "; ".join(f"{k} {m:.2f}/{n}" for m, n, k in rows[:8]))
-        spread = np.std([m for m, _, _ in rows]) if rows else float("nan")
-        print(f"  {side} score spread (sd over decks with ≥6 games): {spread:.3f} over {len(rows)} decks")
+        if rows:
+            print(
+                f"  {side} score spread (sd over decks with ≥6 games): {np.std([m for m, _, _ in rows]):.3f} over {len(rows)} decks"
+            )
+        else:
+            print(f"  {side} score spread: insufficient games per deck")
     if vs == "self":
-        # outcome variance explained by the pairing (both games of a pairing share decks, first player differs)
+        # Descriptive only: fitting a mean to two independent coin flips already explains ~50% in sample.
         by = defaultdict(list)
         for x in g:
-            by[x["pairing"]].append(x["score"])
-        pair_means = np.array([np.mean(v) for v in by.values() if len(v) == 2])
-        within = np.mean([np.var(v) for v in by.values() if len(v) == 2])
-        print(f"  pairing effect: sd of pairing means {pair_means.std():.3f}; total var {s.var():.3f}, within-pairing var {within:.3f} "
-              f"-> deck pairing explains ~{1 - within / s.var():.2f} of outcome variance")  # fmt: skip
+            by[x["pairing"]].append(x)
+        pair_means = [np.mean([x["score"] for x in v]) for v in by.values()
+                      if len(v) == 2 and {x["first"] for x in v} == {True, False}]  # fmt: skip
+        if pair_means:
+            print(f"  sd of complete pairing means {np.std(pair_means):.3f} (n={len(pair_means)}); "
+                  "descriptive only, not variance explained by decks")  # fmt: skip
+        else:
+            print("  no complete first/second pairings")
 
 
 def main():
