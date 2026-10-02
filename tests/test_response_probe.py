@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
-import torch
 
-from ygorl.eval.response_probe import ResponseRidge, bootstrap_clusters, common_valid, public_features
+torch = pytest.importorskip("torch")
+
+from ygorl.eval.response_probe import ResponseRidge, bootstrap_clusters, common_valid, public_features  # noqa: E402
 
 
 def test_error_continuations_are_removed_for_every_action():
