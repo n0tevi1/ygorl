@@ -321,6 +321,7 @@ int Duel::process() {
     ensure_open();
     int status;
     bool over_budget;
+    const size_t log_start = logs_.size();
     {
         CoreCall in_core(*this);
         ScriptBudget budget;
@@ -328,9 +329,19 @@ int Duel::process() {
         over_budget = budget.exceeded();
     }
     rethrow_pending();
-    if (over_budget)
-        throw ScriptBudgetExceeded("script budget: one engine call ran more than " +
-                                   std::to_string(g_max_script_steps.load()) + " thousand script instructions");
+    if (over_budget) {
+        std::string message = "script budget: one engine call ran more than " +
+                              std::to_string(g_max_script_steps.load()) + " thousand script instructions";
+        // The first traceback identifies the expensive call; later ones describe unwinding after exhaustion.
+        // Include only this process() call's logs, bounded in size, so pooled hosts retain useful diagnostics.
+        for (size_t i = log_start; i < logs_.size(); ++i) {
+            if (logs_[i].text.find("stack traceback:") != std::string::npos) {
+                message += "\n" + logs_[i].text.substr(0, 8192);
+                break;
+            }
+        }
+        throw ScriptBudgetExceeded(message);
+    }
     return status;
 }
 
