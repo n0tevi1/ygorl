@@ -181,3 +181,15 @@ manifest 绑定公开重排权重、检查点、环境、实际 core/cdb/Python 
 **验证**：新 native 编译通过；全套测试 1,336 passed / 9 skipped，15 个缓存路径 setup error 在设置 `YGORL_CACHE_DIR` 后全部通过，
 合计 1,351 项通过。GPU 测试在沙箱内跳过；GPU 侧已实际跑完上述实验和 48 局 control 对照。presubmit lint/format 通过。
 运行用共享 ROCm venv，显式 `PYTHONPATH`；未执行依赖同步、未修改原 Claude worktrees/检查点/默认训练配方。
+
+
+复跑命令（在已配置好的 ROCm Python 环境与本分支中执行；原运行设 `PYTHONPATH=src`，未同步依赖）：
+
+```sh
+export PYTHONPATH=src
+python tools/response_probe.py --checkpoint out/why/bb_lam05/checkpoints/update_000400.pt --pairings 64 --continuations 32 --seed 20261003 --out out/research/response-diagnostics-2026-10-02/pilot
+python tools/evaluate_response_reranker.py --pilot out/research/response-diagnostics-2026-10-02/pilot --panel out/research/rl-handoff-2026-10-02/md-panel/manifest.json --pairings 128 --seed 20261004 --out out/research/response-diagnostics-2026-10-02/deployed-panel
+python tools/evaluate_response_reranker.py --pilot out/research/response-diagnostics-2026-10-02/pilot --panel out/research/response-diagnostics-2026-10-02/selfplay-diagnostic-panel.json --pairings 128 --seed 20261005 --out out/research/response-diagnostics-2026-10-02/selfplay-diagnostic
+```
+
+第二条命令完成后再次运行已确认复用全部 6 个格子，无新增对局。改变代码/权重/环境时 manifest 拒绝原目录，需使用新的输出目录。
