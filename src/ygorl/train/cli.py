@@ -60,6 +60,7 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
     ("environment and rollout", (
         _f("--envs", "num_envs", "environment slots = rollout columns B"),
         _f("--env-threads", "env_threads", "C++ worker threads"),
+        _f("--complete-games", "complete_games", "experimental: one complete game per env per update; --steps unused"),
         _f("--steps", "steps", "rows per column per rollout, T"),
         _f("--min-batch", "min_batch", "ready decisions per forward pass (default: --envs // 2)"),
         _f("--event-length", "event_length", "event tokens per observation"),
@@ -93,6 +94,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            "VRPO advantage: 'return' (Q-boosted with lambda returns) or 'critic'", choices=("return", "critic")),
         _f("--gamma", "ppo.gamma", "discount"),
         _f("--lam", "ppo.lam", "lambda of the advantage estimate"),
+        _f("--critic-target", "ppo.critic_target", "Q/V supervision; terminal requires --complete-games",
+           choices=("lambda", "terminal")),
         _f("--critic-lam", "ppo.critic_lam",
            "lambda of critic Q / V targets (default: --lam); 1.0 retains VRPO control variates and segment bootstrap"),
         _f("--clip", "ppo.clip", "PPO ratio clip"),

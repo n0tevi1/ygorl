@@ -51,6 +51,8 @@ def perturbed(key: str):
         value = {bool: lambda: not default, int: lambda: (default or 0) + 3,
                  float: lambda: (default or 0.0) + 0.25}[cli._type(key)]()  # fmt: skip
     values = {k: value for k in flag.keys}
+    if key == "ppo.critic_target":
+        base = replace(base, complete_games=True)
     owner = key.partition(".")[0]
     if owner == "net":
         return replace(base, net={**base.net, **{k[4:]: v for k, v in values.items()}})

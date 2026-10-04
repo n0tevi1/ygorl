@@ -476,3 +476,19 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 - 评估走 Python `Duel` + 锁步 C++ 主机，单局推理批量为 1，比训练路径慢；每次评估的局数因此较少（区间宽），正式对比用
   `ygorl arena` 多打。
 - 课程模式（T2.6）与中局开局在 C++ 步进路径上还不支持（`EncodedVecEnv` 报 `NotImplementedError`），T4d.1 前需要移植。
+
+### 实验：完整游戏与纯终局 critic 标签（#61）
+
+`--complete-games` 每个环境槽收集一整局后等待其它槽；`--steps` 在此模式下不参与预算。
+批次按游戏拼为单列，长度可变，无 padding 或跨更新续局；终局处阻断回溯。
+截断/错误游戏的所有训练行丢弃，`discarded_rows` 计数并计入 `decisions`，不自动补采。
+全批没有有效学习行时失败；内存随完整游戏长度增加，应先用少量槽冒烟。
+默认固定步数模式不变。
+
+`--critic-target terminal --complete-games` 让 Q(s,a) 和 V(s) 使用真实终局 z，
+不包含 critic/bootstrap/control-variate；要求 gamma=1、turn_discount=1、无 critic_lam 覆盖。
+完整游戏模式暂不支持 overlap。策略优势仍使用配置的 VRPO/GAE，不是 MC policy gradient。
+对照应同样启用 complete-games、只设 `--critic-target lambda`，避免将采样变化误作目标效果。
+完整游戏更新的 `q_terminal_ev` / `v_terminal_ev`、对应 MSE 来自更新前的新游戏，
+其终局标签在两个臂相同定义；`q_explained_var` 仍是各自训练目标的 EV，不能跨目标直接比较。
+当前协议见 [终局 MC pilot](spikes/terminal-mc-2026-10-04.md)，实验选项不改变默认训练配方。

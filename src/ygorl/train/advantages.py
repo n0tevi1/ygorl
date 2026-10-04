@@ -77,6 +77,25 @@ def _zero_padding(x: Tensor, valid: Tensor | None) -> Tensor:
 
 
 @torch.no_grad()
+def terminal_returns(rewards: Tensor, dones: Tensor, players: Tensor, truncated: Tensor) -> Tensor:
+    """Undiscounted terminal z in each acting seat's perspective, with no critic inputs.
+
+    Every column must finish; callers must supply complete games and exclude truncations in full.
+    A draw is an actual terminal event with reward 0, never a limit/error or an unfinished tail.
+    """
+    _check_layout(dones, None, None, None)
+    if truncated.any():
+        raise ValueError("terminal targets require complete non-truncated games")
+    if not (rewards.shape == dones.shape == players.shape == truncated.shape):
+        raise ValueError("terminal target tensors must have the same [T, B] shape")
+    if not torch.isfinite(rewards).all() or not ((rewards == -1) | (rewards == 0) | (rewards == 1)).all():
+        raise ValueError("terminal targets require unscaled z in {-1, 0, 1}")
+    if (rewards[~dones] != 0).any() or not ((players == 0) | (players == 1)).all():
+        raise ValueError("expected terminal-only rewards and seats 0/1")
+    return _scan(rewards, _continuation(dones, players, 1.0, None, None, rewards.dtype))
+
+
+@torch.no_grad()
 def gae(rewards: Tensor, values: Tensor, dones: Tensor, players: Tensor, *, gamma: float = 1.0, lam: float = 0.95,
         bootstrap_value: Tensor | None = None, bootstrap_player: Tensor | None = None,
         valid: Tensor | None = None) -> tuple[Tensor, Tensor]:  # fmt: skip
