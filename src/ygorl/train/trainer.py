@@ -73,6 +73,7 @@ class TrainConfig:
     max_decisions: int | None = None
     num_envs: int = 128  # x steps = 16,384 rows per update (design I1: update noise is the plateau)
     env_threads: int = 2
+    complete_games: bool = False  # experimental: one whole game per env per update, steps unused
     steps: int = 128  # rows per environment slot per rollout (T)
     min_batch: int | None = None  # ready decisions per forward pass (default num_envs // 2)
     event_length: int = 64  # event tokens per observation (window mode)
@@ -133,6 +134,10 @@ class TrainConfig:
     log_games: bool = False
 
     def __post_init__(self) -> None:
+        if self.ppo.critic_target == "terminal" and not self.complete_games:
+            raise ValueError("terminal critic targets require complete_games")
+        if self.complete_games and (self.turn_discount != 1 or self.overlap_collect):
+            raise ValueError("complete_games requires turn_discount=1 and synchronous collection")
         if self.keep_best_by and self.keep_best_by not in self.eval_opponents:
             raise ValueError("keep_best_by must be one of eval_opponents")
         if self.num_envs < 1 or self.steps < 1:
@@ -238,7 +243,7 @@ class Trainer:
         self.collector = RolloutCollector(self.env, self.acting, self.schedule, cfg.steps, opponents=self.schedule.opponent,
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
                                           device=self.device, stall_timeout=cfg.stall_timeout,
-                                          turn_discount=cfg.turn_discount)  # fmt: skip
+                                          turn_discount=cfg.turn_discount, complete_games=cfg.complete_games)  # fmt: skip
         self._warmup_ev: list[float] = []
         self.counters = {"critic_warmup_done": 0, "updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0, "snapshots": 0, "snapshots_skipped": 0}  # fmt: skip
@@ -477,6 +482,7 @@ class Trainer:
             "selfplay_games": sum(g.assignment.opponent is None for g in games),
             "pool_games": len(pool_scores), "pool_win_rate": None if not pool_scores else round(_mean(pool_scores), 3),
             "first_player_win_rate": None if not first_wins else round(_mean(first_wins), 3),
+            **({"discarded_rows": ro.discarded_rows} if ro.complete_games else {}),
             "truncated_games": sum(g.truncated for g in games), "errors": sum(g.reason == "error" for g in games),
             "reasons": dict(Counter(g.reason for g in games)),
             "mean_game_decisions": _mean(int(g.result.get("decisions", 0)) for g in games),

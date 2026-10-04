@@ -99,6 +99,8 @@ class Rollout:
     games: list[FinishedGame]
     opponent_decisions: int  # snapshot-opponent decisions stepped (not rows)
     seconds: float
+    complete_games: bool = False
+    discarded_rows: int = 0  # complete-game mode: rows of truncated games (still charged as decisions)
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -107,7 +109,7 @@ class Rollout:
     @property
     def decisions(self) -> int:
         """All decisions stepped in the environment for this segment (rows + opponent decisions)."""
-        return self.players.numel() + self.opponent_decisions
+        return self.players.numel() + self.opponent_decisions + self.discarded_rows
 
 
 @dataclass
@@ -144,13 +146,14 @@ class RolloutCollector:
     def __init__(self, env, model: nn.Module, next_game: Callable[[], Assignment], num_steps: int, *,
                  opponents: Callable[[int], nn.Module] | None = None, seed: int = 0, min_batch: int | None = None,
                  device: torch.device | str = "cpu", stall_timeout: float | None = 900.0,
-                 turn_discount: float = 1.0) -> None:  # fmt: skip
+                 turn_discount: float = 1.0, complete_games: bool = False) -> None:  # fmt: skip
         if num_steps < 1:
             raise ValueError("num_steps must be at least 1")
         self.env = env
         self.model = model
         self.next_game = next_game
         self.num_steps = num_steps
+        self.complete_games = complete_games
         self.opponents = opponents
         # speed pressure (design T6, docs/spikes/reward-signal.md): a won / lost game's terminal reward is
         # +/- turn_discount ** turns, so an earlier win is worth more and a later loss costs less; 1.0 = off
@@ -175,7 +178,7 @@ class RolloutCollector:
         training = self.model.training
         self.model.eval()
         try:
-            return self._collect()
+            return self._collect_complete() if self.complete_games else self._collect()
         finally:
             self.model.train(training)
 
@@ -215,6 +218,54 @@ class RolloutCollector:
                 break
             ready = self._recv(min(self.min_batch, B - len(self._held)))
         return self._assemble(cols, games, opponent_decisions, time.perf_counter() - t0)
+
+    def _collect_complete(self) -> Rollout:
+        """Exactly one new game per slot, packed in slot order as [rows, 1]. No padding or open tails.
+
+        Truncated games consume the budget but contribute no training rows in either target arm.
+        Finished slots pause until the next update; no preferential refilling of short games.
+        """
+        if self._held or any(slot is not None for slot in self._slots):
+            raise ValueError("complete-game collection cannot continue fixed-length segments")
+        t0 = time.perf_counter()
+        B = self.env.num_envs
+        cols: list[list[_Row]] = [[] for _ in range(B)]
+        games: list[FinishedGame] = []
+        opponent_decisions = discarded = 0
+        for e in range(B):
+            self._new_game(e)
+        while len(self._held) < B:
+            ready = sorted(self._recv(min(self.min_batch, B - len(self._held))), key=lambda ev: ev.env_id)
+            learner, others = [], defaultdict(list)
+            for ev in ready:
+                slot = self._slots[ev.env_id]
+                if ev.result is not None:
+                    game = self._finish(ev, cols[ev.env_id])
+                    games.append(game)
+                    if game.truncated:
+                        discarded += len(cols[ev.env_id])
+                        cols[ev.env_id].clear()
+                    self._held[ev.env_id] = ev  # also exclude finished slots from stall reports
+                    self._slots[ev.env_id] = None
+                elif slot.assignment.is_learner(ev.player):
+                    learner.append(ev)
+                else:
+                    others[id(slot.opponent)].append(ev)
+            if learner:
+                self._act_learner(learner, cols)
+            for evs in others.values():
+                self._act_opponent(self._slots[evs[0].env_id].opponent, evs)
+                opponent_decisions += len(evs)
+        self._held.clear()
+        rows = [row for col in cols for row in col]
+        if not rows:
+            raise ValueError(
+                f"complete-game batch has no valid learner rows ({len(games)} games, "
+                f"{discarded} discarded rows); reduce truncation, do not label it a draw"
+            )
+        ro = self._assemble([rows], games, opponent_decisions, time.perf_counter() - t0, complete=True)
+        ro.discarded_rows = discarded
+        return ro
 
     def _recv(self, n: int) -> list:
         if self.stall_timeout is None:
@@ -302,8 +353,10 @@ class RolloutCollector:
             self.env.step(ev.env_id, int(a))
 
     # -- assembly ---------------------------------------------------------------------------------
-    def _assemble(self, cols: list[list[_Row]], games, opponent_decisions: int, seconds: float) -> Rollout:
-        B, T = len(cols), self.num_steps
+    def _assemble(
+        self, cols: list[list[_Row]], games, opponent_decisions: int, seconds: float, *, complete: bool = False
+    ) -> Rollout:
+        B, T = len(cols), len(cols[0]) if complete else self.num_steps
         rows = [cols[b][t] for t in range(T) for b in range(B)]  # time-major
         model = self.model
         obs = model.collate([r.obs for r in rows], self.device)
@@ -315,10 +368,21 @@ class RolloutCollector:
         def grid_a(tensors) -> Tensor:
             return torch.stack(tensors).reshape(T, B, -1)
 
-        held = [self._held[b] for b in range(B)]
-        boot_batch = model.collate([ev.obs for ev in held], self.device)
-        boot_priv = model.collate_privileged([ev.privileged for ev in held], self.device)
-        boot = model(boot_batch, boot_priv)
+        if complete:
+            # All games end in done=True, so these shape-compatible sentinels are never bootstrapped.
+            boot_player = torch.tensor([rows[-1].player])
+            boot_mask = obs["action_mask"][-1:].cpu()
+            boot_probs, boot_q = rows[-1].probs[None], torch.zeros_like(rows[-1].q[None])
+            boot_value = torch.zeros(1)
+        else:
+            held = [self._held[b] for b in range(B)]
+            boot_batch = model.collate([ev.obs for ev in held], self.device)
+            boot_priv = model.collate_privileged([ev.privileged for ev in held], self.device)
+            boot = model(boot_batch, boot_priv)
+            boot_player = torch.tensor([int(ev.player) for ev in held])
+            boot_mask = boot_batch["action_mask"].cpu()
+            boot_probs, boot_q = torch.softmax(boot.logits.float(), -1).cpu(), boot.q.float().cpu()
+            boot_value = boot.v.float().cpu()
         return Rollout(
             obs=obs, privileged=priv,
             players=grid([r.player for r in rows], torch.long), actions=grid([r.action for r in rows], torch.long),
@@ -326,9 +390,9 @@ class RolloutCollector:
             log_probs=grid([r.log_prob for r in rows], torch.float32), q=grid_a([r.q for r in rows]),
             values=grid([r.value for r in rows], torch.float32), rewards=grid([r.reward for r in rows], torch.float32),
             dones=grid([r.done for r in rows], torch.bool), truncated=grid([r.truncated for r in rows], torch.bool),
-            bootstrap_player=torch.tensor([int(ev.player) for ev in held]), bootstrap_mask=boot_batch["action_mask"].cpu(),
-            bootstrap_probs=torch.softmax(boot.logits.float(), -1).cpu(), bootstrap_q=boot.q.float().cpu(),
-            bootstrap_value=boot.v.float().cpu(), games=games, opponent_decisions=opponent_decisions, seconds=seconds,
+            bootstrap_player=boot_player, bootstrap_mask=boot_mask, bootstrap_probs=boot_probs, bootstrap_q=boot_q,
+            bootstrap_value=boot_value, games=games, opponent_decisions=opponent_decisions, seconds=seconds,
+            complete_games=complete,
         )  # fmt: skip
 
 

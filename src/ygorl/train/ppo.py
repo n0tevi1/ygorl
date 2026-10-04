@@ -34,7 +34,7 @@ from torch import Tensor, nn
 
 from ygorl.nets.batch import policy_logits
 from ygorl.nets.policy import trim_padding
-from ygorl.train.advantages import ESTIMATORS, NORMALIZE_MODES, VRPO_MODES, Estimate, estimate
+from ygorl.train.advantages import ESTIMATORS, NORMALIZE_MODES, VRPO_MODES, Estimate, estimate, terminal_returns
 from ygorl.train.critic import q_loss, v_loss
 from ygorl.train.rollout import Rollout
 
@@ -47,6 +47,7 @@ class PPOConfig:
     gamma: float = 1.0
     lam: float = 0.5  # design I2: lower-variance advantages; 0.3 / the critic mode are worse (docs/benchmarks.md)
     critic_lam: float | None = None  # Q / V target λ (None: lam); 1.0 still retains VRPO control variates/bootstrap
+    critic_target: str = "lambda"  # experimental "terminal": actual z for Q/V, same policy advantages
     clip: float = 0.2  # PPO ratio clip
     entropy_coef: float = 0.05  # design I1: 0.05-0.2
     kl_ref_coef: float = 0.05  # KL(π‖π_ref) to the EMA reference (design I8)
@@ -69,6 +70,10 @@ class PPOConfig:
     adv_norm: str = "standard"  # normalize_advantages mode, over the whole rollout
 
     def __post_init__(self) -> None:
+        if self.critic_target not in ("lambda", "terminal"):
+            raise ValueError("critic_target must be lambda or terminal")
+        if self.critic_target == "terminal" and (self.gamma != 1 or self.critic_lam is not None):
+            raise ValueError("terminal targets require gamma=1 and no critic_lam override")
         if self.estimator not in ESTIMATORS:
             raise ValueError(f"estimator must be one of {ESTIMATORS}, got {self.estimator!r}")
         if self.vrpo_mode not in VRPO_MODES:
@@ -303,12 +308,18 @@ class PPOLearner:
     # -- update --------------------------------------------------------------------------------------
     def targets(self, ro: Rollout) -> Estimate:
         cfg = self.cfg
-        return estimate(cfg.estimator, rewards=ro.rewards, dones=ro.dones, players=ro.players, actions=ro.actions,
+        est = estimate(cfg.estimator, rewards=ro.rewards, dones=ro.dones, players=ro.players, actions=ro.actions,
                         action_mask=ro.action_mask, probs=ro.probs, q=ro.q, values=ro.values, gamma=cfg.gamma,
                         lam=cfg.lam, bootstrap_player=ro.bootstrap_player, bootstrap_value=ro.bootstrap_value,
                         bootstrap_q=ro.bootstrap_q, bootstrap_probs=ro.bootstrap_probs,
                         bootstrap_mask=ro.bootstrap_mask, truncated=ro.truncated, vrpo_mode=cfg.vrpo_mode,
                         normalize=cfg.adv_norm, target_lam=cfg.critic_lam)  # fmt: skip
+        if cfg.critic_target == "terminal":
+            if not ro.complete_games:
+                raise ValueError("terminal targets require complete-game collection")
+            z = terminal_returns(ro.rewards, ro.dones, ro.players, ro.truncated)
+            est.q_targets = est.v_targets = z
+        return est
 
     def update(self, ro: Rollout, policy: bool = True) -> dict[str, float]:
         """One PPO update on ``ro``. ``policy=False`` (critic warm-up): only the Q / V losses, and only parameters the
@@ -388,6 +399,13 @@ class PPOLearner:
         stats = {k: v / steps for k, v in sums.items()}
         taken_q = ro.q.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1).reshape(-1)
         stats["q_explained_var"] = _explained_variance(taken_q, q_targets)
+        if ro.complete_games:
+            z = terminal_returns(ro.rewards, ro.dones, ro.players, ro.truncated).reshape(-1)
+            # Pre-update predictions on new, complete on-policy games, same z metric in both arms.
+            stats["q_terminal_ev"] = _explained_variance(taken_q, z)
+            stats["v_terminal_ev"] = _explained_variance(ro.values.reshape(-1), z)
+            stats["q_terminal_mse"] = float((taken_q - z).square().mean())
+            stats["v_terminal_mse"] = float((ro.values.reshape(-1) - z).square().mean())
         stats["adv_mean"], stats["adv_std"] = float(adv.mean()), float(adv.std(correction=0))
         stats["rows"] = n
         stats["minibatches"], stats["early_stop"] = steps, int(stopped)
