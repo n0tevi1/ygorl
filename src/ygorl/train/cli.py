@@ -94,7 +94,7 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--gamma", "ppo.gamma", "discount"),
         _f("--lam", "ppo.lam", "lambda of the advantage estimate"),
         _f("--critic-lam", "ppo.critic_lam",
-           "lambda of the critic's Q / V targets only (default: --lam); 1.0 = game results"),
+           "lambda of critic Q / V targets (default: --lam); 1.0 retains VRPO control variates and segment bootstrap"),
         _f("--clip", "ppo.clip", "PPO ratio clip"),
         _f("--entropy", "ppo.entropy_coef", "entropy coefficient (design: 0.05-0.2)"),
         _f("--kl-ref", "ppo.kl_ref_coef", "KL coefficient to the EMA reference"),

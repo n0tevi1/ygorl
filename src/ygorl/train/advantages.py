@@ -83,7 +83,8 @@ def gae(rewards: Tensor, values: Tensor, dones: Tensor, players: Tensor, *, gamm
     """GAE(λ) with perspective flips: ``(advantages, returns)``, both ``[T, B]``.
 
     ``δ_t = r_t + c_t V(s_{t+1}) - V(s_t)``, ``A_t = δ_t + λ c_t A_{t+1}``, ``returns = A + V`` (the λ-return,
-    the V-head target). λ = 1 gives the Monte-Carlo return minus V, λ = 0 the TD error.
+    the V-head target). λ = 1 gives the sampled return minus V (bootstrapped at an unfinished segment),
+    λ = 0 the TD error.
     """
     _check_layout(dones, valid, bootstrap_value, bootstrap_player)
     cont = _continuation(dones, players, gamma, bootstrap_player, valid, values.dtype)
@@ -216,8 +217,8 @@ def estimate(estimator: str, *, rewards: Tensor, dones: Tensor, players: Tensor,
 
     ``target_lam`` (default: ``lam``): the λ of the critic's Q / V targets only; the advantages keep ``lam``. A low
     advantage λ cuts the policy gradient's variance, but the same λ makes the critic's target mostly its own next
-    estimate, so information that pays off only turns later (future draws) hardly reaches it; λ = 1 trains the
-    critic on the game results (up to the rollout segment's end).
+    estimate. λ = 1 extends the trace through the segment, but Expected-SARSA still includes later
+    ``Vbar - Q_taken`` control variates and unfinished segments still bootstrap; this is not pure terminal MC.
     """
     if estimator not in ESTIMATORS:
         raise ValueError(f"estimator must be one of {ESTIMATORS}, got {estimator!r}")

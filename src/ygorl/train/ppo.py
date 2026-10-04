@@ -46,7 +46,7 @@ class PPOConfig:
     vrpo_mode: str = "return"
     gamma: float = 1.0
     lam: float = 0.5  # design I2: lower-variance advantages; 0.3 / the critic mode are worse (docs/benchmarks.md)
-    critic_lam: float | None = None  # λ of the Q / V targets only (None: lam); 1.0 trains the critic on game results
+    critic_lam: float | None = None  # Q / V target λ (None: lam); 1.0 still retains VRPO control variates/bootstrap
     clip: float = 0.2  # PPO ratio clip
     entropy_coef: float = 0.05  # design I1: 0.05-0.2
     kl_ref_coef: float = 0.05  # KL(π‖π_ref) to the EMA reference (design I8)
