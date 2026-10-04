@@ -1,0 +1,17 @@
+--- a/proc_synchro.lua
++++ b/proc_synchro.lua
+@@ -412,7 +412,13 @@
+ 	sg:AddCard(c)
+ 	local tsg_count=#tsg
+ 	local ntsg_count=#ntsg
+-	if max and (tsg_count+ntsg_count)>max then
++	local function unsafe_level(tc)
++		return tc:GetLevel()<=0 or tc:GetSynchroLevel(sc)~=tc:GetLevel() or tc:IsHasEffect(EFFECT_SYNCHRO_LEVEL) or tc:IsHasEffect(EFFECT_SYNCHRO_MATERIAL_CUSTOM) or tc:IsHasEffect(EFFECT_SYNCHRO_CHECK)
++	end
++	local safe_levels=not req2 and not reqm and not Synchro.CheckAdditional and not ntg:IsExists(unsafe_level,1,nil) and not sg:IsExists(unsafe_level,1,nil)
++	if safe_levels and sg:GetSum(Card.GetLevel)>lv then
++		res=false
++	elseif max and (tsg_count+ntsg_count)>max then
+ 		res = false
+ 	elseif ntsg_count<min2 then
+ 		res=ntg:IsExists(Synchro.CheckP42,1,sg,ntg,tsg,ntsg,sg,min2,max2,req2,reqm,lv,sc,tp,pg,mgchk,min,max)
