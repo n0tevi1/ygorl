@@ -14,7 +14,7 @@ from ygorl.cards.cdb import CardDB
 from ygorl.cards.ydk import load_ydk
 from ygorl.engine import constants as C
 from ygorl.engine import tracker as tracker_module
-from ygorl.engine.duel import Duel, DuelConfig, default_cards, default_scripts, expand_seed
+from ygorl.engine.duel import Duel, DuelConfig, default_cards, expand_seed
 from ygorl.env import GameSpec, run_games
 from ygorl.env.encoded import EncodedVecEnv, chooser
 
@@ -151,7 +151,8 @@ def test_real_material_searches_report_the_original_lua_trace(case, db):
     """#169: real MD failures replay without a checkpoint, inference, or stochastic policy sampling."""
     old = _core.set_max_script_steps(100000)
     try:
-        host = _core.HostDuel(db.to_core(), default_scripts(), [])
+        original = _core.ScriptDirectory([str(p) for p in paths.script_directories()])
+        host = _core.HostDuel(db.to_core(), original, [])
         host.start(case["core_seed"], case["rule_flags"], (8000, 5, 1), (8000, 5, 1),
                    case["loaded_decks"], 200, 4000)  # fmt: skip
         for action in case["actions"]:

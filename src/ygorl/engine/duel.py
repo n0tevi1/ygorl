@@ -125,7 +125,12 @@ def default_cards() -> CardDB:
 
 @cache
 def default_scripts() -> _core.ScriptDirectory:
-    return _core.ScriptDirectory([str(p) for p in paths.script_directories()])
+    from ygorl.engine.script_patches import synchro_override
+
+    directories = [str(p) for p in paths.script_directories()]
+    original = _core.ScriptDirectory(directories)
+    replacement = synchro_override(original.read("proc_synchro.lua"))
+    return original if replacement is None else _core.ScriptDirectory(directories, {"proc_synchro.lua": replacement})
 
 
 class Duel:

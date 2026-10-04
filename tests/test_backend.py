@@ -58,6 +58,20 @@ def test_create_duel_rejects_zero_seed(db, scripts):
         _core.Duel([0, 0, 0, 0], C.DUEL_MODE_MR5, PLAYER, PLAYER, db.to_core(), scripts)
 
 
+def test_script_overrides_are_immutable_and_do_not_change_disk_files(tmp_path):
+    (tmp_path / "c1.lua").write_bytes(b"-- disk")
+    content = {"c1.lua": b"-- override", "memory.lua": b"-- memory"}
+    scripts = _core.ScriptDirectory([str(tmp_path)], content)
+    content["c1.lua"] = b"-- changed caller dictionary"
+    assert scripts.read("./script/c1.lua") == b"-- override"
+    assert scripts.read("memory.lua") == b"-- memory"
+    assert scripts.find("c1.lua") == str(tmp_path / "c1.lua")
+    assert scripts.find("memory.lua") is None and len(scripts) == 2
+    assert (tmp_path / "c1.lua").read_bytes() == b"-- disk"
+    with pytest.raises(ValueError, match="file names"):
+        _core.ScriptDirectory([], {"script/c1.lua": b"-- ambiguous key"})
+
+
 def test_bad_sources_are_type_errors(scripts):
     with pytest.raises(TypeError):
         _core.Duel(SEED, C.DUEL_MODE_MR5, PLAYER, PLAYER, object(), scripts)

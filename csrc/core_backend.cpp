@@ -83,8 +83,13 @@ bool CardDatabase::read(uint32_t code, OCG_CardData* out) {
 
 // ------------------------------------------------------------- ScriptDirectory
 
-ScriptDirectory::ScriptDirectory(std::vector<std::string> directories)
-    : directories_(std::move(directories)) {
+ScriptDirectory::ScriptDirectory(std::vector<std::string> directories,
+                                 std::unordered_map<std::string, std::string> overrides)
+    : directories_(std::move(directories)), overrides_(std::move(overrides)) {
+    for (const auto& [name, content] : overrides_) {
+        if (name.empty() || fs::path(name).filename().string() != name)
+            throw std::invalid_argument("script override keys must be file names");
+    }
     for (const auto& dir : directories_) {
         std::error_code ec;
         if (!fs::is_directory(dir, ec)) continue;
@@ -93,6 +98,8 @@ ScriptDirectory::ScriptDirectory(std::vector<std::string> directories)
             index_.emplace(entry.path().filename().string(), entry.path().string());  // first wins
         }
     }
+    size_ = index_.size();
+    for (const auto& [name, content] : overrides_) size_ += index_.count(name) == 0;
 }
 
 std::optional<std::string> ScriptDirectory::find(const std::string& name) const {
@@ -103,6 +110,8 @@ std::optional<std::string> ScriptDirectory::find(const std::string& name) const 
 }
 
 std::optional<std::string> ScriptDirectory::read(const std::string& name) const {
+    auto replacement = overrides_.find(fs::path(name).filename().string());
+    if (replacement != overrides_.end()) return replacement->second;
     auto path = find(name);
     if (!path) return std::nullopt;
     std::ifstream in(*path, std::ios::binary);

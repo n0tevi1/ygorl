@@ -36,3 +36,24 @@
 **选 edo9300/ygopro-core + ProjectIgnis CardScripts / BabelCDB / LFLists。** 决定性因素是 R2 和 R3：多格式是明确需求，只有它有格式预设与 TCG 专属裁定；每局独立回调让 C++ 线程池不依赖全局约定。R1/R4/R5/R7 它同样不弱或更强。Fluorohydride 唯一的实质优势是 R6（ygo-agent 先例），但 ygo-agent 的价值在**编码方案与训练循环**，这部分与核心无关，可以移植。
 
 缓解措施：`ygorl.engine` 定义一个极薄的 `CoreBackend` 接口（`create / process / get_message / set_response / query`），消息解码器按核心分文件。若将来因许可证或社区原因要换回 Fluorohydride，只需重写绑定与解码器（消息负载格式略有差异：edo9300 的位置信息是 `{u8,u8,u32,u32}`，Fluorohydride 是 4 个 u8），上层不动。
+
+## 2.4 版本限定的同调搜索剪枝（2026-10-04，#169）
+
+默认 100,000 千条脚本指令预算保持不变。对已审查的 CardScripts `proc_synchro.lua` 内容哈希提供内存覆盖，
+不修改子模块或写入共享脚本目录；未识别的版本原样加载。`ScriptDirectory` 可接收只读的文件名→内容覆盖，Python 单局和 C++ 批量主机共用。
+直接构造不带覆盖的 `ScriptDirectory` 保留原脚本，供语义对照与原始失败诊断。
+
+剪枝仅作用于 `Synchro.CheckP42` 的非调整素材递归：调整组固定，每次递归只增加一个非调整素材。
+当当前素材等级和已超过目标，且所有当前/剩余候选都是固定正等级（1–65535）、同调等级等于普通等级时，增加素材不可能恢复等式。
+更大的数值会被核心求和接口解释为两个 16-bit 可选等级，即使没有特殊等级效果也必须退回原搜索。
+在这一条件下返回 false，并仍执行原来的组恢复逻辑。不能调换成功组合的搜索顺序，也不改目标/操作阶段。
+
+保护边界：存在特殊同调等级、custom material、`EFFECT_SYNCHRO_CHECK`、素材限制、等级修改效果，或 `req2` / `reqm` /
+`Synchro.CheckAdditional` 时保留原搜索。对 `EFFECT_HAND_SYNCHRO + EFFECT_SYNCHRO_CHECK`，只允许本版本
+`Synchro.CreateHandMaterialEffect` 自己创建的 `synchktg` 闭包；用 Lua 内私有弱键表记录函数身份，未知/替换的回调一律退回。
+该闭包仅检查效果标签与筛选/返回排除组，不修改卡片属性或已选择组；其之后的 `CheckHand` 也仅检查标签。
+因此这些回调不能使已超目标的固定正等级和降低。普通查询接口仍遵循引擎对只读属性/效果查询的约定。
+
+验收包含：两个真实默认预算失败前缀、可完成高预算参照的完整消息/应答/终局一致性、新随机对局、
+特殊/双值同调等级、custom material、未选择素材上的自定义回调/效果，以及组约束。未知回调改变等级的构造必须仍保留合法组合。
+原始失败 traceback 测试显式使用未覆盖脚本。融合搜索另行处理；不以本次修复关闭整个 #169，也不重写历史 RL 结果。
