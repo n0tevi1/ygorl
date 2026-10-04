@@ -15,10 +15,9 @@ import numpy as np
 import torch
 
 from compare_checkpoints import digest, git, write_json
-from response_probe import PASS, sample
+from response_probe import sample, signature
 from ygorl import _core
 from ygorl.data.environment import load_environment
-from ygorl.engine import constants as C
 from ygorl.engine.duel import DuelConfig, default_cards
 from ygorl.env import GameSpec
 from ygorl.env.driver import drive
@@ -26,13 +25,21 @@ from ygorl.env.encoded import EncodedVecEnv
 from ygorl.eval.agent_matrix import pairing_slots, sample_pairings
 from ygorl.eval.batched import _uniform
 from ygorl.eval.paired_panel import compare_panel
-from ygorl.eval.response_probe import ResponseRidge, public_features
+from ygorl.eval.response_probe import (
+    ResponseRidge,
+    public_features,
+    response_window,
+    simple_response,
+    response_contrasts,
+)
 from ygorl.nets.batch import collate, policy_logits
 from ygorl.paths import cards_cdb, third_party
 from ygorl.train.checkpoint import load_actor
 
 
-def play(candidate, opponent, teacher, slots, config, device, enabled):
+def play(candidate, opponent, teacher, slots, config, device, mode, pass_bias=-4.0):
+    if mode not in ("control", "reranked", "pass_bias", "always_activate"):
+        raise ValueError("unknown intervention mode")
     specs, streams = [], []
     for seed, ds, ss in slots:
         for m in (0, 1):
@@ -84,34 +91,33 @@ def play(candidate, opponent, teacher, slots, config, device, enabled):
                 n = state["counts"][ev.player]
                 actions[j] = sample(probs[row], _uniform(streams[game.index][side], 0, 0, n))
                 state["counts"][ev.player] += 1
-                glob = ev.obs["globals"]
-                legal = np.flatnonzero(ev.obs["action_mask"])
-                passes = [k for k in legal if ev.obs["actions"][k, 0] == PASS]
-                if (
-                    side == 0
-                    and state["intervention"] is None
-                    and int(glob[3]) <= 4
-                    and int(glob[18]) == C.MSG_SELECT_CHAIN
-                    and int(glob[2]) == 0
-                    and passes
-                    and 1 < len(legal) <= 8
-                ):
-                    eligible.append((j, legal, passes[0]))
+                window = response_window(ev.obs)
+                if side == 0 and state["intervention"] is None and window is not None:
+                    legal, passed = window
+                    eligible.append((j, legal, passed, probs[row]))
             if eligible:
-                features = public_features(policy.net, [ready[j][1].obs for j, _, _ in eligible], device)
-                for f, (j, legal, passed) in zip(features, eligible, strict=True):
+                features = public_features(policy.net, [ready[j][1].obs for j, _, _, _ in eligible], device)
+                for f, (j, legal, passed, prob) in zip(features, eligible, strict=True):
                     game, ev = ready[j]
                     picked = int(legal[np.argmax(teacher.scores(f[legal] - f[passed]))])
+                    choices = {
+                        "reranked": picked,
+                        "pass_bias": simple_response(prob, legal, passed, pass_bias=pass_bias),
+                        "always_activate": simple_response(prob, legal, passed),
+                    }
+                    proposed = choices[mode if mode != "control" else "reranked"]
                     game.state["intervention"] = {
+                        "signature": signature(ev.obs, ev.player),
                         "turn": int(ev.obs["globals"][3]),
                         "chain_length": int(ev.obs["globals"][17]),
                         "sampled": actions[j],
                         "reranked": picked,
-                        "changed": bool(picked != actions[j]),
-                        "applied": enabled,
+                        "choices": choices,
+                        "changed": bool(proposed != actions[j]),
+                        "applied": mode != "control",
                     }
-                    if enabled:
-                        actions[j] = picked
+                    if mode != "control":
+                        actions[j] = proposed
         return actions
 
     drive(env, specs, decide, result, min_batch=32, start=lambda i, sp: {"counts": [0, 0], "intervention": None})
@@ -127,7 +133,23 @@ def main():
     p.add_argument("--seed", type=int, default=20261004)
     p.add_argument("--device", default="cuda")
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument(
+        "--arms",
+        nargs="+",
+        choices=("control", "reranked", "pass_bias", "always_activate"),
+        default=["control", "reranked"],
+    )
+    p.add_argument("--pass-bias", type=float)
     a = p.parse_args()
+    if "control" not in a.arms or len(set(a.arms)) != len(a.arms) or len(a.arms) < 2 or a.pairings < 2:
+        p.error("need control and distinct comparison arms, with at least two pairings")
+    if a.pass_bias is None:
+        if "pass_bias" in a.arms:
+            a.pass_bias = json.loads((a.pilot / "training-summary.json").read_text())["selected_pass_bias"]
+        else:
+            a.pass_bias = -4.0
+    if not np.isfinite(a.pass_bias):
+        p.error("pass bias must be finite")
     torch.set_num_threads(1)
     a.out.mkdir(parents=True, exist_ok=True)
     pilot = json.loads((a.pilot / "manifest.json").read_text())
@@ -159,6 +181,8 @@ def main():
         "opponents": panel["opponents"],
         "pilot_manifest_sha256": digest(a.pilot / "manifest.json"),
         "device": a.device,
+        "arms": a.arms,
+        "pass_bias": a.pass_bias,
         "core_sha256": digest(_core.__file__),
         "cards_sha256": digest(cards_cdb()),
         "tool_sha256": digest(__file__),
@@ -179,7 +203,7 @@ def main():
     if path.exists() and json.loads(path.read_text()) != manifest:
         raise ValueError("manifest mismatch")
     write_json(path, manifest)
-    arrays = {name: np.empty((a.pairings, len(panel["opponents"]), 4)) for name in ("control", "reranked")}
+    arrays = {name: np.empty((a.pairings, len(panel["opponents"]), 4)) for name in a.arms}
     coverage = {}
     for oi, (name, entry) in enumerate(panel["opponents"].items()):
         if digest(entry["path"]) != entry["sha256"]:
@@ -193,7 +217,7 @@ def main():
             if not path.exists():
                 print("playing", label, name, flush=True)
                 write_json(
-                    path, {"records": play(candidate, opponent, teacher, slots, config, a.device, label == "reranked")}
+                    path, {"records": play(candidate, opponent, teacher, slots, config, a.device, label, a.pass_bias)}
                 )
             records = json.loads(path.read_text())["records"]
             arrays[label][:, oi, :] = np.array(
@@ -213,6 +237,8 @@ def main():
         if digest(entry["path"]) != entry["sha256"]:
             raise ValueError("opponent changed during evaluation")
     report = compare_panel(arrays, "control", seed=a.seed)
+    if set(arrays) == {"control", "reranked", "pass_bias", "always_activate"}:
+        report["familywise"] = response_contrasts(arrays, seed=a.seed)
     report["coverage"] = coverage
     report["opponents"] = list(panel["opponents"])
     write_json(a.out / "summary.json", report)
