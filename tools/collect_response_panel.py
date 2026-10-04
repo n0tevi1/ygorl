@@ -198,7 +198,7 @@ def fit(a, opponents):
                 ]
             ).reshape(-1, a.continuations)
             valid = common_valid(scores)
-            if valid.sum() < a.continuations // 2:
+            if 2 * valid.sum() < a.continuations:
                 excluded.add(r["pairing"])
                 continue
             data.append(

@@ -92,3 +92,34 @@ def test_response_contrasts_use_one_common_pairing_mask_and_family():
     for c in result["contrasts"].values():
         assert c["clusters"] == 3
     np.testing.assert_allclose(result["contrasts"]["reranked-control"]["ci99"], [0.2, 0.2])
+
+
+def test_collection_excludes_a_pairing_with_less_than_half_common_continuations(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    monkeypatch.syspath_prepend(str(Path(__file__).parents[1] / "tools"))
+    from collect_response_panel import fit
+
+    opponent = tmp_path / "opponent"
+    opponent.mkdir()
+    roots = {}
+    for pair in range(3):
+        game = 4 * pair
+        roots[str(game)] = dict(
+            game=game, pairing=pair, player=0, features=[[0, 0], [1, pair + 1]], probs=[0.5, 0.5], **{"pass": 0}
+        )
+        records = [
+            dict(reason="error" if pair == 0 and rep >= 2 else "win", winner=1 - action)
+            for action in range(2)
+            for rep in range(5)
+        ]
+        (opponent / f"rollouts-{game}.json").write_text(json.dumps(dict(records=records)))
+    (opponent / "states.json").write_text(
+        json.dumps(dict(roots=roots, outcomes={key: {"status": "root"} for key in roots}))
+    )
+    fit(SimpleNamespace(out=tmp_path, pairings=3, continuations=5), ["opponent"])
+    summary = json.loads((tmp_path / "training-summary.json").read_text())
+    assert summary["excluded_pairings"] == [0]
+    assert summary["training_roots"] == 2
