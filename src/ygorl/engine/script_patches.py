@@ -4,6 +4,7 @@ from hashlib import sha256
 
 
 SYNCHRO_SHA256 = "cacd92d496ab653e6e5f304cb2b38b831e4f6d41ab1e842ffab909a0efb1543d"
+FUSION_SHA256 = "3779bd72c57d95ce7d330c04f9bc2479966337f50ad23ce3a1d5bf9304a6fdc9"
 
 # Only the library-created hand-material checks are known to preserve card levels and selected groups.
 # Keep this identity set private to the Lua chunk, rather than trusting card-provided labels or flags.
@@ -48,3 +49,22 @@ def synchro_override(source: bytes | None) -> bytes | None:
     assert text[start:].count(old) == 1
     text = text[:start] + text[start:].replace(old, new)
     return text.encode("utf-8")
+
+
+def fusion_override(source: bytes | None) -> bytes | None:
+    """Check the complete group's constraint before enumerating material-role permutations.
+
+    Do not check partial groups: real card constraints can require an as-yet-unselected material,
+    despite the upstream monotonicity comment (Fusion Destiny is one such counterexample).
+    """
+    if source is None or sha256(source).hexdigest() != FUSION_SHA256:
+        return None
+    text = source.decode("utf-8")
+    start = text.index("function Fusion.CheckMixGoal(")
+    end = text.index("function Fusion.SelectMix(", start)
+    body = text[start:end]
+    check = "(not Fusion.CheckAdditional or Fusion.CheckAdditional(tp,sg,fc,sumtype,tp))"
+    assert body.count(check) == 1
+    body = body.replace("return sg:IsExists(", f"return {check} and sg:IsExists(")
+    body = body.replace("\n\t\tand " + check, "")
+    return (text[:start] + body + text[end:]).encode("utf-8")
