@@ -102,16 +102,19 @@ private:
 // Looks scripts up by file name in an ordered list of directories (first match wins).
 class ScriptDirectory final : public ScriptSource {
 public:
-    explicit ScriptDirectory(std::vector<std::string> directories);
+    explicit ScriptDirectory(std::vector<std::string> directories,
+                             std::unordered_map<std::string, std::string> overrides = {});
     std::optional<std::string> find(const std::string& name) const;
     std::optional<std::string> read(const std::string& name) const;
     bool load(OCG_Duel duel, const char* name) override;
     const std::vector<std::string>& directories() const { return directories_; }
-    size_t size() const { return index_.size(); }
+    size_t size() const { return size_; }
 
 private:
     std::vector<std::string> directories_;
     std::unordered_map<std::string, std::string> index_;  // file name -> full path
+    const std::unordered_map<std::string, std::string> overrides_;  // file name -> script content
+    size_t size_ = 0;
 };
 
 struct PlayerOptions {

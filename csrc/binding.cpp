@@ -248,9 +248,10 @@ PYBIND11_MODULE(_core, m) {
         }, "Return the stored 12-tuple for `code`, or None.");
 
     py::class_<ScriptDirectory, std::shared_ptr<ScriptDirectory>>(m, "ScriptDirectory",
-        "Loads card scripts by file name from an ordered list of directories (first match wins).")
-        .def(py::init<std::vector<std::string>>(), py::arg("directories"))
-        .def("find", &ScriptDirectory::find, py::arg("name"))
+        "Loads scripts by file name: immutable content overrides, then ordered directories (first match wins).")
+        .def(py::init<std::vector<std::string>, std::unordered_map<std::string, std::string>>(),
+             py::arg("directories"), py::arg("overrides") = std::unordered_map<std::string, std::string>{})
+        .def("find", &ScriptDirectory::find, py::arg("name"), "Find the underlying disk path, without content overrides.")
         .def("read", [](const ScriptDirectory& s, const std::string& name) -> py::object {
             auto c = s.read(name);
             if (!c) return py::none();
