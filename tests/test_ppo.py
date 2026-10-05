@@ -454,3 +454,67 @@ def test_pinned_snapshots_stay_and_get_their_share_of_pool_games():
     alone = SnapshotPool(capacity=2, pinned_share=0.5)
     only = alone.pin(model, tag="bc")
     assert {alone.sample(rng) for _ in range(20)} == {only}
+
+
+def test_kl_guard_never_applies_an_update_with_a_known_violation(monkeypatch):
+    torch.manual_seed(0)
+    model = NimModel(max_pile=15)
+    ro = RolloutCollector(
+        NimEnv(4, max_pile=15), model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0
+    ).collect()
+    learner = PPOLearner(model, PPOConfig(epochs=6, minibatch_size=16, lr=0.05, target_kl=1e-4))
+    original_loss, original_step = learner.objective.loss, learner.optimizer.step
+    checked, applied = [], []
+
+    def loss(*args, **kw):
+        value, extra = original_loss(*args, **kw)
+        checked.append(float(extra["approx_kl"]))
+        return value, extra
+
+    def step(*args, **kw):
+        assert checked[-1] <= 1.5e-4, "optimizer ran despite an already measured KL violation"
+        applied.append(checked[-1])
+        return original_step(*args, **kw)
+
+    monkeypatch.setattr(learner.objective, "loss", loss)
+    monkeypatch.setattr(learner.optimizer, "step", step)
+    stats = learner.update(ro)
+    assert len(applied) == stats["minibatches"] == 1
+    assert len(checked) == stats["evaluated_minibatches"] == 2
+    assert stats["early_stop"] == 1 and stats["stop_approx_kl"] == checked[-1] > 1.5e-4
+    assert stats["approx_kl"] == pytest.approx(np.mean(checked))
+
+
+def test_kl_guard_first_batch_rejection_is_a_finite_zero_step_update():
+    torch.manual_seed(0)
+    model = NimModel(max_pile=15)
+    ro = RolloutCollector(
+        NimEnv(4, max_pile=15), model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0
+    ).collect()
+    ro.log_probs -= 1  # stale behavior likelihoods: the current policy is already too far away
+    learner = PPOLearner(model, PPOConfig(epochs=2, minibatch_size=16, target_kl=1e-4))
+    before = copy.deepcopy(model.state_dict())
+    stats = learner.update(ro)
+    assert stats["minibatches"] == 0 and not learner.optimizer.state
+    assert stats["evaluated_minibatches"] == stats["early_stop"] == 1 and stats["stop_approx_kl"] > 1.5e-4
+    assert stats["grad_norm"] == 0 and learner.updates == 1
+    assert all(torch.equal(v, model.state_dict()[k]) for k, v in before.items())
+    assert all(np.isfinite(v) for v in stats.values())
+    assert all(k in stats for k in ("loss", "policy_loss", "entropy", "q_loss", "v_loss", "kl_ref"))
+
+
+def test_disabled_and_untriggered_kl_guards_apply_identical_updates():
+    torch.manual_seed(0)
+    model = NimModel(max_pile=15)
+    ro = RolloutCollector(
+        NimEnv(4, max_pile=15), model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0
+    ).collect()
+    weights = []
+    for limit in (None, 1e9):
+        learner = PPOLearner(copy.deepcopy(model), PPOConfig(epochs=2, minibatch_size=16, target_kl=limit))
+        torch.manual_seed(31)
+        stats = learner.update(ro)
+        assert stats["minibatches"] == stats["evaluated_minibatches"] == 8
+        assert stats["early_stop"] == stats["stop_approx_kl"] == 0
+        weights.append(copy.deepcopy(learner.model.state_dict()))
+    assert all(torch.equal(weights[0][k], v) for k, v in weights[1].items())

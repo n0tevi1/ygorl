@@ -772,3 +772,14 @@ def test_another_invalid_baseline_blocks_an_otherwise_best_score(tmp_path, monke
     assert result["greedy"]["valid"] and result["greedy"]["win_rate"] == 1
     assert not result["random"]["valid"] and result["random"]["attempted_games"] == 0
     assert trainer.best["score"] is None and trainer.pool.best_id is None and not (tmp_path / "best.pt").exists()
+
+
+def test_policy_kl_guard_does_not_block_a_frozen_actor_critic_warmup(tmp_path):
+    trainer = Trainer(_small_cfg(), tmp_path, log=None)
+    ro = trainer.collector.collect()
+    ro.log_probs -= 1  # stale behavior likelihoods do not prevent fitting the critic with a frozen actor
+    before = {k: v.clone() for k, v in trainer.model.actor.state_dict().items()}
+    stats = trainer.learner.update(ro, policy=False)
+    assert stats["minibatches"] == stats["evaluated_minibatches"] == 1 and stats["early_stop"] == 0
+    assert stats["approx_kl"] > 1.5 * trainer.cfg.ppo.target_kl and stats["stop_approx_kl"] == 0
+    assert all(torch.equal(v, trainer.model.actor.state_dict()[k]) for k, v in before.items())
