@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--env", default=None, metavar="PATH|VERSION", help="environment the demonstrations are bound to"
     )
+    parser.add_argument(
+        "--include-synthetic-closing",
+        action="store_true",
+        help="also imitate automatically appended passive closing (legacy comparisons only)",
+    )
     parser.add_argument("--epochs", type=int, default=12)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -167,7 +172,9 @@ def main(argv: list[str] | None = None) -> int:
                 raise SystemExit(f"train_bc: illegal demonstration deck {deck.name}: "
                                  + "; ".join(v.message for v in violations))  # fmt: skip
     report: dict = {"train_files": [str(p) for p in args.train], "heldout_files": [str(p) for p in args.heldout],
-                    "environment": stamp}  # fmt: skip
+                    "environment": stamp,
+                    "data_policy": {"include_synthetic_closing": args.include_synthetic_closing,
+                                    "full_replay_validation": True}}  # fmt: skip
 
     def count(demos) -> dict:
         solved = [d for d in demos if d.status == "solved"]
@@ -193,8 +200,16 @@ def main(argv: list[str] | None = None) -> int:
     else:
         vocab = CardVocab.from_db(cards)
         event_length = args.event_length
-    train_data = build_dataset(train_demos, vocab, cards=cards, env=env, event_length=event_length)
-    heldout_data = build_dataset(heldout_demos, vocab, cards=cards, env=env, event_length=event_length) if any(
+    train_data = build_dataset(
+        train_demos,
+        vocab,
+        cards=cards,
+        env=env,
+        event_length=event_length,
+        include_synthetic_closing=args.include_synthetic_closing,
+    )
+    heldout_data = build_dataset(heldout_demos, vocab, cards=cards, env=env, event_length=event_length,
+                                 include_synthetic_closing=args.include_synthetic_closing) if any(
         d.status == "solved" for d in heldout_demos) else None  # fmt: skip
     report["data"]["train"]["samples"] = len(train_data)
     report["data"]["train"]["skipped"] = dict(train_data.skipped)
@@ -243,7 +258,7 @@ def main(argv: list[str] | None = None) -> int:
         report["training"] = {"config": bc.__dict__, "net": cfg.to_dict(), "seconds": round(time.time() - t1, 1),
                               "history": history}  # fmt: skip
         meta = {"trainer": "bc", "task": "T4a.2", "data": report["data"], "bc": bc.__dict__,
-                "final": history[-1] if history else {}}  # fmt: skip
+                "final": history[-1] if history else {}, "data_policy": report["data_policy"]}  # fmt: skip
         save_checkpoint(ckpt_path, net, vocab, event_length=event_length, environment=stamp, meta=meta)
         print(f"checkpoint: {ckpt_path}", flush=True)
 

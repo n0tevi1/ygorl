@@ -27,6 +27,9 @@ tools/greedy_demos.py        录制 Greedy 示范（.npz），见「补救实验
 1. **样本**：示范只存动作下标（[solver.md](solver.md)「示范集格式」）。`line_steps` 从记录的起始对局（`demo.replay`）新建 `DuelSession`，
    逐步喂示范动作；**每一步**（双方的）都把 `point.events` 喂给事件流，在研究对象（引擎玩家 0，先攻）的决策点用
    `PointObserver.encode(point, core)` 编码观测。样本 = (观测, 示范动作在候选动作表中的行号)。
+   - 默认仅保留 `step < solver_steps` 的原生教师前缀；完整线（包括合成收尾）始终先回放验真。
+     自动补的 pass/no/end_phase 不当专家标签，计入 `skipped.synthetic_closing`。`--include-synthetic-closing` 仅用于旧结果复现/对照；
+     train/heldout 范围一致，报告和 checkpoint 的 `data_policy` 记录该选择。历史数值默认包含收尾，不能直接与新范围的步准确率比较。
    - 只有 1 个合法动作的步不入样本（损失恒为 0）；示范动作行号 ≥ 128（编码截断）的步不入样本（本数据集中 0 个）。
    - **选中 / 取消来回切换**不入样本（`undone_steps`）：求解器的线有时在 SELECT_UNSELECT_CARD 里把同一张卡选中又立刻取消（一条 tenpai 线在选同调素材时来回 320 次），
      每一对都回到同一决策状态，不示范任何东西。不去掉时这类步占训练样本的 13%、held-out 样本的 67%，并教会网络原地打转。去掉后的动作序列在同一起始对局里同样到达目标（17 条受影响的 plain 线全部复核）。
@@ -50,7 +53,7 @@ tools/greedy_demos.py        录制 Greedy 示范（.npz），见「补救实验
 | `vocab` | `CardVocab` 的密码表（按下标顺序），卡库更新后仍按训练时的下标解释 |
 | `event_length` | 每个观测的事件 token 数 |
 | `environment` | 训练数据绑定的环境 `{"version", "fingerprint"}`，无环境为 `null` |
-| `meta` | `trainer`、数据规模、`BCConfig`、最后一个 epoch 的指标 |
+| `meta` | `trainer`、数据规模、`data_policy`、`BCConfig`、最后一个 epoch 的指标 |
 
 加载与对局：
 
@@ -77,13 +80,13 @@ uv run ygorl arena tests/decks --agent-a policy:out/bc12/policy.pt --agent-b ran
 - **等价副本**：观测的 `action_mask` 只保留同一张卡等价副本中的第一行（[encoding.md](encoding.md)「等价动作去重」）。示范若选了另一张副本，
   训练标签换成它的代表行（`canonical_action`）；去重后只剩一行的决策按强制决策跳过（`skipped["forced"]`）；示范动作是被遮住的「撤销类空操作」（[encoding.md](encoding.md)）的样本也跳过（`skipped["undo"]`）。
 - **步准确率**（teacher forcing，`step_accuracy`）：在示范线的每个样本上，网络 argmax 是否等于示范动作（代表行）；同时给出均匀随机猜中的期望（`uniform_accuracy`，按去重后的可选行数）作参照。
-- **自由对局**（`play_opening`）：从记录的起始对局（与求解器完全相同的种子字、卡组顺序、`DUEL_PSEUDO_SHUFFLE` 与白板对手；求解器没解出的起手用 `start_replay` 按
-  `hand_seed` 重建，单测核对重建结果与求解器记录的起始对局一致）让 agent 下第 1 回合，对手以被动选项应答（与示范补完回合相同），
+- **自由对局**（`play_opening`）：从记录的起始对局（与求解器相同的种子字、卡组顺序、普通或 pseudo-shuffle 规则与白板对手；
+  未解出起手也优先使用保存的精确 start，只有无 start 的旧记录才按 `hand_seed` 重建 pseudo-shuffle）让 agent 下第 1 回合，对手以被动选项应答（与示范补完回合相同），
   到第 2 回合第一个决策为止；agent 超过 300 步时由主机用被动选项收尾（`capped`）。终局场面按求解器判定线的标准评分：目标卡是否全部在场（`board_summary_missing`）。
   - **线复现率**：agent 的动作序列（玩家 0）与该起手某条示范线（去掉来回切换后）**逐步相同**的比例；另报「与示范线的最长公共前缀 / 线长」的平均。
     逐步比较用 `action_key`（决策类型、动作类型、卡、效果串、区域；场上的卡带序号），不用动作下标：选了另一张等价副本后手牌顺序不同，之后的下标会错开。
     下文 2026-09-23 的数字是等价动作去重之前测的（当时按下标比较）。
-  - **场面质量**：目标场面达成率（`reach_rate`）、目标卡在场比例（`placed_fraction`）；同一批起手上求解器自己的解出率作上限参照（求解器在 20 秒预算内解出 = 存在一条到达目标的线）。
+  - **场面质量**：目标场面达成率（`reach_rate`）、目标卡在场比例（`placed_fraction`）；同一批起手上求解器自己的解出率作已知可达参照（有限预算找到解只证明存在路径，不是策略达成率的上界）。
 - 基线：`RandomAgent`、`GreedyAgent` 在同样的起手上自由对局。
 
 ## 数据与命令（2026-09-23）

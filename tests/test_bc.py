@@ -149,7 +149,8 @@ def test_point_observer_matches_the_cpp_environment(db, vocab):
 def test_dataset_holds_the_decisions_of_the_deck_under_study(demo, data):
     line = demo.lines[0]
     ours = [(s, a) for s, (a, p) in enumerate(zip(line.actions, line.players)) if p == 0]
-    assert len(data) + data.skipped["forced"] == len(ours)
+    assert len(data) + sum(data.skipped.values()) == len(ours)
+    assert all(m["solver"] for m in data.meta)
     kept = {m["step"] for m in data.meta}
     raw = [a for s, a in ours if s in kept]
     # a demonstrated copy other than the first maps to the row the policy can choose (docs/encoding.md)
@@ -335,19 +336,28 @@ def test_greedy_demonstrations_record_later_turns(db, vocab, data, tmp_path):
         concat([got, longer])
 
 
-def test_train_bc_fine_tunes_an_existing_actor(vocab, tmp_path):
+@pytest.mark.parametrize("include_closing", [False, True])
+def test_train_bc_fine_tunes_an_existing_actor(vocab, tmp_path, include_closing):
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("train_bc", HERE.parent / "tools" / "train_bc.py")
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
+    import json
+
     base = save_checkpoint(tmp_path / "base.pt", tiny_net(vocab), vocab, event_length=24)
     out = tmp_path / "ft"
-    assert tool.main(["--train", str(DEMO_FILE), "--init-from", str(base), "--epochs", "1", "--openings", "none",
-                      "--out", str(out), "--threads", "1"]) == 0  # fmt: skip
+    flags = ["--include-synthetic-closing"] if include_closing else []
+    assert tool.main(["--train", str(DEMO_FILE), "--heldout", str(DEMO_FILE), "--init-from", str(base),
+                      "--epochs", "1", "--openings", "none", "--out", str(out), "--threads", "1", *flags]) == 0  # fmt: skip
     ckpt = load_checkpoint(out / "policy.pt")
     # the base network, vocab and event window carry over (--d-model etc. are ignored), and the weights moved
     assert ckpt.event_length == 24 and ckpt.net.cfg == load_checkpoint(base).net.cfg
+    policy = {"include_synthetic_closing": include_closing, "full_replay_validation": True}
+    report = json.loads((out / "report.json").read_text())
+    assert ckpt.meta["data_policy"] == report["data_policy"] == policy
+    assert report["data"]["train"]["samples"] == report["data"]["heldout"]["samples"]
+    assert bool(report["data"]["train"]["skipped"].get("synthetic_closing")) != include_closing
     before = load_checkpoint(base).net.state_dict()
     assert any(not torch.equal(v, before[k]) for k, v in ckpt.net.state_dict().items())
 
@@ -468,3 +478,38 @@ def test_unsolved_opening_retains_recorded_shuffle_and_start(demo):
     assert rep.core_seed == start["core_seed"] and not rep.responses
     assert rep.decks["a"]["main"] == start["decks"]["a"]["main"]
     assert demo.lines[0].responses  # no mutation of the solved source
+
+
+def test_synthetic_closing_is_not_an_expert_label_but_is_still_verified(vocab, db):
+    import copy
+
+    from ygorl.data import load_environment
+    from ygorl.solver import DemoError
+    from ygorl.train.bc import line_steps
+
+    (demo,) = read_jsonl(HERE / "data/bc_synthetic_closing.jsonl")
+    env = load_environment("md-2026-09")
+    original = copy.deepcopy(demo.to_json())
+    old = build_dataset([demo], vocab, cards=db, env=env, event_length=32, include_synthetic_closing=True)
+    data = build_dataset([demo], vocab, cards=db, env=env, event_length=32)
+    steps = line_steps(demo, 0, cards=db, env=env)
+    # The actual bad label declined The Man with the Mark's free search.
+    declined = next(s for s in steps if s.kind == "no" and s.card and s.card[0] == 97522863)
+    assert any(m["step"] == declined.step for m in old.meta)
+    assert all(m["step"] != declined.step and m["solver"] for m in data.meta)
+    idx = np.asarray([i for i, m in enumerate(old.meta) if m["solver"]])
+    np.testing.assert_array_equal(data.actions, old.actions[idx])
+    for key, value in data.obs.items():
+        np.testing.assert_array_equal(value, old.obs[key][idx])
+    assert data.skipped["synthetic_closing"] == len(old) - len(data) > 0
+    assert demo.to_json() == original
+
+    # Damage only a discarded closing label. It must still fail full validation.
+    broken = copy.deepcopy(demo)
+    broken.lines[0].responses[-1] = b"wrong response"
+    with pytest.raises(DemoError, match="responses"):
+        build_dataset([broken], vocab, cards=db, env=env, event_length=32)
+    broken = copy.deepcopy(demo)
+    broken.lines[0].solver_steps = len(broken.lines[0].actions) + 1
+    with pytest.raises(DemoError, match="solver_steps"):
+        build_dataset([broken], vocab, cards=db, env=env, event_length=32)
