@@ -83,3 +83,8 @@ Kaleido Chick 的改名能力使“必须先召唤 Leo”不成立。先沿已�
 验证：solver 单测 33 passed；已测实现 `b7a17ca` 完整 `tools/presubmit.sh --test`
 **1,425 passed / 3 skipped，294.34 秒**，包含实际 ROCm。三个跳过分别为 snapshot 编译选项和两个可选联网测试；
 后续只有文档改动。`validation.json` 封存本轮工件哈希；复核零工作续跑保持原始 JSONL 哈希。
+
+
+后续已完成：[材料图/backward 新种子对照](material-guidance-2026-10-05.md) 为 2/16 vs 2/16，
+未过门槛；该轮不带参考捕获、novelty 默认为 12，与本轮 19 不同，不能当作本轮单参考线配方的直接复测。
+当前下一步为失败起手可达性诊断，正式教师/容量状态见后续报告。
