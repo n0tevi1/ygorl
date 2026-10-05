@@ -230,3 +230,13 @@ grad_norm只对实际更新平均。stop_approx_kl保留触发值，未触发为
 首批即超限时允许0 optimizer步，仍有完整有限的诊断，update计数记一次处理的rollout；
 不伪称完成过梯度更新。保留已有EMA更新约定。测试必须拦截optimizer.step验证边界，
 而不只检查“比全epoch少几步”。
+
+### GPU续训的随机流（2026-10-05）
+
+PPO minibatch的randperm运行于learner设备，使用该设备的全局torch RNG；它与collector的独立generator不同。
+GPU checkpoint的rng必须同时保存CPU torch、collector generator和learner设备的CUDA/ROCm全局状态，
+在模型、reference、pool及schedule重建完成后恢复。当前单GPU训练只保存learner设备流，不初始化或修改其它GPU。
+CPU checkpoint不调用CUDA RNG API、不新增GPU初始化副作用。旧checkpoint没有CUDA字段时仍能载入，
+但缺失的GPU历史随机流无法重建，不声称精确恢复。设备迁移不承诺随机序列可比。
+测试需在真实GPU训练/保存/载入后比较下一次randperm、CPU随机数与collector抽样，而不只比权重与更新号。
+进行中的引擎对局仍重新开局，默认GPU算子也可能存在数值波动；恢复随机流不等于整段训练轨迹逐位复现。
