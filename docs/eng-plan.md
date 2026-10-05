@@ -252,9 +252,9 @@ survival teacher 与先后手分网的 400-update 训练和旧 panel 已结束�
 [32更新双配置PPO诊断](spikes/registered-ppo-pilot-2026-10-05.md)已完成：4,108训练终局与1,440评估局均健康，
 Greedy曲线64×1为37.5→32.5→47.5%，128×2为15→47.5→35%，单seed小面板不代表长期收益。
 普通Arena健康与异常best晋级已由PR196修复；PR197修复KL已越界仍多走Adam；PR199修复GPU续训随机流。
-最新完整实际ROCm1,497 passed/3 skipped。固定rollout[根因诊断](spikes/ppo-first-step-2026-10-05.md)显示
+最新完整实际ROCm1,499 passed/3 skipped。固定rollout[根因诊断](spikes/ppo-first-step-2026-10-05.md)显示
 首步仍过冲、fresh critic通过advantage有间接作用；不能把估值相关性当实际动作信号比例。
-[两容量×两学习率四臂控制](spikes/ppo-lr-control-2026-10-05.md)运行中，全部固定节点完成后才决定下一配方；
+[两容量×两学习率四臂控制](spikes/ppo-lr-control-2026-10-05.md)训练完成，评估因4局决策上限停止；
 #92两万更新尚未完成。当前运行明确FP32，另行修复的[BF16作用域回归](spikes/ppo-autocast-2026-10-05.md)不改变这些producer。
 
 ### 2026-10-05：保留跨更新训练截断轨迹
@@ -270,4 +270,14 @@ skip_forced与健康字段，支持跨rollout精确回放；普通健康终局�
 共享embedding的τ=.02变成.07763184。现在每个唯一参数/持久buffer只更新一次，旧checkpoint兼容。
 5例修前失败，修后定向26通过；整合main真实ROCm全量1497 passed、3 skipped（409.86s，ef11ae7）。
 该错误不能解释EMA之前的首步过冲，修复的胜率净效应未测。四臂训练全部32更新完成，
-独立评估继续使用冻结旧EMA；下一训练使用修复版本。训练文档同时撤回用自举Q EV称critic“学好”的过度归因。
+独立评估使用冻结旧EMA且已停止；下一训练使用修复版本。训练文档同时撤回用自举Q EV称critic“学好”的过度归因。
+
+### 2026-10-05：融合素材取消循环
+
+四臂共2,097,152训练行、7,292终局；2,040新评估中4个decision_limit使128×2低LR终点未发布。
+[四局精确复现](spikes/ppo-decision-limits-2026-10-05.md)定位到目标/素材菜单往返使旧计数清零；
+同一状态取消概率由update0的.022–.118升至update32的.9977–.9995，训练强化该行为的机制仍待查。
+新guard累计无进展选择链取消，前32次保留；四个失败局复验全部正常终局（506–745决策），
+冷回放全部一致，定向39项通过。完整实际ROCm测试1499 passed、3 skipped（287.34s），证据已封存。
+下一步是已登记的[固定actor critic终局校准](spikes/critic-warmup-calibration-2026-10-05.md)，
+检验lambda-target预热是否改善真实终局预测；不会由训练Q EV或一次短程胜率直接宣称棋力提升。

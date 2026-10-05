@@ -38,3 +38,9 @@ SelfPlaySchedule每个seed生成先后手两局，所以共有64个独立发牌s
 不会据此推广checkpoint或宣布#92两万更新目标完成。
 
 证据根：`out/research/critic-warmup-calibration-2026-10-05/`。
+
+运行前修订：四臂LR评估已因4个融合素材取消循环按协议停止；全量复现后先修进度mask。
+本实验将在该修复的完整测试通过后开始，train/heldout使用同一新mask与PR203修复后EMA。
+修复把无游戏进展选择链的material cancel预算设为32，不改变原始合法动作或终局规则。
+固定actor指网络权重固定；这不是旧mask下行为分布的原样复用。训练与heldout预算、seed、
+比较节点、主指标和停止阈值均不变；还未生成本实验训练/heldout数据。
