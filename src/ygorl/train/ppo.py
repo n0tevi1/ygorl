@@ -56,7 +56,8 @@ class PPOConfig:
     # > 0: the prior KL only on the turn player's own decisions up to this turn (globals is_my_turn / turn), the
     # states the turn-1 solver demonstrations cover (docs/bc.md「补救实验」); other rows count as 0; 0 = every row
     kl_prior_turns: int = 0
-    # stop an update's remaining minibatches once one exceeds 1.5 x target_kl (approx_kl); None = every epoch.
+    # Reject this and remaining minibatches before Adam when measured approx_kl exceeds 1.5 x target_kl.
+    # An accepted step can still overshoot: this is an early-stop heuristic, not a hard KL bound. None = off.
     # From a BC warm start the fixed 32 steps overshoot (docs/benchmarks.md 「BC 热启动 + PPO」); from scratch it
     # rarely triggers (approx_kl ~0.006-0.009 per update)
     target_kl: float | None = 0.01
@@ -347,7 +348,8 @@ class PPOLearner:
 
         model.train()
         sums: dict[str, float] = defaultdict(float)
-        steps = 0
+        steps, checked = 0, 0
+        grad_sum, stop_kl = 0.0, 0.0
         stopped = False
         for _ in range(cfg.epochs):
             if stopped:
@@ -374,29 +376,37 @@ class PPOLearner:
                 if not policy:
                     loss = cfg.q_coef * ql + cfg.v_coef * vl
                 laps.lap("forward")
-                self.optimizer.zero_grad(set_to_none=True)
-                loss.backward()
-                if not policy:
-                    for p in self._policy_params():
-                        p.grad = None  # Adam skips parameters without a gradient: the policy does not move
-                laps.lap("backward")
-                grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
-                self.optimizer.step()
-                laps.lap("optimizer")
-                for key, val in (("loss", loss), ("policy_loss", policy_loss), ("entropy", ent), ("kl_ref", kl_ref),
-                                 ("kl_prior", kl_prior), ("q_loss", ql), ("v_loss", vl), ("grad_norm", grad_norm),
-                                 *extra.items()):  # fmt: skip
-                    sums[key] += float(val.detach()) if isinstance(val, Tensor) else float(val)
-                steps += 1
-                laps.lap("bookkeeping")
                 kl_now = extra.get("approx_kl")
-                if cfg.target_kl is not None and kl_now is not None and float(kl_now) > 1.5 * cfg.target_kl:
-                    stopped = True  # the policy moved enough for this batch of data
+                rejected = (
+                    policy and cfg.target_kl is not None and kl_now is not None and float(kl_now) > 1.5 * cfg.target_kl
+                )
+                laps.lap("kl_guard")
+                if not rejected:
+                    self.optimizer.zero_grad(set_to_none=True)
+                    loss.backward()
+                    if not policy:
+                        for p in self._policy_params():
+                            p.grad = None  # Adam skips these parameters: the policy does not move
+                    laps.lap("backward")
+                    grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
+                    self.optimizer.step()
+                    laps.lap("optimizer")
+                    grad_sum += float(grad_norm)
+                    steps += 1
+                # Forward diagnostics include a rejected batch; grad_norm counts only applied steps.
+                for key, val in (("loss", loss), ("policy_loss", policy_loss), ("entropy", ent), ("kl_ref", kl_ref),
+                                 ("kl_prior", kl_prior), ("q_loss", ql), ("v_loss", vl), *extra.items()):  # fmt: skip
+                    sums[key] += float(val.detach()) if isinstance(val, Tensor) else float(val)
+                checked += 1
+                laps.lap("bookkeeping")
+                if rejected:
+                    stopped, stop_kl = True, float(kl_now)
                     break
         self.updates += 1
         self.update_reference()
         laps.lap("ema")
-        stats = {k: v / steps for k, v in sums.items()}
+        stats = {k: v / checked for k, v in sums.items()}
+        stats["grad_norm"] = grad_sum / steps if steps else 0.0
         taken_q = ro.q.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1).reshape(-1)
         stats["q_explained_var"] = _explained_variance(taken_q, q_targets)
         if ro.complete_games:
@@ -409,6 +419,7 @@ class PPOLearner:
         stats["adv_mean"], stats["adv_std"] = float(adv.mean()), float(adv.std(correction=0))
         stats["rows"] = n
         stats["minibatches"], stats["early_stop"] = steps, int(stopped)
+        stats["evaluated_minibatches"], stats["stop_approx_kl"] = checked, stop_kl
         stats["critic_warmup"] = int(not policy)
         stats.update(_advantage_by_kind(obs, actions, adv))
         if prior_rows is not None:

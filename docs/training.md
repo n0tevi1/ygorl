@@ -287,8 +287,8 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
    **只在第 1 回合用先验**：`--kl-prior-turns N`（`PPOConfig.kl_prior_turns`，默认 0 = 所有行）只对「回合玩家自己的决策、回合数 ≤ N」
    的行（观测 `globals` 的 `is_my_turn` 与 `turn` 两列）计先验 KL，其余行按 0 计入同一个均值（被选中的行权重与不限制时相同）；
    日志多一个 `kl_prior_rows`（本段被选中的行数）。`N = 1` 即求解器示范覆盖的先攻第 1 回合，理由与对比实验见 [bc.md](bc.md)「补救实验」。
-   **按 KL 提前停**：`--target-kl X`（`PPOConfig.target_kl`，默认 0.01；`--target-kl 0` 关闭）——某个 minibatch 的 `approx_kl` 超过 1.5 X 时，本次更新余下的
-   minibatch 都跳过（日志 `minibatches` / `early_stop`）。步长按「策略实际移动了多少」封顶，而不是按固定的轮数：同一组学习率与轮数，
+   **按 KL 提前停**：`--target-kl X`（`PPOConfig.target_kl`，默认 0.01；`--target-kl 0` 关闭）——某个 minibatch 的更新前 `approx_kl` 超过 1.5 X 时，该批及本次更新余下的
+   minibatch 都跳过（日志 `minibatches` / `early_stop`）。这是按已测策略变化提前停止的启发式，不保证KL硬上界；刚接受的一步仍可超限：同一组学习率与轮数，
    从零开始（熵约 1.3）每次约 0.006–0.009，从 BC 热启动（熵约 0.7）则到 0.023–0.029、裁剪比例约 0.2（[benchmarks.md](benchmarks.md)）。
 4. `reference ← (1 − τ) reference + τ θ`，`τ = reference_ema`（默认 0.02 / 次更新）。
 
@@ -526,3 +526,9 @@ uv run --no-sync python tools/consume_registrations.py out/train/run --matrix /a
 同步evaluate的任何基线有健康错误或零有效局时，不更新best.pt或best池；
 `eval.jsonl`保留attempted_games、全部健康计数与valid，完整无效报告另写`eval-errors.jsonl`。
 checkpoint与诊断仍保存，训练可继续。这样不能靠剔除异常后剩余的小样本高分晋级。
+
+2026-10-05修正KL检查顺序：检查发生在backward/optimizer之前。minibatches是实际Adam步数，
+evaluated_minibatches是已检查批数，stop_approx_kl是触发值；loss/entropy/KL均值包括最后
+拒绝的forward，grad_norm只统计真正更新。第一批即超限时minibatches=0，诊断仍完整有限。
+critic-only warmup不受policy guard限制，策略参数仍被冻结。旧32-update诊断保持原实现作为对照，
+不把检查顺序的修复自动宣称为实战提升；下一轮要独立检验。
