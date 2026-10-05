@@ -212,3 +212,6 @@ Arena 的 games/胜负平/区间/先后攻/平均回合只统计健康局；atte
 训练同步evaluate保留所有invalid评估的完整报告和原始记录，任一基线含错误或零有效局时，
 整次评估不得覆盖best.pt或pin到best池。仍保存当前checkpoint、指标和诊断，训练可继续，
 日志明确说明未通过健康检查。不从少量剩余健康局高胜率选best。独立矩阵消费者策略不变。
+
+固定配对比较工具 `compare_checkpoints.read_cell` 同样使用GameRecord健康谓词，
+带健康异常的历史记录变成NaN，进入原有跨候选共同剔除配对逻辑；仍保留原始记录。

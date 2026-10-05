@@ -25,7 +25,8 @@ from ygorl import _core
 from ygorl.agents.registry import agent_factory
 from ygorl.data.environment import load_environment
 from ygorl.engine.duel import DuelConfig, default_cards
-from ygorl.eval.agent_matrix import ERROR_REASONS, _play_batched, pairing_slots, sample_pairings
+from ygorl.eval.agent_matrix import _play_batched, pairing_slots, sample_pairings
+from ygorl.eval.arena import GameRecord
 from ygorl.eval.matchup import _deck_hash
 from ygorl.eval.paired_panel import compare_panel
 from ygorl.paths import cards_cdb, third_party
@@ -71,7 +72,7 @@ def read_cell(path, candidate, opponent, slots):
             raise ValueError(f"mismatched game order: {path} record {i}")
         if r["winner"] not in (0, 1, None):
             raise ValueError(f"invalid winner: {path} record {i}")
-        values.append(np.nan if r["reason"] in ERROR_REASONS else
+        values.append(np.nan if not GameRecord(**r).healthy else
                       (0.5 if r["winner"] is None else float(r["winner"] == 0)))  # fmt: skip
     return np.asarray(values).reshape(len(slots), 4)
 

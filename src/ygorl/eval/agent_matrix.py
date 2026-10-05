@@ -40,6 +40,7 @@ from ygorl.eval.matchup import DEFAULT_ALPHA, DEFAULT_POPULATION, _deck_hash, _n
 FORMAT = "ygorl-agent-matrix"
 FORMAT_VERSION = 1
 ARTIFACT_DIR = "agent-matrix"
+ERROR_REASONS = ("exception", "error")  # compatibility; full health checks use GameRecord.healthy
 
 
 def sample_pairings(n_decks: int, count: int, seed: int) -> list[tuple[int, int]]:
