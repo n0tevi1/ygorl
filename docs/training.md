@@ -518,3 +518,7 @@ uv run --no-sync python tools/consume_registrations.py out/train/run --matrix /a
 对初始固定 agent 的胜率及当前矩阵名次。消费前应冻结所有基线 checkpoint 的路径/内容；
 原始基线清单写在 `<matrix>.registrations.json`。多个消费者通过锁互斥，勿同时用普通
 `ygorl strength` 改写同一目标。错误矩阵不发布；已有矩阵计分仍须配合逐局健康审计。
+
+矩阵计分会把带Lua错误、retry、未知/不可解码消息或error文本的局计为errors，
+即使该局原reason为win；批量路径保留相同健康字段。消费者拒绝发布含errors的矩阵。
+此前版本产出的历史矩阵需要另行审计/重建，不能通过这次修复推断它们没有污染。
