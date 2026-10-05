@@ -162,13 +162,17 @@ def _signature(a: Action, loose: bool) -> tuple:
         card = None
     elif loose and c.loc.location in (C.LOCATION_DECK, C.LOCATION_HAND):
         card = (c.code, c.loc.controller, c.loc.location)  # order within deck / hand is not comparable
+    elif loose and c.loc.location == C.LOCATION_EXTRA:
+        # Returning a card can reorder/shuffle the Extra Deck too. Keep its position:
+        # face-up Pendulum cards and face-down cards do not have the same summon rules.
+        card = (c.code, c.loc.controller, c.loc.location, c.loc.position)
     else:
         card = (c.code, c.loc.controller, c.loc.location, c.loc.sequence, c.loc.position)
     return (a.kind, card, a.description, a.value if a.kind not in ("select", "unselect", "chain") else None)
 
 
 def match_action(action: Action, candidates: Sequence[Action]) -> int | None:
-    """Index of the candidate doing what ``action`` does (same kind, card and zone; any copy in deck or hand)."""
+    """Match kind/card/zone; ignore order within deck, hand and Extra Deck (preserve Extra Deck position)."""
     for loose in (False, True):
         want = _signature(action, loose)
         for i, cand in enumerate(candidates):

@@ -266,15 +266,20 @@ def _order_with_hand(deck: Deck, hand: list[int]) -> list[int]:
     return rest + list(hand)
 
 
-def run_job(job: HandJob) -> list[dict]:
+def run_job(job: HandJob, base: Demonstration | None = None) -> list[dict]:
     """Worker entry point: the plain record and one ``--fire`` record per hand trap, as JSON dicts."""
-    base = solve_hand(job)
+    base = base if base is not None else solve_hand(job)
     out = [base.to_json()]
     for fire in job.fire:
         out.append(solve_fire(job, base, fire).to_json())
     if not job.keep_files:
         shutil.rmtree(job.scratch, ignore_errors=True)
     return out
+
+
+def resume_job(item: tuple[HandJob, Demonstration | None]) -> list[dict]:
+    """Pool entry point: missing fire records must descend from the persisted plain line."""
+    return run_job(*item)
 
 
 # ------------------------------------------------------------------ planning, resuming, summarising a batch
@@ -328,11 +333,13 @@ def done_keys(path: str | Path, environment: dict | None) -> set[tuple]:
     keys: set[tuple] = set()
     if not path.exists():
         return keys
-    want = environment["version"] if environment else None
     for demo in read_jsonl(path):
-        have = demo.environment["version"] if demo.environment else None
-        if have != want:
-            raise ValueError(f"{path} holds demonstrations of environment {have}, not {want}; use another --out")
+        if demo.environment != environment:
+            raise ValueError(
+                f"{path} holds demonstrations of environment {demo.environment}, not {environment}; use another --out"
+            )
+        if demo.key in keys:
+            raise ValueError(f"{path} holds duplicate demonstration key {demo.key}")
         keys.add(demo.key)
     return keys
 
