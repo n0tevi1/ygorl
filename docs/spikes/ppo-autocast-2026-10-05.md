@@ -29,7 +29,7 @@ git历史定位4fa15b9752d907fcb0be1e80d98d185ff120292f（2026-09-26加入critic
 数据在`out/research/ppo-autocast-final-2026-10-05/`，原探针未覆盖。
 
 发现缓存缺陷后主动停止中间版全量测试（exit143，日志保留），不把不完整运行称为green。
-最终完整实际ROCm测试通过后合并，前后证据及产物hash统一归档于原目录validation.json。
+最终完整实际ROCm **1487 passed /3 skipped，488.38s**（1个snapshot选项、2个网络opt-in）；前后证据及产物hash统一归档于原目录validation.json。
 
 对历史解释：09-29文档的bench_train调用Trainer.step，该回归期间CLI BF16对照不能验证更新阶段BF16性能。
 不凭文档日期声称精确还原了某个没有源码指纹的原始运行；历史计时保留并明确此限制。
