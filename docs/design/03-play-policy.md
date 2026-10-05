@@ -254,3 +254,14 @@ CPU checkpoint不调用CUDA RNG API、不新增GPU初始化副作用。旧checkp
 避免FP32权重被修改后后续minibatch继续读取旧BF16副本。只修缩进仍会留下这一问题。
 collector作用域内权重不变，可保留缓存；overlap collector使用独立acting副本。
 回归需在每个真实Adam步后将当前作用域的logits与禁用缓存的fresh forward逐元素比较，覆盖至少两步。
+
+### 共享参数的reference EMA（2026-10-05）
+
+慢reference的更新公式对每个唯一参数/持久buffer恰好执行一次：
+`reference <- (1 - reference_ema) * reference + reference_ema * learner`，
+非浮点buffer直接复制。PolicyNet的CardIdentity被board/action/history模块共享，
+state_dict中多个名称可指向同一个Parameter；禁止按别名重复原地EMA。
+实现必须保留checkpoint键名、共享关系、非持久buffer行为及reference冻结状态，
+并在实际ActorCritic上验证共享/非共享参数的单次与多次更新，以及持久buffer。
+旧checkpoint继续载入已有reference，不追溯重写历史权重；修复后的训练身份单独记录，
+运行中的四臂LR对照保持原实现冻结，其旧EMA行为作为结果的共同限制明确披露。
