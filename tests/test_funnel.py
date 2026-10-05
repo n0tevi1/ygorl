@@ -347,3 +347,19 @@ def test_end_to_end_funnel_on_a_real_deck(db, tmp_path):
             assert h.fire[ASH_BLOSSOM]["survives"] in (True, False)
             demo = Demonstration.from_json(h.demos[0])
             assert replay_line(demo, 0, cards=db).board["turn"] == 2
+
+
+def test_shuffled_prefix_excludes_passive_closing_and_stops_at_divergence(db, tmp_path):
+    from ygorl.solver.continuation import shuffled_prefix
+
+    demo = _pseudo_line(db, tmp_path, FunnelConfig(hands=2).hand_seeds()[1])
+    demo.lines[0].solver_steps = 1
+    prefix = shuffled_prefix(demo, cards=db)
+    assert prefix.matched_steps == 1 and not prefix.divergence
+    assert not prefix.replay.rule_flags & C.DUEL_PSEUDO_SHUFFLE
+    assert prefix.replay.play(cards=db).turns == 1
+    # The same genuine top-of-deck divergence as the first-turn transfer test.
+    demo = _pseudo_line(db, tmp_path, FunnelConfig(hands=1).hand_seeds()[0])
+    prefix = shuffled_prefix(demo, cards=db)
+    assert prefix.divergence and prefix.matched_steps < demo.lines[0].solver_steps
+    assert prefix.replay.play(cards=db).turns == 1

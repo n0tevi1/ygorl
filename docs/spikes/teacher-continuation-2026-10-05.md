@@ -1,0 +1,54 @@
+# Ordinary-shuffle teacher continuation (2026-10-05)
+
+Related: #88, #83; follows the failed all-deck coverage gate in
+[the MD teacher pilot](md-bc-data-2026-10-05.md). This is a development diagnostic,
+not a formal held-out evaluation or evidence of improved agent strength.
+
+## Protocol frozen before the searches
+
+Sources are the eight saved Lunalight Perfume Dancer lines and the six saved
+Maliss/Tearlaments lines that failed ordinary-shuffle transfer in the previous
+pilot. Preserve source hashes. Those six are a failure-conditioned sample;
+never report their recovery rate as the overall deck's success probability.
+
+For each of these 14 starting hands compare two searches, 28 jobs total:
+
+1. From-start search in an ordinary-shuffle duel.
+2. The same search supplied with the longest transferable source prefix,
+   stopping at the solver's last response (before passive turn closing) or
+   immediately before the first semantic mismatch. Only complete core responses
+   are exported; partial host selections are discarded.
+
+Both arms use the exact same recorded deck order, core seed, opponent and MD
+rules with `DUEL_PSEUDO_SHUFFLE` cleared. Final targets are unchanged: Liger
+Dancer for Lunalight; the original targets for Maliss/Tearlaments. Both use
+`--no-plan` (no learned reference repertoire), 30,000 ms search, 20,000 ms reserved
+for the finisher, one thread, seed `2026100503`, at most four written candidates,
+and depth `12*(main+extra)+32`. Use four CPU workers under nice 19 and a 60 s
+per-process timeout. Run in paired hand order, alternating which arm is first.
+Report actual elapsed time too: native prelude/finisher work may exceed the
+nominal search budget. Prefix-generation cost is extra/amortized from the prior
+pilot; this is not an equal-total-compute claim.
+
+The native `--approach` mechanism can backtrack the supplied line and solves on
+that file's own replay header. Thus every approach and candidate must match the
+intended start (both ordered decks, seed, flags and player rules). Reject a
+candidate of a different start even if it reaches the target. Independently
+replay every accepted line, require turn 2 and the original final target.
+Record all failures, native warnings, rejected candidates and timeouts.
+
+No changing targets, seeds, budgets, sample membership or search controls after
+looking at results. After these development searches, decide whether the method
+merits a new independent-seed coverage test. Do not generate or tune on formal
+held-out hands in this experiment. No large-network training yet.
+
+## Implementation
+
+`SolveRequest.start` uses the recorded start instead of constructing a synthetic
+pseudo-shuffle hand. `continue_opening` checks environment/legality, derives an
+ordinary-shuffle prefix, verifies exported start identities, and filters and
+independently replays each resulting candidate. Intermediate-only completions
+never become final-target demonstrations. Native logs, commands and replay
+inputs are retained for auditing; the result is ordinary `Demonstration` JSON.
+
+Results: pending.
