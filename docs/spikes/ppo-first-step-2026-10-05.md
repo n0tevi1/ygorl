@@ -64,9 +64,29 @@
 1e−4为.01538/.02738；argmax改变比例21.38%/34.82%降至2.19%/3.68%。
 
 判断：默认1e−3对这些BC权重的首步过大，KL早停只能在一步之后发现。policy-only仍更严重过冲，
-所以“只需暖critic即可解决”不受本实验支持；entropy和共享critic也会改变策略，但不是唯一原因。
+排除了“Q/V loss直接更新共享trunk是唯一来源”，但它仍用原随机critic算出的VRPO advantage，
+**不能排除critic初始化通过advantage间接造成过冲**。本实验既未实施也未排除warmup的收益。
+entropy和共享critic也会改变策略，但这些独立Adam干预不构成可相加的因果贡献分解。
 更小LR是值得进入真实训练的干预；单步KL好看仍不证明学习更快、胜率更高或长期不会失稳。
 只在本次单seed/两份rollout上成立，不更改生产默认。
 
 产物封存：`out/research/ppo-kl-guard-2026-10-05/diagnostic-validation.json`，包括失败记录、完整frozen.pt、
 所有第一步权重、梯度、身份、脚本与报告。下一轮预先保留新guard下的1e−3对照与1e−4干预，各跑两容量。
+
+## Adam首步机制审计
+
+原始Adam state为空，默认无weight decay。首步bias correction后有
+`delta = -lr * clipped_gradient / (abs(clipped_gradient) + eps)`；从已保存梯度及初始权重重算，
+与真实GPU首步最大权重差两容量均5.96e−8。global norm clipping系数为.81817/.57578，
+但当梯度大于eps时，Adam的归一化会抵消大部分统一缩放，所以max_grad_norm不是策略KL约束。
+独立actor参数首步delta L2为.38954/.75812，最大单坐标约.001。
+这是对保存产物的解析核验，不新增训练干预；`adam-audit.json`及单独manifest保留证据。
+
+## advantage来源补充审计协议（运行前）
+
+在原固定rollout上只作诊断，先保留默认VRPO λ=.5的未归一化advantage，然后把Q及bootstrap Q全部置零
+（reward、done、seat和概率不变）重算。估计器对Q/reward线性，full−zeroQ可描述该份数据的critic项，
+报告范数、方差、相关性、实际terminal reward非零行数、纯reward trace覆盖和可见终局的完整前缀比例。
+不能把zeroQ当正确bootstrap，也不替换训练目标；它仅分开稀疏奖励项与当前估值项。
+再在同一个首批样本比较两组各自按原标准化方式归一的policy梯度方向/范数，完整记录，
+不据此宣称warmup已经有效。后续是否需要完整终局监督或warmup实验，应由该诊断和四臂训练一起判断。
