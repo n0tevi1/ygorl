@@ -26,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("decks", type=Path, nargs="*", default=[ROOT / "tests" / "decks"])
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--env", default=None, help="environment whose rules and legal decks generate the samples")
     p.add_argument("--opponents", default="random,greedy", help="comma-separated agent specs (default random,greedy)")
     p.add_argument("--pairs", type=int, default=1, help="paired seeds per deck pairing and opponent (2 games each)")
     p.add_argument("--seed", type=int, default=7001)
@@ -38,16 +39,17 @@ def main(argv: list[str] | None = None) -> int:
     from ygorl.agents import GreedyAgent
     from ygorl.agents.registry import AgentSpec
     from ygorl.cards.cdb import CardVocab
-    from ygorl.commands import duel_config, load_decks
+    from ygorl.commands import duel_config, load_decks, load_env
     from ygorl.engine.duel import default_cards
     from ygorl.eval.arena import Arena, derive_seed
-    from ygorl.train.heuristic_demos import SUBSETS, record_games, save_data
+    from ygorl.train.heuristic_demos import SUBSETS, data_identity, record_games, save_data
 
-    decks = load_decks(args.decks)
+    env = load_env(args.env)
+    decks = load_decks(args.decks, env)
     vocab = CardVocab.from_db(default_cards())  # same construction as tools/train_bc.py
     specs = []
     for k, opponent in enumerate(s for s in args.opponents.split(",") if s):
-        arena = Arena(AgentSpec("greedy"), AgentSpec(opponent), config=duel_config(None, None))
+        arena = Arena(AgentSpec("greedy"), AgentSpec(opponent), config=duel_config(env, None), env=env)
         for i, a in enumerate(decks):
             for j, b in enumerate(decks):
                 specs.extend(arena.game_specs(a, b, args.pairs, derive_seed(args.seed, k, i, j)))
@@ -65,12 +67,14 @@ def main(argv: list[str] | None = None) -> int:
             "greedy_win_rate": {opp: sum(g.get("winner") == 0 for g in games if g.get("opponent") == opp)
                                 / max(1, sum(g.get("opponent") == opp for g in games))
                                 for opp in {g.get("opponent") for g in games}}}  # fmt: skip
+    stamp = None if env is None else {"version": env.version, "fingerprint": env.fingerprint}
+    info["identity"] = data_identity(vocab, args.event_length, stamp)
     save_data(args.out, data, **info)
     args.out.with_suffix(".games.json").write_text(json.dumps({"info": info, "games": games,
                                                                "kinds": dict(kinds.most_common())}, indent=1))  # fmt: skip
     print(json.dumps(info, indent=1))
     print(f"{len(data)} samples from {len(games)} games in {seconds:.0f}s -> {args.out}")
-    return 0
+    return 1 if data.skipped["error_games"] else 0
 
 
 if __name__ == "__main__":

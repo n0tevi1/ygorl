@@ -146,11 +146,26 @@ def main(argv: list[str] | None = None) -> int:
         env = load_environment(args.env)
     train_demos, heldout_demos = _load(args.train), _load(args.heldout)
     stamp = _environment(train_demos + heldout_demos)
-    if (stamp is None) != (env is None) or (env is not None and stamp["version"] != env.version):
+    expected_stamp = None if env is None else {"version": env.version, "fingerprint": env.fingerprint}
+    if stamp != expected_stamp:
         raise SystemExit(f"train_bc: error: the demonstrations are bound to {stamp}; pass the same --env")
     args.out.mkdir(parents=True, exist_ok=True)
     ckpt_path = args.checkpoint or args.out / "policy.pt"
     cards = default_cards()
+    if env is not None:
+        from ygorl.cards.ydk import Deck
+
+        checked = set()
+        for demo in train_demos + heldout_demos:
+            deck = Deck(main=tuple(demo.deck["main"]), extra=tuple(demo.deck["extra"]),
+                        side=tuple(demo.deck.get("side", ())), name=demo.deck["name"])  # fmt: skip
+            if deck in checked:
+                continue
+            checked.add(deck)
+            violations = env.validate_deck(deck, cards)
+            if violations:
+                raise SystemExit(f"train_bc: illegal demonstration deck {deck.name}: "
+                                 + "; ".join(v.message for v in violations))  # fmt: skip
     report: dict = {"train_files": [str(p) for p in args.train], "heldout_files": [str(p) for p in args.heldout],
                     "environment": stamp}  # fmt: skip
 
@@ -185,17 +200,20 @@ def main(argv: list[str] | None = None) -> int:
     report["data"]["train"]["skipped"] = dict(train_data.skipped)
     solver_data, extra_heldout = train_data, None
     if args.extra or args.extra_heldout:
-        from ygorl.train.heuristic_demos import concat, load_data, select
+        from ygorl.train.heuristic_demos import concat, load_compatible_data, select
+
+        def extra_data(path):
+            return load_compatible_data(path, vocab=vocab, event_length=event_length, environment=stamp)[0]
 
         if args.extra:
-            extra = concat([load_data(p)[0] for p in args.extra])
+            extra = concat([extra_data(p) for p in args.extra])
             extra = select(extra, args.extra_subset, max_samples=args.extra_max, seed=args.seed)
             train_data = concat([solver_data, extra])
             report["data"]["extra"] = {"files": [str(p) for p in args.extra], "subset": args.extra_subset,
                                        "max": args.extra_max, "samples": len(extra),
                                        "solver_fraction": len(solver_data) / len(train_data)}  # fmt: skip
         if args.extra_heldout is not None:
-            extra_heldout = select(load_data(args.extra_heldout)[0], args.extra_subset, max_samples=4000, seed=1)
+            extra_heldout = select(extra_data(args.extra_heldout), args.extra_subset, max_samples=4000, seed=1)
             report["data"]["extra_heldout"] = {"file": str(args.extra_heldout), "samples": len(extra_heldout)}
     if heldout_data is not None:
         report["data"]["heldout"]["samples"] = len(heldout_data)
@@ -205,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_train:
         from ygorl.nets.text import TextFeatures
 
+        torch.manual_seed(args.seed)
         text = TextFeatures.load(args.text_dir, vocab) if args.text_dir else None
         if init is not None:
             net = init.net.requires_grad_(True)
