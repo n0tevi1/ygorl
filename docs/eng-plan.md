@@ -232,3 +232,8 @@ survival teacher 与先后手分网的 400-update 训练和旧 panel 已结束�
 2026-10-05 全牌组普通洗牌复验：265/320 solved，54 unsolved、1 unverified；Lunalight 7/16、Odion 5/16，gate 仍失败。
 已定位 Sky Striker 连锁中途误报与 Primite 精确卡名声明漏路，修复后正在单独重跑全部 55 个失败起手。
 保留原面板和失败结论；先完成[根因调查](spikes/solver-failure-causes-2026-10-05.md)，再决定正式教师数据协议。
+
+2026-10-05 教师动作边界修复：完整回放始终验真，BC 默认排除合成被动收尾；旧模式显式保留用于复现。
+同一开发数据从 6,060 降为 5,466 样本，原生前缀逐元素不变；全套 1,430 passed / 3 skipped（实际 ROCm）。
+55 手原生修复诊断仅恢复 Sky Striker 5，剩余 54 手未解出；继续有限声明列表修复及 49 手 unknown 的独立可达性诊断。
+正式容量与长训练尚未完成，见 [BC 边界报告](spikes/bc-closing-boundary-2026-10-05.md)。
