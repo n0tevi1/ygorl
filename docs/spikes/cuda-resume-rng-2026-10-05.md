@@ -15,7 +15,7 @@ CPU随机数和collector抽样；扰乱种子后resume。修前在GPU排列比�
 旧GPU checkpoint没有字段时仍正常加载，但无法恢复从未保存的历史GPU随机流；不承诺跨设备同序列。
 
 新增三项回归覆盖真实GPU三个流的连续性、CPU不调用CUDA RNG API、旧GPU检查点继续训练。
-训练循环/checkpoint/登记定向 **49 passed，30.09s**。全量实际ROCm测试结果后续归档。
+训练循环/checkpoint/登记定向 **49 passed，30.09s**。全量实际ROCm **1483 passed /3 skipped，430.21s**；1个snapshot选项和2个网络opt-in跳过。
 这恢复随机流，不保证整段训练逐位重现：原生异步调度、重开的半局和GPU数值波动仍存在。
 运行中的四臂LR实验保留冻结源01d473e，全从BC新建，因此不改动这些producer来应用续训补丁。
 
