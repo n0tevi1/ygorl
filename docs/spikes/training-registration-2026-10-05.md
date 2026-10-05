@@ -28,3 +28,7 @@ unknown/undecodable或error文本但最终reason=win，也会计入胜率。另�
 原生日志二进制仍为PR192的5f64e558；此次仅Python计分与传递修复。
 最终完整测试及源身份随 `out/research/training-registration-2026-10-05/validation.json` 归档。
 接续实验已经 [预注册短程PPO协议](registered-ppo-pilot-2026-10-05.md)，不冒充#92长跑验收。
+
+最终实际ROCm全套 **1,460 passed /3 skipped，349.79s**，测试源`9bd7871`
+（含健康修复7bbf8a6及main文档合并），之后仅文档提交。skip为snapshot编译选项及两个opt-in联网测试。
+短程双配置PPO已按协议启动，训练与独立CPU基线矩阵使用相同冻结源；其结果另报。
