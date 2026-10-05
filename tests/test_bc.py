@@ -330,6 +330,88 @@ def test_action_key_is_the_same_for_equivalent_copies(db):
 # ------------------------------------------------------------------ heuristic demonstrations beyond turn 1
 
 
+def test_cancelled_attacks_do_not_remain_as_contradictory_teacher_labels(db, vocab):
+    from ygorl.agents import GreedyAgent
+    from ygorl.data import load_environment
+    from ygorl.eval.arena import derive_seed
+    from ygorl.train.heuristic_demos import DemoRecorder, record_games
+
+    env = load_environment("md-2026-09")
+    deck = next(m.deck for m in env.meta_decks if m.deck.name == "blue-eyes")
+    arena = Arena(AgentSpec("greedy"), AgentSpec("random"), env=env,
+                  config=DuelConfig.from_environment(env, max_turns=9))  # fmt: skip
+    spec = arena.game_specs(deck, deck, 1, derive_seed(2026100512, 0, 0, 0))[0]
+    old = DemoRecorder(GreedyAgent(spec.agent_seeds[0]), db, vocab, event_length=64,
+                        include_cancelled_commands=True)  # fmt: skip
+    new = DemoRecorder(GreedyAgent(spec.agent_seeds[0]), db, vocab, event_length=64)
+    before = spec.duel().run(old, spec.agent_b(spec.agent_seeds[1]))
+    after = spec.duel().run(new, spec.agent_b(spec.agent_seeds[1]))
+    assert before.responses == after.responses and before.winner == after.winner and before.lp == after.lp
+    assert not (after.error or after.script_errors or after.retries)
+    removed = new.skipped["cancelled_command"]
+    assert removed > 0 and len(new.actions) == len(old.actions) - removed
+    # The actual turn-3 attack/cancel/main2 cycle returns to identical six-array input.
+    menu = [i for i, m in enumerate(old.meta) if m["turn"] == 3 and m["decision"] == "SelectBattleCmd"]
+    assert [old.meta[i]["kind"] for i in menu] == ["attack", "main2"]
+    assert all(np.array_equal(old.obs[menu[0]][k], old.obs[menu[1]][k]) for k in old.obs[menu[0]])
+    kept = [i for i, m in enumerate(new.meta) if m["turn"] == 3 and m["decision"] == "SelectBattleCmd"]
+    assert len(kept) == 1 and new.meta[kept[0]]["kind"] == "main2"
+    assert all(np.array_equal(new.obs[kept[0]][k], old.obs[menu[1]][k]) for k in old.obs[menu[1]])
+    for legacy, expected in ((False, new), (True, old)):
+        data, _ = record_games([spec], GreedyAgent, vocab, event_length=64, include_cancelled_commands=legacy)
+        assert np.array_equal(data.actions, expected.actions) and data.skipped == expected.skipped
+        for k in data.obs:
+            np.testing.assert_array_equal(data.obs[k], np.stack([o[k] for o in expected.obs]))
+
+
+def test_optional_cancel_after_a_real_effect_does_not_remove_its_teacher_command(db, vocab):
+    from ygorl import _core, paths
+    from ygorl.agents import GreedyAgent
+    from ygorl.engine.duel import default_scripts
+    from ygorl.train.heuristic_demos import DemoRecorder
+
+    class CancelOptional(GreedyAgent):
+        cancelled = 0
+
+        def act(self, point):
+            for i, a in enumerate(point.actions):
+                if a.kind == "cancel" and i not in point.undo:
+                    self.cancelled += 1
+                    return i
+            return super().act(point)
+
+    base = default_scripts()
+    suffix = b"""\nlocal old_initial_effect=s.initial_effect
+        function s.initial_effect(c)
+            old_initial_effect(c)
+            local e=Effect.CreateEffect(c)
+            e:SetType(EFFECT_TYPE_IGNITION)
+            e:SetRange(LOCATION_HAND)
+            e:SetOperation(function(e,tp) Duel.SelectMatchingCard(tp,aux.TRUE,tp,LOCATION_HAND,0,0,1,nil) end)
+            c:RegisterEffect(e)
+        end"""
+    scripts = _core.ScriptDirectory([str(p) for p in paths.script_directories()],
+                                   {"c14558127.lua": base.read("c14558127.lua") + suffix,
+                                    **{n: base.read(n) for n in ("proc_fusion.lua", "proc_synchro.lua")}})  # fmt: skip
+    deck = Deck(main=(14558127,) * 40)
+    recorders = []
+    responses = []
+    for legacy in (True, False):
+        agent = CancelOptional(0)
+        rec = DemoRecorder(agent, db, vocab, event_length=16, min_turn=1, include_cancelled_commands=legacy)
+        result = Duel(0, None, deck, deck, cards=db, scripts=scripts, config=DuelConfig(max_turns=1)).run(
+            rec, RandomAgent(1)
+        )
+        assert not (result.error or result.script_errors or result.retries) and agent.cancelled > 0
+        assert any(m["kind"] == "activate" for m in rec.meta) and any(m["kind"] == "cancel" for m in rec.meta)
+        assert rec.skipped["cancelled_command"] == 0
+        recorders.append(rec)
+        responses.append(result.responses)
+    old, new = recorders
+    assert responses[0] == responses[1] and old.actions == new.actions and old.meta == new.meta
+    assert all(np.array_equal(a[k], b[k]) for a, b in zip(old.obs, new.obs) for k in a)
+
+
 def test_greedy_demonstrations_record_later_turns(db, vocab, data, tmp_path):
     """DemoRecorder: Greedy's non-forced decisions from turn 2 on, as the observations NetPolicy would see."""
     from ygorl.agents import GreedyAgent

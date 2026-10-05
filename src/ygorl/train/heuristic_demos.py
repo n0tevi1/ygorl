@@ -8,7 +8,7 @@ ordinary duels and turns its decisions into the same ``(observation, action row)
   the event stream needs them all) and encodes the seat's non-forced decisions from ``min_turn`` on with
   :class:`~ygorl.env.observer.PointObserver`, i.e. the observations ``EncodedVecEnv`` and ``NetPolicy``
   produce. Labels are mapped to the representative row of their equivalent copies (``canonical_action``);
-  a decision whose action is a masked no-op undo (e.g. Greedy backing out of an attack) is skipped.
+  a masked no-op cancel removes the whole cancelled command's samples, not only the cancel itself.
 - :func:`record_games` plays a list of ``GameSpec`` s (both seats via ``first``), optionally in parallel.
 - :data:`SUBSETS` select samples by their ``meta``: ``all``, or ``battle`` — the decisions the root-cause
   analysis found missing (own battle-phase decisions, and the main-phase-1 choice to enter the battle phase).
@@ -56,12 +56,14 @@ class DemoRecorder:
     """
 
     def __init__(self, agent, cards, vocab, *, event_length: int = DEFAULT_EVENT_LENGTH, min_turn: int = 2,
-                 game: int = 0) -> None:  # fmt: skip
+                 game: int = 0, include_cancelled_commands: bool = False) -> None:  # fmt: skip
         self.agent = agent
         self.name = f"record({getattr(agent, 'name', type(agent).__name__)})"
         self.observer = PointObserver(cards, vocab, event_length)
         self.min_turn = min_turn
         self.game = game
+        self.include_cancelled_commands = include_cancelled_commands
+        self._command: tuple[int, int, int] | None = None  # player, turn, first sample of the menu command
         self.core = None
         self.obs: list[dict[str, np.ndarray]] = []
         self.actions: list[int] = []
@@ -76,7 +78,21 @@ class DemoRecorder:
             hook(point, core)
 
     def act(self, point) -> int:
+        if point.decision.TYPE in (C.MSG_SELECT_IDLECMD, C.MSG_SELECT_BATTLECMD):
+            self._command = (point.player, point.turn, len(self.actions))
         idx = self.agent.act(point)
+        if (not self.include_cancelled_commands and point.actions[idx].kind == "cancel" and idx in point.undo
+                and self._command is not None and self._command[:2] == (point.player, point.turn)):  # fmt: skip
+            # The host only marks cancel as undo if no game event or other player's decision intervened.
+            # Teaching the abandoned menu choice is wrong when that same undo is masked for the policy.
+            start = self._command[2]
+            removed = len(self.actions) - start
+            if removed:
+                self.skipped["cancelled_command"] += removed
+                del self.obs[start:]
+                del self.actions[start:]
+                del self.meta[start:]
+            self._command = None
         if point.turn < self.min_turn:
             self.skipped["early_turn"] += 1
             return idx
@@ -104,11 +120,11 @@ class DemoRecorder:
 
 
 def _record_one(job) -> dict:
-    game, spec, make_agent, vocab, event_length, min_turn = job
+    game, spec, make_agent, vocab, event_length, min_turn, include_cancelled_commands = job
     from ygorl.engine.duel import default_cards
 
     rec = DemoRecorder(make_agent(spec.agent_seeds[0]), default_cards(), vocab, event_length=event_length,
-                       min_turn=min_turn, game=game)  # fmt: skip
+                       min_turn=min_turn, game=game, include_cancelled_commands=include_cancelled_commands)  # fmt: skip
     try:
         result = spec.duel().run(rec, spec.agent_b(spec.agent_seeds[1]))
     except Exception as exc:  # noqa: BLE001 - reported, the game is dropped
@@ -123,12 +139,14 @@ def _record_one(job) -> dict:
 
 def record_games(specs: Sequence, make_agent: Callable[[int], object], vocab, *,
                  event_length: int = DEFAULT_EVENT_LENGTH, min_turn: int = 2, workers: int = 1,
-                 log: Callable[[str], None] | None = None) -> tuple[BCData, list[dict]]:  # fmt: skip
+                 log: Callable[[str], None] | None = None,
+                 include_cancelled_commands: bool = False) -> tuple[BCData, list[dict]]:  # fmt: skip
     """Play every ``GameSpec`` with ``make_agent(seed)`` recorded as seat a (``spec.agent_a`` is ignored).
 
     Returns the samples (``meta`` also carries the deck, opponent and seat of each game) and one summary per game.
     """
-    jobs = [(g, spec, make_agent, vocab, event_length, min_turn) for g, spec in enumerate(specs)]
+    jobs = [(g, spec, make_agent, vocab, event_length, min_turn, include_cancelled_commands)
+            for g, spec in enumerate(specs)]  # fmt: skip
     if workers <= 1:
         results = map(_record_one, jobs)
         pool = None
