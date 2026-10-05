@@ -48,6 +48,12 @@
 
 随后对四个实际检查点测 PPO **128 envs ×16 steps**，1次warmup+5次测量，
 相同配置、数据/对手采样与更新预算。待重 CPU 搜索结束后独占测试；记录完整命令及 collect/update 分时。
+执行细化在BC结果产生前固定：seed **2026100515**，20合法牌组，selfplay fraction1、min-batch64、
+env/collect/torch threads均2；2个完整PPO epochs、minibatch256、target-KL提前停止关闭，
+其余 `PPOConfig` 默认（包括lr1e-3、VRPO return、lambda0.5、EMA参考KL），无BC prior。
+关闭评估、快照登记、checkpoint周期、AMP、overlap与critic warmup；actor来自对应BC检查点，critic从头初始化。
+永久保存6次实际更新记录/错误/完整环境与网络配置，不能只留下丢弃临时目录后的平均秒数。
+这仅测实际初始化下的更新成本，不用6次benchmark更新作强度结论或覆盖原BC文件。
 按验证展开、battle 保持及吞吐综合选择两个配置进入长 RL；若大网络未改善或代价过大，允许保留基线。
 任何训练/评估错误先修复，不能以样本内 NLL 或几个成功对局宣布顶尖强度。
 移除被动收尾后，前缀数据没有完整回合1停手教学；battle 子集也不补齐主阶段2停手。
