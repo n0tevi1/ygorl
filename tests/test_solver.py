@@ -379,6 +379,8 @@ def test_batch_planning_and_resume(tmp_path, monkeypatch):
     out = tmp_path / "demos.jsonl"
     argv = [str(Path(__file__).parent / "decks" / "snake_eye.ydk"), "--hands", "2", "--solve-ms", "100", "--workers", "1",
             "--binary", str(unsolved), "--out", str(out), "--scratch", str(tmp_path / "scratch")]  # fmt: skip
+    summary = tmp_path / "summary.json"
+    argv += ["--summary", str(summary)]
     assert tool.main(argv) == 0
     records = [json.loads(line) for line in out.read_text().splitlines()]
     got = sorted((r["hand_index"], r["variant"], r["status"]) for r in records)
@@ -392,3 +394,80 @@ def test_batch_planning_and_resume(tmp_path, monkeypatch):
     assert {k[1] for k in keys} == {0, 1, 2} and len(out.read_text().splitlines()) == 6
     with pytest.raises(ValueError, match="environment"):
         done_keys(out, {"version": "md-2026-10", "fingerprint": "x"})
+    assert json.loads(summary.read_text())["table"]["snake_eye plain"]["hands"] == 3
+    frozen = out.read_bytes()
+    # Validate identity before truncating even a partial record.
+    out.write_bytes(frozen + b'{"partial"')
+    for changed in (["--seed", "7"], ["--solve-ms", "200"], ["--solver-seed", "5"], ["--no-fire"]):
+        assert tool.main(argv + changed) == 2
+        assert out.read_bytes() == frozen + b'{"partial"'
+    assert tool.main(argv + ["--hands", "3"]) == 0
+    assert out.read_bytes() == frozen
+    assert json.loads(summary.read_text())["new_records"] == 0
+    assert json.loads(summary.read_text())["records"] == 6
+    # An existing error remains a failed batch even with no new work.
+    old = [json.loads(line) for line in frozen.splitlines()]
+    old[0]["status"] = "error"
+    out.write_text("".join(json.dumps(r) + "\n" for r in old))
+    assert tool.main(argv + ["--hands", "3"]) == 1
+    assert json.loads(summary.read_text())["table"]["snake_eye plain"]["error"] == 1
+    # Version equality alone is insufficient.
+    for r in old:
+        r["environment"] = {"version": "md-2026-10", "fingerprint": "old"}
+    out.write_text("".join(json.dumps(r) + "\n" for r in old))
+    with pytest.raises(ValueError, match="environment"):
+        done_keys(out, {"version": "md-2026-10", "fingerprint": "new"})
+
+
+def test_batch_manifest_identity_and_exclusive_writer(tmp_path):
+    from ygorl.solver.resume import bind_output, output_lock
+
+    out = tmp_path / "batch.jsonl"
+    identity = {"environment": {"version": "md", "fingerprint": "a"}, "decks": {"a": [1, 2]},
+                "implementation": {"solver": "binary1"}, "search": {"seed": 2}}  # fmt: skip
+    with output_lock(out):
+        bind_output(out, identity)
+        with pytest.raises(ValueError, match="active writer"), output_lock(out):
+            pass
+    with output_lock(out):
+        bind_output(out, identity)
+        for field in identity:
+            with pytest.raises(ValueError, match="identity mismatch"):
+                bind_output(out, {**identity, field: "changed"})
+    legacy = tmp_path / "legacy.jsonl"
+    legacy.write_text('{"partial":')
+    with output_lock(legacy), pytest.raises(ValueError, match="no batch manifest"):
+        bind_output(legacy, identity)
+    assert legacy.read_text() == '{"partial":'
+
+
+def test_solver_content_identity_tracks_edits(tmp_path):
+    from ygorl.solver.resume import tree_digest
+
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / "one.py").write_text("x = 1")
+    (b / "one.py").write_text("x = 1")
+    assert tree_digest(a, "*.py") == tree_digest(b, "*.py")
+    (b / "one.py").write_text("x = 2")
+    assert tree_digest(a, "*.py") != tree_digest(b, "*.py")
+
+
+def test_resume_fire_uses_persisted_plain_line(tmp_path, monkeypatch):
+    from ygorl.solver import HandJob
+    from ygorl.solver import batch
+
+    base = Demonstration.new(SNAKE, [], hand_index=0, hand_seed=7, variant="plain", targets=["48452496"])
+    base.status = "unsolved"
+    job = HandJob(deck_path=tmp_path / "deck.ydk", hand_index=0, hand_seed=7, targets=("48452496",),
+                  workdir=tmp_path, scratch=tmp_path / "scratch", fire=(ASH_BLOSSOM,))  # fmt: skip
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("resuming a missing fire record must not replace the plain search")
+
+    monkeypatch.setattr(batch, "solve_hand", unexpected)
+    result = batch.resume_job((job, base))
+    assert result[0] == base.to_json()
+    assert result[1]["variant"] == "fire" and result[1]["status"] == "skipped"
