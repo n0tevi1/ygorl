@@ -870,6 +870,7 @@ void Tracker::on_buffer(const std::string& buf, int status) {
             inside_ = -1;
             toggle_.reset();
             selection_steps_ = 0;
+            selection_cancels_ = 0;
         }
         if (!is_decision_type(type)) {
             switch (type) {
@@ -948,6 +949,11 @@ void Tracker::on_buffer(const std::string& buf, int status) {
         selection_steps_ = 0;  // not the same selection any more
         selection_player_ = decision->player;
     }
+    if (decision->player != selection_cancel_player_ ||
+        (decision->type != MSG_SELECT_CARD && decision->type != MSG_SELECT_UNSELECT_CARD)) {
+        selection_cancels_ = 0;
+    }
+    selection_cancel_player_ = decision->player;
     state_ = std::make_unique<DecisionState>(*decision, cards_);
 }
 
@@ -965,6 +971,9 @@ std::vector<size_t> Tracker::undo() const {
         const Action& a = acts[i];
         if (a.kind == CANCEL && inside_ >= 0) {
             out.push_back(i);  // backs out of the command to the unchanged menu
+        } else if (d.type == MSG_SELECT_UNSELECT_CARD && a.kind == CANCEL &&
+                   selection_cancels_ >= MAX_SELECTION_CANCELS) {
+            out.push_back(i);  // target/material cancellation without game progress (rule 6)
         } else if (toggle_ && d.type == MSG_SELECT_UNSELECT_CARD && a.has_card &&
                    ((a.kind == SELECT && toggle_->kind == UNSELECT) || (a.kind == UNSELECT && toggle_->kind == SELECT)) &&
                    same_card(a.card, toggle_->code, toggle_->loc)) {
@@ -1018,7 +1027,10 @@ const std::string* Tracker::act(size_t index) {
     if (d.type == MSG_SELECT_UNSELECT_CARD && (a.kind == SELECT || a.kind == UNSELECT) && a.has_card) {
         toggle_ = Toggle{d.player, a.kind, a.card.code, a.card.loc};
     }
-    if (d.type == MSG_SELECT_UNSELECT_CARD) ++selection_steps_;
+    if (d.type == MSG_SELECT_UNSELECT_CARD) {
+        ++selection_steps_;
+        if (a.kind == CANCEL) ++selection_cancels_;
+    }
     if (state_->done()) {
         responses_.push_back(state_->response());
         state_.reset();

@@ -200,6 +200,9 @@ private:
     // player, no game event in between); past MAX_SELECTION_STEPS unselecting is masked
     uint32_t selection_steps_ = 0;
     int selection_player_ = -1;
+    // rule 6: cancellations across target/material prompts, until game progress / player / decision-kind change
+    uint32_t selection_cancels_ = 0;
+    int selection_cancel_player_ = -1;
     // repeated activation limit (rule 3, mirror of DuelTracker._activations): menu activations of one effect
     // this turn, keyed by (player, has card, code, controller, location, sequence, description)
     using ActKey = std::tuple<int, bool, uint32_t, uint8_t, uint8_t, uint32_t, uint64_t>;
@@ -215,6 +218,7 @@ constexpr uint32_t MAX_MENU_ACTIVATIONS = 8;
 // After this many steps in one SELECT_UNSELECT_CARD selection unselecting is masked, so it can only move forward
 // (docs/encoding.md 「撤销类空操作」 rule 5; mirror of duel.MAX_SELECTION_STEPS).
 constexpr uint32_t MAX_SELECTION_STEPS = 32;
+constexpr uint32_t MAX_SELECTION_CANCELS = 32;
 
 // Observation encoder (mirror of env.encoding.ObservationEncoder, docs/encoding.md).
 constexpr int N_CARDS = 160, F_CARD = 23, G_GLOBAL = 22, MAX_OPTIONS = 128, A_ACTION = 10;
