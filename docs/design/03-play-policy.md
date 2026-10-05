@@ -283,3 +283,17 @@ state_dict中多个名称可指向同一个Parameter；禁止按别名重复原�
 并在实际ActorCritic上验证共享/非共享参数的单次与多次更新，以及持久buffer。
 旧checkpoint继续载入已有reference，不追溯重写历史权重；修复后的训练身份单独记录，
 运行中的四臂LR对照保持原实现冻结，其旧EMA行为作为结果的共同限制明确披露。
+
+### 跨消息的素材取消循环（2026-10-05）
+
+4个冻结PPO评估上限均复现为SELECT_CARD选择融合目标、SELECT_UNSELECT_CARD取消素材，
+连续循环约5,500–5,800步。取消合法且会发engine response，不能套用“未提交的host命令”标签删除规则。
+现有规则5仅限制连续UNSELECT选择；每次回到SELECT_CARD都会重置，且它只遮unselect，不遮cancel。
+新增策略进度规则6：同一玩家、没有游戏状态事件的SELECT_CARD/SELECT_UNSELECT_CARD连续选择链，
+累计32次UNSELECT_CARD的cancel后，将后续该类型的cancel标记为undo供编码mask；
+最初32次取消、全部合法select/unselect、底层actions/response语义保留。
+切换玩家、离开这两类选择或收到游戏事件时清零；Hint等非状态消息不清零。
+永远保留至少一个可选动作，若cancel是唯一可行行则保留，不能制造无动作状态或封死完成所需卡。
+Python与C++同步，快照/复制保留计数；真实轨迹与重置/边界/唯一出口测试验证两端一致。
+这是对具体无进展行为的有界策略约束，不是“cancel非法”的引擎修复，也不证明critic归因已解。
+旧四臂研究保持health-stop；修后推理结果以新实现身份单独报告，不能填回原曲线。

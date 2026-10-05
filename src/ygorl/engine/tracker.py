@@ -100,6 +100,8 @@ MAX_ENGINE_STEPS = 100_000
 # forward (docs/encoding.md 「撤销类空操作」 rule 5): a policy that never picks the card a finish needs (Swordsoul
 # Blackout needs your Wyrm) would otherwise toggle the others until the decision limit
 MAX_SELECTION_STEPS = 32
+# Across target/material prompts with no game event, bound cancellations that only return to target selection.
+MAX_SELECTION_CANCELS = 32
 _INVERSE = {"select": "unselect", "unselect": "select"}
 
 
@@ -152,6 +154,8 @@ class DuelTracker:
         # rule 5: steps of the current SELECT_UNSELECT_CARD selection (same player, no game event in between)
         self._selection_steps = 0
         self._selection_player = -1
+        self._selection_cancels = 0
+        self._selection_cancel_player = -1
         self._activations: dict[tuple, int] = {}  # (player, card key, description) -> menu activations this turn
         self._activations_turn = -1
         self._stepped = False
@@ -190,6 +194,7 @@ class DuelTracker:
             if not isinstance(msg, _NOT_EVENTS):
                 self._inside = self._toggle = None
                 self._selection_steps = 0
+                self._selection_cancels = 0
             if isinstance(msg, M.Decision):
                 decision = msg
             elif isinstance(msg, M.NewTurn):
@@ -252,6 +257,10 @@ class DuelTracker:
         if decision.TYPE != C.MSG_SELECT_UNSELECT_CARD or decision.player != self._selection_player:
             self._selection_steps = 0  # not the same selection any more
             self._selection_player = decision.player
+        if (decision.player != self._selection_cancel_player
+                or decision.TYPE not in (C.MSG_SELECT_CARD, C.MSG_SELECT_UNSELECT_CARD)):  # fmt: skip
+            self._selection_cancels = 0
+        self._selection_cancel_player = decision.player
         self.state = make_decision(decision, self.cards)
         self._point = None
         self._stepped = False  # host answers only fresh decisions, never a half-built multi-select
@@ -309,6 +318,9 @@ class DuelTracker:
         for i, a in enumerate(actions):
             if a.kind == "cancel" and self._inside is not None:
                 undo.append(i)  # backs out of the command to the unchanged menu
+            elif (decision.TYPE == C.MSG_SELECT_UNSELECT_CARD and a.kind == "cancel"
+                  and self._selection_cancels >= MAX_SELECTION_CANCELS):  # fmt: skip
+                undo.append(i)  # repeated target/material cancellation without game progress (rule 6)
             elif (self._toggle is not None and decision.TYPE == C.MSG_SELECT_UNSELECT_CARD
                   and (_INVERSE.get(a.kind), _card_key(a)) == self._toggle[1:]):  # fmt: skip
                 undo.append(i)  # reverses the previous select / unselect
@@ -335,6 +347,8 @@ class DuelTracker:
             self._toggle = (decision.player, action.kind, _card_key(action))
         if decision.TYPE == C.MSG_SELECT_UNSELECT_CARD:
             self._selection_steps += 1
+            if action.kind == "cancel":
+                self._selection_cancels += 1
 
     def _restricted(self) -> bool:
         """The pending decision is the opponent's, in the learner's turn, under a restricting curriculum."""
@@ -404,6 +418,7 @@ __all__ = [
     "MAX_ENGINE_STEPS",
     "MAX_MENU_ACTIVATIONS",
     "MAX_SELECTION_STEPS",
+    "MAX_SELECTION_CANCELS",
     "WIN_REASON_DECK_OUT",
     "WIN_REASON_LP",
     "DecisionPoint",
