@@ -375,3 +375,18 @@ solver 前缀；若随机分支变化，则在首次语义不匹配前停止。�
 
 [冻结协议与结果](spikes/teacher-continuation-2026-10-05.md)：前缀对照没有收益；普通洗牌从头搜索
 恢复原有六条失败分支，新种子 Maliss / Tearlaments 各 15/16。Lunalight 最终展开仍是数据缺口。
+
+### 完整参考线的引导消融（研究 API）
+
+`solve_hand(job, reference=demo, reference_guidance=True)` 可在 `ordinary_shuffle=True` 的任务中
+保留参考线的 native semantic plan。`False` 仍使用同一参考文件，但传 `--no-plan`；不传 `reference`
+则保留既有 `--no-ref --start` 行为。该选项尚未接入批次 CLI，不能混入既有 CLI resume manifest。
+
+两臂参考线都必须来自同一完整环境身份、同一合法卡组、普通规则及被动对手；标签卡组与实际起始
+卡组也须一致。新鲜重放必须无错误，结束在 turn 2 且满足本任务最终目标。输入不符返回显式 error，
+不把中间目标成功线作为最终目标参考。每个候选仍核对实际 start、目标、turn2 和引擎错误。
+
+研究 API 显式设置深度 `12*(main+extra)+32`，避免求解器默认深度随参考长度改变；保存参考哈希、
+引导开关、命令及日志。调用者负责独立的实验 manifest/输出锁，冻结目标、参考线、种子、预算及实现。
+引导包含 native 内部的多个搜索机制，不是仅改变一个 rollout 权重。
+[协议及结果](spikes/lunalight-guidance-2026-10-05.md)。
