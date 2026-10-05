@@ -90,3 +90,26 @@ entropy和共享critic也会改变策略，但这些独立Adam干预不构成可
 不能把zeroQ当正确bootstrap，也不替换训练目标；它仅分开稀疏奖励项与当前估值项。
 再在同一个首批样本比较两组各自按原标准化方式归一的policy梯度方向/范数，完整记录，
 不据此宣称warmup已经有效。后续是否需要完整终局监督或warmup实验，应由该诊断和四臂训练一起判断。
+
+### advantage来源审计结果
+
+同一份固定rollout的分解，重构`full = reward_only + critic_only`最大误差1.19e−7。
+两容量均只有10个非零终局奖励；能在本段看见后续终局的行数为1,007/1,095（共16,384行）。
+λ=.5令reward trace的绝对值>1e−6仅200行、>1e−3仅100行；其余行仍从critic估值获得梯度权重。
+
+|模型|full raw advantage std|reward-only std|critic-only std|full与critic项相关性|full与reward项相关性|policy梯度full vs reward-only cosine|
+|---|---:|---:|---:|---:|---:|---:|
+|64×1|.47942|.02852|.47832|.99823|.06841|.26624|
+|128×2|.40473|.02851|.40451|.99752|.04302|.18700|
+
+梯度使用相同首批样本与网络，但各组按原standard规则归一；完整梯度与原存档policy梯度cosine约1。
+结果说明这两份fresh-critic首轮更新的数值方向主要依赖估值项，而非已观测终局奖励；
+**不是99.8%的梯度是噪声，也不是实际动作信号比例或Q正确率**。zeroQ丢掉合法bootstrap，不能直接用来训练。
+仍需真实分支续局/校准或受控warmup干预，才能判断估值方向是否错误、预热能否改善强度。
+
+不能把它当成重新延长旧MC配方的理由：[先前完整终局监督对照](terminal-mc-2026-10-04.md)在两个种子上
+比lambda低4.56pp，完整游戏采样的后续三seed对照也未通过门槛（[报告](collection-control-2026-10-04.md)）。
+那些实验没有冻结actor预热、使用旧actor与guard，因而既不证明新初始化warmup有效，也不完全排除它。
+本轮先完成已经启动的四臂LR对照，不改变其配置或混入预热。
+
+补充数据/梯度/解析Adam审计与失败记录在同目录`advantage-validation.json`单独封存，原诊断manifest不覆盖。
