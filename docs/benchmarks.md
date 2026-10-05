@@ -1185,3 +1185,13 @@ always-activate −0.16pp [−2.12,+1.86]。五个 familywise 区间仍跨零，
 780 步独立回放、780/780 native 必要响应覆盖，零工作续跑哈希不变。
 未达到 guided ≥8/16 门槛，不扩大单参考线配方；未训练 policy，不代表对局胜率。
 [完整协议、工件及限制](spikes/lunalight-guidance-2026-10-05.md)。
+
+
+## Lunalight 材料图与反向分解（2026-10-05）
+
+提交 `a75652d`（运行代码同 main `c3e79b4`），`md-2026-09`，Ryzen AI MAX+ 395 CPU，
+4 workers × 1 thread，新 seed 2026100506，16 起手 × 两臂、30 秒/臂、深度 692、novelty patience 12。
+control **2/16**，material **2/16**；共同成功 1 手，各自独有 1 手，0 error/unverified/拒收。
+native 累计时间 444.29 / 443.32 秒。**296 步**独立回放与 **296/296** native 必要响应覆盖通过。
+零净收益，未达预设开发门槛，不扩大此组合。上一轮 novelty=19 且有参考捕获，不能直接跨轮归因。
+[协议、模型审计、工件与下一步](spikes/material-guidance-2026-10-05.md)。
