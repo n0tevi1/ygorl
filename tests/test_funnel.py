@@ -274,6 +274,19 @@ def test_match_action_ignores_order_in_deck_and_hand():
     assert match_action(Action("end_phase"), [Action("battle_phase"), Action("end_phase")]) == 1
 
 
+def test_match_action_extra_deck_shuffle_preserves_card_state():
+    def summon(code=66141736, seq=0, pos=0, controller=0, description=0):
+        return Action("spsummon", 0, M.CardInfo(code, M.Location(controller, C.LOCATION_EXTRA, seq, pos)),
+                      description=description)  # fmt: skip
+
+    # Observed Resonators replay: Red Rising Dragon was still legal, but moved 0 -> 12.
+    assert match_action(summon(), [summon(code=9753964), summon(seq=12)]) == 1
+    assert match_action(summon(), [summon(seq=12, controller=1)]) is None
+    assert match_action(summon(), [summon(seq=12, description=42)]) is None
+    assert match_action(summon(pos=C.POS_FACEUP_ATTACK), [summon(seq=12, pos=C.POS_FACEDOWN_DEFENSE)]) is None
+    assert match_action(summon(pos=C.POS_FACEUP_ATTACK), [summon(seq=12, pos=C.POS_FACEUP_ATTACK)]) == 0
+
+
 def _pseudo_line(db, tmp_path, seed):
     """A 'solver line' made by Greedy in the solver's setting (pseudo-shuffle, passive opponent), as a Demonstration."""
     _, order = sample_hand(PURRELY, seed)

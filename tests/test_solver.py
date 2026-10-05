@@ -417,6 +417,10 @@ def test_batch_planning_and_resume(tmp_path, monkeypatch):
     out.write_text("".join(json.dumps(r) + "\n" for r in old))
     with pytest.raises(ValueError, match="environment"):
         done_keys(out, {"version": "md-2026-10", "fingerprint": "new"})
+    with out.open("a") as stream:
+        stream.write(json.dumps(old[0]) + "\n")
+    with pytest.raises(ValueError, match="duplicate"):
+        done_keys(out, {"version": "md-2026-10", "fingerprint": "old"})
 
 
 def test_batch_manifest_identity_and_exclusive_writer(tmp_path):
