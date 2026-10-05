@@ -365,6 +365,10 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 （训练环境的 `stamp()`，没有环境时为 None）、`learner`（模型、EMA 参考、优化器、更新数）、`pool`（全部快照含 keep-best）、
 `schedule`（发局计数与 RNG）、`counters`、`best`、`rng`、`evolved`（进化牌组池的条目、卡表与逐卡组得分，没有时为 None）。
 续训恢复以上全部状态；进行中的对局不保存，续训时各槽位开新局。
+`rng`包含CPU torch流和独立的CPU collector generator；GPU训练还保存learner设备的CUDA/ROCm全局流，
+供PPO minibatch randperm等使用，在模型和快照池重建后恢复。CPU checkpoint不访问CUDA RNG。
+旧GPU checkpoint没有该字段时仍可载入，但无法恢复缺失的GPU随机历史；跨设备迁移不保证相同随机序列。
+对局重开和GPU数值波动仍可能改变轨迹，恢复RNG不代表整段续训逐位相同。
 
 **从检查点重建网络**（#122）：训练器、对战 agent、评估、智能体矩阵与研究脚本都经 `ygorl.train.checkpoint` 重建网络，不各自拼装：
 
