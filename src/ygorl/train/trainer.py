@@ -350,8 +350,10 @@ class Trainer:
             self.log(f"deck pool {ev.path}: {len(live)} evolved decks dealt, {len(hist)} history"
                      + "".join(f"; left out {p}" for p in ev.problems))  # fmt: skip
 
-    def _autocast(self):
-        return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=self.cfg.bf16)
+    def _autocast(self, *, cache_enabled: bool = True):
+        return torch.autocast(
+            self.device.type, dtype=torch.bfloat16, enabled=self.cfg.bf16, cache_enabled=cache_enabled
+        )
 
     def _collect(self) -> Rollout:
         if self._stream is None:
@@ -390,9 +392,10 @@ class Trainer:
             ro = self._collect()
         torch.set_num_threads(cfg.torch_threads)
         t0 = time.perf_counter()
-        with self._autocast():
+        # Adam mutates weights between minibatches: cached BF16 casts would become stale within this context.
+        with self._autocast(cache_enabled=False):
             warm = self.cfg.critic_warmup > 0 and not self.counters.get("critic_warmup_done")
-        stats = self.learner.update(ro, policy=not warm)
+            stats = self.learner.update(ro, policy=not warm)
         update_s = time.perf_counter() - t0
         if warm:
             self._warmup_ev.append(stats["q_explained_var"])

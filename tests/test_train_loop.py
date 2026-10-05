@@ -33,6 +33,73 @@ TINY = {"d_model": 16, "n_heads": 2, "board_layers": 1, "history_layers": 1}
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
+@pytest.mark.parametrize(("bf16", "warmup"), [(False, 0), (True, 0), (True, 1)])
+def test_training_forward_uses_requested_precision(tmp_path, monkeypatch, bf16, warmup):
+    cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", bf16=bf16, critic_warmup=warmup,
+                      num_envs=2, steps=4, event_length=8, checkpoint_every=0, eval_every=0,
+                      ppo=PPOConfig(epochs=1, minibatch_size=8))  # fmt: skip
+    trainer = Trainer(cfg, tmp_path)
+    updating = False
+    outputs = []
+    original = trainer.learner.update
+
+    def update(*args, **kwargs):
+        nonlocal updating
+        updating = True
+        try:
+            return original(*args, **kwargs)
+        finally:
+            updating = False
+
+    def observe(module, args, result):
+        if updating:
+            outputs.append((torch.is_autocast_enabled("cuda"), result.logits.dtype))
+
+    monkeypatch.setattr(trainer.learner, "update", update)
+    hook = trainer.model.register_forward_hook(observe)
+    try:
+        rec = trainer.step()
+    finally:
+        hook.remove()
+    expected = torch.bfloat16 if bf16 else torch.float32
+    assert outputs and all(active == bf16 and dtype == expected for active, dtype in outputs)
+    assert rec["critic_warmup"] == int(bool(warmup)) and rec["minibatches"] > 0
+    assert torch.isfinite(torch.tensor(rec["loss"]))
+    assert all(torch.isfinite(p).all() for p in trainer.model.parameters())
+    assert all(torch.isfinite(p.grad).all() for p in trainer.model.parameters() if p.grad is not None)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
+def test_bf16_update_reads_current_weights_after_each_adam_step(tmp_path, monkeypatch):
+    cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", bf16=True, num_envs=2, steps=4,
+                      event_length=8, checkpoint_every=0, eval_every=0,
+                      ppo=PPOConfig(epochs=2, minibatch_size=8, target_kl=None))  # fmt: skip
+    trainer = Trainer(cfg, tmp_path)
+    observations = {}
+    original_update = trainer.learner.update
+    original_step = trainer.learner.optimizer.step
+    checked = []
+
+    def update(ro, *args, **kwargs):
+        observations.update({k: v[:2] for k, v in ro.obs.items()})
+        return original_update(ro, *args, **kwargs)
+
+    def step(*args, **kwargs):
+        result = original_step(*args, **kwargs)
+        with torch.no_grad():
+            actual = trainer.model.policy_logits(observations)
+            with torch.autocast("cuda", dtype=torch.bfloat16, cache_enabled=False):
+                fresh = trainer.model.policy_logits(observations)
+        torch.testing.assert_close(actual, fresh, rtol=0, atol=0)
+        checked.append(True)
+        return result
+
+    monkeypatch.setattr(trainer.learner, "update", update)
+    monkeypatch.setattr(trainer.learner.optimizer, "step", step)
+    assert trainer.step()["minibatches"] == 2 and len(checked) == 2
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
 def test_gpu_resume_restores_minibatch_and_collector_rng(tmp_path):
     cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", num_envs=2, steps=4, event_length=8,
                       checkpoint_every=0, eval_every=0, ppo=PPOConfig(epochs=1, minibatch_size=8))  # fmt: skip

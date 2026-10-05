@@ -240,3 +240,17 @@ CPU checkpoint不调用CUDA RNG API、不新增GPU初始化副作用。旧checkp
 但缺失的GPU历史随机流无法重建，不声称精确恢复。设备迁移不承诺随机序列可比。
 测试需在真实GPU训练/保存/载入后比较下一次randperm、CPU随机数与collector抽样，而不只比权重与更新号。
 进行中的引擎对局仍重新开局，默认GPU算子也可能存在数值波动；恢复随机流不等于整段训练轨迹逐位复现。
+
+### 混合精度作用域（2026-10-05修复）
+
+`bf16=True`时，collector与整个PPOLearner.update都必须进入既有bfloat16 autocast作用域；
+是否critic-only warmup只改变可训练参数，不能意外关闭更新阶段的混合精度。
+当前实现的warm判断在with内、update却在with外，偏离原设计；恢复update的作用域，不改变默认FP32配方。
+回归需捕获实际训练forward的logits dtype及autocast状态，包含BF16普通更新、BF16 warmup和FP32控制，
+并检查参数/梯度有限。已有“BF16训练能跑完”的测试不足以发现静默回退为FP32。
+短诊断须覆盖ROCm Split-K的真实大token路径；不据修复本身承诺BF16加速或强度收益。
+
+补充边界：一次PPOLearner.update内有多次Adam，整个更新作用域必须关闭autocast参数转换缓存，
+避免FP32权重被修改后后续minibatch继续读取旧BF16副本。只修缩进仍会留下这一问题。
+collector作用域内权重不变，可保留缓存；overlap collector使用独立acting副本。
+回归需在每个真实Adam步后将当前作用域的logits与禁用缓存的fresh forward逐元素比较，覆盖至少两步。
