@@ -33,6 +33,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-turn", type=int, default=2)
     p.add_argument("--event-length", type=int, default=128)
     p.add_argument("--workers", type=int, default=2)
+    p.add_argument(
+        "--include-cancelled-commands", action="store_true", help="legacy labels: keep commands the teacher undoes"
+    )
     p.add_argument("--limit", type=int, default=None, help="only the first N games (smoke test)")
     args = p.parse_args(argv)
 
@@ -57,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         specs = specs[: args.limit]
     t0 = time.time()
     data, games = record_games(specs, GreedyAgent, vocab, event_length=args.event_length, min_turn=args.min_turn,
-                               workers=args.workers)  # fmt: skip
+                               workers=args.workers, include_cancelled_commands=args.include_cancelled_commands)  # fmt: skip
     seconds = time.time() - t0
     counts = {name: sum(map(f, data.meta)) for name, f in SUBSETS.items()}
     kinds = Counter(f"{m['decision']}/{m['kind']}" for m in data.meta)
@@ -69,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
                                 for opp in {g.get("opponent") for g in games}}}  # fmt: skip
     stamp = None if env is None else {"version": env.version, "fingerprint": env.fingerprint}
     info["identity"] = data_identity(vocab, args.event_length, stamp)
+    info["label_scope"] = {"include_cancelled_commands": args.include_cancelled_commands}
     save_data(args.out, data, **info)
     args.out.with_suffix(".games.json").write_text(json.dumps({"info": info, "games": games,
                                                                "kinds": dict(kinds.most_common())}, indent=1))  # fmt: skip
