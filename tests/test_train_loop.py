@@ -70,6 +70,36 @@ def test_training_forward_uses_requested_precision(tmp_path, monkeypatch, bf16, 
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
+def test_bf16_update_reads_current_weights_after_each_adam_step(tmp_path, monkeypatch):
+    cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", bf16=True, num_envs=2, steps=4,
+                      event_length=8, checkpoint_every=0, eval_every=0,
+                      ppo=PPOConfig(epochs=2, minibatch_size=8, target_kl=None))  # fmt: skip
+    trainer = Trainer(cfg, tmp_path)
+    observations = {}
+    original_update = trainer.learner.update
+    original_step = trainer.learner.optimizer.step
+    checked = []
+
+    def update(ro, *args, **kwargs):
+        observations.update({k: v[:2] for k, v in ro.obs.items()})
+        return original_update(ro, *args, **kwargs)
+
+    def step(*args, **kwargs):
+        result = original_step(*args, **kwargs)
+        with torch.no_grad():
+            actual = trainer.model.policy_logits(observations)
+            with torch.autocast("cuda", dtype=torch.bfloat16, cache_enabled=False):
+                fresh = trainer.model.policy_logits(observations)
+        torch.testing.assert_close(actual, fresh, rtol=0, atol=0)
+        checked.append(True)
+        return result
+
+    monkeypatch.setattr(trainer.learner, "update", update)
+    monkeypatch.setattr(trainer.learner.optimizer, "step", step)
+    assert trainer.step()["minibatches"] == 2 and len(checked) == 2
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
 def test_gpu_resume_restores_minibatch_and_collector_rng(tmp_path):
     cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", num_envs=2, steps=4, event_length=8,
                       checkpoint_every=0, eval_every=0, ppo=PPOConfig(epochs=1, minibatch_size=8))  # fmt: skip
