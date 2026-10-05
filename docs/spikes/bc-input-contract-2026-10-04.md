@@ -48,5 +48,11 @@ The heuristic games use two legal decks and ordinary shuffled play. Larger BC
 work must specify teacher coverage and freeze identical processed data across
 network sizes before spending the long-training budget.
 
-Artifacts: `out/research/bc-input-contract-2026-10-04/`. Full-suite validation
-and final source/artifact fingerprints will be recorded before merge.
+Artifacts: `out/research/bc-input-contract-2026-10-04/`. Final implementation
+`3e2eb82`: full CPU presubmit **1,409 passed / 8 skipped** (323.28 s); separate
+real ROCm tests **6 passed** (5.38 s), covering all five GPU-skipped cases.
+The three remaining skips require optional solver/cache assets. There are no
+hosted GitHub checks. `validation.json` pins the source and fixture artifacts;
+the final `validated/` rerun reproduces all normal heuristic samples and every
+mixed-BC parameter exactly, with eight zero-error heuristic games. This checks
+that rejecting error prefixes leaves successful recording unchanged.
