@@ -42,7 +42,7 @@ from ygorl.env.observer import PointObserver
 from ygorl.nets.batch import OBS_KEYS, to_tensors
 from ygorl.nets.policy import PolicyNet
 from ygorl.solver.batch import PASSIVE_OPPONENT, _order_with_hand, sample_hand
-from ygorl.solver.demo import PASSIVE_KINDS, DemoError, Demonstration
+from ygorl.solver.demo import PASSIVE_KINDS, DemoError, Demonstration, verify_line
 from ygorl.solver.targets import board_summary, board_summary_missing, parse_targets
 
 DEMO_PLAYER = 0  # engine player of the deck under study in every demonstration (it moves first)
@@ -195,12 +195,13 @@ def undone_steps(steps: Sequence[DemoStep]) -> set[int]:
 
 def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=None, scripts=None,
                   env: Environment | None = None, event_length: int = DEFAULT_EVENT_LENGTH,
-                  player: int = DEMO_PLAYER) -> BCData:  # fmt: skip
+                  player: int = DEMO_PLAYER, include_synthetic_closing: bool = False) -> BCData:  # fmt: skip
     """Every verified line of every solved record (plain and ``--fire``) as training samples.
 
     Kept: the decisions of ``player`` with at least two legal actions whose demonstrated row is encoded
     (< 128), minus select/unselect toggles (:func:`undone_steps`) and steps the mask hides as no-op undos;
-    ``skipped`` counts the rest.
+    Synthetic passive closing is verified but excluded unless explicitly requested for legacy
+    comparisons. ``skipped`` counts the excluded decisions; full replay validity is required in either mode.
     """
     columns: dict[str, list[np.ndarray]] = {}
     actions: list[int] = []
@@ -210,6 +211,11 @@ def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=Non
         if demo.status != "solved":
             continue
         for li, ln in enumerate(demo.lines):
+            if not 0 <= ln.solver_steps <= len(ln.actions):
+                raise DemoError("solver_steps is outside the recorded action range")
+            if not 0 <= ln.solver_responses <= len(ln.responses):
+                raise DemoError("solver_responses is outside the recorded response range")
+            verify_line(demo, li, env=env, cards=cards, scripts=scripts)
             steps = line_steps(demo, li, vocab, cards=cards, scripts=scripts, env=env, event_length=event_length,
                                player=player)  # fmt: skip
             undone = undone_steps(steps)
@@ -224,6 +230,8 @@ def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=Non
                     skipped["beyond_128"] += 1
                 elif not st.obs["action_mask"][canonical_action(st.obs, st.action)]:
                     skipped["undo"] += 1  # undoes the previous step (docs/encoding.md 「撤销类空操作」)
+                elif not include_synthetic_closing and st.step >= ln.solver_steps:
+                    skipped["synthetic_closing"] += 1
                 else:
                     for k in OBS_KEYS:
                         if k in st.obs:
