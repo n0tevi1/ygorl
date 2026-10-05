@@ -350,3 +350,104 @@ def test_train_bc_fine_tunes_an_existing_actor(vocab, tmp_path):
     assert ckpt.event_length == 24 and ckpt.net.cfg == load_checkpoint(base).net.cfg
     before = load_checkpoint(base).net.state_dict()
     assert any(not torch.equal(v, before[k]) for k, v in ckpt.net.state_dict().items())
+
+
+def test_extra_bc_data_checks_environment_vocab_and_window(data, vocab, tmp_path):
+    from ygorl.nets.agent import vocab_passwords
+    from ygorl.train.heuristic_demos import data_identity, load_compatible_data, save_data
+
+    stamp = {"version": "test", "fingerprint": "revision-a"}
+    path = save_data(tmp_path / "extra.npz", data, identity=data_identity(vocab, 32, stamp))
+    got, _ = load_compatible_data(path, vocab=vocab, event_length=32, environment=stamp)
+    np.testing.assert_array_equal(got.actions, data.actions)
+    # Same shape and vocabulary size, different card indices: silently mixing these corrupts observations.
+    passwords = vocab_passwords(vocab)
+    passwords[0], passwords[1] = passwords[1], passwords[0]
+    with pytest.raises(ValueError, match="vocab_sha256 mismatch"):
+        load_compatible_data(path, vocab=CardVocab(passwords), event_length=32, environment=stamp)
+    for wrong in [None, {"version": "test", "fingerprint": "revision-b"}]:
+        with pytest.raises(ValueError, match="environment mismatch"):
+            load_compatible_data(path, vocab=vocab, event_length=32, environment=wrong)
+    with pytest.raises(ValueError, match="event_length mismatch"):
+        load_compatible_data(path, vocab=vocab, event_length=64, environment=stamp)
+    stale = save_data(tmp_path / "stale.npz", data, identity=data_identity(vocab, 64, stamp))
+    with pytest.raises(ValueError, match="encoded observations"):
+        load_compatible_data(stale, vocab=vocab, event_length=64, environment=stamp)
+    legacy = save_data(tmp_path / "legacy.npz", data)
+    with pytest.raises(ValueError, match="missing BC data identity"):
+        load_compatible_data(legacy, vocab=vocab, event_length=32)
+
+
+def test_heuristic_samples_from_engine_error_games_are_discarded(vocab, monkeypatch):
+    from ygorl.agents import GreedyAgent
+    from ygorl.train.heuristic_demos import record_games
+
+    arena = Arena(AgentSpec("greedy"), AgentSpec("random"), config=DuelConfig(max_turns=5))
+    specs = arena.game_specs(DECKS["snake_eye"], DECKS["kashtira"], pairs=1, seed=3)
+    run = Duel.run
+
+    def failed_result(self, a, b):
+        # The engine reports budget errors as results, without throwing a Python exception.
+        result = run(self, a, b)
+        assert a.actions  # partial recorded samples must be dropped along with the failed game
+        return dataclasses.replace(result, winner=None, reason="error", error="script budget exceeded")
+
+    monkeypatch.setattr(Duel, "run", failed_result)
+    data, games = record_games(specs[:1], GreedyAgent, vocab, event_length=32)
+    assert len(data) == 0 and data.skipped["error_games"] == 1
+    assert games[0]["samples"] == 0 and games[0]["error"] == "script budget exceeded"
+
+
+@pytest.mark.parametrize("flag", ["--extra", "--extra-heldout"])
+def test_train_bc_rejects_unidentified_extra_data(data, tmp_path, flag):
+    import importlib.util
+
+    from ygorl.train.heuristic_demos import save_data
+
+    spec = importlib.util.spec_from_file_location("train_bc", HERE.parent / "tools" / "train_bc.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    path = save_data(tmp_path / "legacy.npz", data)
+    with pytest.raises(ValueError, match="missing BC data identity"):
+        tool.main(["--train", str(DEMO_FILE), flag, str(path), "--event-length", "32",
+                   "--epochs", "1", "--openings", "none", "--out", str(tmp_path / "run")])  # fmt: skip
+    assert not (tmp_path / "run" / "policy.pt").exists()
+
+
+def test_train_bc_seed_controls_initialization_and_training(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("train_bc", HERE.parent / "tools" / "train_bc.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    states = []
+    for run, seed in enumerate([17, 17, 18]):
+        torch.manual_seed(900 + run)  # unrelated caller RNG must not change this command's initialization
+        out = tmp_path / str(run)
+        assert tool.main(["--train", str(DEMO_FILE), "--seed", str(seed), "--epochs", "1",
+                          "--d-model", "32", "--layers", "1", "--event-length", "24", "--no-text",
+                          "--openings", "none", "--out", str(out), "--threads", "1"]) == 0  # fmt: skip
+        states.append(load_checkpoint(out / "policy.pt").net.state_dict())
+    assert all(torch.equal(v, states[1][k]) for k, v in states[0].items())
+    assert any(not torch.equal(v, states[2][k]) for k, v in states[0].items())
+
+
+@pytest.mark.parametrize("wrong_fingerprint", [False, True])
+def test_train_bc_checks_bound_demo_revision_and_legality(demo, tmp_path, wrong_fingerprint):
+    import importlib.util
+
+    from ygorl.data.environment import load_environment
+
+    spec = importlib.util.spec_from_file_location("train_bc", HERE.parent / "tools" / "train_bc.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    env_path = HERE.parent / "environments" / "md-2026-09"
+    env = load_environment(env_path)
+    stamp = {"version": env.version, "fingerprint": "wrong" if wrong_fingerprint else env.fingerprint}
+    path = tmp_path / "relabeled.jsonl"
+    dataclasses.replace(demo, environment=stamp).append_to(path)
+    message = "pass the same --env" if wrong_fingerprint else "illegal demonstration deck"
+    with pytest.raises(SystemExit, match=message):
+        tool.main(["--train", str(path), "--env", str(env_path), "--out", str(tmp_path / "run"),
+                   "--epochs", "1", "--openings", "none"])  # fmt: skip
+    assert not (tmp_path / "run" / "policy.pt").exists()

@@ -18,6 +18,7 @@ ordinary duels and turns its decisions into the same ``(observation, action row)
 from __future__ import annotations
 
 import json
+import hashlib
 import multiprocessing as mp
 from collections import Counter
 from collections.abc import Callable, Sequence
@@ -112,8 +113,11 @@ def _record_one(job) -> dict:
         result = spec.duel().run(rec, spec.agent_b(spec.agent_seeds[1]))
     except Exception as exc:  # noqa: BLE001 - reported, the game is dropped
         return {"game": game, "error": f"{type(exc).__name__}: {exc}"}
+    if result.reason == "error":
+        return {"game": game, "reason": result.reason, "error": result.error or "engine error"}
     return {"game": game, "obs": rec.obs, "actions": rec.actions, "meta": rec.meta, "skipped": rec.skipped,
-            "winner": result.winner, "turns": result.turns, "deck_a": spec.deck_a.name, "deck_b": spec.deck_b.name,
+            "winner": result.winner, "reason": result.reason, "turns": result.turns,
+            "deck_a": spec.deck_a.name, "deck_b": spec.deck_b.name,
             "first": spec.first, "opponent": getattr(spec.agent_b, "name", str(spec.agent_b))}  # fmt: skip
 
 
@@ -207,5 +211,32 @@ def load_data(path: str | Path) -> tuple[BCData, dict]:
     return data, extra["info"]
 
 
+def data_identity(vocab, event_length: int, environment: dict | None = None) -> dict:
+    """Identity of already encoded samples; equal shapes do not imply equal card IDs or rules."""
+    from ygorl.nets.agent import vocab_passwords
+
+    mapping = {"first_index": vocab.FIRST_INDEX, "passwords": vocab_passwords(vocab)}
+    digest = hashlib.sha256(json.dumps(mapping, sort_keys=True).encode()).hexdigest()
+    return {"format": "ygorl-bc-data-1", "environment": environment,
+            "vocab_sha256": digest, "event_length": event_length}  # fmt: skip
+
+
+def load_compatible_data(path: str | Path, *, vocab, event_length: int,
+                         environment: dict | None = None) -> tuple[BCData, dict]:  # fmt: skip
+    """Load extra BC samples only when their recorded identity matches the solver data / actor."""
+    data, info = load_data(path)
+    identity = info.get("identity")
+    if not isinstance(identity, dict):
+        raise ValueError(f"{path}: missing BC data identity; regenerate with tools/greedy_demos.py")
+    expected = data_identity(vocab, event_length, environment)
+    for key, value in expected.items():
+        if key not in identity or identity[key] != value:
+            raise ValueError(f"{path}: BC data {key} mismatch; regenerate for the selected environment and actor")
+    events = data.obs.get("events")
+    if events is None or events.ndim != 3 or events.shape[1] != event_length:
+        raise ValueError(f"{path}: BC data event_length does not match its encoded observations")
+    return data, info
+
+
 __all__ = ["BATTLE_PHASES", "DemoRecorder", "SUBSETS", "concat", "is_battle_decision", "load_data", "record_games",
-           "save_data", "select"]  # fmt: skip
+           "save_data", "select", "data_identity", "load_compatible_data"]  # fmt: skip

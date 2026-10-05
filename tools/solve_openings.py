@@ -27,7 +27,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from ygorl.cards.ydk import load_ydk
+from ygorl.commands import load_decks
 from ygorl.solver import DEFAULT_FIRE_MS, Demonstration, HandJob, Workdir, find_solver, run_job
 from ygorl.solver.batch import done_keys, hand_seed, job_done, load_targets, repair_jsonl, summarize
 from ygorl.solver.combo_solver import SolverNotFound
@@ -98,6 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     targets = load_targets(args.targets)
     env_stamp = None
+    env = None
     if args.env is not None:
         from ygorl.data import load_environment
 
@@ -118,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     jobs: list[tuple[str, HandJob]] = []
     skipped = 0
     for path in deck_files(args.decks):
-        name = load_ydk(path).name
+        name = load_decks([path], env)[0].name
         if name not in targets:
             print(f"solve_openings: error: no targets for deck {name} in {args.targets}", file=sys.stderr)
             return 2
