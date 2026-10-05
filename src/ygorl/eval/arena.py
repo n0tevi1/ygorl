@@ -89,6 +89,13 @@ class GameRecord:
     script_errors: int = 0
     error: str = ""
 
+    @property
+    def healthy(self) -> bool:
+        """An error remains invalid even when a later engine message reports a winner."""
+        return self.reason not in ("exception", "error") and not (
+            self.error or self.retries or self.script_errors or self.unknown_messages or self.undecodable_messages
+        )
+
 
 @dataclass(frozen=True)
 class SideStats:
@@ -134,10 +141,16 @@ class ArenaReport:
     reasons: dict[str, int]
     retries: int
     unknown_messages: int
-    errors: int  # games that raised
+    errors: int  # unhealthy attempts, excluded from scored games
     mean_turns: float
     environment: dict[str, str] | None = None
     records: tuple[GameRecord, ...] = field(default=(), repr=False)
+    script_errors: int = 0
+    undecodable_messages: int = 0
+
+    @property
+    def attempted_games(self) -> int:
+        return self.games + self.errors
 
     def significant(self) -> bool:
         """The interval excludes 50%: a is significantly better or worse than b."""
@@ -145,6 +158,7 @@ class ArenaReport:
 
     def to_dict(self, records: bool = True) -> dict[str, Any]:
         d = {k: getattr(self, k) for k in self.__dataclass_fields__ if k != "records"}
+        d["attempted_games"] = self.attempted_games
         d["ci"] = list(self.ci)
         d["as_first"], d["as_second"] = self.as_first.to_dict(), self.as_second.to_dict()
         if records:
@@ -153,31 +167,35 @@ class ArenaReport:
 
     def summary(self) -> str:
         lo, hi = self.ci
-        return (f"{self.agent_a}[{self.deck_a}] vs {self.agent_b}[{self.deck_b}]: {self.games} games, "
+        return (f"{self.agent_a}[{self.deck_a}] vs {self.agent_b}[{self.deck_b}]: {self.games} scored / {self.attempted_games} attempted games, "
                 f"W/L/D {self.wins}/{self.losses}/{self.draws}, win rate {self.win_rate:.3f} "
                 f"({self.confidence:.0%} CI {lo:.3f}-{hi:.3f}); first {self.as_first.win_rate:.3f}, "
                 f"second {self.as_second.win_rate:.3f}; first player wins {self.first_player_win_rate:.3f}; "
-                f"errors {self.errors}, retries {self.retries}")  # fmt: skip
+                f"errors {self.errors}, retries {self.retries}, script errors {self.script_errors}, "
+                f"undecodable messages {self.undecodable_messages}")  # fmt: skip
 
 
 def summarize(records: Sequence[GameRecord], *, agent_a: str, agent_b: str, deck_a: str, deck_b: str, seed: int,
               confidence: float = 0.95, environment: dict[str, str] | None = None) -> ArenaReport:  # fmt: skip
     """Aggregate game records (agent a's side) into a report."""
-    total = _side(records)
+    healthy = [r for r in records if r.healthy]
+    total = _side(healthy)
     first_player = sum(
-        1.0 if r.winner == deck_of_seat(r.first, 0) else 0.5 if r.winner is None else 0.0 for r in records
+        1.0 if r.winner == deck_of_seat(r.first, 0) else 0.5 if r.winner is None else 0.0 for r in healthy
     )
     n = total.games
     return ArenaReport(
         agent_a=agent_a, agent_b=agent_b, deck_a=deck_a, deck_b=deck_b, seed=seed, games=n,
         wins=total.wins, losses=total.losses, draws=total.draws, win_rate=total.win_rate,
         ci=wilson_interval(total.wins + 0.5 * total.draws, n, confidence), confidence=confidence,
-        as_first=_side(r for r in records if r.first == 0), as_second=_side(r for r in records if r.first == 1),
+        as_first=_side(r for r in healthy if r.first == 0), as_second=_side(r for r in healthy if r.first == 1),
         first_player_win_rate=first_player / n if n else 0.0,
         reasons=dict(sorted(Counter(r.reason for r in records).items())),
         retries=sum(r.retries for r in records), unknown_messages=sum(r.unknown_messages for r in records),
-        errors=sum(r.reason == "exception" for r in records),
-        mean_turns=sum(r.turns for r in records) / n if n else 0.0,
+        errors=len(records) - len(healthy),
+        script_errors=sum(r.script_errors for r in records),
+        undecodable_messages=sum(r.undecodable_messages for r in records),
+        mean_turns=sum(r.turns for r in healthy) / n if n else 0.0,
         environment=environment, records=tuple(records),
     )  # fmt: skip
 

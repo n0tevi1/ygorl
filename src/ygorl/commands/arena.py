@@ -69,7 +69,7 @@ def run(args: argparse.Namespace) -> int:
 
     workers = f"{args.workers} worker{'s' if args.workers != 1 else ''}"
     lines = [
-        f"{len(cells)} deck pairing{'s' if len(cells) != 1 else ''} x {2 * pairs} games = {pooled.games} games "
+        f"{len(cells)} deck pairing{'s' if len(cells) != 1 else ''} x {2 * pairs} games = {pooled.attempted_games} attempted games "
         f"in {elapsed:.1f}s with {workers} (environment: {env.version if env is not None else 'none'})",
         pooled.summary(),
         f"reasons: {pooled.reasons}; mean turns {pooled.mean_turns:.1f}",
@@ -92,10 +92,11 @@ def run(args: argparse.Namespace) -> int:
         except OSError as exc:
             raise CommandError(str(exc)) from None
         lines += ["", f"report written to {args.out}"]
-    unhealthy = pooled.errors or pooled.retries or pooled.unknown_messages
+    unhealthy = pooled.errors
     if unhealthy:
-        lines.append(f"warning: {pooled.errors} games raised, {pooled.retries} retries, "
-                     f"{pooled.unknown_messages} unknown messages")  # fmt: skip
+        lines.append(f"warning: {pooled.errors} unhealthy games, {pooled.retries} retries, "
+                     f"{pooled.unknown_messages} unknown messages, {pooled.script_errors} script errors, "
+                     f"{pooled.undecodable_messages} undecodable messages")  # fmt: skip
     print("\n".join(lines))
     return 1 if unhealthy else 0
 
