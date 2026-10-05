@@ -193,3 +193,12 @@ survival teacher 与先后手分网的 400-update 训练和旧 panel 已结束�
 - 任何数字结果（吞吐、胜率、校准）写入 `docs/benchmarks.md` 或 `docs/experiments/`，并注明环境版本与提交哈希。
 - 设计变更先改 `docs/design/`，再改代码；设计文档是唯一权威。
 - 术语与卡片主键约定见 [CLAUDE.md](../CLAUDE.md)。
+
+
+### 2026-10-05：普通洗牌教师数据推进（#88 / #83）
+
+[展开续接与直接生成对照](spikes/teacher-continuation-2026-10-05.md)：相同预算下，前缀续接和从头搜索
+解出相同的 7/14 手；Lunalight 中间前缀未提高完整展开覆盖。普通洗牌搜索恢复原有 Maliss/Tearlaments
+六条失败分支，新开发种子两牌组各 15/16，1,897 步独立回放零失败，BC 编码 956 样本可复现。
+已修复无成功线时 BC 起始评估悄悄换回 pseudo-shuffle 的问题。下一步针对 Lunalight 验证完整成功线引导，
+再做全牌组普通洗牌覆盖；当前没有新策略提升，不关闭 #88/#92。

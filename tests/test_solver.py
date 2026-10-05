@@ -475,3 +475,95 @@ def test_resume_fire_uses_persisted_plain_line(tmp_path, monkeypatch):
     result = batch.resume_job((job, base))
     assert result[0] == base.to_json()
     assert result[1]["variant"] == "fire" and result[1]["status"] == "skipped"
+
+
+def test_exact_start_search_preserves_mode_and_budget(tmp_path):
+    from dataclasses import replace
+
+    wd = Workdir(tmp_path, ())
+    req = SolveRequest(template=Path("ref.yrpX"), start=Path("start.yrpX"),
+                       targets=(TargetCard.parse("54701958"),), approaches=(Path("prefix.yrpX"),),
+                       solve_ms=30000, finisher_ms=20000, max_decisions=692)  # fmt: skip
+    args = req.args(wd, tmp_path)
+    assert "--start" in args and "--no-plan" in args and "--approach" in args
+    assert "--no-ref" not in args and "--deck" not in args and "--hand" not in args
+    assert args[args.index("--finisher-min") + 1] == "20000"
+    assert args[args.index("--max-decisions") + 1] == "692"
+    goal_only = replace(req, no_reference=True).args(wd, tmp_path)
+    assert "--no-ref" in goal_only and "--no-plan" not in goal_only
+    for changed in (
+        {"deck": Path("d.ydk")},
+        {"hand": (1,)},
+        {"fire": 14558127},
+        {"start": None},
+        {"targets": ()},
+        {"finisher_ms": 30001},
+    ):
+        with pytest.raises(ValueError):
+            replace(req, **changed).args(wd, tmp_path)
+
+
+def test_continuation_rejects_different_start_identity():
+    from copy import deepcopy
+
+    from ygorl.solver.continuation import require_same_start
+
+    rep = Replay(seed=1, first=0, rule_flags=C.DUEL_MODE_MR5, player={"starting_lp": 8000},
+                 shuffle_decks=False, decks={s: {"main": [1, 2, 3], "extra": [4]} for s in "ab"}, responses=[])  # fmt: skip
+    same = deepcopy(rep)
+    same.responses = [b"ignored"]
+    same.decks["a"]["name"] = "ignored"
+    require_same_start(rep, same)
+    for field in ("seed", "flags", "player", "own_order", "opponent", "extra", "host_shuffle", "seat"):
+        other = deepcopy(rep)
+        if field == "seed":
+            other.seed += 1
+        elif field == "flags":
+            other.rule_flags |= C.DUEL_PSEUDO_SHUFFLE
+        elif field == "player":
+            other.player["starting_lp"] = 4000
+        elif field == "own_order":
+            other.decks["a"]["main"].reverse()
+        elif field == "opponent":
+            other.decks["b"]["main"][0] = 8
+        elif field == "extra":
+            other.decks["a"]["extra"][0] = 8
+        elif field == "host_shuffle":
+            other.shuffle_decks = True
+        else:
+            other.first = 1
+        with pytest.raises(ValueError):
+            require_same_start(rep, other)
+
+
+def test_ordinary_search_keeps_unsolved_start(tmp_path):
+    from ygorl.solver import HandJob, solve_hand
+    from ygorl.solver.batch import hand_seed
+    from ygorl.train.bc import start_replay
+
+    binary = _fake_solver(tmp_path, "#!/bin/sh\necho nothing\nexit 0\n")
+    job = HandJob(deck_path=Path(__file__).parent / "decks" / "snake_eye.ydk", hand_index=0,
+                  hand_seed=hand_seed(2, "snake_eye", 0), targets=("48452496",), ordinary_shuffle=True,
+                  workdir=tmp_path / "wd", scratch=tmp_path / "scratch", binary=binary)  # fmt: skip
+    demo = solve_hand(job)
+    assert demo.status == "unsolved" and demo.start is not None and not demo.lines
+    assert not demo.start["rule_flags"] & C.DUEL_PSEUDO_SHUFFLE
+    rep = start_replay(demo)
+    assert rep.rule_flags == demo.start["rule_flags"] and rep.core_seed == demo.start["core_seed"]
+    assert not rep.responses
+
+
+def test_collect_rejects_candidate_of_another_start(db, tmp_path):
+    from dataclasses import replace
+    from ygorl.solver.batch import _collect
+    from ygorl.solver.combo_solver import SolutionFile, SolverRun
+
+    _, yrp = _short_game(db, tmp_path)
+    rep = Replay.from_yrp(yrp)
+    path = tmp_path / "wrong.yrpX"
+    rep.to_yrpx(path, cards=db)
+    expected = replace(rep, seed_words=[1, 2, 3, 4])
+    demo = Demonstration.new(SNAKE, [], hand_index=0, hand_seed=1, variant="plain", targets=[])
+    run = SolverRun([], 0, 0, "", solutions=[SolutionFile(path, 0, 0, 0, False)])
+    _collect(demo, run, 1, db, None, expected)
+    assert not demo.lines and "start identity mismatch" in demo.rejected[0]["error"]

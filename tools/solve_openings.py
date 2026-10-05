@@ -80,6 +80,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--threads", type=int, default=1, help="solver threads per process (default 1)")
     parser.add_argument("--lines", type=int, default=1, help="verified lines kept per hand (default 1)")
+    parser.add_argument(
+        "--ordinary-shuffle", action="store_true", help="search the exact ordinary-shuffle start (requires --no-fire)"
+    )
     parser.add_argument("--env", default=None, metavar="PATH|VERSION", help="environment (rules; binds the output)")
     parser.add_argument("--out", type=Path, default=None, help="demonstration file (JSONL, appended)")
     parser.add_argument("--summary", type=Path, default=None, help="also write the per-deck summary as JSON")
@@ -127,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
                 raise ValueError(f"no targets for deck {deck.name} in {args.targets}")
             spec = targets[deck.name]
             fire = () if args.no_fire else tuple(args.fire if args.fire is not None else spec["fire"])
+            if args.ordinary_shuffle and fire:
+                raise ValueError("--ordinary-shuffle currently supports plain openings only; pass --no-fire")
             specs[deck.name] = (path, deck, spec["targets"], sorted(set(fire)))
         if not specs:
             raise ValueError("no decks selected")
@@ -139,7 +144,16 @@ def main(argv: list[str] | None = None) -> int:
             },
             "search": {
                 key: getattr(args, key)
-                for key in ("seed", "solver_seed", "solve_ms", "fire_ms", "threads", "lines", "timeout")
+                for key in (
+                    "seed",
+                    "solver_seed",
+                    "solve_ms",
+                    "fire_ms",
+                    "threads",
+                    "lines",
+                    "timeout",
+                    "ordinary_shuffle",
+                )
             },
             "implementation": implementation_identity(binary, Path(__file__)),
         }
@@ -167,7 +181,7 @@ def run_batch(args, binary: Path, env_stamp: dict | None, out: Path, specs: dict
                           targets=tuple(targets), workdir=workdir, scratch=scratch / f"{name}_{i}",
                           solve_ms=args.solve_ms, threads=args.threads, lines=args.lines, fire=tuple(fire), fire_ms=args.fire_ms,
                           binary=binary, solver_seed=args.solver_seed, env=args.env, timeout_s=args.timeout,
-                          keep_files=args.keep_files)  # fmt: skip
+                          keep_files=args.keep_files, ordinary_shuffle=args.ordinary_shuffle)  # fmt: skip
             if job_done(name, job, done):
                 skipped += 1
             else:

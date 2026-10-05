@@ -106,7 +106,7 @@ def _link(link: Path, target: Path) -> None:
 class SolveRequest:
     """One solver run.
 
-    Two modes: an opening (``deck`` + ``hand`` + ``targets``; ``template`` only supplies the rule
+    Modes: an exact recorded ``start`` (ordinary rules retained), a synthetic opening (``deck`` + ``hand`` + ``targets``; ``template`` only supplies the rule
     flags, life points, core seed and the opponent, ``--no-ref``), or a ``--fire`` test of the line
     recorded in ``template`` (the opponent plays ``fire`` at every legal window and the solver
     rebuilds the board; ``--fire-bake`` writes the card into the replays' headers).
@@ -125,12 +125,28 @@ class SolveRequest:
     max_decisions: int | None = None
     max_rollouts: int | None = None  # --max-rollouts: rollouts per worker and search phase (wall time still bounds)
     extra_args: tuple[str, ...] = ()
+    start: Path | None = None  # exact recorded start, preserving ordinary shuffle rules
+    approaches: tuple[Path, ...] = ()  # continuation roots; caller must validate their start identity
+    finisher_ms: int | None = None
+    no_reference: bool = False  # exact-start goal-only mode; no reference repertoire or capture
 
     def args(self, workdir: Workdir, outdir: Path) -> list[str]:
+        if self.start is not None and (self.fire is not None or self.deck is not None or self.hand):
+            raise ValueError("an exact replay start cannot also use a synthetic deck/hand or fire mode")
+        if self.approaches and self.start is None:
+            raise ValueError("continuation roots require an exact replay start")
+        if self.finisher_ms is not None and not 0 <= self.finisher_ms <= self.solve_ms:
+            raise ValueError("finisher budget must be between zero and solve_ms")
         out = [str(self.template), "--workdir", str(workdir.path)]
         for d in workdir.scriptdirs:
             out += ["--scriptdir", str(d)]
-        if self.fire is not None:
+        if self.start is not None:
+            if not self.targets:
+                raise ValueError("an exact replay start needs at least one target card")
+            out += ["--start", str(self.start), "--no-ref" if self.no_reference else "--no-plan"]
+            for t in self.targets:
+                out += ["--target", t.to_arg()]
+        elif self.fire is not None:
             out += ["--fire", str(self.fire), "--fire-bake"]
             if self.fire_ms is not None:
                 out += ["--fire-ms", str(self.fire_ms)]
@@ -143,6 +159,10 @@ class SolveRequest:
             for t in self.targets:
                 out += ["--target", t.to_arg()]
         out += ["--solve-ms", str(self.solve_ms)]
+        for approach in self.approaches:
+            out += ["--approach", str(approach)]
+        if self.finisher_ms is not None:
+            out += ["--finisher-min", str(self.finisher_ms)]
         for flag, value in (("--threads", self.threads), ("--seed", self.seed), ("--max-written", self.max_written),
                             ("--max-decisions", self.max_decisions), ("--max-rollouts", self.max_rollouts)):  # fmt: skip
             if value is not None:

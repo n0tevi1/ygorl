@@ -345,10 +345,8 @@ def start_replay(demo: Demonstration, config: DuelConfig | None = None) -> Repla
     opening hand moved to the end of the list, the seed words of ``hand_seed``, the rule flags plus
     ``DUEL_PSEUDO_SHUFFLE`` and the passive opponent.
     """
-    if demo.start is not None and demo.lines:
-        rep = demo.replay(0)
-        rep.responses = []
-        return rep
+    if demo.start is not None:
+        return demo.replay(None)
     config = config or DuelConfig()
     deck = Deck(tuple(demo.deck["main"]), tuple(demo.deck["extra"]), (), demo.deck["name"])
     hand, order = sample_hand(deck, demo.hand_seed, config.player.starting_hand)

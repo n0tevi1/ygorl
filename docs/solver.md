@@ -351,3 +351,27 @@ PYTHONFAULTHANDLER=1 nice -n 19 uv run --no-sync python tools/train_ppo.py out/c
 底层 `done_keys` 也核对完整环境指纹并拒绝重复 key；其他旧批次命令尚未使用本 manifest 契约。
 
 20 套合法 MD 牌组的教师覆盖试验见 [研究协议与报告](spikes/md-bc-data-2026-10-05.md)。
+
+
+### 普通洗牌生成与展开续接（2026-10-05）
+
+`solve_openings.py --ordinary-shuffle --no-fire` 使用记录的牌序和核心 seed，按普通洗牌规则搜索原目标。
+底层是 `--no-ref --start`，不先制造 pseudo-shuffle 解，不需要已有成功参考线。
+该选项进入批次身份；候选解必须与记录的双方牌序、seed、玩家规则及 flags 完全一致。
+未解出记录也保存实际起始局面。首版只支持 plain 开局，`--fire` 另行验证后再扩展。
+默认合成起手模式保持现有行为。
+
+```bash
+uv run --no-sync python tools/solve_openings.py environments/md-2026-09/meta/maliss.ydk \
+  --env md-2026-09 --targets docs/spikes/md-bc-targets-2026-10-05.json \
+  --ordinary-shuffle --no-fire --hands 16 --solve-ms 30000 --workers 4 --threads 1 \
+  --seed 2026100504 --solver-seed 2026100504 --out out/demos/maliss-ordinary.jsonl
+```
+
+`ygorl.solver.continuation.continue_opening` 将已验证线迁移到普通洗牌下，只保留自动结束回合之前的
+solver 前缀；若随机分支变化，则在首次语义不匹配前停止。求解器从该前缀及其回退点搜索最终目标。
+来源环境、牌组合法性、实际规则、前缀及输出起始身份都必须通过校验；完整候选独立回放才可保存。
+所有原生日志、命令和输入文件保留在调用者给定的 scratch 目录。此接口是研究工具，尚无收益保证。
+
+[冻结协议与结果](spikes/teacher-continuation-2026-10-05.md)：前缀对照没有收益；普通洗牌从头搜索
+恢复原有六条失败分支，新种子 Maliss / Tearlaments 各 15/16。Lunalight 最终展开仍是数据缺口。
