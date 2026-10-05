@@ -711,3 +711,40 @@ def test_native_search_does_not_stop_inside_linkage_chain(db, tmp_path):
         require_same_start(start, Replay.from_yrp(yrp))
         line = convert_line(yrp, [target], cards=db)
         assert line.board["turn"] == 2
+
+
+def test_native_enumerator_covers_every_finite_declaration(db, tmp_path):
+    """The captured 23-password OR filter must enumerate every host-legal answer."""
+    import re
+    import subprocess
+
+    case = json.loads((Path(__file__).parent / "data/declaration-list-replay.json").read_text())
+    prefix = Replay.from_json(case["prefix"])
+    wd = Workdir.create(tmp_path / "wd")
+    binary = _solver_or_skip()
+    assert len(case["legal_passwords"]) == 23
+    for code in case["legal_passwords"]:
+        replay = Replay.from_json(prefix.to_json())
+        replay.responses.append(struct.pack("<i", code))
+        source = tmp_path / f"declare-{code}.yrpX"
+        replay.to_yrpx(source, cards=db)
+        cmd = [
+            str(binary),
+            str(source),
+            "--workdir",
+            str(wd.path),
+            "--json",
+            "--growth",
+            "--growth-max",
+            "0",
+            "--max-subsets",
+            "24",
+        ]
+        for path in wd.scriptdirs:
+            cmd += ["--scriptdir", str(path)]
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert run.returncode == 0, (code, run.stdout, run.stderr)
+        checks = [e for e in parse_events(run.stdout) if e.get("type") == "selfChecks"]
+        assert len(checks) == 1 and checks[0]["pass"], (code, run.stdout)
+        coverage = re.search(r"coverage (\d+)/(\d+)", checks[0]["detail"])
+        assert coverage and int(coverage[1]) == int(coverage[2]) == 3, (code, run.stdout)
