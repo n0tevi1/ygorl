@@ -1,0 +1,15 @@
+--- a/search.cpp
++++ b/search.cpp
+@@ -1665,6 +1665,12 @@
+ 	// THE BOARD IS THERE. Counted before any further gate, so that a gate
+ 	// reporting zero rejections can be told apart from a board never reached.
+ 	++stats.board_reached;
++	// A transient board inside a resolving chain is not a completed combo.
++	// In particular, a later Linkage link can be forced to send the very
++	// Shizuku that made the current board match. Keep searching until the
++	// chain has settled; the host still verifies the complete end of turn.
++	if(duel.LastChainLink(nullptr))
++		return false;
+ 	// Zone demands (--target "card@grave|@banished|@hand"): the half of the goal
+ 	// the BoardKey cannot carry, since it reads the monster and spell/trap zones
+ 	// and nothing else. Same discipline as the resolutions below -- a MINIMUM,

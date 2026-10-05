@@ -228,3 +228,7 @@ survival teacher 与先后手分网的 400-update 训练和旧 panel 已结束�
 已修复并从原候选零搜索恢复，584 步独立验证通过。旧面板至少9/16可达，其余仍未知。
 已冻结新种子20×16普通洗牌覆盖：Lunalight120秒/novelty0，其它牌组30秒/novelty12，
 逐牌组验收后才冻结正式教师数据；不能把诊断追加结果回填旧 gate。
+
+2026-10-05 全牌组普通洗牌复验：265/320 solved，54 unsolved、1 unverified；Lunalight 7/16、Odion 5/16，gate 仍失败。
+已定位 Sky Striker 连锁中途误报与 Primite 精确卡名声明漏路，修复后正在单独重跑全部 55 个失败起手。
+保留原面板和失败结论；先完成[根因调查](spikes/solver-failure-causes-2026-10-05.md)，再决定正式教师数据协议。
