@@ -17,7 +17,7 @@ update仍计处理的rollout次数，EMA约定保留。**这不是KL硬上界**�
 
 修后相同独立Nim复现只执行KL=0对应的一步，拒绝.364731对应的第二步。
 PPO与真实对局训练定向 **54 passed，42.13s**，包含现有学习收敛和新增4项回归。
-完整实际ROCm测试进行中，结果之后归档于 `out/research/ppo-kl-guard-2026-10-05/validation.json`。
+完整实际ROCm测试 **1480 passed / 3 skipped，328.58s**（1个snapshot选项、2个网络opt-in），结果归档于 `out/research/ppo-kl-guard-2026-10-05/validation.json`。
 旧两组32-update训练已按原协议跑完并保留为对照，运行中的矩阵消费者保持原冻结源码。
 
 ## 下一项受控诊断（运行前协议）
