@@ -430,8 +430,14 @@ class PPOLearner:
     @torch.no_grad()
     def update_reference(self) -> None:
         tau = self.cfg.reference_ema
-        ref = self.reference.state_dict()
+        # keep_vars preserves Parameter/buffer identity across module aliases. A detached state_dict
+        # has distinct Tensor wrappers for the same parameter, so it cannot be deduplicated by id.
+        ref = self.reference.state_dict(keep_vars=True)
+        seen: set[int] = set()
         for name, value in self.model.state_dict().items():
+            if id(ref[name]) in seen:
+                continue
+            seen.add(id(ref[name]))
             if value.dtype.is_floating_point:
                 ref[name].mul_(1 - tau).add_(value.detach(), alpha=tau)
             else:
