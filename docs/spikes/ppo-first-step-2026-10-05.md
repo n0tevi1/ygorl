@@ -22,3 +22,51 @@
 
 另一个待审计项：Trainer checkpoint目前记录CPU torch RNG与collector generator，尚未看到全局CUDA RNG。
 进行中的对局本就不存盘，不能要求续训完整轨迹逐位一致；但GPU minibatch RNG是否应恢复需要单独复现。
+
+## 完成结果
+
+两容量原paired.py都在“共同Adam步骤逐位一致”处失败，原脚本/日志/产物未覆盖。
+追加重复试验复用原始frozen.pt（完整rollout、初始learner与CPU/CUDA RNG），无重采样。
+旧旧、新新及旧新比较的首步权重最大绝对差分别为：64×1全部2.98e−8，128×2为5.96e−8/5.96e−8/2.98e−8。
+差异L2为0.9e−7至1.9e−7量级（state_dict包含共享权重别名，计数不是独立参数数）。
+同实现重跑也有数值波动；因此不能要求默认GPU路径hash相等。尚未定位具体kernel，不把它归罪于某算子。
+开启确定性算法的附加路径两模型均可运行，但只跑了一次，不宣称已验证其逐位重复性。
+这些参数微差未解释0.1至1量级的KL；默认重复两次的最终KL差最多约3e−8。
+
+每份固定rollout 16,384行均为多动作状态；全部已结束游戏健康。共同第一minibatch索引hash相同。
+下表为完整rollout上的真实双向KL，区别于第二minibatch的采样approx_kl。
+
+|模型|第一步后下一batch approx_kl|新guard步数|新guard KL(old‖new) / KL(new‖old)|旧guard步数|旧guard KL(old‖new) / KL(new‖old)|
+|---|---:|---:|---:|---:|---:|
+|64×1|.122452|1|.132638 / .138579|2|.055225 / .061206|
+|128×2|.590497|1|.668931 / .936508|2|.471283 / .617251|
+
+**少走一步不保证最终KL更小**：这里第二步反而拉回部分位移。修复保证不执行已知越界batch，
+不是硬trust region，也不能据此承诺强度更高。旧guard保留下来的训练结果仍是有用的历史对照。
+
+首个固定minibatch的梯度分解保留所有默认加权系数。actor参数上的policy/entropy/critic梯度范数：
+64×1为.37084/.04342/.21354；128×2为.45452/.03994/.34871。
+完整critic-only参数梯度范数.41739/.64217。reference初始与actor相同，loss为0，梯度只有约1.6e−8数值残差，
+因此EMA reference惩罚无法在初始点预先约束第一步位移。不能把梯度范数直接当Adam后的影响权重。
+
+|单步loss / LR|64×1 KL(old‖new)|128×2 KL(old‖new)|
+|---|---:|---:|
+|完整 / 1e−3|.132638|.668931|
+|完整 / 3e−4|.015114|.080807|
+|完整 / 1e−4|.001763|.009852|
+|policy-only / 1e−3|.166128|.899741|
+|entropy-only / 1e−3|.065702|.195234|
+|critic-only / 1e−3|.030167|.057027|
+
+这里critic-only允许Q/V更新共享actor trunk，**不是**冻结actor的policy=False warmup。
+完整loss 1e−3复算与原第一步最大参数差2.98e−8/5.96e−8，KL相同；分解驱动在恢复Adam后显式设置LR，
+避免load_state_dict把扫描学习率覆盖回1e−3。完整loss的mean total variation在1e−3为.13378/.24292，
+1e−4为.01538/.02738；argmax改变比例21.38%/34.82%降至2.19%/3.68%。
+
+判断：默认1e−3对这些BC权重的首步过大，KL早停只能在一步之后发现。policy-only仍更严重过冲，
+所以“只需暖critic即可解决”不受本实验支持；entropy和共享critic也会改变策略，但不是唯一原因。
+更小LR是值得进入真实训练的干预；单步KL好看仍不证明学习更快、胜率更高或长期不会失稳。
+只在本次单seed/两份rollout上成立，不更改生产默认。
+
+产物封存：`out/research/ppo-kl-guard-2026-10-05/diagnostic-validation.json`，包括失败记录、完整frozen.pt、
+所有第一步权重、梯度、身份、脚本与报告。下一轮预先保留新guard下的1e−3对照与1e−4干预，各跑两容量。
