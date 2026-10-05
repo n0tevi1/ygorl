@@ -42,7 +42,7 @@ from ygorl.env.observer import PointObserver
 from ygorl.nets.batch import OBS_KEYS, to_tensors
 from ygorl.nets.policy import PolicyNet
 from ygorl.solver.batch import PASSIVE_OPPONENT, _order_with_hand, sample_hand
-from ygorl.solver.demo import PASSIVE_KINDS, DemoError, Demonstration, verify_line
+from ygorl.solver.demo import PASSIVE_KINDS, DemoError, Demonstration, _check_replay_health, verify_line
 from ygorl.solver.targets import board_summary, board_summary_missing, parse_targets
 
 DEMO_PLAYER = 0  # engine player of the deck under study in every demonstration (it moves first)
@@ -418,6 +418,7 @@ def play_opening(replay: Replay, agent, targets: Sequence[str], *, env: Environm
                 capped = capped or point.player == player
                 idx = passive_action(point)
             session.act(idx)
+        _check_replay_health(tracker, require_turn2=True)
         board = board_summary(session.core, tracker.turn, (tracker.lp[0], tracker.lp[1]))
     finally:
         session.close()
@@ -462,8 +463,11 @@ def opening_report(demos: Sequence[Demonstration], agent_factory: Callable[[int]
     rows: dict[str, Counter] = {}
     per_hand = []
     for i, demo in enumerate(d for d in demos if d.variant == "plain" and d.status in ("solved", "unsolved")):
-        res = play_opening(start_replay(demo, config), agent_factory(i), demo.targets, env=env, cards=cards,
-                           scripts=scripts, max_steps=max_steps)  # fmt: skip
+        try:
+            res = play_opening(start_replay(demo, config), agent_factory(i), demo.targets, env=env, cards=cards,
+                               scripts=scripts, max_steps=max_steps)  # fmt: skip
+        except DemoError as exc:
+            raise DemoError(f"opening {demo.deck['name']} hand {demo.hand_index}: {exc}") from exc
         lines = demo_player_keys(demo, cards=cards, scripts=scripts, env=env)
         reproduced = any(res.keys == ln for ln in lines)
         prefix = max((_common_prefix(res.keys, ln) / len(ln) for ln in lines if ln), default=0.0)

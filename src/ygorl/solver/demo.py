@@ -43,6 +43,23 @@ class DemoError(ValueError):
     """A solver line does not survive the fresh replay in our engine."""
 
 
+def _check_replay_health(tracker, *, require_turn2: bool = False) -> None:
+    """A matching board cannot validate an errored or truncated execution."""
+    result = tracker.result
+    if (
+        result.reason in ("error", "decision_limit", "turn_limit")
+        or result.error
+        or result.retries
+        or result.script_errors
+        or result.unknown_messages
+        or result.undecodable_messages
+    ):
+        detail = "; ".join(result.script_errors[:3])
+        raise DemoError(f"unhealthy replay at turn {tracker.turn}: {result.summary()}; {detail}")
+    if require_turn2 and tracker.turn < 2:
+        raise DemoError(f"opening stopped before turn 2: turn={tracker.turn} reason={result.reason}")
+
+
 def canonical_response(decision: M.Decision, response: bytes) -> bytes:
     """``response`` in the encoding our action model produces.
 
@@ -145,8 +162,7 @@ def convert_line(yrp: YrpFile, targets: Sequence[TargetCard | str], *, responses
             if tracker.result.retries:
                 raise DemoError("closing the turn: the engine answered MSG_RETRY")
         res = tracker.result
-        if res.reason == "error":
-            raise DemoError(f"the engine stopped with an error: {res.error}")
+        _check_replay_health(tracker, require_turn2=close_turn)
         board = board_summary(session.core, tracker.turn, (tracker.lp[0], tracker.lp[1]))
     finally:
         session.close()
@@ -315,6 +331,7 @@ def verify_line(demo: Demonstration, line: int = 0, *, env: Environment | None =
                 raise DemoError(f"step {i}: the engine answered MSG_RETRY")
         if tracker.result.responses != ln.responses:
             raise DemoError("the action indices do not reproduce the stored responses")
+        _check_replay_health(tracker)
         board = board_summary(session.core, tracker.turn, (tracker.lp[0], tracker.lp[1]))
     finally:
         session.close()

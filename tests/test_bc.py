@@ -198,6 +198,50 @@ def test_play_opening_scores_the_demonstrated_line(demo, db):
     assert hand_overlap([demo], [demo]) == 1
 
 
+def test_opening_rejects_engine_truncation_even_after_the_target_appears(demo, db):
+    from ygorl.solver.demo import DemoError
+
+    replay = start_replay(demo)
+    replay.max_decisions = demo.lines[0].solver_steps
+    (line,) = demo_player_actions(demo)
+    # This real engine cutoff used to return reached=True on a turn-1 board.
+    with pytest.raises(DemoError, match="decision_limit"):
+        play_opening(replay, Replayer(line), demo.targets, cards=db)
+
+
+def test_replays_reject_real_lua_errors_even_when_the_line_and_board_still_match(demo, db, tmp_path):
+    from ygorl import _core, paths
+    from ygorl.engine.duel import default_scripts
+    from ygorl.engine.replay import load_yrp
+    from ygorl.solver.demo import DemoError, convert_line, verify_line
+
+    base = default_scripts()
+    original = base.read("c14558127.lua")
+    assert original
+    suffix = (
+        b"\nlocal old_initial_effect=s.initial_effect\n"
+        b'function s.initial_effect(c) old_initial_effect(c) error("opening health regression") end\n'
+    )
+    overrides = {"c14558127.lua": original + suffix,
+                 **{name: base.read(name) for name in ("proc_fusion.lua", "proc_synchro.lua")}}  # fmt: skip
+    scripts = _core.ScriptDirectory([str(p) for p in paths.script_directories()], overrides)
+    result = demo.replay(0).play(cards=db, scripts=scripts)
+    assert result.reason == "log_exhausted" and not result.retries
+    assert len(result.script_errors) == 3 and all("opening health regression" in e for e in result.script_errors)
+    (line,) = demo_player_actions(demo)
+    with pytest.raises(DemoError, match="script_errors=3"):
+        play_opening(start_replay(demo), Replayer(line), demo.targets, cards=db, scripts=scripts)
+    with pytest.raises(DemoError, match=f"opening {demo.deck['name']} hand {demo.hand_index}.*script_errors=3"):
+        opening_report([demo], lambda i: Replayer(line), cards=db, scripts=scripts)
+    with pytest.raises(DemoError, match="script_errors=3"):
+        verify_line(demo, cards=db, scripts=scripts)
+    path = tmp_path / "line.yrpX"
+    demo.replay(0).to_yrpx(path, cards=db)
+    for close_turn in (False, True):
+        with pytest.raises(DemoError, match="script_errors=3"):
+            convert_line(load_yrp(path), demo.targets, cards=db, scripts=scripts, close_turn=close_turn)
+
+
 # ------------------------------------------------------------------ training
 
 
