@@ -401,7 +401,10 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 `decks` 是牌组 a、b：语料牌组用 `.ydk` 文件名（路径在 `config.json` 的 `decks`），进化牌组用清单 id（`evolved` 标出发下去的那套是 a 还是 b，
 清单路径是 `config.json` 的 `deck_pool`；作对手的 history 牌组也是清单 id）；`first`、`winner`、`learner` 都是牌组下标（0 = a、1 = b），
 `winner` 为 null 表示无胜者；`truncated` 为真的局（上限截断、引擎错误）不是训练意义上的胜负；`opponent` 为 null 是自博弈，否则是快照 id，
-`learner` 是学习者所用牌组。`update` 是这批对局所喂的那次更新：下棋的策略是 `update - 1` 次更新后的（`--overlap` 时 `update - 2`）。
+`learner` 是学习者所用牌组。`update` 是该局结束所在 rollout 所喂的那次更新。
+该 rollout 的学习者使用 `update - 1` 次更新后的策略（`--overlap` 时 `update - 2`）；
+固定段收集的一局可能跨越多次更新，不能把这个编号解释成整局使用同一个 checkpoint。
+完整游戏收集才保证一局的学习者策略在一次更新边界内固定。
 开销：md-2026-09 的 6 套 meta 牌组、32 槽 × 64 步、`max_decisions=40`（为了多出局）跑 4 次更新共 407 局，写日志合计 6 ms（约 16 µs/局，
 占训练时间 0.01%），压缩后约 17 字节/局。
 读取：`ygorl.build.edit_labels.read_game_log`（解析牌组名、去掉截断局与续训重放的重复行），用作改动价值模型的辅助损失（[tuning.md](tuning.md)「改动价值模型」，#151）。
@@ -492,3 +495,6 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 完整游戏更新的 `q_terminal_ev` / `v_terminal_ev`、对应 MSE 来自更新前的新游戏，
 其终局标签在两个臂相同定义；`q_explained_var` 仍是各自训练目标的 EV，不能跨目标直接比较。
 当前协议见 [终局 MC pilot](spikes/terminal-mc-2026-10-04.md)，实验选项不改变默认训练配方。
+完整游戏与常规固定段的近似等行数对照见
+[采样实验](spikes/collection-control-2026-10-04.md)；对照同时包含跨更新续局、事件顺序和截断行处理的差异，
+不能将结果单独归因于段末自举。
