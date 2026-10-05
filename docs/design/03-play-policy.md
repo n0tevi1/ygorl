@@ -215,3 +215,18 @@ Arena 的 games/胜负平/区间/先后攻/平均回合只统计健康局；atte
 
 固定配对比较工具 `compare_checkpoints.read_cell` 同样使用GameRecord健康谓词，
 带健康异常的历史记录变成NaN，进入原有跨候选共同剔除配对逻辑；仍保留原始记录。
+
+### PPO KL guard 的更新边界（2026-10-05）
+
+approx_kl由当前minibatch的forward计算，必须在任何backward/optimizer.step之前检查。
+policy更新若该值>1.5*target_kl，当前minibatch及其后全部跳过；不能已知超限仍多走一步。
+它是停止启发式，**不是严格KL上界**：刚接受的一步仍可能把策略推过阈值，
+末次更新之后的真实KL需独立度量，不能把目标阈值称为保证的策略位移封顶。
+critic-only warmup冻结策略参数，不受policy KL guard阻断。关闭guard时更新顺序和预算不变。
+
+日志minibatches只计实际optimizer步数，evaluated_minibatches计forward检查次数；
+除grad_norm外loss/entropy/KL等诊断对全部检查的minibatch平均（含最后拒绝的一批），
+grad_norm只对实际更新平均。stop_approx_kl保留触发值，未触发为0。
+首批即超限时允许0 optimizer步，仍有完整有限的诊断，update计数记一次处理的rollout；
+不伪称完成过梯度更新。保留已有EMA更新约定。测试必须拦截optimizer.step验证边界，
+而不只检查“比全epoch少几步”。
