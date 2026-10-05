@@ -1204,3 +1204,12 @@ native 累计时间 444.29 / 443.32 秒。**296 步**独立回放与 **296/296**
 找到6条完整线；修复带环境回放漏传env后，从原候选零搜索恢复，584步独立回放与584/584 native覆盖全过。
 旧面板至少9/16可达，其余7手未知；不是随机面板成功率或旧gate通过声明。
 [协议、失败保留与独立全牌组后续](spikes/reachability-2026-10-05.md)。
+
+### 普通洗牌全牌组覆盖（2026-10-05）
+
+本机 Ryzen AI MAX+ 395，4 CPU workers × 1 native thread、nice19。seed=2026100508，20×16 手。
+Lunalight 120 秒/novelty0，其它 30 秒/novelty12；原目标、普通规则，关闭 serial/reenter。
+265/320 solved，54 unsolved、1 unverified；Lunalight 7/16、Odion 5/16，gate 失败。
+18,042 host 动作回放通过，6,060 BC 开发样本编码可复现。原生响应数与 host 动作数不同，
+完整枚举覆盖、逐牌组数据和搜索成本见[覆盖报告](spikes/ordinary-coverage-2026-10-05.md)。
+这是教师诊断，没有新 policy 或强度提升。

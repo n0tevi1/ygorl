@@ -19,4 +19,39 @@ timeout=solve_ms/1000+30 秒；4 CPU workers、nice19，按起手 index 交错�
 
 ## 结果
 
-尚未运行。
+共 320 手：**265 solved / 54 unsolved / 1 unverified**。0 native error/timeout；Sky Striker 5 的四条候选在未结算连锁中途达标，结束回合后失去 Shizuku，均被 host 正确拒收。
+
+| 牌组 | 解出 / 16 |
+|---|---:|
+| blue-eyes | 11 |
+| branded | 14 |
+| clown-crew | 15 |
+| dracotail | 13 |
+| elfnote | 16 |
+| elfnote-kewl-tune | 10 |
+| heros | 15 |
+| kewl-tune | 15 |
+| lunalight | 7 |
+| magistus-fairy-tail | 14 |
+| maliss | 15 |
+| odion | 5 |
+| orcust | 16 |
+| radiant-typhoon-zoodiac | 11 |
+| resonators | 14 |
+| ryzeal-mitsurugi | 14 |
+| sky-striker | 15 |
+| tearlaments | 16 |
+| vanquish-soul-k9 | 14 |
+| yummy | 15 |
+
+**Gate 失败**：Lunalight 7/16、Odion 5/16，且有上述候选拒收。不能用总体 82.8% 或接近 8/16 代替逐项通过。
+
+全部输入的环境、合法卡组、普通洗牌规则、手牌/牌序/core seed、被动对手、目标及实际命令已核对。
+265 条成功线 **18,042 个 host 动作**独立回放通过；原生枚举 **18,024/18,024 响应**覆盖及 snapshot 检查通过。
+多选会拆成多个 host 动作，不能将两种步数混用。四条拒收错误独立复现。
+BC 开发编码 **6,060 样本**，重复编码和带身份保存/读取逐元素一致，0 beyond_128。
+原始 JSONL SHA256：`eaaaa3af29b41444483edd3e93865ad0a45d2060272d69106f83c9c8effdfd3b`。
+
+已继续[未解出根因调查](solver-failure-causes-2026-10-05.md)：捕获声明卡名漏路、连锁中途目标误报，
+对全部 55 个失败记录开展单独的修复后诊断；不追加原面板凑过线。正式数据冻结与容量对照仍未完成。
+

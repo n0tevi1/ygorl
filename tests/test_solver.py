@@ -642,3 +642,72 @@ def test_collect_preserves_environment_for_exact_start_replay(db, tmp_path):
     bad = replace(demo, lines=[], rejected=[])
     _collect(bad, run, 1, db, None, expected, env=replace(env, fingerprint="wrong"))
     assert not bad.lines and "has changed" in bad.rejected[0]["error"]
+
+
+def test_native_enumerator_covers_exact_card_declaration(db, tmp_path):
+    """Odion's single-answer ANNOUNCE_CARD must survive the native search space."""
+    import re
+    import subprocess
+
+    cases = json.loads((Path(__file__).parent / "data/solver-failure-replays.json").read_text())
+    replay = Replay.from_json(cases["declaration"])
+    source = tmp_path / "declaration.yrpX"
+    replay.to_yrpx(source, cards=db)
+    wd = Workdir.create(tmp_path / "wd")
+    cmd = [
+        str(_solver_or_skip()),
+        str(source),
+        "--workdir",
+        str(wd.path),
+        "--json",
+        "--growth",
+        "--growth-max",
+        "0",
+        "--max-subsets",
+        "24",
+    ]
+    for path in wd.scriptdirs:
+        cmd += ["--scriptdir", str(path)]
+    run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stdout + run.stderr
+    checks = [e for e in parse_events(run.stdout) if e.get("type") == "selfChecks"]
+    assert len(checks) == 1 and checks[0]["pass"], run.stdout
+    coverage = re.search(r"coverage (\d+)/(\d+)", checks[0]["detail"])
+    assert coverage and int(coverage[1]) == int(coverage[2]) > 0, run.stdout
+
+
+def test_native_search_does_not_stop_inside_linkage_chain(db, tmp_path):
+    """A transient Shizuku is forced to leave; native candidates must settle the chain."""
+    from ygorl.solver import run_solver
+    from ygorl.solver.demo import require_same_start
+
+    cases = json.loads((Path(__file__).parent / "data/solver-failure-replays.json").read_text())
+    target = TargetCard(90673288)
+    transient = tmp_path / "transient.yrpX"
+    Replay.from_json(cases["transient_chain"]).to_yrpx(transient, cards=db)
+    # The rejected old candidate is faithful but only meets the goal mid-chain.
+    convert_line(load_yrp(transient), [target], cards=db, close_turn=False)
+    with pytest.raises(DemoError, match="final board lacks"):
+        convert_line(load_yrp(transient), [target], cards=db)
+    start = Replay.from_json(cases["chain_start"])
+    source = tmp_path / "start.yrpX"
+    start.to_yrpx(source, cards=db)
+    request = SolveRequest(
+        template=source,
+        start=source,
+        no_reference=True,
+        targets=(target,),
+        solve_ms=30000,
+        threads=1,
+        seed=2026100508,
+        max_written=4,
+        max_decisions=692,
+        extra_args=("--novelty", "12", "--no-serial", "--reenter", "0"),
+    )
+    run = run_solver(request, Workdir.create(tmp_path / "wd"), tmp_path / "out", binary=_solver_or_skip(), timeout=45)
+    assert run.returncode == 0 and not run.timed_out and run.solutions, run.stdout
+    for solution in run.solutions:
+        yrp = load_yrp(solution.path)
+        require_same_start(start, Replay.from_yrp(yrp))
+        line = convert_line(yrp, [target], cards=db)
+        assert line.board["turn"] == 2

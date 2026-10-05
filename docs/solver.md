@@ -404,3 +404,12 @@ solver 前缀；若随机分支变化，则在首次语义不匹配前停止。�
 必须核对完整指纹，再用该环境重放候选响应。此前该边界会把合法候选误报为 unverified；
 修复同时测试正确环境接受、错误指纹拒绝。[诊断与原始候选恢复](spikes/reachability-2026-10-05.md)
 找回六条完整线，原搜索及错误记录保留，没有删除环境标签或重新搜索来绕开验证。
+
+### 原生候选缺口修复（2026-10-05）
+
+`tools/build_combo_solver.sh` 在 pinned upstream 的独立源码副本应用 `patches/combo-solver/`，补丁内容进入构建缓存身份。
+目标检查不再接受未结算连锁内的短暂场面；仍必须通过 host 结束回合验证。
+声明卡名枚举支持完整过滤器 `[password, OPCODE_ISCODE]`，按数据库核对默认 alias/token 排除规则；
+其它复杂表达式仍没有完整枚举，不能将因此未解出的起手称无解。原生 coverage 检查同样传入数据库。
+两个捕获的真实回放作为回归：旧二进制两项均失败，修复版全部 solver tests 36 passed。
+调查方法和限制见[未解出根因报告](spikes/solver-failure-causes-2026-10-05.md)。

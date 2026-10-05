@@ -215,6 +215,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── .gitmodules              # 子模块定义（third_party/）
 ├── CMakeLists.txt           # 构建 C++ 扩展 ygorl._core
 ├── cmake/                   # CMake 片段（ocgcore.cmake：复制核心、打补丁、编成静态库）
+├── patches/combo-solver/    # 原生教师搜索补丁（连锁稳定性、精确卡名声明），构建时应用
 ├── patches/ygopro-core/     # 对规则核心的补丁（确定性遍历顺序、Lua 字符串哈希种子、Lua 分配器钩子），构建时应用
 ├── third_party/             # git submodule：ygopro-core、CardScripts、BabelCDB、LFLists
 ├── environments/            # 环境版本目录（规范见 docs/environments.md）：md-2026-09 快照由 ygorl env build 生成；*/raw/ 原始抓取文件不进 git；<版本>/artifacts/meta_packages.json 为协同图召回检验用的 meta 引擎包；artifacts/decks/ + deck_corpus.json 为牌组语料（tools/build_deck_corpus.py）

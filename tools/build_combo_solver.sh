@@ -21,6 +21,7 @@ SOLVER_COMMIT=e0c7221802a23657d5a9a0b020025e0ceca04675
 EDOPRO_REPO=https://github.com/edo9300/edopro
 EDOPRO_COMMIT=c250b6ab9bebb6eca9fdd07ee0c5bd2278426e81
 OUR_PATCHES=(0001-deterministic-iteration-order.patch 0002-constant-lua-string-hash-seed.patch)
+SOLVER_PATCHES=(0001-reject-unresolved-chain-goals.patch 0002-enumerate-exact-card-declarations.patch)
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="${YGORL_SOLVER_BUILD_DIR:-$root/build/combo-solver}"
@@ -76,6 +77,7 @@ stamp="$(
     "$CXX" --version | head -1
     cat "$0"
     for p in "${OUR_PATCHES[@]}"; do cat "$root/patches/ygopro-core/$p"; done
+    for p in "${SOLVER_PATCHES[@]}"; do cat "$root/patches/combo-solver/$p"; done
     # Uncommitted edits of the core submodule count as well.
     git -C "$core_src" diff HEAD 2> /dev/null || true
   } | sha256sum | cut -d' ' -f1
@@ -88,6 +90,16 @@ fi
 
 start=$(date +%s)
 rm -f "$out/stamp"
+
+# Apply local solver fixes to a copy, preserving the pinned upstream checkout.
+solver_src="$out/solver-patched"
+rm -rf "$solver_src"
+mkdir -p "$solver_src"
+(cd "$out/src/solver" && tar --exclude=.git -cf - .) | tar -xf - -C "$solver_src"
+for p in "${SOLVER_PATCHES[@]}"; do
+  patch -d "$solver_src" -p1 --forward --batch --quiet -i "$root/patches/combo-solver/$p" > /dev/null \
+    || die "failed to apply patches/combo-solver/$p"
+done
 
 # --- core: our copy, our patches 0001-0002, then the solver's patches -------------------
 core="$out/ocgcore"
