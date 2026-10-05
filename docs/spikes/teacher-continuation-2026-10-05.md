@@ -51,7 +51,8 @@ independently replays each resulting candidate. Intermediate-only completions
 never become final-target demonstrations. Native logs, commands and replay
 inputs are retained for auditing; the result is ordinary `Demonstration` JSON.
 
-Results: pending.
+Artifacts: `out/research/teacher-continuation-2026-10-05/`.
+Generation: `cd13d26` for the paired experiment; `559d971` for direct ordinary generation.
 
 
 ## First paired result and follow-up protocol
@@ -82,3 +83,49 @@ each deck, zero engine/replay failures, exact candidate-start identity and
 ordinary flags throughout. Audit all raw results and the BC encoding path.
 Do not claim it satisfies the still-failing 20-deck gate or generalizes to all
 random shuffles. Seeds are for development only; formal held-out remains unused.
+
+
+## Independent check results and decision
+
+The **narrow two-deck check passes**: Maliss 15/16 and Tearlaments 15/16,
+30/32 solved, two unsolved, zero error/unverified and zero rejected candidates.
+Search wall time is 69.8 s (four CPU workers); per-job solver wall times total
+253.43 s. All **1,897 action steps** independently replay with ordinary shuffle
+flags and exact recorded starts, to the original targets at turn 2. Core seed
+words and initial ordered decks match the specified hand sampler for all 32
+records, including the two unsolved hands.
+
+BC preprocessing yields **956 non-forced samples**. Exclusions are 473 forced
+steps, four select/unselect toggles and one undo; no beyond-128 action is dropped.
+Two independent encoding passes produce elementwise-identical observation and
+action arrays, and the environment/vocabulary/window-checked save/load roundtrip
+is exact. `ordinary-encoded-development.npz` is labeled development-only.
+Zero-work CLI resume preserves the raw file hash and reports all 32 records.
+
+The earlier paired experiment has **14 accepted lines / 912 verified steps**
+(counting both arms). All 14 hand outcomes agree, and all seven solved pairs
+have byte-identical response sequences. Thus the observed recovery belongs to
+ordinary from-start search, with no measured benefit from these prefixes. The
+successful jobs finish before the finisher approach stage. Lunalight remains
+1/8; the intermediate-prefix recipe is not promoted. The native logs show the
+failed prefix searches did enter the approach stage, so this is not a missing
+argument or a silently unused approach on those jobs.
+
+Generation and replay fixes are ready to use. This does **not** finish the
+20-deck teacher coverage gate, #88's capacity comparison, or #92's long RL run.
+No new policy is trained/promoted. The new seed is an independent development
+check, not the formal BC held-out set. Ordinary replay verification here checks
+the same concrete shuffle realization; it does not establish transfer to every
+possible draw/mill or remove the perfect-information teacher's access to deck
+order. Passive synthetic opponents remain opening exercises, not full MD games.
+
+**Next:** test guidance from successful *complete* Lunalight lines against an
+unguided ordinary-shuffle control, keeping the Liger target and matched budgets.
+Do not keep scaling the failed intermediate-prefix recipe or substitute Perfume
+Dancer as the final target. Then run a fresh all-deck ordinary-generation coverage
+check, freeze formal train/held-out inputs and compare network capacities.
+
+Validation: 71 BC/solver/funnel tests pass. Full presubmit of final implementation
+`559d971`: **1,424 passed / 3 skipped** in 297.11 s, including real ROCm tests.
+Skips: one snapshot build-option test and two opt-in network tests. No hosted
+GitHub checks. `validation.json` seals the source revisions and artifact hashes.

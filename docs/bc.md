@@ -525,3 +525,12 @@ uv run --frozen python tools/diagnose_bc.py report out/eval/*_random.json --base
 Maliss / Tearlaments 还有真实随机分支失败。因此正式容量对照继续等待分阶段、可迁移的教师数据，
 不把当前开发数据当作 held-out 评估，不以降低目标难度宣称教师已修好。
 求解器批次续跑现绑定完整输入身份，并保留历史错误的全量汇总与退出状态。
+
+
+### 普通洗牌起始局面的评估一致性
+
+[普通洗牌教师试验](spikes/teacher-continuation-2026-10-05.md) 修复了 `start_replay` 的边界情况：
+有明确 `start` 但未解出线时也必须沿用原牌序、seed、规则，不能重建为 pseudo-shuffle。
+`Demonstration.replay(None)` 返回无动作的原始开局；只有旧缺失 `start` 的记录才使用历史重建逻辑。
+新种子两牌组 30 条普通洗牌线产生 956 个 BC 样本，重复编码及带身份的保存/读取逐元素一致。
+它们仍是开发数据；正式训练/留出集合和大网络容量对照尚未完成。
