@@ -32,6 +32,52 @@ PAIR = (str(DECK_DIR / "snake_eye.ydk"), str(DECK_DIR / "kashtira.ydk"))
 TINY = {"d_model": 16, "n_heads": 2, "board_layers": 1, "history_layers": 1}
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
+def test_gpu_resume_restores_minibatch_and_collector_rng(tmp_path):
+    cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", num_envs=2, steps=4, event_length=8,
+                      checkpoint_every=0, eval_every=0, ppo=PPOConfig(epochs=1, minibatch_size=8))  # fmt: skip
+    trainer = Trainer(cfg, tmp_path / "original")
+    trainer.step()
+    trainer.pool.add(trainer.model, update=1)  # restoring a pool must happen before restoring RNG
+    path = trainer.save()
+    expected_perm = torch.randperm(257, device=trainer.device)
+    expected_cpu = torch.rand(32)
+    expected_acting = torch.rand(32, generator=trainer.collector.generator)
+    torch.manual_seed(234567)  # simulate unrelated activity/new process before resume
+    resumed = Trainer.resume(path, tmp_path / "resumed", log=None)
+    assert torch.equal(torch.randperm(257, device=resumed.device), expected_perm)
+    assert torch.equal(torch.rand(32), expected_cpu)
+    assert torch.equal(torch.rand(32, generator=resumed.collector.generator), expected_acting)
+
+
+def test_cpu_checkpoint_does_not_access_cuda_rng(tmp_path, monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail("CPU checkpoints must not read or write CUDA RNG")
+
+    monkeypatch.setattr(torch.cuda, "get_rng_state", unexpected)
+    monkeypatch.setattr(torch.cuda, "set_rng_state", unexpected)
+    cfg = TrainConfig(decks=PAIR, net=TINY, num_envs=2, steps=4, event_length=8, eval_every=0)
+    trainer = Trainer(cfg, tmp_path / "original")
+    assert "cuda" not in trainer.state_dict()["rng"]
+    path = trainer.save()
+    expected = torch.randperm(257)
+    Trainer.resume(path, tmp_path / "resumed", log=None)
+    assert torch.equal(torch.randperm(257), expected)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
+def test_legacy_gpu_checkpoint_without_cuda_rng_still_resumes(tmp_path):
+    cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", num_envs=2, steps=4, event_length=8,
+                      checkpoint_every=0, eval_every=0, ppo=PPOConfig(epochs=1, minibatch_size=8))  # fmt: skip
+    trainer = Trainer(cfg, tmp_path / "original")
+    state = trainer.state_dict()
+    del state["rng"]["cuda"]
+    resumed = Trainer(cfg, tmp_path / "legacy", state=state)
+    for key, value in trainer.model.state_dict().items():
+        assert torch.equal(value, resumed.model.state_dict()[key])
+    assert resumed.step()["update"] == 1
+
+
 @pytest.fixture(autouse=True)
 def one_thread():
     before = torch.get_num_threads()

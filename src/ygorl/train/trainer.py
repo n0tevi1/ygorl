@@ -272,11 +272,15 @@ class Trainer:
         return cls(cfg, Path(run_dir), state=state, log=log)
 
     def state_dict(self) -> dict:
+        rng = {"torch": torch.get_rng_state(), "collector": self.collector.generator.get_state()}
+        if self.device.type == "cuda":
+            # PPO shuffles minibatches on the learner device, independently of the CPU acting generator.
+            rng["cuda"] = torch.cuda.get_rng_state(self.device)
         return {"config": self.cfg.to_dict(), "net_config": self.net_config.to_dict(), "vocab": self.vocab_text,
                 "environment": self.environment.stamp() if self.environment is not None else None,
                 "learner": self.learner.state_dict(), "pool": self.pool.state_dict(),
                 "schedule": self.schedule.state_dict(), "counters": dict(self.counters), "best": dict(self.best), "league": dict(self.league),
-                "rng": {"torch": torch.get_rng_state(), "collector": self.collector.generator.get_state()},
+                "rng": rng,
                 "evolved": self.evolved.state_dict() if self.evolved is not None else None}  # fmt: skip
 
     def _restore(self, state: dict) -> None:
@@ -292,6 +296,8 @@ class Trainer:
             self.evolved.load_state_dict(state["evolved"])
         torch.set_rng_state(state["rng"]["torch"])
         self.collector.generator.set_state(state["rng"]["collector"])
+        if self.device.type == "cuda" and "cuda" in state["rng"]:
+            torch.cuda.set_rng_state(state["rng"]["cuda"], self.device)
 
     def save(self, name: str = "latest.pt") -> Path:
         return save_checkpoint(self.state_dict(), self.run_dir / "checkpoints" / name)
