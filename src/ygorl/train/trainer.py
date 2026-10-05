@@ -238,7 +238,7 @@ class Trainer:
                                          evolved=self.evolved)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
-                                 skip_forced=cfg.skip_forced)  # fmt: skip
+                                 skip_forced=cfg.skip_forced, record_actions=True)  # fmt: skip
         # the acting network: the model itself, or a copy refreshed before each overlapped collection
         self.acting = copy.deepcopy(self.model) if cfg.overlap_collect else self.model
         self._pending: Rollout | None = None
@@ -417,6 +417,7 @@ class Trainer:
         c["truncated"] += sum(g.truncated for g in ro.games)
         c["errors"] += sum(g.reason == "error" for g in ro.games)
         self._log_errors(ro.games)
+        self._log_truncations(ro.games)
         if cfg.log_games:
             self._log_games(ro.games)
         for g in ro.games:
@@ -446,22 +447,45 @@ class Trainer:
                  f"q_loss {stats['q_loss']:.4f}, pool win {record['pool_win_rate']}")  # fmt: skip
         return record
 
+    def _diagnostic_record(self, game) -> dict:
+        """Actual decks/rules and cross-update actions are needed to replay a changing training policy."""
+        a, result = game.assignment, game.result
+        return {"format": "ygorl.training-diagnostic.v1", "update": self.learner.updates,
+                "seed": a.spec.seed, "first": a.spec.first, "info": dict(a.info), "spec": asdict(a.spec),
+                "environment": self.environment.stamp() if self.environment is not None else None,
+                "skip_forced": self.cfg.skip_forced, "opponent": a.opponent, "learner_seat": a.learner_seat,
+                "reason": game.reason, "truncated": game.truncated, "winner": game.winner,
+                "turns": result.get("turns"), "decisions": result.get("decisions"),
+                "error": str(result.get("error", "")), "script_errors": result.get("script_errors"),
+                "retries": result.get("retries"), "unknown_messages": result.get("unknown_messages"),
+                "undecodable_messages": result.get("undecodable_messages", 0),
+                "action_indices": result.get("action_indices"),
+                "responses": [bytes(r).hex() for r in result.get("responses", [])]}  # fmt: skip
+
     def _log_errors(self, games) -> None:
-        """Append every game an engine error cut short to ``errors.jsonl``, with enough to replay it (seed, first
-        player, deck names, the error, the response log as hex)."""
-        errors = [g for g in games if g.reason == "error"]
+        """Preserve unhealthy games even when the engine subsequently reported a winner."""
+        errors = [
+            g
+            for g in games
+            if g.reason == "error"
+            or any(
+                g.result.get(k)
+                for k in ("error", "retries", "unknown_messages", "script_errors", "undecodable_messages")
+            )
+        ]
         if not errors:
             return
         with (self.run_dir / "errors.jsonl").open("a") as f:
             for g in errors:
-                spec = g.assignment.spec
-                f.write(json.dumps({"update": self.learner.updates, "seed": getattr(spec, "seed", None),
-                                    "first": getattr(spec, "first", None), "info": dict(g.assignment.info),
-                                    "error": str(g.result.get("error", "")), "decisions": g.result.get("decisions"),
-                                    "script_errors": g.result.get("script_errors"),
-                                    "retries": g.result.get("retries"),
-                                    "unknown_messages": g.result.get("unknown_messages"),
-                                    "responses": [bytes(r).hex() for r in g.result.get("responses", [])]}) + "\n")  # fmt: skip
+                f.write(json.dumps(self._diagnostic_record(g)) + "\n")
+
+    def _log_truncations(self, games) -> None:
+        limits = [g for g in games if g.truncated and g.reason != "error"]
+        if not limits:
+            return
+        with (self.run_dir / "truncations.jsonl").open("a") as f:
+            for g in limits:
+                f.write(json.dumps(self._diagnostic_record(g)) + "\n")
 
     def _log_games(self, games) -> None:
         """Append one line per finished game to ``games.jsonl.gz`` (a gzip member per update)::
