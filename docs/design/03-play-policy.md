@@ -168,3 +168,8 @@ Python 自动补的被动收尾只是验证工具，不能默认作为专家标�
 启发式教师不得留下已被完全撤回的菜单命令作为监督：host确认的无事件cancel要删除整个尝试的标签，
 而不是只删取消本身。真实对局不变，删除计数公开；历史模式需显式开启。
 参见 [教师撤销标签根因](../spikes/teacher-cancel-2026-10-05.md)。
+
+原生 RL 环境健康约束：HostDuel 不得丢弃 Lua error 日志后继续对局。出现错误时立即返回 reason=error、
+无 winner，原文通过 HostDuel/HostPool 的 script_errors 传出；rollout 将其截断且不给胜负奖励。
+完整游戏记录保留脚本错误、重试与未知消息计数，历史缺失字段不等于零。
+详见 [原生环境日志调查](../spikes/native-health-2026-10-05.md)。

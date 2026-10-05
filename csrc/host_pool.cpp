@@ -86,6 +86,9 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
     ev.decisions = t.decisions();
     ev.lp = t.lp();
     ev.responses = t.responses();
+    ev.retries = t.retries();
+    ev.unknown_messages = t.unknown_messages();
+    ev.script_errors = t.script_errors();
     host.reset();
     return ev;
 }
