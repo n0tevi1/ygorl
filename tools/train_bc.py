@@ -69,6 +69,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--layers", type=int, default=2, help="board and history Transformer layers (default 2)")
     parser.add_argument("--event-length", type=int, default=128, help="event tokens per observation (default 128)")
     parser.add_argument("--threads", type=int, default=2, help="torch threads (default 2)")
+    parser.add_argument("--device", default="cpu", help="CPU or CUDA/ROCm device: cpu, cuda, cuda:0 (default cpu)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--text-dir",
@@ -144,6 +145,21 @@ def main(argv: list[str] | None = None) -> int:
     from ygorl.train.bc import BCConfig, build_dataset, hand_overlap, opening_report, step_accuracy, train_bc
 
     torch.set_num_threads(args.threads)
+    try:
+        device = torch.device(args.device)
+    except (RuntimeError, ValueError) as exc:
+        raise SystemExit(f"train_bc: invalid device: {exc}") from None
+    if device.type not in ("cpu", "cuda"):
+        raise SystemExit("train_bc: --device must be cpu or cuda[:index] (including ROCm)")
+    if device.type == "cuda":
+        if not torch.cuda.is_available():
+            raise SystemExit("train_bc: CUDA/ROCm was requested but is unavailable")
+        index = torch.cuda.current_device() if device.index is None else device.index
+        if index >= torch.cuda.device_count():
+            raise SystemExit(f"train_bc: CUDA/ROCm device index {index} is unavailable")
+        device = torch.device("cuda", index)
+    else:
+        device = torch.device("cpu")
     env = None
     if args.env is not None:
         from ygorl.data import load_environment
@@ -175,6 +191,15 @@ def main(argv: list[str] | None = None) -> int:
                     "environment": stamp,
                     "data_policy": {"include_synthetic_closing": args.include_synthetic_closing,
                                     "full_replay_validation": True}}  # fmt: skip
+    report["device"] = {
+        "requested": args.device,
+        "actual": str(device),
+        "name": torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU",
+        "torch": str(torch.__version__),
+        "hip": torch.version.hip,
+        "cuda": torch.version.cuda,
+    }
+    report["opening_device"] = "cpu"
 
     def count(demos) -> dict:
         solved = [d for d in demos if d.status == "solved"]
@@ -191,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
 
         ckpt = load_actor(ckpt_path, args.text_dir)
         net, vocab, event_length = ckpt.net, ckpt.vocab, ckpt.event_length
+        net.to(device)
     elif args.init_from is not None:  # fine-tune an existing actor: its vocab indexes its ID embeddings
         from ygorl.train.checkpoint import load_actor
 
@@ -246,6 +272,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             cfg = net_config(args, vocab, text)
             net = PolicyNet(cfg, text)
+        net.to(device)
         bc = BCConfig(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay,
                       label_smoothing=args.label_smoothing, seed=args.seed)  # fmt: skip
         torch.manual_seed(args.seed)
@@ -258,7 +285,8 @@ def main(argv: list[str] | None = None) -> int:
         report["training"] = {"config": bc.__dict__, "net": cfg.to_dict(), "seconds": round(time.time() - t1, 1),
                               "history": history}  # fmt: skip
         meta = {"trainer": "bc", "task": "T4a.2", "data": report["data"], "bc": bc.__dict__,
-                "final": history[-1] if history else {}, "data_policy": report["data_policy"]}  # fmt: skip
+                "final": history[-1] if history else {}, "data_policy": report["data_policy"],
+                "training_device": report["device"]}  # fmt: skip
         save_checkpoint(ckpt_path, net, vocab, event_length=event_length, environment=stamp, meta=meta)
         print(f"checkpoint: {ckpt_path}", flush=True)
 
@@ -271,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     if extra_heldout is not None:
         report["step_accuracy"]["extra_heldout"] = step_accuracy(net, extra_heldout)
     print("step accuracy:", json.dumps(report["step_accuracy"]), flush=True)
+    net.cpu()  # NetPolicy's per-decision observation path runs on CPU.
 
     def bc_agent(i: int):
         return PolicyAgent(NetPolicy(net, vocab, event_length=event_length, cards=cards), seed=i,

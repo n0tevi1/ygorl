@@ -71,7 +71,7 @@ class BCData:
     def batch(self, idx: np.ndarray, device: torch.device | str | None = None) -> tuple[dict, torch.Tensor]:
         """Samples ``idx`` as tensors, with the padding rows no sample of the batch uses cut off (:func:`trim_padding`)."""
         return to_tensors(trim_padding({k: v[idx] for k, v in self.obs.items()}), device), torch.as_tensor(
-            self.actions[idx]
+            self.actions[idx], device=device
         )
 
     def subset(self, keep: np.ndarray) -> BCData:
@@ -290,6 +290,7 @@ def train_bc(net: PolicyNet, data: BCData, cfg: BCConfig, *, eval_sets: dict[str
     """Fit ``net`` to ``data`` (AdamW, warm-up + cosine); one history entry per epoch."""
     torch.manual_seed(cfg.seed)
     rng = np.random.default_rng(cfg.seed)
+    device = next(net.parameters()).device
     opt = torch.optim.AdamW(net.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     per_epoch = math.ceil(len(data) / cfg.batch_size)
     total = per_epoch * cfg.epochs
@@ -302,7 +303,7 @@ def train_bc(net: PolicyNet, data: BCData, cfg: BCConfig, *, eval_sets: dict[str
         loss_sum = correct = 0.0
         for b in range(per_epoch):
             idx = perm[b * cfg.batch_size : (b + 1) * cfg.batch_size]
-            obs, target = data.batch(idx)
+            obs, target = data.batch(idx, device=device)
             loss, logits = bc_loss(net, obs, target, cfg.label_smoothing)
             opt.zero_grad(set_to_none=True)
             loss.backward()
@@ -330,10 +331,11 @@ def step_accuracy(net: PolicyNet, data: BCData, batch_size: int = 256) -> dict:
     """Teacher-forced agreement: top-1 accuracy, mean NLL, and the uniform-guess accuracy for scale."""
     was_training = net.training
     net.eval()
+    device = next(net.parameters()).device
     correct = nll = 0.0
     for b in range(0, len(data), batch_size):
         idx = np.arange(b, min(len(data), b + batch_size))
-        obs, target = data.batch(idx)
+        obs, target = data.batch(idx, device=device)
         logp = net(obs).log_probs()
         correct += (logp.argmax(-1) == target).sum().item()
         nll -= logp.gather(1, target.unsqueeze(1)).sum().item()

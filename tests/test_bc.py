@@ -337,7 +337,14 @@ def test_greedy_demonstrations_record_later_turns(db, vocab, data, tmp_path):
 
 
 @pytest.mark.parametrize("include_closing", [False, True])
-def test_train_bc_fine_tunes_an_existing_actor(vocab, tmp_path, include_closing):
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param("cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")),
+    ],
+)
+def test_train_bc_fine_tunes_an_existing_actor(vocab, tmp_path, include_closing, device):
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("train_bc", HERE.parent / "tools" / "train_bc.py")
@@ -349,13 +356,17 @@ def test_train_bc_fine_tunes_an_existing_actor(vocab, tmp_path, include_closing)
     out = tmp_path / "ft"
     flags = ["--include-synthetic-closing"] if include_closing else []
     assert tool.main(["--train", str(DEMO_FILE), "--heldout", str(DEMO_FILE), "--init-from", str(base),
-                      "--epochs", "1", "--openings", "none", "--out", str(out), "--threads", "1", *flags]) == 0  # fmt: skip
+                      "--epochs", "1", "--openings", "heldout", "--out", str(out), "--threads", "1", "--device", device, *flags]) == 0  # fmt: skip
     ckpt = load_checkpoint(out / "policy.pt")
     # the base network, vocab and event window carry over (--d-model etc. are ignored), and the weights moved
     assert ckpt.event_length == 24 and ckpt.net.cfg == load_checkpoint(base).net.cfg
     policy = {"include_synthetic_closing": include_closing, "full_replay_validation": True}
     report = json.loads((out / "report.json").read_text())
     assert ckpt.meta["data_policy"] == report["data_policy"] == policy
+    assert ckpt.meta["training_device"] == report["device"]
+    assert report["device"]["actual"].startswith(device) and report["opening_device"] == "cpu"
+    assert next(ckpt.net.parameters()).device.type == "cpu"
+    assert report["openings"]["bc"]["heldout"]["totals"]["total"]["hands"] == 1
     assert report["data"]["train"]["samples"] == report["data"]["heldout"]["samples"]
     assert bool(report["data"]["train"]["skipped"].get("synthetic_closing")) != include_closing
     before = load_checkpoint(base).net.state_dict()
@@ -513,3 +524,22 @@ def test_synthetic_closing_is_not_an_expert_label_but_is_still_verified(vocab, d
     broken.lines[0].solver_steps = len(broken.lines[0].actions) + 1
     with pytest.raises(DemoError, match="solver_steps"):
         build_dataset([broken], vocab, cards=db, env=env, event_length=32)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
+def test_bc_gpu_updates_and_cpu_checkpoint_agree(data, vocab, tmp_path):
+    net = tiny_net(vocab).cuda()
+    before = {k: v.detach().clone() for k, v in net.state_dict().items()}
+    history = train_bc(
+        net, data, BCConfig(epochs=2, batch_size=16, lr=1e-3, warmup_steps=0), eval_sets={"heldout": data}
+    )
+    assert all(np.isfinite(h["loss"]) and np.isfinite(h["heldout_loss"]) for h in history)
+    assert any(not torch.equal(v, before[k]) for k, v in net.state_dict().items())
+    gpu = step_accuracy(net, data)
+    assert next(net.parameters()).is_cuda
+    path = save_checkpoint(tmp_path / "gpu.pt", net, vocab, event_length=32)
+    cpu = load_checkpoint(path)
+    assert next(cpu.net.parameters()).device.type == "cpu"
+    got = step_accuracy(cpu.net, data)
+    assert got["accuracy"] == gpu["accuracy"]
+    assert got["nll"] == pytest.approx(gpu["nll"], rel=1e-4, abs=1e-5)
