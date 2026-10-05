@@ -637,6 +637,39 @@ def test_engine_errors_are_logged_for_replay(tmp_path):
     assert rows[0]["responses"] == ["0100", "02"] and "engine loop" in rows[0]["error"]
 
 
+def test_real_lua_error_truncates_rollout_without_a_win_reward(db, vocab, tmp_path):
+    from ygorl import _core, paths
+    from ygorl.engine.duel import default_scripts
+    from ygorl.train.rollout import Assignment
+
+    base = default_scripts()
+    suffix = b"""\nlocal old_initial_effect=s.initial_effect
+        function s.initial_effect(c)
+            old_initial_effect(c)
+            local e=Effect.CreateEffect(c)
+            e:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_CONTINUOUS)
+            e:SetCode(EVENT_PHASE_START+PHASE_DRAW)
+            e:SetOperation(function() if Duel.GetTurnCount()==2 then error("rollout Lua regression") end end)
+            Duel.RegisterEffect(e,0)
+        end"""
+    scripts = _core.ScriptDirectory([str(p) for p in paths.script_directories()],
+                                   {"c14558127.lua": base.read("c14558127.lua") + suffix,
+                                    **{n: base.read(n) for n in ("proc_fusion.lua", "proc_synchro.lua")}})  # fmt: skip
+    deck = load_ydk(DECK_DIR / "branded_despia.ydk")
+    spec = GameSpec(0, deck, deck)
+    env = EncodedVecEnv(1, 1, cards=db, vocab=vocab, scripts=scripts, privileged=True, event_length=16)
+    col = RolloutCollector(env, tiny_model(vocab), lambda: Assignment(spec), 256, seed=5)
+    ro = col.collect()
+    errors = [g for g in ro.games if g.result.get("script_errors")]
+    assert errors and all(g.reason == "error" and g.truncated and g.winner is None for g in errors)
+    assert (ro.rewards == 0).all() and (ro.truncated == ro.dones).all()
+    trainer = Trainer(_small_cfg(), tmp_path, log=None)
+    trainer._log_errors(errors)
+    rows = [json.loads(line) for line in (tmp_path / "errors.jsonl").read_text().splitlines()]
+    assert len(rows) == len(errors) and all("rollout Lua regression" in r["script_errors"][0] for r in rows)
+    assert all(r["retries"] == r["unknown_messages"] == 0 for r in rows)
+
+
 def test_a_stalled_rollout_saves_a_checkpoint_and_propagates(tmp_path):
     """Training cannot unwind past a stuck engine thread, so train() saves latest.pt and re-raises for the caller
     to end the process (tools/train_ppo.py exits with os._exit(3))."""

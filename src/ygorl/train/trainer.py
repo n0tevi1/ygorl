@@ -435,6 +435,9 @@ class Trainer:
                 f.write(json.dumps({"update": self.learner.updates, "seed": getattr(spec, "seed", None),
                                     "first": getattr(spec, "first", None), "info": dict(g.assignment.info),
                                     "error": str(g.result.get("error", "")), "decisions": g.result.get("decisions"),
+                                    "script_errors": g.result.get("script_errors"),
+                                    "retries": g.result.get("retries"),
+                                    "unknown_messages": g.result.get("unknown_messages"),
                                     "responses": [bytes(r).hex() for r in g.result.get("responses", [])]}) + "\n")  # fmt: skip
 
     def _log_games(self, games) -> None:
@@ -464,7 +467,9 @@ class Trainer:
                 "first": spec.first, "winner": None if g.winner is None else spec.deck_of_seat(g.winner),
                 "turns": int(g.result.get("turns", 0)), "reason": g.reason, "truncated": g.truncated,
                 "opponent": a.opponent, "learner": None if a.opponent is None else spec.deck_of_seat(a.learner_seat),
-                "seed": getattr(spec, "seed", None), **env}))  # fmt: skip
+                "seed": getattr(spec, "seed", None),
+                "retries": g.result.get("retries"), "unknown_messages": g.result.get("unknown_messages"),
+                "script_errors": g.result.get("script_errors"), "error": g.result.get("error"), **env}))  # fmt: skip
         if lines:
             with gzip.open(self.run_dir / "games.jsonl.gz", "at", compresslevel=6) as f:
                 f.write("\n".join(lines) + "\n")

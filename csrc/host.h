@@ -164,6 +164,8 @@ public:
     int win_reason() const { return win_reason_; }
     uint32_t retries() const { return retries_; }
     uint32_t unknown_messages() const { return unknown_; }
+    const std::vector<std::string>& script_errors() const { return script_errors_; }
+    void on_logs(const std::vector<LogEntry>& logs);
     // Indices of the current actions that only undo the previous step (docs/encoding.md 「撤销类空操作」;
     // mirror of DuelTracker._undo); never all of them.
     std::vector<size_t> undo() const;
@@ -177,6 +179,7 @@ private:
     uint16_t phase_ = 0;
     bool done_ = false;
     std::string reason_, error_;
+    std::vector<std::string> script_errors_;
     int engine_winner_ = -1;
     int win_reason_ = -1;
     uint32_t retries_ = 0, unknown_ = 0, consecutive_retries_ = 0, decisions_ = 0;

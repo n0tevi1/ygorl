@@ -22,6 +22,8 @@ struct PoolEvent {
     int winner = -1, win_reason = -1;
     std::string reason, error;
     uint32_t turns = 0, decisions = 0;
+    uint32_t retries = 0, unknown_messages = 0;
+    std::vector<std::string> script_errors;
     std::array<int64_t, 2> lp{};
     std::vector<std::string> responses;
 };

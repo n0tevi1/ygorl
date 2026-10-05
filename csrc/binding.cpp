@@ -178,6 +178,9 @@ py::dict result_dict(const host::PoolEvent& e) {
     for (const auto& r : e.responses) responses.append(py::bytes(r));
     d["responses"] = responses;
     d["error"] = e.error;
+    d["retries"] = e.retries;
+    d["unknown_messages"] = e.unknown_messages;
+    d["script_errors"] = e.script_errors;
     return d;
 }
 
@@ -434,6 +437,8 @@ PYBIND11_MODULE(_core, m) {
             for (const auto& r : t.responses()) responses.append(py::bytes(r));
             d["responses"] = responses;
             d["retries"] = t.retries();
+            d["unknown_messages"] = t.unknown_messages();
+            d["script_errors"] = t.script_errors();
             d["error"] = t.error();
             return d;
         });
