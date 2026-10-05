@@ -392,7 +392,7 @@ class Trainer:
         t0 = time.perf_counter()
         with self._autocast():
             warm = self.cfg.critic_warmup > 0 and not self.counters.get("critic_warmup_done")
-        stats = self.learner.update(ro, policy=not warm)
+            stats = self.learner.update(ro, policy=not warm)
         update_s = time.perf_counter() - t0
         if warm:
             self._warmup_ev.append(stats["q_explained_var"])

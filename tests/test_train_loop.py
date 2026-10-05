@@ -33,6 +33,43 @@ TINY = {"d_model": 16, "n_heads": 2, "board_layers": 1, "history_layers": 1}
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
+@pytest.mark.parametrize(("bf16", "warmup"), [(False, 0), (True, 0), (True, 1)])
+def test_training_forward_uses_requested_precision(tmp_path, monkeypatch, bf16, warmup):
+    cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", bf16=bf16, critic_warmup=warmup,
+                      num_envs=2, steps=4, event_length=8, checkpoint_every=0, eval_every=0,
+                      ppo=PPOConfig(epochs=1, minibatch_size=8))  # fmt: skip
+    trainer = Trainer(cfg, tmp_path)
+    updating = False
+    outputs = []
+    original = trainer.learner.update
+
+    def update(*args, **kwargs):
+        nonlocal updating
+        updating = True
+        try:
+            return original(*args, **kwargs)
+        finally:
+            updating = False
+
+    def observe(module, args, result):
+        if updating:
+            outputs.append((torch.is_autocast_enabled("cuda"), result.logits.dtype))
+
+    monkeypatch.setattr(trainer.learner, "update", update)
+    hook = trainer.model.register_forward_hook(observe)
+    try:
+        rec = trainer.step()
+    finally:
+        hook.remove()
+    expected = torch.bfloat16 if bf16 else torch.float32
+    assert outputs and all(active == bf16 and dtype == expected for active, dtype in outputs)
+    assert rec["critic_warmup"] == int(bool(warmup)) and rec["minibatches"] > 0
+    assert torch.isfinite(torch.tensor(rec["loss"]))
+    assert all(torch.isfinite(p).all() for p in trainer.model.parameters())
+    assert all(torch.isfinite(p.grad).all() for p in trainer.model.parameters() if p.grad is not None)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
 def test_gpu_resume_restores_minibatch_and_collector_rng(tmp_path):
     cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", num_envs=2, steps=4, event_length=8,
                       checkpoint_every=0, eval_every=0, ppo=PPOConfig(epochs=1, minibatch_size=8))  # fmt: skip

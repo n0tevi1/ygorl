@@ -432,7 +432,10 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 
 - `overlap_collect`（`--overlap`）：更新进行时在另一个线程（GPU 上另一个 stream）用「更新开始前的权重」的副本收集下一段；联赛记账
   （快照、评估、checkpoint）只在两步之间、没有收集在跑时进行。代价是每段数据落后一次更新，偏离设计的同步 PPO（[scaling.md](scaling.md) S3），采用前要先改设计。
-- `bf16`（`--bf16`）：行动与更新都在 bf16 autocast 下跑；GPU 上更新约快 10–20%，CPU 上更慢。
+- `bf16`（`--bf16`）：行动与更新都在 bf16 autocast 下跑，包含critic-only warmup。
+  2026-10-05修复warmup引入时的缩进回归：此前该选项只覆盖采样，update实际在autocast之外。
+  早期特定配置曾测得GPU更新快10–20%，但不是当前硬件/配置保证；回归期间的CLI对照不能证明更新阶段BF16无收益。
+  新配置需分别验证真实dtype、成本与强度，CPU上也不保证更快。
 
 `tools/bench_train.py` 测 `Trainer.step()` 的收集 / 更新耗时、行/秒与（AMD GPU 上的）忙碌率。
 另外输出一次更新内部的细分（#72）：
