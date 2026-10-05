@@ -615,3 +615,30 @@ def test_complete_reference_rejects_mislabeled_or_incomplete_inputs(db, tmp_path
             bad.lines[0].board["turn"] = 1
         with pytest.raises(ValueError):
             _validate_reference(bad, deck, [], env, db)
+
+
+def test_collect_preserves_environment_for_exact_start_replay(db, tmp_path):
+    from dataclasses import replace
+
+    from ygorl.data import load_environment
+    from ygorl.solver.batch import _collect
+    from ygorl.solver.combo_solver import SolutionFile, SolverRun
+
+    env = load_environment("md-2026-09")
+    deck = next(m.deck for m in env.meta_decks if m.deck.name == "lunalight")
+    path = make_template(tmp_path / "start.yrpX", deck, 1, DuelConfig.from_environment(env), db)
+    expected = Replay.from_yrp(path)
+    expected.environment = {"version": env.version, "fingerprint": env.fingerprint}
+    demo = Demonstration.start_from(
+        load_yrp(path), deck=deck, hand=[], hand_index=0, hand_seed=1, variant="plain", targets=[], environment=env
+    )
+    run = SolverRun([], 0, 0, "", solutions=[SolutionFile(path, 0, 0, 0, False)])
+    _collect(demo, run, 1, db, None, expected, env=env)
+    assert len(demo.lines) == 1 and not demo.rejected
+    verify_line(demo, env=env, cards=db)
+    assert demo.lines[0].board["turn"] == 2
+    # A wrong environment must still be rejected, even though the native header
+    # itself has no application environment tag and the engine rules match.
+    bad = replace(demo, lines=[], rejected=[])
+    _collect(bad, run, 1, db, None, expected, env=replace(env, fingerprint="wrong"))
+    assert not bad.lines and "has changed" in bad.rejected[0]["error"]
