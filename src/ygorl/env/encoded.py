@@ -49,7 +49,8 @@ class EncodedVecEnv:
 
     def __init__(self, num_envs: int, num_threads: int | None = None, cards=None, scripts=None,
                  vocab: CardVocab | None = None, privileged: bool = False,
-                 event_length: int = DEFAULT_EVENT_LENGTH, skip_forced: bool = False) -> None:  # fmt: skip
+                 event_length: int = DEFAULT_EVENT_LENGTH, skip_forced: bool = False,
+                 record_actions: bool = False) -> None:  # fmt: skip
         """``privileged=True`` is training mode: events also carry ``privileged`` (opponent ground truth).
 
         The default (inference mode) never computes it. Evaluation and play must use the default.
@@ -57,6 +58,8 @@ class EncodedVecEnv:
         ``skip_forced=True`` plays every decision with exactly one choosable row (one legal action, or only
         equivalent copies of one; docs/encoding.md) inside the C++ loop, so
         only decisions with a real choice come back (the games are identical; ``step`` counts differ).
+        ``record_actions=True`` retains explicit step indices across calls until each game ends. Limits/errors
+        carry ``action_indices`` for replay with the same ``skip_forced`` setting; healthy wins discard the trace.
         """
         self.cards = cards if cards is not None else default_cards()
         self.vocab = vocab if vocab is not None else CardVocab.from_db(self.cards)
@@ -70,6 +73,7 @@ class EncodedVecEnv:
         self.privileged = privileged
         self.event_length = event_length
         self.skip_forced = skip_forced
+        self._action_traces: dict[int, list[int]] | None = {} if record_actions else None
 
     def reset(self, env_id: int, spec: GameSpec) -> None:
         if spec.config.curriculum != "full" or spec.config.augmented_start:
@@ -82,14 +86,27 @@ class EncodedVecEnv:
         decks = [(list(m), list(e)) for m, e in duel.loaded_decks()]
         self._pool.reset(env_id, expand_seed(spec.seed), cfg.rule_flags, player, player, decks, cfg.max_turns,
                          cfg.max_decisions)  # fmt: skip
+        if self._action_traces is not None:
+            self._action_traces[env_id] = []
 
     def step(self, env_id: int, action: int) -> None:
         self._pool.step(env_id, action)
+        if self._action_traces is not None:
+            self._action_traces[env_id].append(int(action))
 
     def recv(self, min_events: int = 1, timeout: float | None = None) -> list[EncodedEvent]:
         timeout_ms = -1 if timeout is None else int(timeout * 1000)
-        return [EncodedEvent(e, player, obs, result, priv)
-                for e, _done, player, obs, result, priv in self._pool.recv(min_events, timeout_ms)]  # fmt: skip
+        events = []
+        for e, done, player, obs, result, priv in self._pool.recv(min_events, timeout_ms):
+            if done and self._action_traces is not None:
+                actions = self._action_traces.pop(e, [])
+                if result["reason"] in ("error", "turn_limit", "decision_limit") or any(
+                    result.get(k)
+                    for k in ("error", "retries", "unknown_messages", "script_errors", "undecodable_messages")
+                ):
+                    result["action_indices"] = actions
+            events.append(EncodedEvent(e, player, obs, result, priv))
+        return events
 
     def pending(self) -> int:
         return self._pool.pending()

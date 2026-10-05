@@ -253,6 +253,7 @@ EncodedVecEnv新增默认关闭的动作记录选项，Trainer启用：按env sl
 不保存整段observations或模型张量，不修改native引擎、合法动作、采样或奖励。
 
 Trainer将非error截断追加到truncations.jsonl；原errors.jsonl保留并补充同样的重放字段。
+健康字段异常即使reason后来为win也必须保存诊断，保留其原始reason，不把它伪装成干净胜局。
 记录完整GameSpec（含实际牌组/先手/seed/rules/limits/player配置）、环境stamp、skip_forced、终局原因、
 健康字段、原始responses和action indices。原生动作重放需匹配引擎/数据库/脚本版本，不能只依赖模型路径。
 真实跨更新小上限对局必须用记录的spec+indices在新native env复现终局、决策数和逐response。
