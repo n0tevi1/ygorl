@@ -87,3 +87,22 @@ def test_saved_game_order_is_checked_before_resume(tmp_path):
     path.write_text(json.dumps(cell))
     with pytest.raises(ValueError, match="game order"):
         read_cell(path, "a", "b", [(17, None, None)])
+
+
+@pytest.mark.parametrize(
+    "health",
+    [
+        {"script_errors": 1},
+        {"undecodable_messages": 1},
+        {"retries": 1},
+        {"unknown_messages": 1},
+        {"error": "engine diagnostic"},
+    ],
+)
+def test_saved_cell_health_failure_is_missing_not_a_win(tmp_path, health):
+    path = tmp_path / "cell.json"
+    records = [dict(pair=0, seed=17, first=f, reason="win", winner=0) for f in (0, 1, 1, 0)]
+    records[1].update(health)
+    path.write_text(json.dumps(dict(candidate="a", opponent="b", records=records)))
+    scores = read_cell(path, "a", "b", [(17, None, None)])
+    assert np.isnan(scores[0, 1]) and scores[0, [0, 2, 3]].tolist() == [1, 1, 1]

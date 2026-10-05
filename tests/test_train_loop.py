@@ -727,3 +727,48 @@ def test_turn_discount_scales_the_terminal_reward_by_game_length(tmp_path):
     assert seen and all(v < 1 for v in seen)
     with pytest.raises(ValueError, match="turn_discount"):
         Trainer(replace(_small_cfg(), turn_discount=0.0), tmp_path / "bad", log=None)
+
+
+def test_unhealthy_evaluation_cannot_create_or_replace_best(tmp_path, monkeypatch):
+    from ygorl.eval.arena import GameRecord, summarize
+    from ygorl.train import trainer as module
+
+    trainer = Trainer(_small_cfg(eval_opponents=("random",), keep_best_by="random"), tmp_path, log=None)
+    good = GameRecord(pair=0, first=0, seed=0, winner=0, reason="win")
+    bad = replace(good, pair=1, script_errors=1)
+
+    def report(records):
+        return summarize(records, agent_a="a", agent_b="b", deck_a="x", deck_b="y", seed=0), 0.1
+
+    monkeypatch.setattr(module, "evaluate_checkpoint", lambda *a, **kw: report([good, bad]))
+    result = trainer.evaluate()
+    assert trainer.best["score"] is None and trainer.pool.best_id is None and not (tmp_path / "best.pt").exists()
+    assert not result["random"]["valid"] and result["random"]["attempted_games"] == 2
+    failure = json.loads((tmp_path / "eval-errors.jsonl").read_text().splitlines()[0])
+    assert failure["report"]["records"][1]["script_errors"] == 1
+    monkeypatch.setattr(module, "evaluate_checkpoint", lambda *a, **kw: report([replace(good, winner=1)]))
+    trainer.evaluate()
+    before = (tmp_path / "best.pt").read_bytes()
+    state = dict(trainer.best)
+    pinned = trainer.pool.best_id
+    monkeypatch.setattr(module, "evaluate_checkpoint", lambda *a, **kw: report([good, bad]))
+    trainer.evaluate()
+    assert (tmp_path / "best.pt").read_bytes() == before and trainer.best == state and trainer.pool.best_id == pinned
+    assert json.loads((tmp_path / "eval.jsonl").read_text().splitlines()[-1])["best"] is False
+
+
+def test_another_invalid_baseline_blocks_an_otherwise_best_score(tmp_path, monkeypatch):
+    from ygorl.eval.arena import GameRecord, summarize
+    from ygorl.train import trainer as module
+
+    trainer = Trainer(_small_cfg(), tmp_path, log=None)
+
+    def evaluate(path, decks, opponent, **kw):
+        rows = [GameRecord(pair=0, first=0, seed=0, winner=0, reason="win")] if opponent == "greedy" else []
+        return summarize(rows, agent_a="a", agent_b=opponent, deck_a="x", deck_b="y", seed=0), 0.1
+
+    monkeypatch.setattr(module, "evaluate_checkpoint", evaluate)
+    result = trainer.evaluate()
+    assert result["greedy"]["valid"] and result["greedy"]["win_rate"] == 1
+    assert not result["random"]["valid"] and result["random"]["attempted_games"] == 0
+    assert trainer.best["score"] is None and trainer.pool.best_id is None and not (tmp_path / "best.pt").exists()

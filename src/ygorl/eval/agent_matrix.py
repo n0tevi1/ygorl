@@ -40,7 +40,7 @@ from ygorl.eval.matchup import DEFAULT_ALPHA, DEFAULT_POPULATION, _deck_hash, _n
 FORMAT = "ygorl-agent-matrix"
 FORMAT_VERSION = 1
 ARTIFACT_DIR = "agent-matrix"
-ERROR_REASONS = ("exception", "error")  # not a result: counted apart
+ERROR_REASONS = ("exception", "error")  # compatibility; full health checks use GameRecord.healthy
 
 
 def sample_pairings(n_decks: int, count: int, seed: int) -> list[tuple[int, int]]:
@@ -78,12 +78,7 @@ class CellResult:
 
 def score(records: Sequence[GameRecord]) -> CellResult:
     """Count agent a's results; unhealthy games are errors even if the engine later reported a win."""
-    ok = [
-        r
-        for r in records
-        if r.reason not in ERROR_REASONS
-        and not (r.error or r.retries or r.script_errors or r.unknown_messages or r.undecodable_messages)
-    ]
+    ok = [r for r in records if r.healthy]
     return CellResult(wins=sum(r.winner == 0 for r in ok), losses=sum(r.winner == 1 for r in ok),
                       draws=sum(r.winner is None for r in ok), errors=len(records) - len(ok))  # fmt: skip
 

@@ -522,3 +522,7 @@ uv run --no-sync python tools/consume_registrations.py out/train/run --matrix /a
 矩阵计分会把带Lua错误、retry、未知/不可解码消息或error文本的局计为errors，
 即使该局原reason为win；批量路径保留相同健康字段。消费者拒绝发布含errors的矩阵。
 此前版本产出的历史矩阵需要另行审计/重建，不能通过这次修复推断它们没有污染。
+
+同步evaluate的任何基线有健康错误或零有效局时，不更新best.pt或best池；
+`eval.jsonl`保留attempted_games、全部健康计数与valid，完整无效报告另写`eval-errors.jsonl`。
+checkpoint与诊断仍保存，训练可继续。这样不能靠剔除异常后剩余的小样本高分晋级。

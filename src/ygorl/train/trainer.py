@@ -530,11 +530,18 @@ class Trainer:
                                                pairs=cfg.eval_pairs, config=self.duel_config, env=self.environment,
                                                workers=cfg.eval_workers, seed=derive_seed(cfg.seed, 4),
                                                greedy_policy=cfg.eval_greedy_policy)  # fmt: skip
-            results[opponent] = {"update": u, "vs": opponent, "games": rep.games, "win_rate": rep.win_rate,
+            results[opponent] = {"update": u, "vs": opponent, "games": rep.games, "attempted_games": rep.attempted_games,
+                                 "valid": rep.errors == 0 and rep.games > 0, "win_rate": rep.win_rate,
                                  "ci": list(rep.ci), "wins": rep.wins, "losses": rep.losses, "draws": rep.draws,
                                  "reasons": rep.reasons, "errors": rep.errors, "mean_turns": rep.mean_turns,
+                                 "retries": rep.retries, "script_errors": rep.script_errors,
+                                 "unknown_messages": rep.unknown_messages, "undecodable_messages": rep.undecodable_messages,
                                  "seconds": round(seconds, 1)}  # fmt: skip
-        score = results[cfg.keep_best_by]["win_rate"] if cfg.keep_best_by else None
+            if not results[opponent]["valid"]:
+                with (self.run_dir / "eval-errors.jsonl").open("a") as f:
+                    f.write(json.dumps({"update": u, "vs": opponent, "report": rep.to_dict()}) + "\n")
+        valid = all(r["valid"] for r in results.values())
+        score = results[cfg.keep_best_by]["win_rate"] if cfg.keep_best_by and valid else None
         is_best = score is not None and (self.best["score"] is None or score > self.best["score"])
         if is_best:
             self.best = {"score": score, "update": u}
@@ -546,7 +553,8 @@ class Trainer:
             for r in results.values():
                 f.write(json.dumps({**r, "best": is_best and r["vs"] == cfg.keep_best_by}) + "\n")
         summary = ", ".join(f"vs {k} {v['win_rate']:.3f} ({v['games']} games)" for k, v in results.items())
-        self.log(f"eval at update {u}: {summary}{' -> new best' if is_best else ''}")
+        status = " -> new best" if is_best else " (invalid evaluation; best unchanged)" if not valid else ""
+        self.log(f"eval at update {u}: {summary}{status}")
         return results
 
 

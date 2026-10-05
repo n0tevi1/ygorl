@@ -130,3 +130,67 @@ def test_environment_is_stamped(tmp_path):
     rep = Arena(RandomAgent, RandomAgent, env=env, config=SHORT).run(A, B, pairs=1, seed=0)
     assert rep.environment == env.stamp()
     assert rep.to_dict()["environment"] == env.stamp()
+
+
+@pytest.mark.parametrize(
+    "health",
+    [
+        {"reason": "error"},
+        {"reason": "exception"},
+        {"script_errors": 1},
+        {"undecodable_messages": 1},
+        {"unknown_messages": 1},
+        {"retries": 1},
+        {"error": "engine diagnostic"},
+    ],
+)
+def test_unhealthy_results_do_not_enter_any_scored_denominator(health):
+    bad = GameRecord(**{**dict(pair=1, first=1, seed=2, winner=0, reason="win", turns=100), **health})
+    good = GameRecord(pair=0, first=0, seed=1, winner=1, reason="win", turns=4)
+    rep = summarize([good, bad], agent_a="a", agent_b="b", deck_a="x", deck_b="y", seed=0)
+    assert (rep.games, rep.wins, rep.losses, rep.draws, rep.errors) == (1, 0, 1, 0, 1)
+    assert rep.attempted_games == rep.to_dict()["attempted_games"] == 2
+    assert rep.as_first.games == 1 and rep.as_second.games == 0
+    assert rep.win_rate == rep.first_player_win_rate == 0 and rep.mean_turns == 4
+    assert rep.records == (good, bad) and sum(rep.reasons.values()) == 2
+    only_bad = summarize([bad], agent_a="a", agent_b="b", deck_a="x", deck_b="y", seed=0)
+    assert only_bad.games == 0 and only_bad.errors == 1 and only_bad.ci == (0.0, 1.0)
+    assert merge([rep, only_bad]).attempted_games == 3
+
+
+def test_arena_rejects_real_lua_error_even_when_duel_continues(tmp_path, monkeypatch):
+    from ygorl import _core, paths
+    from ygorl.engine.duel import default_scripts
+    from ygorl.eval.arena import GameSpec
+
+    base = default_scripts()
+    suffix = b"\nlocal old=s.initial_effect; function s.initial_effect(c) old(c); error('arena Lua regression') end"
+    scripts = _core.ScriptDirectory(
+        [str(p) for p in paths.script_directories()], {"c14558127.lua": base.read("c14558127.lua") + suffix}
+    )
+    original = GameSpec.duel
+
+    def broken(sp):
+        duel = original(sp)
+        duel.scripts = scripts
+        return duel
+
+    monkeypatch.setattr(GameSpec, "duel", broken)
+    deck = DECKS["branded_despia"]
+    rep = Arena(GreedyAgent, RandomAgent, config=DuelConfig(max_turns=2)).run(deck, deck, pairs=1, seed=0)
+    assert all(r.script_errors > 0 for r in rep.records)
+    assert rep.games == 0 and rep.errors == rep.attempted_games == 2
+    assert rep.script_errors == sum(r.script_errors for r in rep.records) > 0
+
+
+def test_cli_lua_health_failure_has_nonzero_exit(tmp_path, monkeypatch, capsys):
+    from ygorl.cli import main
+
+    rec = GameRecord(pair=0, first=0, seed=0, winner=0, reason="win", script_errors=1)
+    rep = summarize([rec], agent_a="a", agent_b="b", deck_a="x", deck_b="y", seed=0)
+    monkeypatch.setattr(Arena, "run_many", lambda *a, **kw: [rep])
+    out = tmp_path / "arena.json"
+    assert main(["arena", str(Path(__file__).parent / "decks/snake_eye.ydk"), "--games", "2", "--out", str(out)]) == 1
+    data = json.loads(out.read_text())
+    assert data["games"] == 0 and data["attempted_games"] == data["errors"] == data["script_errors"] == 1
+    assert "script errors" in capsys.readouterr().out

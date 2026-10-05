@@ -312,3 +312,11 @@ PYTHONPATH=src python tools/compare_checkpoints.py \
 [--device cuda] [--envs 256] [--out report.json]`：CKPT 驾驶 `--decks` 里的牌，对手策略驾驶 `--opponents` 里的牌，按 `--seed`
 抽一次对阵；打印总胜率（Wilson 区间）与先后攻分项，`--out` 另写按驾驶牌组拆开的胜率与耗时统计。吞吐见 [benchmarks.md](benchmarks.md)。
 两个检查点都用 `train.checkpoint.load_actor` 加载，词表或事件窗口长度不同时报错并写明哪里不同（`Signature.mismatches`；`tools/tune_deck.py` 同）。
+
+### 健康局与尝试局数（2026-10-05）
+
+`GameRecord.healthy` 统一Arena与策略矩阵：error/exception、非空error文本、retry、Lua错误、
+未知或不可解码消息都属于异常。Arena报告的games、胜负平、CI、先后攻及平均回合只用健康局；
+`attempted_games=games+errors` 保留完整分母，`records`和`reasons`仍包含所有尝试，
+script_errors/undecodable_messages等健康计数仍对所有尝试汇总。旧版本可能把异常计成和局或胜局，
+旧报告需由原始records重新审计，不能用历史errors=0推断健康。上限局计分规则不变。
