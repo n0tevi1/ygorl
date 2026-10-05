@@ -249,3 +249,8 @@ CPU checkpoint不调用CUDA RNG API、不新增GPU初始化副作用。旧checkp
 回归需捕获实际训练forward的logits dtype及autocast状态，包含BF16普通更新、BF16 warmup和FP32控制，
 并检查参数/梯度有限。已有“BF16训练能跑完”的测试不足以发现静默回退为FP32。
 短诊断须覆盖ROCm Split-K的真实大token路径；不据修复本身承诺BF16加速或强度收益。
+
+补充边界：一次PPOLearner.update内有多次Adam，整个更新作用域必须关闭autocast参数转换缓存，
+避免FP32权重被修改后后续minibatch继续读取旧BF16副本。只修缩进仍会留下这一问题。
+collector作用域内权重不变，可保留缓存；overlap collector使用独立acting副本。
+回归需在每个真实Adam步后将当前作用域的logits与禁用缓存的fresh forward逐元素比较，覆盖至少两步。
