@@ -140,7 +140,14 @@ def _solver_meta(run: SolverRun, request: SolveRequest) -> dict:
 
 
 def _collect(
-    demo: Demonstration, run: SolverRun, keep: int, cards, scripts, expected_start: Replay | None = None
+    demo: Demonstration,
+    run: SolverRun,
+    keep: int,
+    cards,
+    scripts,
+    expected_start: Replay | None = None,
+    *,
+    env: Environment | None = None,
 ) -> None:
     """Convert and verify the solver's lines into ``demo`` (best first, distinct response lists)."""
     seen: set[tuple[bytes, ...]] = set()
@@ -151,6 +158,7 @@ def _collect(
         try:
             yrp = load_yrp(sol.path)
             if expected_start is not None:
+                expected_start.check_environment(env)
                 require_same_start(expected_start, Replay.from_yrp(yrp))
             if demo.start is None:
                 demo.set_start(yrp)
@@ -159,7 +167,7 @@ def _collect(
                 if line.board["turn"] != 2:
                     raise DemoError("ordinary opening must finish at the start of turn 2")
                 replay = replace(expected_start, responses=list(line.responses))
-                if replay.play(**_engine_kwargs(cards, scripts)).reason == "error":
+                if replay.play(env, **_engine_kwargs(cards, scripts)).reason == "error":
                     raise DemoError("ordinary opening replay ended with an engine error")
         except (DemoError, YrpError, ValueError) as exc:
             demo.rejected.append({"source": sol.path.name, "error": str(exc)})
@@ -273,7 +281,7 @@ def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | Non
         ):
             demo.status, demo.error = "error", f"solver exited with {run.returncode}: {run.problems()}"
         else:
-            _collect(demo, run, job.lines, cards, scripts, expected_start)
+            _collect(demo, run, job.lines, cards, scripts, expected_start, env=env)
             demo.status = "solved" if demo.lines else ("unverified" if run.solutions else "unsolved")
             if demo.status == "unverified":
                 demo.error = f"none of the {len(run.solutions)} solver lines survived the fresh replay"
