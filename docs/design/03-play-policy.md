@@ -200,3 +200,15 @@ checkpoint 内容校验全部保留。消费者持矩阵独占锁，逐 checkpoi
 Lua error、未知或不可解码消息，整个对局归入errors并从胜负/和局分母剔除。批量评估保留
 原生结果中的健康字段。消费者遇到任何errors拒绝发布；普通矩阵仍保留errors供调用方判断。
 此修正不自动洗白已有矩阵，也不改写历史研究，旧工件需独立审计或重建。
+
+### Arena 汇总与 keep-best 的健康一致性（2026-10-05）
+
+将 GameRecord 的健康谓词集中到 `healthy` 属性，Arena 与策略矩阵共用。
+Arena 的 games/胜负平/区间/先后攻/平均回合只统计健康局；attempted_games=games+errors，
+原始records、reasons和全部健康计数保留，因此异常局既不会变成半个胜场，也不会消失。
+错误包括exception/error、error文本、retry、Lua、unknown/undecodable；上限计分策略保持现状。
+普通Arena CLI显示全部异常字段并以非零状态退出。
+
+训练同步evaluate保留所有invalid评估的完整报告和原始记录，任一基线含错误或零有效局时，
+整次评估不得覆盖best.pt或pin到best池。仍保存当前checkpoint、指标和诊断，训练可继续，
+日志明确说明未通过健康检查。不从少量剩余健康局高胜率选best。独立矩阵消费者策略不变。
