@@ -525,7 +525,8 @@ def test_extra_bc_data_checks_environment_vocab_and_window(data, vocab, tmp_path
         load_compatible_data(legacy, vocab=vocab, event_length=32)
 
 
-def test_heuristic_samples_from_engine_error_games_are_discarded(vocab, monkeypatch):
+@pytest.mark.parametrize("failure", ["engine", "script", "retry", "unknown", "undecodable"])
+def test_heuristic_samples_from_engine_error_games_are_discarded(vocab, monkeypatch, failure):
     from ygorl.agents import GreedyAgent
     from ygorl.train.heuristic_demos import record_games
 
@@ -537,12 +538,19 @@ def test_heuristic_samples_from_engine_error_games_are_discarded(vocab, monkeypa
         # The engine reports budget errors as results, without throwing a Python exception.
         result = run(self, a, b)
         assert a.actions  # partial recorded samples must be dropped along with the failed game
-        return dataclasses.replace(result, winner=None, reason="error", error="script budget exceeded")
+        fields = {"engine": {"winner": None, "reason": "error", "error": "script budget exceeded"},
+                  "script": {"script_errors": ["Lua regression"]}, "retry": {"retries": 1},
+                  "unknown": {"unknown_messages": 1}, "undecodable": {"undecodable_messages": 1}}  # fmt: skip
+        return dataclasses.replace(result, **fields[failure])
 
     monkeypatch.setattr(Duel, "run", failed_result)
     data, games = record_games(specs[:1], GreedyAgent, vocab, event_length=32)
     assert len(data) == 0 and data.skipped["error_games"] == 1
-    assert games[0]["samples"] == 0 and games[0]["error"] == "script budget exceeded"
+    assert games[0]["samples"] == 0 and games[0]["error"]
+    if failure == "engine":
+        assert games[0]["error"] == "script budget exceeded"
+    elif failure == "script":
+        assert games[0]["script_errors"] == ["Lua regression"]
 
 
 @pytest.mark.parametrize("flag", ["--extra", "--extra-heldout"])

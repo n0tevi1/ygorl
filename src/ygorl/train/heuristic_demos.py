@@ -129,12 +129,14 @@ def _record_one(job) -> dict:
         result = spec.duel().run(rec, spec.agent_b(spec.agent_seeds[1]))
     except Exception as exc:  # noqa: BLE001 - reported, the game is dropped
         return {"game": game, "error": f"{type(exc).__name__}: {exc}"}
-    if result.reason == "error":
-        return {"game": game, "reason": result.reason, "error": result.error or "engine error"}
+    health = {"retries": result.retries, "unknown_messages": result.unknown_messages,
+              "undecodable_messages": result.undecodable_messages, "script_errors": list(result.script_errors)}  # fmt: skip
+    if result.reason == "error" or result.error or any(health.values()):
+        return {"game": game, "reason": result.reason, "error": result.error or result.summary(), **health}
     return {"game": game, "obs": rec.obs, "actions": rec.actions, "meta": rec.meta, "skipped": rec.skipped,
             "winner": result.winner, "reason": result.reason, "turns": result.turns,
             "deck_a": spec.deck_a.name, "deck_b": spec.deck_b.name,
-            "first": spec.first, "opponent": getattr(spec.agent_b, "name", str(spec.agent_b))}  # fmt: skip
+            "first": spec.first, "opponent": getattr(spec.agent_b, "name", str(spec.agent_b)), **health}  # fmt: skip
 
 
 def record_games(specs: Sequence, make_agent: Callable[[int], object], vocab, *,
