@@ -101,6 +101,8 @@ class TrainConfig:
     # (at least snapshot_min_games of them; ygo-agent's OSFP uses 0.55); None = always; an empty pool always takes one
     snapshot_min_win_rate: float | None = None
     snapshot_min_games: int = 20
+    register_every: int = 0  # publish immutable checkpoints for an independent matrix consumer; 0 = off
+    register_matrix: str | None = None  # existing matrix path, resolved at publication
     checkpoint_every: int = 10
     eval_every: int = 25
     eval_pairs: int = 8  # paired seeds per deck pairing and baseline (2 games each)
@@ -134,6 +136,8 @@ class TrainConfig:
     log_games: bool = False
 
     def __post_init__(self) -> None:
+        if self.register_every < 0 or (self.register_every and not self.register_matrix):
+            raise ValueError("register_every must be nonnegative and needs register_matrix when enabled")
         if self.ppo.critic_target == "terminal" and not self.complete_games:
             raise ValueError("terminal critic targets require complete_games")
         if self.complete_games and (self.turn_discount != 1 or self.overlap_collect):
@@ -297,6 +301,8 @@ class Trainer:
         """Run until ``max_updates`` more updates or ``max_minutes`` of wall time; returns the last metrics."""
         cfg = self.cfg
         start, done, last = time.time(), 0, {}
+        wall_start = time.monotonic()
+        wall_before = self.counters.get("wall_seconds", 0.0)
         try:
             while (max_updates is None or done < max_updates) and (
                 max_minutes is None or time.time() - start < max_minutes * 60
@@ -308,6 +314,12 @@ class Trainer:
                     self._reload_deck_pool()
                 if cfg.snapshot_every and u % cfg.snapshot_every == 0:
                     self.maybe_snapshot(u)
+                if cfg.register_every:
+                    self.counters["wall_seconds"] = wall_before + time.monotonic() - wall_start
+                    if u % cfg.register_every == 0:
+                        from ygorl.train.registration import register_checkpoint
+
+                        register_checkpoint(self)
                 if cfg.eval_every and u % cfg.eval_every == 0:
                     self.evaluate()
                 elif cfg.checkpoint_every and u % cfg.checkpoint_every == 0:
@@ -320,6 +332,8 @@ class Trainer:
             self.log(f"rollout stalled, saving checkpoints/latest.pt: {exc}")
             self.save()
             raise
+        if cfg.register_every:
+            self.counters["wall_seconds"] = wall_before + time.monotonic() - wall_start
         self.save()
         return last
 
