@@ -21,11 +21,19 @@ from pathlib import Path
 from ygorl import _core
 from ygorl.cards.ydk import Deck, load_ydk
 from ygorl.data.environment import Environment
-from ygorl.engine.duel import DuelConfig, shuffle_deck
+from ygorl.engine.duel import DuelConfig, default_cards, shuffle_deck
 from ygorl.engine.replay import Replay, YrpError, load_yrp
-from ygorl.solver.combo_solver import SolveRequest, SolverError, SolverRun, Workdir, run_solver, solver_version
-from ygorl.solver.demo import DemoError, Demonstration, convert_line, read_jsonl, require_same_start
-from ygorl.solver.targets import parse_targets
+from ygorl.solver.combo_solver import (
+    SolveRequest,
+    SolverError,
+    SolverRun,
+    Workdir,
+    find_solver,
+    run_solver,
+    solver_version,
+)
+from ygorl.solver.demo import DemoError, Demonstration, convert_line, read_jsonl, require_same_start, verify_line
+from ygorl.solver.targets import board_summary_missing, parse_targets
 
 # The template's opponent: 40 copies of a vanilla monster (Blue-Eyes White Dragon), so it never has an
 # effect to play; the solver plays the opponent's windows as passes, and --fire adds the one card it plays.
@@ -165,7 +173,44 @@ def _collect(
         demo.lines.append(line)
 
 
-def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | None = None) -> Demonstration:
+def _validate_reference(reference: Demonstration, deck: Deck, targets, env: Environment | None,
+                        cards=None, scripts=None) -> Replay:  # fmt: skip
+    """Accept only complete, ordinary, same-environment/deck reference lines."""
+    if env is None or reference.environment != {"version": env.version, "fingerprint": env.fingerprint}:
+        raise ValueError("reference environment identity mismatch")
+    if (
+        reference.variant != "plain"
+        or reference.fire is not None
+        or reference.status != "solved"
+        or not reference.lines
+    ):
+        raise ValueError("reference requires a solved plain line")
+    cards = cards if cards is not None else default_cards()
+    if violations := env.validate_deck(deck, cards):
+        raise ValueError(f"illegal reference deck: {violations}")
+    replay = reference.replay(0)
+    cfg = _config(env)
+    if replay.rule_flags != cfg.rule_flags or replay.player != asdict(cfg.player):
+        raise ValueError("reference rules differ from its environment")
+    for zone in ("main", "extra"):
+        if sorted(reference.deck[zone]) != sorted(getattr(deck, zone)) or sorted(replay.decks["a"][zone]) != sorted(
+            getattr(deck, zone)
+        ):
+            raise ValueError("reference deck differs from the requested deck or replay start")
+        if replay.decks["b"][zone] != list(getattr(PASSIVE_OPPONENT, zone)):
+            raise ValueError("reference requires the passive opponent")
+    if replay.first != 0 or replay.shuffle_decks:
+        raise ValueError("reference requires a recorded first-player start")
+    verify_line(reference, 0, env=env, cards=cards, scripts=scripts)
+    if reference.lines[0].board["turn"] != 2 or board_summary_missing(reference.lines[0].board, targets, cards):
+        raise ValueError("reference must finish turn 1 with the requested final targets")
+    if replay.play(env, **_engine_kwargs(cards, scripts)).reason == "error":
+        raise ValueError("reference replay ended with an engine error")
+    return replay
+
+
+def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | None = None,
+               reference: Demonstration | None = None, reference_guidance: bool = False) -> Demonstration:  # fmt: skip
     """Solve one opening hand and return its verified record (never raises for solver-side failures)."""
     env = _load_env(job.env)
     config = _config(env)
@@ -183,6 +228,10 @@ def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | Non
     start = time.monotonic()
     try:
         _check_targets(deck, targets, cards)
+        if reference_guidance and reference is None:
+            raise ValueError("reference guidance requires a complete reference")
+        if reference is not None and not job.ordinary_shuffle:
+            raise ValueError("reference comparison requires ordinary-shuffle generation")
         if job.ordinary_shuffle and job.fire:
             raise ValueError("ordinary-shuffle generation currently supports plain openings only")
         deck_file = scratch / f"{deck.name}.ydk"
@@ -193,15 +242,32 @@ def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | Non
         if job.ordinary_shuffle:
             demo.set_start(load_yrp(template))  # preserve the true start even when search finds no line
             expected_start = Replay.from_yrp(template)
-        request = SolveRequest(template=template, deck=None if job.ordinary_shuffle else deck_file,
+        search_reference, reference_meta = template, {}
+        if reference is not None:
+            replay = _validate_reference(reference, deck, targets, env, cards, scripts)
+            search_reference = scratch / "reference.yrpX"
+            replay.to_yrpx(search_reference, env=env, **_engine_kwargs(cards, scripts))
+            reference_meta = {
+                "source_sha256": hashlib.sha256(json.dumps(reference.to_json(), sort_keys=True).encode()).hexdigest(),
+                "guided": reference_guidance,
+                "max_decisions": 12 * (len(deck.main) + len(deck.extra)) + 32,
+            }
+        request = SolveRequest(template=search_reference, deck=None if job.ordinary_shuffle else deck_file,
                                hand=() if job.ordinary_shuffle else tuple(hand), targets=tuple(targets),
-                               start=template if job.ordinary_shuffle else None, no_reference=job.ordinary_shuffle,
+                               start=template if job.ordinary_shuffle else None,
+                               no_reference=job.ordinary_shuffle and reference is None, reference_guidance=reference_guidance,
+                               max_decisions=reference_meta.get("max_decisions"),
                                solve_ms=job.solve_ms, threads=job.threads, seed=job.solver_seed,
                                max_written=max(4, 2 * job.lines), max_rollouts=job.max_rollouts)  # fmt: skip
         run = run_solver(
             request, Workdir.create(job.workdir), scratch / "out", binary=job.binary, timeout=job.timeout_s
         )
         demo.solver = _solver_meta(run, request)
+        if reference_meta:
+            demo.solver["reference"] = reference_meta
+            (scratch / "command.json").write_text(
+                json.dumps([str(job.binary or find_solver()), *run.args], indent=2) + "\n"
+            )
         if (run.returncode != 0 and (not run.solutions or job.ordinary_shuffle)) or (
             job.ordinary_shuffle and run.timed_out
         ):

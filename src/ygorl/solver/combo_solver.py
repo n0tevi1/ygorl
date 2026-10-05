@@ -129,8 +129,11 @@ class SolveRequest:
     approaches: tuple[Path, ...] = ()  # continuation roots; caller must validate their start identity
     finisher_ms: int | None = None
     no_reference: bool = False  # exact-start goal-only mode; no reference repertoire or capture
+    reference_guidance: bool = False  # retain the template's semantic plan at an exact start
 
     def args(self, workdir: Workdir, outdir: Path) -> list[str]:
+        if self.reference_guidance and (self.start is None or self.no_reference):
+            raise ValueError("reference guidance requires an exact start and a reference")
         if self.start is not None and (self.fire is not None or self.deck is not None or self.hand):
             raise ValueError("an exact replay start cannot also use a synthetic deck/hand or fire mode")
         if self.approaches and self.start is None:
@@ -143,7 +146,11 @@ class SolveRequest:
         if self.start is not None:
             if not self.targets:
                 raise ValueError("an exact replay start needs at least one target card")
-            out += ["--start", str(self.start), "--no-ref" if self.no_reference else "--no-plan"]
+            out += ["--start", str(self.start)]
+            if self.no_reference:
+                out += ["--no-ref"]
+            elif not self.reference_guidance:
+                out += ["--no-plan"]
             for t in self.targets:
                 out += ["--target", t.to_arg()]
         elif self.fire is not None:

@@ -491,6 +491,11 @@ def test_exact_start_search_preserves_mode_and_budget(tmp_path):
     assert args[args.index("--max-decisions") + 1] == "692"
     goal_only = replace(req, no_reference=True).args(wd, tmp_path)
     assert "--no-ref" in goal_only and "--no-plan" not in goal_only
+    guided = replace(req, reference_guidance=True).args(wd, tmp_path)
+    assert guided == [a for a in args if a != "--no-plan"]
+    for changed in ({"no_reference": True}, {"start": None, "approaches": ()}):
+        with pytest.raises(ValueError, match="reference guidance"):
+            replace(req, reference_guidance=True, **changed).args(wd, tmp_path)
     for changed in (
         {"deck": Path("d.ydk")},
         {"hand": (1,)},
@@ -567,3 +572,46 @@ def test_collect_rejects_candidate_of_another_start(db, tmp_path):
     run = SolverRun([], 0, 0, "", solutions=[SolutionFile(path, 0, 0, 0, False)])
     _collect(demo, run, 1, db, None, expected)
     assert not demo.lines and "start identity mismatch" in demo.rejected[0]["error"]
+
+
+def test_complete_reference_rejects_mislabeled_or_incomplete_inputs(db, tmp_path):
+    from copy import deepcopy
+
+    from ygorl.data import load_environment
+    from ygorl.solver.batch import _validate_reference
+
+    env = load_environment("md-2026-09")
+    deck = next(m.deck for m in env.meta_decks if m.deck.name == "lunalight")
+    path = make_template(tmp_path / "reference.yrpX", deck, 1, DuelConfig.from_environment(env), db)
+    yrp = load_yrp(path)
+    demo = Demonstration.start_from(
+        yrp, deck=deck, hand=[], hand_index=0, hand_seed=1, variant="plain", targets=[], environment=env
+    )
+    demo.lines = [convert_line(yrp, [], cards=db)]
+    demo.status = "solved"
+    _validate_reference(demo, deck, [], env, db)
+    # A verified line ending the turn is still not a reference for a stronger target.
+    with pytest.raises(ValueError, match="requested final targets"):
+        _validate_reference(demo, deck, [TargetCard(54701958)], env, db)
+    for field in ("environment", "label", "start", "opponent", "rules", "status", "fire", "actions", "board"):
+        bad = deepcopy(demo)
+        if field == "environment":
+            bad.environment["fingerprint"] = "wrong"
+        elif field == "label":
+            bad.deck["main"][0] = 89631139
+        elif field == "start":
+            bad.start["decks"]["a"]["main"][0] = 89631139
+        elif field == "opponent":
+            bad.start["decks"]["b"]["main"][0] = 14558127
+        elif field == "rules":
+            bad.start["rule_flags"] |= C.DUEL_PSEUDO_SHUFFLE
+        elif field == "status":
+            bad.status = "unsolved"
+        elif field == "fire":
+            bad.fire = 14558127
+        elif field == "actions":
+            bad.lines[0].actions[0] = 999999
+        else:
+            bad.lines[0].board["turn"] = 1
+        with pytest.raises(ValueError):
+            _validate_reference(bad, deck, [], env, db)

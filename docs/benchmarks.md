@@ -1175,3 +1175,13 @@ always-activate −0.16pp [−2.12,+1.86]。五个 familywise 区间仍跨零，
 下一阶段先修 BC 数据链路（已由 #179 合并），再准备合法、环境绑定的示范集推进容量与长训练。
 [完整协议、逐种子结果、成本和恢复验证](spikes/collection-control-2026-10-04.md)。
 本地全量 presubmit 1,407 passed / 3 skipped，含实际 ROCm；GitHub 未生成 hosted checks。
+
+
+## Lunalight 完整参考线教师搜索（2026-10-05）
+
+实现 `b7a17ca`，`md-2026-09`，Ryzen AI MAX+ 395 CPU，4 workers × 1 thread，seed 2026100505。
+同 16 起手、30 秒/臂、深度 692、原最终目标：无 plan 5/16，有 plan 7/16；
+3 手仅引导成功、1 手仅对照成功，0 error/unverified/拒收。native 累计时间 398.16 / 366.86 秒。
+780 步独立回放、780/780 native 必要响应覆盖，零工作续跑哈希不变。
+未达到 guided ≥8/16 门槛，不扩大单参考线配方；未训练 policy，不代表对局胜率。
+[完整协议、工件及限制](spikes/lunalight-guidance-2026-10-05.md)。
