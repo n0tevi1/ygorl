@@ -21,5 +21,6 @@ Trainer新truncations.jsonl记录非error截断，原errors.jsonl补足相同spe
 - 原生非法动作报error时保留尝试的索引；不健康win仍保留原reason及诊断。
 - 原engine error及真实Lua错误回归保持通过，登记/checkpoint契约不变。
 
-全量测试在整合当前main后执行；证据根目录`out/research/training-truncation-traces-2026-10-05/`。
+整合main（含BF16修复）后，真实ROCm全量 **1492 passed，3 skipped，525.83s**，测试源码1a43104；
+3个skip为1个snapshot选项与2个显式网络测试。validation.json封存日志与历史上限证据；证据根目录`out/research/training-truncation-traces-2026-10-05/`。
 当前四臂producer源码和native模块保持冻结，不在运行途中加日志或改变采样。未来长训练使用该诊断。
