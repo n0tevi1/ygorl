@@ -241,6 +241,24 @@ CPU checkpoint不调用CUDA RNG API、不新增GPU初始化副作用。旧checkp
 测试需在真实GPU训练/保存/载入后比较下一次randperm、CPU随机数与collector抽样，而不只比权重与更新号。
 进行中的引擎对局仍重新开局，默认GPU算子也可能存在数值波动；恢复随机流不等于整段训练轨迹逐位复现。
 
+### 训练截断的可重放诊断（2026-10-05）
+
+四臂LR控制中128×2高LR出现1/1,691场decision_limit，健康字段为零但只有简要终局记录。
+对局跨更新改变策略，仅保存seed和最近checkpoint不足以精确重放；raw engine responses也不包含未提交的host选择。
+该历史截断原因仍未明，不声称可从缺失日志中还原。
+
+EncodedVecEnv新增默认关闭的动作记录选项，Trainer启用：按env slot记录每次显式step的action index，
+跨collect/update保留，直到终局；记录skip_forced以便在相同native路径自动重放被跳过的强制选择。
+只在错误/上限结果中导出完整动作序列，正常终局丢弃buffer且结果格式不变；reset必须开始新序列。
+不保存整段observations或模型张量，不修改native引擎、合法动作、采样或奖励。
+
+Trainer将非error截断追加到truncations.jsonl；原errors.jsonl保留并补充同样的重放字段。
+健康字段异常即使reason后来为win也必须保存诊断，保留其原始reason，不把它伪装成干净胜局。
+记录完整GameSpec（含实际牌组/先手/seed/rules/limits/player配置）、环境stamp、skip_forced、终局原因、
+健康字段、原始responses和action indices。原生动作重放需匹配引擎/数据库/脚本版本，不能只依赖模型路径。
+真实跨更新小上限对局必须用记录的spec+indices在新native env复现终局、决策数和逐response。
+记录开关的同seed对局须结果相同，正常局不导出trace，槽位复用不能串局。
+
 ### 混合精度作用域（2026-10-05修复）
 
 `bf16=True`时，collector与整个PPOLearner.update都必须进入既有bfloat16 autocast作用域；

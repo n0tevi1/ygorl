@@ -252,7 +252,14 @@ survival teacher 与先后手分网的 400-update 训练和旧 panel 已结束�
 [32更新双配置PPO诊断](spikes/registered-ppo-pilot-2026-10-05.md)已完成：4,108训练终局与1,440评估局均健康，
 Greedy曲线64×1为37.5→32.5→47.5%，128×2为15→47.5→35%，单seed小面板不代表长期收益。
 普通Arena健康与异常best晋级已由PR196修复；PR197修复KL已越界仍多走Adam；PR199修复GPU续训随机流。
-最新完整实际ROCm1,487 passed/3 skipped。固定rollout[根因诊断](spikes/ppo-first-step-2026-10-05.md)显示
+最新完整实际ROCm1,492 passed/3 skipped。固定rollout[根因诊断](spikes/ppo-first-step-2026-10-05.md)显示
 首步仍过冲、fresh critic通过advantage有间接作用；不能把估值相关性当实际动作信号比例。
 [两容量×两学习率四臂控制](spikes/ppo-lr-control-2026-10-05.md)运行中，全部固定节点完成后才决定下一配方；
 #92两万更新尚未完成。当前运行明确FP32，另行修复的[BF16作用域回归](spikes/ppo-autocast-2026-10-05.md)不改变这些producer。
+
+### 2026-10-05：保留跨更新训练截断轨迹
+
+[训练截断诊断](spikes/training-truncation-traces-2026-10-05.md)补齐完整GameSpec、显式动作、responses、
+skip_forced与健康字段，支持跨rollout精确回放；普通健康终局不落trace。
+四臂128×2高LR的历史decision_limit仍因原日志缺失而无法定位，不把新日志能力当作根因已解。
+整合BF16修复后真实ROCm全量1492 passed、3 skipped（525.83s）；源码1a43104，证据已封存。

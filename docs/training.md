@@ -261,6 +261,12 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
 **卡死保护**：`RolloutCollector` 带超时等事件；连续 `TrainConfig.stall_timeout`（默认 900 秒）没有任何环境产生事件、而仍有环境欠着行时，
 抛 `RuntimeError`，列出沉默最久的环境及其对局（种子、先攻方、牌组），而不是永远等下去（环境 i 固定在第 i % T 个线程上，一个卡死的对局会连带卡住同线程的环境）。
 `Trainer.train` 先存 `checkpoints/latest.pt` 再抛出 `RolloutStalled`；卡住的工作线程让环境池无法正常析构（析构要等所有线程结束），所以 `tools/train_ppo.py` 捕获后用 `os._exit(3)` 结束进程（直接调用 `Trainer` 的代码也应如此），之后可 `--resume` 续训。引擎错误截断的每一局追加到运行目录的 `errors.jsonl`（种子、先攻方、牌组、错误、十六进制应答日志），可据此复现。
+
+训练限时/决策上限另存`truncations.jsonl`，健康异常仍存`errors.jsonl`（即使最终reason为win）。
+两者包含完整`spec`、环境stamp、`skip_forced`和跨更新累计的`action_indices`，以及原始response/健康/终局字段。
+动作索引需经相同版本的EncodedVecEnv、相同skip_forced设置重放；只用seed与最近checkpoint不能重现局中变化的策略。
+记录不改变采样、奖励或终局计数。正常终局不导出完整trace；独立EncodedVecEnv默认关闭记录，Trainer启用。
+旧来源未收集动作时该字段为null，不伪装为可复现的空序列；运行中的旧实验不会被补写不存在的动作日志。
 已知限制：若每一局都在第一个决策之前出错，收集器会不停开新局而凑不满一列（事件一直有，看门狗不触发）；只在引擎整体损坏时出现。
 
 ### 8.2 更新（`PPOLearner`）
