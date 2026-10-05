@@ -498,3 +498,23 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 完整游戏与常规固定段的近似等行数对照见
 [采样实验](spikes/collection-control-2026-10-04.md)；对照同时包含跨更新续局、事件顺序和截断行处理的差异，
 不能将结果单独归因于段末自举。
+
+### 独立矩阵消费者（#90）
+
+先用 `ygorl strength` 创建固定基线矩阵，再训练时传
+`--register-every 250 --register-matrix /absolute/path/matrix.json`。默认登记关闭；
+需要完全异步评估时同时设 `--eval-every 0`。登记保存在 RUN/registrations，
+checkpoint 永不覆盖；续训更新号延续，分叉历史更新应使用新 RUN。
+
+另一个进程执行：
+
+```bash
+uv run --no-sync python tools/consume_registrations.py out/train/run --matrix /absolute/path/matrix.json --env md-2026-09 --workers 2
+```
+
+未传 `--decks` 时使用环境 meta 牌组（顺序/内容必须与矩阵一致）；可显式传评估牌组路径。
+每次执行消费当前快照，重复执行安全；只写完整 checkpoint 的矩阵结果，异常中断可重跑。
+输出默认在矩阵旁的 `<matrix-stem>.strength.json`。曲线列出累计活动 wall 秒数和训练秒数，
+对初始固定 agent 的胜率及当前矩阵名次。消费前应冻结所有基线 checkpoint 的路径/内容；
+原始基线清单写在 `<matrix>.registrations.json`。多个消费者通过锁互斥，勿同时用普通
+`ygorl strength` 改写同一目标。错误矩阵不发布；已有矩阵计分仍须配合逐局健康审计。

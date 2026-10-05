@@ -173,3 +173,25 @@ Python 自动补的被动收尾只是验证工具，不能默认作为专家标�
 无 winner，原文通过 HostDuel/HostPool 的 script_errors 传出；rollout 将其截断且不给胜负奖励。
 完整游戏记录保留脚本错误、重试与未知消息计数，历史缺失字段不等于零。
 详见 [原生环境日志调查](../spikes/native-health-2026-10-05.md)。
+
+### 训练检查点异步登记（#90，2026-10-05）
+
+训练配置增加 `register_every=0` 与 `register_matrix=None`，默认关闭。启用时每 N 次更新在
+运行目录 `registrations/` 写独立、不可覆盖的 PPO checkpoint，再原子发布一个 JSON 登记记录；
+记录包含 run UUID、update、训练行数、累计训练秒数、累计活动 wall 秒数、环境戳、目标矩阵绝对路径、
+checkpoint 绝对路径与 SHA-256。保留完整 PPO 格式以兼容外部冻结卡特征表和现有策略加载器。
+训练只等待本地序列化，不进行矩阵对局；已有同步 eval 由 `eval_every` 独立控制。
+
+独立工具 `tools/consume_registrations.py RUN... --matrix PATH` 读取已发布记录，使用现有
+`extend_agent_matrix` 扩展**预先创建**的固定矩阵。环境和评估牌组由消费者显式提供，
+不将训练牌组自动当评估牌组。矩阵自己的环境、牌组顺序/内容、种子、配对、限制与已有
+checkpoint 内容校验全部保留。消费者持矩阵独占锁，逐 checkpoint 原子保存矩阵；重跑时
+同名、同 spec、同内容直接复用，不重复已完成单元格。崩溃前尚未保存的当前 checkpoint
+可能重打；不声明逐游戏恢复。拒绝 checkpoint 篡改、环境不一致及有引擎 error 的矩阵。
+
+每次消费后原子重建按 run/update 排序的 `strength.json`，含 update、rows、训练秒数、
+活动 wall 秒数、对登记前固定基线的胜率/区间/局数，以及**当前整个矩阵**的排名与总 agent 数；
+排名会随矩阵扩大变化，不将不同矩阵大小的名次当作绝对强度。消费者宕机后可从矩阵恢复
+曲线，不依赖额外已消费标记。活动 wall 不包括停机/离线评估，训练秒数只含 rollout/update。
+恢复旧 checkpoint 导致同一 run/update 冲突时失败，要求分叉到新运行目录，绝不覆盖历史策略。
+该链路沿用矩阵现有计分规则（含其上限处理），不能替代逐对局健康/截断审计。
