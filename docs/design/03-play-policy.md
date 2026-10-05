@@ -164,3 +164,8 @@ Python 自动补的被动收尾只是验证工具，不能默认作为专家标�
 不将异常时场面计为成功或静默当策略失败。策略步数上限触发后的合法host收尾保持单独的capped标记。
 契约与回归见 [自由展开健康检查](../spikes/opening-health-2026-10-05.md)。
 同一健康检查覆盖原生候选转换和存储教师验真；要求自动收尾的转换须到turn2，显式健康前缀转换保持可用。
+
+原生 RL 环境健康约束：HostDuel 不得丢弃 Lua error 日志后继续对局。出现错误时立即返回 reason=error、
+无 winner，原文通过 HostDuel/HostPool 的 script_errors 传出；rollout 将其截断且不给胜负奖励。
+完整游戏记录保留脚本错误、重试与未知消息计数，历史缺失字段不等于零。
+详见 [原生环境日志调查](../spikes/native-health-2026-10-05.md)。

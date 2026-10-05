@@ -1027,6 +1027,12 @@ const std::string* Tracker::act(size_t index) {
     return nullptr;
 }
 
+void Tracker::on_logs(const std::vector<LogEntry>& logs) {
+    for (const auto& log : logs)
+        if (log.type == OCG_LOG_TYPE_ERROR) script_errors_.push_back(log.text);
+    if (!script_errors_.empty()) stop("error", "Lua script error: " + script_errors_.front());
+}
+
 int Tracker::winner() const {
     if (reason_ == "turn_limit" || reason_ == "decision_limit" || reason_ == "error") {
         // the turn limit is a rule (the higher LP wins); the decision limit only stops a loop: a draw
@@ -1077,7 +1083,8 @@ void HostDuel::advance() {
             return;
         }
         std::string buf = core_->get_message();
-        core_->pop_logs();
+        tracker_->on_logs(core_->pop_logs());
+        if (tracker_->done()) return;
         tracker_->on_buffer(buf, status);
         if (events_) events_->feed(buf);
         if (tracker_->done() || tracker_->awaiting()) return;

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ygorl import _core
+from ygorl import _core, paths
 from ygorl.cards.cdb import CardDB, CardVocab
 from ygorl.cards.ydk import load_ydk
 from ygorl.engine.duel import Duel, DuelConfig, default_scripts, expand_seed
@@ -31,10 +31,11 @@ def specs(n, config=DuelConfig()):
             for i in range(n)]  # fmt: skip
 
 
-def sequential(db, vocab, spec):
+def sequential(db, vocab, spec, scripts=None):
     """HostDuel played alone with the same deterministic chooser."""
     duel = Duel(spec.seed, None, spec.deck_a, spec.deck_b, cards=db, first=spec.first, config=spec.config)
-    host = _core.HostDuel(db.to_core(), default_scripts(), [vocab.password(i) for i in range(2, len(vocab))])
+    host = _core.HostDuel(db.to_core(), scripts if scripts is not None else default_scripts(),
+                          [vocab.password(i) for i in range(2, len(vocab))])  # fmt: skip
     cfg = spec.config
     host.start(expand_seed(spec.seed), cfg.rule_flags, (8000, 5, 1), (8000, 5, 1),
                [(list(m), list(e)) for m, e in duel.loaded_decks()], cfg.max_turns, cfg.max_decisions)  # fmt: skip
@@ -75,6 +76,42 @@ def test_limits_apply(db, vocab):
     games = specs(3, DuelConfig(max_decisions=12))
     for r in play_pool(db, vocab, games, num_envs=3, threads=2):
         assert r["reason"] == "decision_limit" and r["decisions"] == 12
+
+
+@pytest.mark.parametrize("pooled", [False, True])
+@pytest.mark.parametrize("mode", ["initial", "runtime", "debug"])
+def test_native_lua_health_is_visible_and_errors_stop_the_game(db, vocab, pooled, mode):
+    base = default_scripts()
+    body = {
+        "initial": 'error("native health regression")',
+        "debug": 'Debug.Message("native health regression")',
+        "runtime": """local e=Effect.CreateEffect(c)
+            e:SetType(EFFECT_TYPE_FIELD+EFFECT_TYPE_CONTINUOUS)
+            e:SetCode(EVENT_PHASE_START+PHASE_DRAW)
+            e:SetOperation(function() if Duel.GetTurnCount()==2 then error("native health regression") end end)
+            Duel.RegisterEffect(e,0)""",
+    }[mode]
+    suffix = (
+        f"\nlocal old_initial_effect=s.initial_effect\nfunction s.initial_effect(c) old_initial_effect(c) {body} end\n"
+    )
+    scripts = _core.ScriptDirectory([str(p) for p in paths.script_directories()],
+                                   {"c14558127.lua": base.read("c14558127.lua") + suffix.encode(),
+                                    **{n: base.read(n) for n in ("proc_fusion.lua", "proc_synchro.lua")}})  # fmt: skip
+    spec = GameSpec(0, DECKS["branded_despia"], DECKS["branded_despia"])
+    if pooled:
+        env = EncodedVecEnv(1, 1, cards=db, vocab=vocab, scripts=scripts)
+        (result,) = env.play([spec], chooser)
+    else:
+        result = sequential(db, vocab, spec, scripts)
+    assert result["retries"] == result["unknown_messages"] == 0
+    if mode == "debug":
+        assert not result["script_errors"] and not result["error"]
+        assert key(result) == key(sequential(db, vocab, spec))
+    else:
+        assert result["reason"] == "error" and result["winner"] is None
+        assert result["script_errors"] and all("native health regression" in e for e in result["script_errors"])
+        assert "native health regression" in result["error"]
+        assert (result["decisions"] == 0) == (mode == "initial")
 
 
 def test_observations_have_fixed_shapes(db, vocab):

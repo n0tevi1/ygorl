@@ -220,6 +220,7 @@ def test_log_games_writes_one_record_per_finished_game(tmp_path):
         assert g["evolved"] is None or g["decks"][g["evolved"]] == "e1"
         assert (g["opponent"] is None) == (g["learner"] is None)
         assert g["turns"] >= 0 and g["reason"] and g["environment"] is None
+        assert g["retries"] == g["unknown_messages"] == 0 and g["script_errors"] == [] and g["error"] == ""
     assert any(g["evolved"] is not None for g in games)
     quiet = Trainer(small_cfg(), tmp_path / "run2", log=None)  # off by default
     quiet.train(max_updates=1)
