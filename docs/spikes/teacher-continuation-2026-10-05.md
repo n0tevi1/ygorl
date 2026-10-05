@@ -52,3 +52,33 @@ never become final-target demonstrations. Native logs, commands and replay
 inputs are retained for auditing; the result is ordinary `Demonstration` JSON.
 
 Results: pending.
+
+
+## First paired result and follow-up protocol
+
+At generation commit `cd13d26`, both arms solve exactly the same hands:
+Lunalight **1/8**, Maliss **2/2**, Tearlaments **4/4**, with zero error/unverified
+records and zero rejected candidates. Supplying the current intermediate prefix
+provides no observed coverage gain. All six previously failed shuffle branches
+are now solved to their original targets in ordinary duels, including in the
+from-start arm. These are development recoveries, not a strength evaluation.
+The Lunalight intermediate-prefix hypothesis has not passed its coverage gate.
+
+The native source accepts `--no-ref --start`, even though its README's flag
+table emphasizes `--deck`. This permits ordinary-shuffle generation directly
+from an empty recorded opening, without any solved source line or reference
+repertoire. Add this as opt-in `solve_openings.py --ordinary-shuffle --no-fire`.
+Preserve the exact start even on unsolved records; otherwise the existing BC
+opening evaluator reconstructs those hands with pseudo-shuffle and changes the
+rules for just the unsuccessful cases. Fix that before evaluating this data.
+
+**Independent development check, specified before running:** Maliss and
+Tearlaments, 16 hands each (indices 0–15), base and solver seed `2026100504`,
+30,000 ms, one thread, four workers, one line, 60 s timeout, no fire. Use the
+original target cards, ordinary shuffling, no reference, and the solver's default
+finisher split. This is a new recipe, not an extension of the preceding paired
+comparison. Pass the narrow two-deck coverage check only with >=8/16 solved in
+each deck, zero engine/replay failures, exact candidate-start identity and
+ordinary flags throughout. Audit all raw results and the BC encoding path.
+Do not claim it satisfies the still-failing 20-deck gate or generalizes to all
+random shuffles. Seeds are for development only; formal held-out remains unused.

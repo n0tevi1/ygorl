@@ -24,7 +24,7 @@ from ygorl.data.environment import Environment
 from ygorl.engine.duel import DuelConfig, shuffle_deck
 from ygorl.engine.replay import Replay, YrpError, load_yrp
 from ygorl.solver.combo_solver import SolveRequest, SolverError, SolverRun, Workdir, run_solver, solver_version
-from ygorl.solver.demo import DemoError, Demonstration, convert_line, read_jsonl
+from ygorl.solver.demo import DemoError, Demonstration, convert_line, read_jsonl, require_same_start
 from ygorl.solver.targets import parse_targets
 
 # The template's opponent: 40 copies of a vanilla monster (Blue-Eyes White Dragon), so it never has an
@@ -91,6 +91,7 @@ class HandJob:
     env: str | None = None  # environment directory or version
     timeout_s: float | None = None
     keep_files: bool = False
+    ordinary_shuffle: bool = False
 
 
 def _config(env: Environment | None) -> DuelConfig:
@@ -130,7 +131,9 @@ def _solver_meta(run: SolverRun, request: SolveRequest) -> dict:
     return meta
 
 
-def _collect(demo: Demonstration, run: SolverRun, keep: int, cards, scripts) -> None:
+def _collect(
+    demo: Demonstration, run: SolverRun, keep: int, cards, scripts, expected_start: Replay | None = None
+) -> None:
     """Convert and verify the solver's lines into ``demo`` (best first, distinct response lists)."""
     seen: set[tuple[bytes, ...]] = set()
     targets = demo.targets
@@ -139,10 +142,18 @@ def _collect(demo: Demonstration, run: SolverRun, keep: int, cards, scripts) -> 
             break
         try:
             yrp = load_yrp(sol.path)
+            if expected_start is not None:
+                require_same_start(expected_start, Replay.from_yrp(yrp))
             if demo.start is None:
                 demo.set_start(yrp)
             line = convert_line(yrp, targets, cards=cards, scripts=scripts)
-        except (DemoError, YrpError) as exc:
+            if expected_start is not None:
+                if line.board["turn"] != 2:
+                    raise DemoError("ordinary opening must finish at the start of turn 2")
+                replay = replace(expected_start, responses=list(line.responses))
+                if replay.play(**_engine_kwargs(cards, scripts)).reason == "error":
+                    raise DemoError("ordinary opening replay ended with an engine error")
+        except (DemoError, YrpError, ValueError) as exc:
             demo.rejected.append({"source": sol.path.name, "error": str(exc)})
             continue
         key = tuple(line.responses)
@@ -172,20 +183,31 @@ def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | Non
     start = time.monotonic()
     try:
         _check_targets(deck, targets, cards)
+        if job.ordinary_shuffle and job.fire:
+            raise ValueError("ordinary-shuffle generation currently supports plain openings only")
         deck_file = scratch / f"{deck.name}.ydk"
         deck_file.write_text(Deck(tuple(order), deck.extra, (), deck.name).to_ydk(), encoding="utf-8")
-        template = make_template(scratch / "template.yrpX", deck, job.hand_seed, config, cards, scripts)
-        request = SolveRequest(template=template, deck=deck_file, hand=tuple(hand), targets=tuple(targets),
+        template_deck = replace(deck, main=tuple(order)) if job.ordinary_shuffle else deck
+        template = make_template(scratch / "template.yrpX", template_deck, job.hand_seed, config, cards, scripts)
+        expected_start = None
+        if job.ordinary_shuffle:
+            demo.set_start(load_yrp(template))  # preserve the true start even when search finds no line
+            expected_start = Replay.from_yrp(template)
+        request = SolveRequest(template=template, deck=None if job.ordinary_shuffle else deck_file,
+                               hand=() if job.ordinary_shuffle else tuple(hand), targets=tuple(targets),
+                               start=template if job.ordinary_shuffle else None, no_reference=job.ordinary_shuffle,
                                solve_ms=job.solve_ms, threads=job.threads, seed=job.solver_seed,
                                max_written=max(4, 2 * job.lines), max_rollouts=job.max_rollouts)  # fmt: skip
         run = run_solver(
             request, Workdir.create(job.workdir), scratch / "out", binary=job.binary, timeout=job.timeout_s
         )
         demo.solver = _solver_meta(run, request)
-        if run.returncode != 0 and not run.solutions:
+        if (run.returncode != 0 and (not run.solutions or job.ordinary_shuffle)) or (
+            job.ordinary_shuffle and run.timed_out
+        ):
             demo.status, demo.error = "error", f"solver exited with {run.returncode}: {run.problems()}"
         else:
-            _collect(demo, run, job.lines, cards, scripts)
+            _collect(demo, run, job.lines, cards, scripts, expected_start)
             demo.status = "solved" if demo.lines else ("unverified" if run.solutions else "unsolved")
             if demo.status == "unverified":
                 demo.error = f"none of the {len(run.solutions)} solver lines survived the fresh replay"

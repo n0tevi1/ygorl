@@ -451,3 +451,20 @@ def test_train_bc_checks_bound_demo_revision_and_legality(demo, tmp_path, wrong_
         tool.main(["--train", str(path), "--env", str(env_path), "--out", str(tmp_path / "run"),
                    "--epochs", "1", "--openings", "none"])  # fmt: skip
     assert not (tmp_path / "run" / "policy.pt").exists()
+
+
+def test_unsolved_opening_retains_recorded_shuffle_and_start(demo):
+    from copy import deepcopy
+    from ygorl.engine import constants as C
+
+    start = deepcopy(demo.start)
+    start["rule_flags"] &= ~C.DUEL_PSEUDO_SHUFFLE
+    start["core_seed"] = [4, 3, 2, 1]
+    start["decks"]["a"]["main"].reverse()
+    unsolved = dataclasses.replace(demo, start=start, lines=[], status="unsolved")
+    rep = start_replay(unsolved)
+    assert rep.rule_flags == start["rule_flags"]
+    assert not rep.rule_flags & C.DUEL_PSEUDO_SHUFFLE
+    assert rep.core_seed == start["core_seed"] and not rep.responses
+    assert rep.decks["a"]["main"] == start["decks"]["a"]["main"]
+    assert demo.lines[0].responses  # no mutation of the solved source

@@ -8,36 +8,27 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 from ygorl.build.first_turn import match_action
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment
 from ygorl.engine import constants as C
-from ygorl.engine.duel import DuelSession, default_cards
+from ygorl.engine.duel import DuelConfig, DuelSession, default_cards
 from ygorl.engine.replay import Replay, load_yrp
 from ygorl.solver.batch import _check_targets, _solver_meta
 from ygorl.solver.combo_solver import SolveRequest, SolverError, Workdir, run_solver
-from ygorl.solver.demo import DemoError, Demonstration, convert_line, iter_steps, verify_line
+from ygorl.solver.demo import (
+    DemoError,
+    Demonstration,
+    convert_line,
+    iter_steps,
+    require_same_start,
+    start_identity,
+    verify_line,
+)
 from ygorl.solver.targets import parse_targets
-
-
-def start_identity(replay: Replay) -> dict:
-    """Engine start identity in load order; reject host-shuffled/seated wrappers."""
-    if replay.shuffle_decks or replay.first != 0:
-        raise ValueError("continuation replays must specify load order and engine seats")
-    return {
-        "core_seed": replay.core_seed,
-        "rule_flags": replay.rule_flags,
-        "player": replay.player,
-        "decks": {s: {k: list(replay.decks[s][k]) for k in ("main", "extra")} for s in "ab"},
-    }
-
-
-def require_same_start(expected: Replay, candidate: Replay) -> None:
-    if start_identity(expected) != start_identity(candidate):
-        raise ValueError("continuation start identity mismatch (seed, decks, rules or opponent)")
 
 
 @dataclass
@@ -104,6 +95,10 @@ def continue_opening(base: Demonstration, targets: list[str], scratch: Path, *, 
         raise ValueError("continuation source environment identity mismatch")
     if not base.lines or base.status != "solved":
         raise ValueError("continuation requires a solved source line")
+    cfg = DuelConfig.from_environment(env)
+    source = base.replay(0)
+    if source.rule_flags & ~C.DUEL_PSEUDO_SHUFFLE != cfg.rule_flags or source.player != asdict(cfg.player):
+        raise ValueError("continuation source rules differ from its environment")
     if lines < 1:
         raise ValueError("lines must be positive")
     cards = default_cards()

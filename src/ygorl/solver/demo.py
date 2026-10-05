@@ -156,6 +156,23 @@ def convert_line(yrp: YrpFile, targets: Sequence[TargetCard | str], *, responses
     return DemoLine(list(res.responses), actions, players, solver_part, solver_steps, board)
 
 
+def start_identity(replay: Replay) -> dict:
+    """Engine start identity in load order; reject host-shuffled/seated wrappers."""
+    if replay.shuffle_decks or replay.first != 0:
+        raise ValueError("continuation replays must specify load order and engine seats")
+    return {
+        "core_seed": replay.core_seed,
+        "rule_flags": replay.rule_flags,
+        "player": replay.player,
+        "decks": {s: {k: list(replay.decks[s][k]) for k in ("main", "extra")} for s in "ab"},
+    }
+
+
+def require_same_start(expected: Replay, candidate: Replay) -> None:
+    if start_identity(expected) != start_identity(candidate):
+        raise ValueError("continuation start identity mismatch (seed, decks, rules or opponent)")
+
+
 @dataclass
 class Demonstration:
     """One record of the demonstration set: a deck, an opening hand, a variant and its verified lines."""
@@ -201,8 +218,8 @@ class Demonstration:
         self.start = {"core_seed": rep.core_seed, "rule_flags": rep.rule_flags, "player": rep.player,
                       "decks": {s: {"main": rep.decks[s]["main"], "extra": rep.decks[s]["extra"]} for s in "ab"}}  # fmt: skip
 
-    def replay(self, line: int = 0) -> Replay:
-        """The line as a ygorl :class:`Replay` (load, play, fork, export to ``.yrpX``)."""
+    def replay(self, line: int | None = 0) -> Replay:
+        """The line as a Replay; ``None`` returns its exact start, even without a solved line."""
         if self.start is None:
             raise ValueError("this record has no start position (no line was solved)")
         s = self.start
@@ -211,7 +228,7 @@ class Demonstration:
             for side in "ab"
         }
         return Replay(seed=0, first=0, rule_flags=s["rule_flags"], player=dict(s["player"]), shuffle_decks=False,
-                      decks=decks, responses=list(self.lines[line].responses), environment=self.environment,
+                      decks=decks, responses=list(self.lines[line].responses) if line is not None else [], environment=self.environment,
                       engine=dict(self.engine), seed_words=list(s["core_seed"]))  # fmt: skip
 
     # -- storage ----------------------------------------------------------
