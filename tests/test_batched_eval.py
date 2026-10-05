@@ -85,3 +85,27 @@ def test_same_seeds_give_the_same_records_with_per_side_sampling(setup):
     moved, _ = play_policies(_env(3, cards, vocab), specs, net, other, sampling=kw["sampling"],
                              sample_seeds=[(a + 1, b + 1) for a, b in seeds])  # fmt: skip
     assert [r.first for r in moved] == [r.first for r in one] and moved != one
+
+
+def test_real_lua_error_survives_batched_result_conversion(setup):
+    from ygorl import _core, paths
+    from ygorl.engine.duel import default_scripts
+    from ygorl.env import GameSpec
+    from ygorl.eval.agent_matrix import score
+
+    cards, vocab, net, _ = setup
+    base = default_scripts()
+    suffix = b"""\nlocal old_initial_effect=s.initial_effect
+        function s.initial_effect(c)
+            old_initial_effect(c)
+            error("batched evaluation Lua regression")
+        end"""
+    scripts = _core.ScriptDirectory(
+        [str(p) for p in paths.script_directories()], {"c14558127.lua": base.read("c14558127.lua") + suffix}
+    )
+    deck = load_ydk(DECKS / "branded_despia.ydk")
+    env = EncodedVecEnv(1, 1, cards=cards, vocab=vocab, scripts=scripts, event_length=16)
+    records, _ = play_policies(env, [GameSpec(0, deck, deck)], net)
+    assert len(records) == 1 and records[0].winner is None
+    assert records[0].script_errors > 0 and "batched evaluation Lua regression" in records[0].error
+    assert score(records).errors == 1 and score(records).games == 0

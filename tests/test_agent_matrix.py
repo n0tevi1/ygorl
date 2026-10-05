@@ -231,3 +231,18 @@ def test_ranking_ignores_float_noise_outside_the_support(matrix):
                 win_rate=((0.5, 0.6, 0.9), (0.4, 0.5, 0.8), (0.1, 0.2, 0.5)))  # fmt: skip
     assert m.ranking() == ["a", "b", "r"]
     assert m.mean_win_rate()["b"] == pytest.approx(0.6)
+
+
+@pytest.mark.parametrize(
+    "health",
+    [
+        {"retries": 1},
+        {"unknown_messages": 1},
+        {"undecodable_messages": 1},
+        {"script_errors": 1},
+        {"error": "retained engine diagnostic"},
+    ],
+)
+def test_health_failure_cannot_count_as_a_win(health):
+    result = score([GameRecord(pair=0, first=0, seed=0, winner=0, reason="win", **health)])
+    assert result.errors == 1 and result.games == 0 and result.wins == 0

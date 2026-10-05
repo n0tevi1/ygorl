@@ -11,7 +11,8 @@ the same games. All cells share one worker pool.
 
 ``win_rate[i][j]`` is agent i's win rate against agent j; draws count half. Games that raised (``exception``) or
 that the host stopped as an error (``error``: engine loop, script budget) are not wins, losses or draws: they are
-counted in ``errors`` and left out of ``games`` and the win rate.
+counted in ``errors`` and left out of ``games`` and the win rate. The same applies to any retry, Lua error,
+unknown/undecodable message or nonempty error diagnostic, even if the recorded reason is a normal win.
 
 The meta game is the one of :mod:`ygorl.eval.matchup` (symmetric, zero-sum, payoff ``M - 0.5``): the Nash mixture
 and alpha-rank rank the agents without assuming strength is transitive (design C7: matrices, not a single Elo).
@@ -76,8 +77,13 @@ class CellResult:
 
 
 def score(records: Sequence[GameRecord]) -> CellResult:
-    """Count agent a's results; error games are counted apart."""
-    ok = [r for r in records if r.reason not in ERROR_REASONS]
+    """Count agent a's results; unhealthy games are errors even if the engine later reported a win."""
+    ok = [
+        r
+        for r in records
+        if r.reason not in ERROR_REASONS
+        and not (r.error or r.retries or r.script_errors or r.unknown_messages or r.undecodable_messages)
+    ]
     return CellResult(wins=sum(r.winner == 0 for r in ok), losses=sum(r.winner == 1 for r in ok),
                       draws=sum(r.winner is None for r in ok), errors=len(records) - len(ok))  # fmt: skip
 

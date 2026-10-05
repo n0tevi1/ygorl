@@ -97,6 +97,10 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
                                          turns=int(res.get("turns", 0)), decisions=int(res.get("decisions", 0)),
                                          win_reason=res.get("win_reason"),
                                          lp=(lp[spec.seat_of_deck(0)], lp[spec.seat_of_deck(1)]),
+                                         retries=int(res.get("retries", 0)),
+                                         unknown_messages=int(res.get("unknown_messages", 0)),
+                                         undecodable_messages=int(res.get("undecodable_messages", 0)),
+                                         script_errors=len(res.get("script_errors", [])),
                                          error=str(res.get("error", "")))  # fmt: skip
 
     def decide(ready: list[tuple[Game, EncodedEvent]]) -> list[int]:

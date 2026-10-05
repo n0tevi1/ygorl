@@ -144,6 +144,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--snapshot-min-win-rate", "snapshot_min_win_rate",
            "a due snapshot joins the pool only if the learner scored above this against the pool"),
         _f("--snapshot-min-games", "snapshot_min_games"),
+        _f("--register-every", "register_every", "publish an immutable checkpoint every N updates; 0 = off"),
+        _f("--register-matrix", "register_matrix", "target matrix for the independent consumer", path=True),
         _f("--checkpoint-every", "checkpoint_every"),
         _f("--eval-every", "eval_every"),
         _f("--eval-pairs", "eval_pairs", "paired seeds per deck pairing and baseline"),
