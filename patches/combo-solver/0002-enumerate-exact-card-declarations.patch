@@ -1,35 +1,47 @@
 --- a/enumerate.cpp
 +++ b/enumerate.cpp
-@@ -840,11 +840,39 @@
+@@ -840,11 +840,51 @@
  		return;
  	}
  
 +	case MSG_ANNOUNCE_CARD: {
-+		// A single exact-code filter has one possible answer, not a huge value
-+		// space. Leaving this prompt empty kills legal branches (e.g. Odion's
-+		// Labradorite Dragon declaration). Do not invent answers for other RPN
-+		// filters: they require the full opcode evaluator.
++		// Recognize the WHOLE finite whitelist: code ISCODE, then zero or
++		// more (code ISCODE OR) terms. Other RPN filters remain unsupported.
 +		r.Get<uint8_t>();
 +		const uint8_t count = r.Get<uint8_t>();
-+		if(count != 2 || len != 18 || !opt.db)
++		if(count < 2 || (count - 2) % 3 || len != 2u + 8u * count || !opt.db)
 +			return;
-+		const uint64_t code = r.Get<uint64_t>();
-+		const uint64_t opcode = r.Get<uint64_t>();
-+		if(!r.Ok() || code == 0 || code > UINT32_MAX || opcode != OPCODE_ISCODE)
-+			return;
-+		const CardRow* row = opt.db->Find(static_cast<uint32_t>(code));
-+		if(!row)
-+			return;
-+		// Match playerop.cpp's default alias/token exclusion and exceptions.
-+		if(code != 78734254 && code != 13857930 &&
-+		   (row->alias || (row->type & (TYPE_MONSTER | TYPE_TOKEN)) ==
-+		                  (TYPE_MONSTER | TYPE_TOKEN)))
-+			return;
-+		Choice& c = out.Emit();
-+		PutInt32(c.response, static_cast<int32_t>(code));
-+		c.card = static_cast<uint32_t>(code);
-+		c.edge = EdgeOf(message, {code});
-+		SetLabel(c, opt, "declare", code);
++		std::vector<uint32_t> declared;
++		for(uint32_t i = 0; i < count;) {
++			const uint64_t code = r.Get<uint64_t>();
++			const uint64_t opcode = r.Get<uint64_t>();
++			if(!r.Ok() || code == 0 || code > UINT32_MAX || opcode != OPCODE_ISCODE)
++				return;
++			i += 2;
++			if(i > 2) {
++				if(r.Get<uint64_t>() != OPCODE_OR || !r.Ok())
++					return;
++				++i;
++			}
++			declared.push_back(static_cast<uint32_t>(code));
++		}
++		std::sort(declared.begin(), declared.end());
++		declared.erase(std::unique(declared.begin(), declared.end()), declared.end());
++		for(uint32_t code : declared) {
++			const CardRow* row = opt.db->Find(code);
++			if(!row)
++				continue;
++			// Match playerop.cpp's default alias/token exclusion and exceptions.
++			if(code != 78734254 && code != 13857930 &&
++			   (row->alias || (row->type & (TYPE_MONSTER | TYPE_TOKEN)) ==
++			                  (TYPE_MONSTER | TYPE_TOKEN)))
++				continue;
++			Choice& c = out.Emit();
++			PutInt32(c.response, static_cast<int32_t>(code));
++			c.card = code;
++			c.edge = EdgeOf(message, {code});
++			SetLabel(c, opt, "declare", code);
++		}
 +		return;
 +	}
 +

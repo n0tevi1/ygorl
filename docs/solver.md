@@ -409,7 +409,8 @@ solver 前缀；若随机分支变化，则在首次语义不匹配前停止。�
 
 `tools/build_combo_solver.sh` 在 pinned upstream 的独立源码副本应用 `patches/combo-solver/`，补丁内容进入构建缓存身份。
 目标检查不再接受未结算连锁内的短暂场面；仍必须通过 host 结束回合验证。
-声明卡名枚举支持完整过滤器 `[password, OPCODE_ISCODE]`，按数据库核对默认 alias/token 排除规则；
+声明卡名枚举支持完整过滤器 `[password, OPCODE_ISCODE]` 及这些项通过 OR 左结合组成的有限列表，
+按数据库核对默认 alias/token 排除规则并保留列表全部合法密码；
 其它复杂表达式仍没有完整枚举，不能将因此未解出的起手称无解。原生 coverage 检查同样传入数据库。
 两个捕获的真实回放作为回归：旧二进制两项均失败，修复版全部 solver tests 36 passed。
 调查方法和限制见[未解出根因报告](spikes/solver-failure-causes-2026-10-05.md)。
