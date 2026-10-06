@@ -47,3 +47,17 @@ loss=.25×(Q_taken−z)²+.25×(V−z)²，使用全数据归一化的逆游戏�
 重复执行runner时先核验并跳过已完成阶段，可重做尚未执行的分析收尾；
 不自动覆盖半份采样/训练，不承诺恢复未结束游戏。父服务失败则整组子进程受控退出，最长8小时。
 分析输出成功后才标记complete；分析可独立幂等核验，避免仅凭陈旧heartbeat判断是否完成。
+
+## 运行前核验与启动记录
+
+协议提交`a252136`早于正式数据。实际ROCm GPU上，缓存与原网络Q/V输出误差均0，
+所有critic私有参数梯度最大绝对误差**2.98e−8**，actor无梯度；缓存等价预检通过。
+第一次预检发现研究入口的inference checkpoint loader将critic也冻结，已在研究driver显式解冻
+privileged encoder/critic，actor保持冻结；原错误日志和旧driver保留，不涉及产品源码改动或研究数据替换。
+成功预检绑定最终driver SHA，再初始化正式研究身份。
+
+服务`ygorl-terminal-critic-20261006.service`已启动，工作目录为`codex-lr-control-report` worktree，
+8小时上限、整组子进程管理、每阶段独立日志；`service-launch.txt`记录InvocationID/工作目录/进程身份。
+首16局正常、4,507行，正式阶段仍在采样，尚无拟合或泛化结论。
+`pipeline-status.json`表示当前阶段，采样进度在各split的`progress.json`；最终成功须同时有
+`analysis.json`、`validation.json`及complete状态。测试集结果不用于中途调整配方。
