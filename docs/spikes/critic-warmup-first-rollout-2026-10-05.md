@@ -56,3 +56,16 @@
 `seed-0.json/.pt`、`order-audit.json`及可复现driver，绑定研究身份、raw/checkpoint manifest和源码SHA。
 容量证据：`out/research/observation-capacity-audit-2026-10-05/`内
 `report.json`、`verify.py`、`validation.json`；独立复核全部16个raw batch的SHA。
+
+## 三seed补全（2026-10-06）
+
+| seed | cold/warm首批终局数 | cold/warm critic项std | cold/warm corr(full,reward) |
+|---|---:|---:|---:|
+| 0 | 4 / 5 | .29115 / .02668 | .0804 / .5103 |
+| 1 | 9 / 7 | .70252 / .03124 | .0376 / .5348 |
+| 2 | 3 / 3 | .30489 / .02623 | .0635 / .4099 |
+
+幅度变化在三个seed中均出现，但[完整强度对照](critic-warmup-control-2026-10-05.md)的warm−cold
+主终点仍未过预定门槛；机制变化不等于稳定胜率收益。首批终局数不能代表整段训练的稳态终局密度。
+旁路watcher只自动完成seed 1，进程随后不存在；seed 2已用原run.py处理现存rollout补齐，
+无新增对局/训练步。全部三份raw绑定、分解和driver已通过validation.json封存，并记录手动恢复。
