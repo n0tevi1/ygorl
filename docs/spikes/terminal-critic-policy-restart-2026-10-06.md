@@ -56,3 +56,29 @@ InvocationID `2365b9fa1c2e4ffe8580f0e081d0cfa3`，工作目录`codex-fusion-repe
 已验证首个seed0/cold实际更新：16,384行、4个正常训练终局、0截断/错误，约621 rows/s（单次更新，非吞吐对照）。
 训练producer与评估consumer同时运行，initial/Greedy原始评估记录已开始写入，无STOP。
 尚无新三seed棋力结论；运行快照不等于后续持续健康，最新状态须检查service和`pipeline-status.json`。
+
+## 独立持续监控（15:11 PDT启用）
+
+监控服务`ygorl-terminal-policy-monitor-20261006.service`与训练服务分开，
+InvocationID `a8eac145c75549948bd4c07f6a390abf`；30秒检查一次，8小时上限，独占写锁。
+只读取已登记研究，记录独立目录`out/research/terminal-critic-policy-monitor-2026-10-06/`，
+不改训练参数、driver、STOP或原始数据，也不自动替换失败游戏。
+
+- 核对研究身份、四个driver哈希、实际systemd调用、训练累计量和新完成cell的SHA/逐局胜负及健康字段。
+- 心跳超过180秒、训练/原始评估10分钟无进展、服务异常、STOP或健康门槛失败时标记需要处理。
+  这些是监控警报，不能自行把停滞诊断成引擎死循环，也不会因此改写研究或杀进程。
+- 每10分钟，以及完成/异常状态转换时，更新#61/#83/#92中由标记限定的监控段落，保留其余正文。
+  GitHub写入失败单独落日志并重试；网络失败不改变实验状态。
+- 完成后先核对39个评估cell/9,984局、配对输入、阶段与模型SHA及实际首批rollout，再用抽样次数权重
+  独立重算20,000次交叉及条件bootstrap、三个seed差和固定update32门槛。通过后才同步完整结论。
+
+首次真实快照：**173/192更新、11,035个已计数训练终局、0截断/错误，6,400/9,984完整评估局**；
+25个cell原始文件核验通过，训练和评估服务正常，三个issues实际发布已确认。
+这仍是阶段记录，最终强度结论须等待剩余数据与独立审计。
+
+监控driver lint/format通过；故障检查在临时元数据副本上验证心跳过期、STOP、服务失败和身份篡改检测。
+审计器用上一轮封存的9,984局与六个PPO阶段复核通过：仅在临时fixture补齐旧schema的npz哈希、
+从阶段列表去掉三个pretrain记录，原始研究文件未改，适配来源和SHA单独记录。
+监控身份SHA `57c07498692d9e0210cf8eb83ce3382cfaad8201def2ac160c6ef53e8c6c6c7b`，
+`latest.json`为最近检查，`events.jsonl`保留进度/警报，`publication.json`记录实际issues更新时间；
+完成须有`completion-audit.json`和`finished.json`，不能仅凭旧的running快照判断。
