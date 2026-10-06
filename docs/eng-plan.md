@@ -287,6 +287,11 @@ skip_forced与健康字段，支持跨rollout精确回放；普通健康终局�
 update32 warm−cold **+1.61pp [−2.39,+5.73]**，seed差+4.82/−1.56/+1.56pp，未过加长预算条件。
 warm−initial **+4.21pp [+1.30,+7.16]**，表明本面板有学习迹象，不能据此断言预热优于cold。
 下一优先级为固定actor的实际终局监督critic诊断。#92两万更新与顶尖对局目标继续开放。
+[终局监督critic拟合诊断](spikes/terminal-critic-fit-2026-10-06.md)已事前登记并启动：
+896新完整游戏（train512/validation128/test256）、3个critic初始化各32epochs，actor/共享主干冻结，
+真实终局标签、逐游戏等权，与train拟合后冻结的常数基线比较；区分训练拟合和新发牌泛化。
+缓存特征的真实GPU输出/梯度等价预检通过，独立systemd用户服务托管顺序采样/拟合/分析，
+保留原子阶段报告并支持完成阶段核验与分析收尾恢复。当前尚无该研究的泛化或棋力结论。
 
 [冻结数据的advantage诊断](spikes/critic-warmup-mechanism-2026-10-05.md)显示critic项std由.31135降至.03273，
 full与reward trace相关性.249→.875；这是幅度和相关性的变化，不是信号占比或棋力证据。
