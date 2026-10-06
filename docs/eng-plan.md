@@ -284,3 +284,8 @@ skip_forced与健康字段，支持跨rollout精确回放；普通健康终局�
 但真实EV仅.0131，且MSE不及在测试标签上拟合的乐观常数基线.9811；不能由此宣称可靠critic或棋力提升。
 下一步是事前登记的[三种子critic权重预热策略对照](spikes/critic-warmup-control-2026-10-05.md)：
 新seed、重置Adam/RNG/对手池、每臂32 PPO更新、独立9,984局固定对手评估；预热额外预算单独披露。
+
+[冻结数据的advantage诊断](spikes/critic-warmup-mechanism-2026-10-05.md)显示critic项std由.31135降至.03273，
+full与reward trace相关性.249→.875；这是幅度和相关性的变化，不是信号占比或棋力证据。
+79.32%的行距终局>=64个learner rows，直接reward trace已近零，仍依赖critic项；长程credit assignment
+和取消行为被强化的具体因果链继续开放，不因全局相关性变好而宣布解决。三种子策略对照仍按原协议运行。
