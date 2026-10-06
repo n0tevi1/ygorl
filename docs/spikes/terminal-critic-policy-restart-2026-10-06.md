@@ -37,3 +37,10 @@ warm额外使用共享512游戏/162,019行的一轮监督训练，80 Adam步/cri
 独立systemd用户服务、8小时上限、whole-cgroup管理、4-worker单线程CPU评估与单GPU训练并行。
 原子阶段记录和SHA核验，可恢复完成阶段/分析收尾；不覆盖半份训练或评估。
 正式数据只能在协议提交、完整测试通过、修复合并及GPU预检通过之后产生。
+
+## 运行前核验
+
+协议/修复提交`ceda223`早于新数据；完整ROCm检查1,511 passed/3 skipped。
+三个真实GPU epoch0/1配对再次验证actor/reference actor与初始RNG/schedule相同、Adam/pool/计数为空；
+历史非研究Arena游戏正常完成。4个研究driver lint/format/compile通过，预检SHA已保存。
+截至本记录尚未生成新训练行，等待修复合并后冻结研究身份并启动独立服务。

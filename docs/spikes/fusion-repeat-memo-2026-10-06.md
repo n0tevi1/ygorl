@@ -39,6 +39,13 @@ Dracotail Arthalion（33760966）的“1个龙尾怪兽＋1个以上手牌怪兽
 `baseline-prefix.json`、`count_bound-prefix.json`保存原失败与否定原型；
 `complete-validation.json`、`complete-fixture.json`为完整参照；
 `random-parity-plan.json`、`random-parity.json`、`random-traces/`为新回归面板；
-`presubmit.log`记录完整检查。
+`presubmit-clean.log`记录最终完整检查。
+
+完整ROCm presubmit **1,511 passed / 3 skipped，302.51s**，产品源码`ceda223`。
+首次完整运行仅因新worktree缺少固定constants头文件失败，且禁限表目录为空导致漏掉9个参数用例；
+已补齐并逐字节核验固定子模块文件后重跑完整套件，原失败日志保留。3个最终skip为既有snapshot配置项和2个显式网络测试。
+有效融合脚本SHA `ce878987fd1f65afc3441d4cb080f3790a1c76eb1a799927c277e3045ee7baea`。
+额外独立插桩确认失败候选1498449使已选组达到9张，目标33760966、可重复素材上限99；
+修复完成该轮候选筛选，最后候选的2,260次状态访问中1,757次复用了失败记录。不同候选不直接作配对计时比较。
 
 修复通过完整检查并合并后，以新研究身份和新seed从六臂起点重跑PPO对照，旧研究继续标记健康停止。
