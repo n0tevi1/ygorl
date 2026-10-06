@@ -45,3 +45,16 @@ bootstrap seed **2026100550**、20,000次，训练seed（3）和deal-cluster（6
 独立systemd用户服务最多8小时，GPU producer和4-worker单线程CPU consumer并行；
 whole-cgroup管理，阶段/heartbeat日志、可恢复分析收尾，completed只在原始证据核验与分析完成后写入。
 研究根`out/research/terminal-critic-policy-2026-10-06/`。
+
+## 运行前核验与启动
+
+协议提交`3c094ab`早于数据；GPU预检核对全部3个实际epoch0/1配对：actor/reference actor一致，
+CPU/GPU/collector RNG和schedule一致、Adam/pool为空，critic私有权重确实不同，零训练行。
+同一Arena接口的历史非研究面板对局正常完成。首次研究入口把critic配置误当作config字典字段，
+预检捕获后改用TrainConfig的派生配置解析并通过；原错误/旧driver留存，正式数据尚未产生时完成修正。
+
+研究身份SHA `304292e15a85f9b71ffc201e9d26eca6eea903d69214fea9e79ea050f96dbcdc`，
+四个driver及全部源模型已冻结。`ygorl-terminal-policy-20261006.service`托管，
+InvocationID `53719e6ee8c74880a28d6533347855ea`，8小时上限；工作目录为`codex-lr-control-report`。
+首个cold PPO更新正常完成（6个终局、0截断），CPU评估消费者同步运行。
+当前尚无本轮胜率结论；`pipeline-status.json`和逐阶段日志记录进度。

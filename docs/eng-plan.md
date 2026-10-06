@@ -297,8 +297,10 @@ Q训练MSE均值.1191，test却1.2276，差于train常数.9848（差+.2428，[+.
 验证集在三个seed均以epoch1最好；已登记[全新256局早期critic确认](spikes/terminal-critic-confirm-2026-10-06.md)，
 公共epoch1在新数据上检验，旧test不补测或改终点。独立256健康局确认已通过：
 early Q MSE.897976，冻结常数.992278，差−.094302 [−.174524,−.014720]，三个seed均优于常数。
-这是固定BC行为下的终局预测改善，未证明棋力；已登记[早期终局critic的三seed PPO对照](spikes/terminal-critic-policy-2026-10-06.md)，
+这是固定BC行为下的终局预测改善，未证明棋力；已登记并启动[早期终局critic的三seed PPO对照](spikes/terminal-critic-policy-2026-10-06.md)，
 仅转移epoch0/1模型权重、六臂各32更新、新9,984局面板，以固定主终点确认实际策略收益。
+全部三个实际GPU转移配对/空Adam/RNG合同及历史非研究Arena预检通过，独立用户服务托管训练/评估/分析；
+当前首条cold已正常更新，无该研究胜率结论。原lambda预热对照的负主终点继续保留。
 
 [冻结数据的advantage诊断](spikes/critic-warmup-mechanism-2026-10-05.md)显示critic项std由.31135降至.03273，
 full与reward trace相关性.249→.875；这是幅度和相关性的变化，不是信号占比或棋力证据。
