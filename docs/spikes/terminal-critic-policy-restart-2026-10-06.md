@@ -44,3 +44,15 @@ warm额外使用共享512游戏/162,019行的一轮监督训练，80 Adam步/cri
 三个真实GPU epoch0/1配对再次验证actor/reference actor与初始RNG/schedule相同、Adam/pool/计数为空；
 历史非研究Arena游戏正常完成。4个研究driver lint/format/compile通过，预检SHA已保存。
 截至本记录尚未生成新训练行，等待修复合并后冻结研究身份并启动独立服务。
+
+## 正式启动
+
+修复[PR #212](https://github.com/n0tevi1/ygorl/pull/212)已合并为`ff3d28d`。
+正式研究身份SHA `67b4fc0aa9a32a2576f633c1dfa5671542c43b9e7cdb7708a8ea70bc2f0a750b`，
+源码`ceda223`、native未改，四个driver/模型和修复验证报告已绑定，旧研究STOP也纳入来源记录。
+独立服务`ygorl-terminal-policy-restart-20261006.service`于2026-10-06 **13:19:06 PDT**启动，
+InvocationID `2365b9fa1c2e4ffe8580f0e081d0cfa3`，工作目录`codex-fusion-repeat-bound`。
+
+已验证首个seed0/cold实际更新：16,384行、4个正常训练终局、0截断/错误，约621 rows/s（单次更新，非吞吐对照）。
+训练producer与评估consumer同时运行，initial/Greedy原始评估记录已开始写入，无STOP。
+尚无新三seed棋力结论；运行快照不等于后续持续健康，最新状态须检查service和`pipeline-status.json`。
