@@ -82,3 +82,26 @@ InvocationID `a8eac145c75549948bd4c07f6a390abf`；30秒检查一次，8小时上
 监控身份SHA `57c07498692d9e0210cf8eb83ce3382cfaad8201def2ac160c6ef53e8c6c6c7b`，
 `latest.json`为最近检查，`events.jsonl`保留进度/警报，`publication.json`记录实际issues更新时间；
 完成须有`completion-audit.json`和`finished.json`，不能仅凭旧的running快照判断。
+
+## 最终结果（16:10 PDT，独立审计通过）
+
+训练服务16:10:29正常退出（exit0），监控16:10:49正常退出；`active/exited`表示已完成、无MainPID。
+六臂共192更新/3,145,728行、12,543个训练终局，0截断/错误；9,984评估局全部正常。
+原始逐局胜负、配对输入、checkpoint SHA和20,000次交叉bootstrap经独立审计复现。
+`analysis.json` SHA：`36171fb9ede02707fd619d579f324ec634342a9a6ed5a78472edaf0d49f5d563`。
+
+固定update32三个对手等权平均：initial **45.96%**、cold **48.48%**、warm **56.38%**。
+warm−cold **+7.90pp，交叉95% CI [+3.91,+11.72]pp**；三个seed分别+8.33/+5.47/+9.90pp。
+warm−initial **+10.42pp，CI [+6.34,+14.45]pp**；预登记加长训练门槛全部满足。
+cold−initial +2.52pp，CI [−0.91,+5.95]pp。update16 warm−cold +4.30pp只作描述。
+
+| update32 对手 | cold | warm |
+|---|---:|---:|
+| Greedy | 36.98% | 43.23% |
+| 原BC256 | 55.73% | 61.07% |
+| 初始BC128 | 52.73% | 64.84% |
+
+这是三个新PPO seed中critic终局预热帮助短程策略训练的证据，但共享监督语料、三个固定对手和训练牌组限制外推。
+Greedy仍低于50%，尚不能称为强游戏王agent，更未完成#92长训练验收。
+#61/#83/#92完成段落已由监控实际同步。下一步按[128更新独立协议](terminal-critic-policy-long-2026-10-06.md)
+检验优势能否持续，以及继续训练是否比update32进一步提高胜率；本研究不追加或替换样本。
