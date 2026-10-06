@@ -33,12 +33,15 @@ LR来自此前首步KL控制的机制证据，不是从健康停止的四臂胜�
 
 新eval seed **2026100533**，64个有放回抽取的ordered deck pair/deal cluster，每个cluster交换牌组和
 先后手4局；每个节点对三个固定对手各256局：Greedy、原BC256×2、修正BC128×2初始actor。
-所有对手均冻结；策略使用CheckpointAgent相同采样接口。共用发牌和slot agent seeds，不跨实现拼接旧面板。
+所有对手均冻结；候选与initial128使用PPO CheckpointAgent相同采样接口，原BC256基线保留其BC PolicyAgent接口。
+共用发牌和slot agent seeds，不跨实现拼接旧面板。
 固定对手等权。先验证所有初始actor逐位相同，再复用同一初始节点的768局，其余6×2节点各768局，
 合计 **9,984新局**。报告全部0/16/32；16为描述性节点，32为唯一主终点。
 用现有pairing_slots/cell_specs协议和独立逐节点对手比较，无需创建全候选两两矩阵或解读跨矩阵排名。
-每局保留完整GameSpec/模型SHA/结果；异常局另外保留显式actions、responses和候选/概率trace。
-统计候选策略material cancel的可用次数、mask次数、选择次数；这些是策略访问分布上的描述量，不能当作同状态因果效应。
+每局保留完整GameSpec/模型SHA/结果；异常局另外保留显式动作前缀，以及引擎已返回的responses和候选/概率trace。
+若agent抛异常而无DuelResult，也保留已提交的动作前缀，不声称拥有未返回的响应记录。
+统计候选策略material cancel的可用次数、mask次数、选择次数；mask包含既有各规则，非rule 6独有计数。
+这些是策略访问分布上的描述量，不能当作同状态因果效应。
 
 主比较：update32三个固定对手等权的warm−cold胜率。
 报告每个训练seed差值、三个seed均值；bootstrap seed **2026100534**，20,000次对训练seed（3个）和
@@ -56,3 +59,8 @@ LR来自此前首步KL控制的机制证据，不是从健康停止的四臂胜�
 若出现新失败，先调查修复，再决定独立复验；旧失败结果保留。
 
 证据根：`out/research/critic-warmup-control-2026-10-05/`。
+
+运行前集成检查：真实GPU上以不同critic权重验证actor、CPU/GPU/collector RNG与schedule一致，
+Adam和pool为空；没有生成训练行。预检最初把BC格式checkpoint传给要求PPO候选的监控器，触发
+PolicyAgent缺少host属性，已保留setup错误并修正预检使用真实PPO格式。历史非研究面板对局复检通过。
+正式研究尚未初始化；这次入口修正不替换任何研究数据。driver增加agent异常时的已提交动作前缀记录。
