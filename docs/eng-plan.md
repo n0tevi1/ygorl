@@ -289,3 +289,6 @@ skip_forced与健康字段，支持跨rollout精确回放；普通健康终局�
 full与reward trace相关性.249→.875；这是幅度和相关性的变化，不是信号占比或棋力证据。
 79.32%的行距终局>=64个learner rows，直接reward trace已近零，仍依赖critic项；长程credit assignment
 和取消行为被强化的具体因果链继续开放，不因全局相关性变好而宣布解决。三种子策略对照仍按原协议运行。
+[实际PPO首批审计](spikes/critic-warmup-first-rollout-2026-10-05.md)进一步确认终局奖励稀疏，
+并复现共享采样RNG对异步事件顺序敏感：同seed/起始actor不代表同训练轨迹。
+固定完整游戏上的相关性不直接代表实际PPO数据；对照的胜率结论仍等待全部预定seed/节点。

@@ -63,4 +63,10 @@ LR来自此前首步KL控制的机制证据，不是从健康停止的四臂胜�
 运行前集成检查：真实GPU上以不同critic权重验证actor、CPU/GPU/collector RNG与schedule一致，
 Adam和pool为空；没有生成训练行。预检最初把BC格式checkpoint传给要求PPO候选的监控器，触发
 PolicyAgent缺少host属性，已保留setup错误并修正预检使用真实PPO格式。历史非研究面板对局复检通过。
-正式研究尚未初始化；这次入口修正不替换任何研究数据。driver增加agent异常时的已提交动作前缀记录。
+以上为正式研究初始化之前的预检记录；这次入口修正不替换任何研究数据。
+driver增加agent异常时的已提交动作前缀记录。
+
+运行后补充（不改变协议）：[实际首批rollout审计](critic-warmup-first-rollout-2026-10-05.md)
+确认初始actor/RNG/schedule相同不保证异步训练轨迹相同。seed 0首行obs/概率完全相同，
+128个环境中48个首步动作不同；共享采样RNG对worker完成顺序敏感，并已用独立控制复现。
+主评估仍按原定训练seed/deal-cluster比较，不声称两臂训练时逐步同数据。
