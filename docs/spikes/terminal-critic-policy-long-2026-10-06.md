@@ -43,3 +43,26 @@ warm仍额外使用共享512游戏/162,019行、1监督epoch/80 Adam步每critic
 独立监控另存`out/research/terminal-critic-policy-long-monitor-2026-10-06/`，每30秒核验，
 每10分钟及完成/异常更新#61/#83/#92专属段落；完成后独立重算原始胜负/模型SHA/bootstrap及全部增长门槛。
 监控只读正式研究，失败证据保留，不自动改变实验协议。
+
+## 预检与实际启动
+
+预登记提交`3e501cb`早于所有新正式数据。产品源码/测试/native与`ceda223`完全相同；
+沿用该版本真实ROCm完整检查 **1,511 passed/3 skipped**，不是声称本次重新跑过完整单测。
+本次presubmit与研究driver lint/format/compile通过；三对真实GPU权重转移、actor/reference/RNG/schedule、
+空Adam/pool/counters和历史非研究Arena游戏再次通过。
+新分析器及独立审计器在临时历史schema fixture上复现全部区间和32→128增长计算，篡改增长均值被拒绝。
+该fixture只是把旧16/32节点适配到新schema并调整预算元数据，原始数据不改，绝不是新128更新结果；
+过程记录`analysis-preflight.json`。监控在临时副本验证心跳过期、STOP、服务失败和身份篡改检测。
+
+正式身份SHA `b01d2e20abf8601dce705ce63b6be6c4a841de78d711ab8ac08828cc7f178dec`，
+研究服务`ygorl-terminal-policy-long-20261006.service`于 **2026-10-06 16:50:59 PDT** 启动，
+InvocationID `5a0838d3163b4d438c88fc80effd2b00`，工作目录仍为`codex-fusion-repeat-bound`。
+已确认seed0/cold实际完成首个更新：**16,384行、4正常终局、0截断/错误**，34.45秒；
+initial评估原始记录也已写入。只代表启动验证，不构成新棋力结论。
+
+独立监控服务`ygorl-terminal-policy-long-monitor-20261006.service`于 **16:51:49 PDT**启动，
+InvocationID `6f479791615b44b8b6907b065fa935fd`，监控身份SHA
+`1d32a1358dc4ddef0bc66eff94fc0b01f7c674537796d498abe2d8b68bc38930`。
+每30秒核验；`latest.json`/`events.jsonl`记录当前状态，`publication.json`记录#61/#83/#92实际同步，
+只有`completion-audit.json`通过后才发布最终强度与增长门槛。
+按上一轮耗时粗估8–12小时，实际取决于策略和对局长度；16小时为硬预算上限，不是完成保证。
