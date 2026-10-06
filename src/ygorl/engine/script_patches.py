@@ -51,6 +51,42 @@ def synchro_override(source: bytes | None) -> bytes | None:
     return text.encode("utf-8")
 
 
+# Predicates are read-only, but may depend on the entire assigned group and remaining roles.
+_FUSION_SELECTED_MEMO = """-- Failed states are local to one selected-material search, never to a duel or card.
+local function ygorl_check_mix_rep_selected(tp,mg,sg,mustg,fc,sub,sub2,contact,sumtype,chkf,fun1,minc,maxc,...)
+	local cards={}
+	for tc in aux.Next(sg) do cards[#cards+1]=tc end
+	local roles={} local role_count=0
+	for _,f in ipairs({...}) do
+		if not roles[f] then role_count=role_count+1 roles[f]=role_count end
+	end
+	local failed={} local entries=0
+	local selected,cond
+	selected=function(c,...) return Fusion.CheckMixRepTemplate(c,cond,...) end
+	cond=function(tp,mg,sg,mustg,g,fc,sub,sub2,contact,sumtype,chkf,fun1,minc,maxc,...)
+		local key={tostring(sub),tostring(minc),tostring(maxc)}
+		for _,tc in ipairs(cards) do
+			key[#key+1]=g:IsContains(tc) and "1" or "0"
+			key[#key+1]=mustg:IsContains(tc) and "1" or "0"
+		end
+		for _,f in ipairs({...}) do key[#key+1]=tostring(roles[f]) end
+		key=table.concat(key,",")
+		if failed[key] then return false end
+		local res
+		if #g<#sg then
+			res=sg:IsExists(selected,1,g,tp,mg,sg,mustg,g,fc,sub,sub2,contact,sumtype,chkf,fun1,minc,maxc,...)
+		else
+			res=Fusion.CheckSelectMixRep(tp,mg,sg,mustg,g,fc,sub,sub2,contact,sumtype,chkf,fun1,minc,maxc,...)
+		end
+		if not res and entries<4096 then failed[key]=true entries=entries+1 end
+		return res
+	end
+	local g=Group.CreateGroup()
+	return sg:IsExists(selected,1,nil,tp,mg,sg,mustg,g,fc,sub,sub2,contact,sumtype,chkf,fun1,minc,maxc,...)
+end
+"""
+
+
 def fusion_override(source: bytes | None) -> bytes | None:
     """Check the complete group's constraint before enumerating material-role permutations.
 
@@ -67,4 +103,15 @@ def fusion_override(source: bytes | None) -> bytes | None:
     assert body.count(check) == 1
     body = body.replace("return sg:IsExists(", f"return {check} and sg:IsExists(")
     body = body.replace("\n\t\tand " + check, "")
-    return (text[:start] + body + text[end:]).encode("utf-8")
+    text = text[:start] + body + text[end:]
+    start = text.index("function Fusion.SelectMixRep(")
+    end = text.index("function Fusion.AddProcMixRepUnfix(", start)
+    body = text[start:end]
+    old = "res=sg:IsExists(Fusion.CheckMixRepSelected,1,nil,tp,mg2,sg,mustg,g,fc,sub,sub2,contact,sumtype,chkf,fun1,minc,maxc,...)"
+    assert body.count(old) == 1
+    new = (
+        "if #sg<6 then\n\t\t\t" + old + "\n\t\telse\n\t\t\t"
+        "res=ygorl_check_mix_rep_selected(tp,mg2,sg,mustg,fc,sub,sub2,contact,sumtype,chkf,fun1,minc,maxc,...)"
+        "\n\t\tend"
+    )
+    return (text[:start] + _FUSION_SELECTED_MEMO + body.replace(old, new) + text[end:]).encode("utf-8")

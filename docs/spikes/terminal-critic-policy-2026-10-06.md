@@ -58,3 +58,11 @@ CPU/GPU/collector RNG和schedule一致、Adam/pool为空，critic私有权重确
 InvocationID `53719e6ee8c74880a28d6533347855ea`，8小时上限；工作目录为`codex-lr-control-report`。
 首个cold PPO更新正常完成（6个终局、0截断），CPU评估消费者同步运行。
 当前尚无本轮胜率结论；`pipeline-status.json`和逐阶段日志记录进度。
+
+## 健康停止与后续（2026-10-06）
+
+服务09:48:17启动，10:36:45 PDT异常退出。实际完成70/192更新、4,293个已计入更新的正常终局，
+完整评估cell共2,560/9,984局。seed1/cold第6次更新后的采样，在Dracotail对Sky Striker第2回合触发
+融合脚本指令预算；原失败rollout未进入optimizer，STOP和完整动作/应答、health-stop模型均保留。
+本轮未完成，不据此发布强度结论。复现、修复及独立回归见[融合排列报告](fusion-repeat-memo-2026-10-06.md)；
+修复后使用新研究身份、新seed从六臂起点重跑，不拼接本轮部分结果。
