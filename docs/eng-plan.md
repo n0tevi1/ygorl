@@ -279,5 +279,8 @@ skip_forced与健康字段，支持跨rollout精确回放；普通健康终局�
 同一状态取消概率由update0的.022–.118升至update32的.9977–.9995，训练强化该行为的机制仍待查。
 新guard累计无进展选择链取消，前32次保留；四个失败局复验全部正常终局（506–745决策），
 冷回放全部一致，定向39项通过。完整实际ROCm测试1499 passed、3 skipped（287.34s），证据已封存。
-下一步是已登记的[固定actor critic终局校准](spikes/critic-warmup-calibration-2026-10-05.md)，
-检验lambda-target预热是否改善真实终局预测；不会由训练Q EV或一次短程胜率直接宣称棋力提升。
+已完成[固定actor critic终局校准](spikes/critic-warmup-calibration-2026-10-05.md)：32更新/1,614正常训练局，
+128完整heldout局全部健康，actor逐位不变。Q终局MSE1.16326→.98823，通过预定继续条件，
+但真实EV仅.0131，且MSE不及在测试标签上拟合的乐观常数基线.9811；不能由此宣称可靠critic或棋力提升。
+下一步是事前登记的[三种子critic权重预热策略对照](spikes/critic-warmup-control-2026-10-05.md)：
+新seed、重置Adam/RNG/对手池、每臂32 PPO更新、独立9,984局固定对手评估；预热额外预算单独披露。
