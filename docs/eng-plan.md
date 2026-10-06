@@ -282,13 +282,18 @@ skip_forced与健康字段，支持跨rollout精确回放；普通健康终局�
 已完成[固定actor critic终局校准](spikes/critic-warmup-calibration-2026-10-05.md)：32更新/1,614正常训练局，
 128完整heldout局全部健康，actor逐位不变。Q终局MSE1.16326→.98823，通过预定继续条件，
 但真实EV仅.0131，且MSE不及在测试标签上拟合的乐观常数基线.9811；不能由此宣称可靠critic或棋力提升。
-下一步是事前登记的[三种子critic权重预热策略对照](spikes/critic-warmup-control-2026-10-05.md)：
-新seed、重置Adam/RNG/对手池、每臂32 PPO更新、独立9,984局固定对手评估；预热额外预算单独披露。
+[三种子critic权重预热策略对照](spikes/critic-warmup-control-2026-10-05.md)已完成：
+288更新/4,718,592行/16,636正常训练局，9,984评估局全部正常；预热额外预算单独披露。
+update32 warm−cold **+1.61pp [−2.39,+5.73]**，seed差+4.82/−1.56/+1.56pp，未过加长预算条件。
+warm−initial **+4.21pp [+1.30,+7.16]**，表明本面板有学习迹象，不能据此断言预热优于cold。
+下一优先级为固定actor的实际终局监督critic诊断。#92两万更新与顶尖对局目标继续开放。
 
 [冻结数据的advantage诊断](spikes/critic-warmup-mechanism-2026-10-05.md)显示critic项std由.31135降至.03273，
 full与reward trace相关性.249→.875；这是幅度和相关性的变化，不是信号占比或棋力证据。
 79.32%的行距终局>=64个learner rows，直接reward trace已近零，仍依赖critic项；长程credit assignment
-和取消行为被强化的具体因果链继续开放，不因全局相关性变好而宣布解决。三种子策略对照仍按原协议运行。
+和取消行为被强化的具体因果链继续开放，不因全局相关性变好而宣布解决。
 [实际PPO首批审计](spikes/critic-warmup-first-rollout-2026-10-05.md)进一步确认终局奖励稀疏，
 并复现共享采样RNG对异步事件顺序敏感：同seed/起始actor不代表同训练轨迹。
-固定完整游戏上的相关性不直接代表实际PPO数据；对照的胜率结论仍等待全部预定seed/节点。
+固定完整游戏上的相关性不直接代表实际PPO数据；三个seed均观察到幅度下降，但主终点未过门槛。
+原监控父进程失联导致finalization遗漏，训练/评估子任务全部完成；已用冻结分析器恢复并独立核对bootstrap，
+保留原日志/旧状态。父进程退出原因未知，持久监控与可恢复收尾仍需加固。
