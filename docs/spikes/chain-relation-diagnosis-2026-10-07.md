@@ -108,11 +108,32 @@ CPU与原先GPU拟合有数值实现差别，报告为探索性定位，不冒�
 CPU小规模预检先验证接口及RNG/初始状态一致性；预检不计入正式预算。所有健康错误封存并停止。
 
 CPU预检完成64个真实rollout行、5个灰窗口、五种完整更新；复制模型的源参数和collector RNG保持不变。
-预检小批次只验证接口，不用于推断正式梯度结果。队列service `ygorl-ash-loss-attribution-20261007`，
-等待`ash-correction-retention-2026-10-07/audit-analysis.json`后开始六个正式采集/干预阶段。
+预检小批次只验证接口，不用于推断正式梯度结果。执行service `ygorl-ash-loss-attribution-20261007`，
+在`ash-correction-retention-2026-10-07/audit-analysis.json`通过后完成六个正式采集/干预阶段。
 保持独立审计service为`ygorl-ash-retention-audit-20261007`，按原始游戏重新计算配对seed×发牌组区间。
 
 工件目录：`out/research/chain-relation-diagnosis-2026-10-07/`（含独立`audit.json`）、
 `out/research/head-readout-correction-2026-10-07/`、`out/research/ash-loss-attribution-2026-10-07/`。
 环境`md-2026-09`，fingerprint `65ca28f79233e73d540a23c2046718ef42749ae883baa920216b94365b3e42d9`；
 执行工作树在`d427811`基础上仅改文档，产品源码仍与`ceda223`相同。
+
+
+正式实验已完成98304行、356个健康终局、1412个合法灰窗口及30个干预更新。
+独立`audit.json`复核全部初始/rollout/最终检查点SHA、有限张量、原始游戏健康、行为概率/Q记录、
+初始模型一致性及概率差值；未独立重跑优化器或梯度导数。以下是原复盘case的概率变化，单位为百分点：
+
+| 起点/采集seed索引 | full Δ（接受minibatches） | no_entropy Δ（接受minibatches） |
+|---|---:|---:|
+| source/0 | −8.95（1） | −9.02（1） |
+| source/1 | −4.83（1） | −5.09（1） |
+| source/2 | +3.29（16） | −5.99（2） |
+| corrected/0 | −1.75（1） | −2.22（1） |
+| corrected/1 | −2.18（1） | −2.52（1） |
+| corrected/2 | +3.43（16） | +1.23（16） |
+
+完整结果还含no_critic_loss、no_KL、policy_only。只去entropy在这个开发case上六组均使最终概率低于full，
+但大小受数据与KL早停影响，source/2接受步数相差明显；这是含guard的更新程序干预，不是固定步数的纯梯度贡献。
+corrected/2去entropy后仍增加自灰概率，因此entropy不是充分解释；source/0去critic loss反而从−8.95点变为+0.15点，
+也伴随1→6个minibatches，不能把共享critic一概当成有害来源。no_critic_loss仍使用原critic导出的advantage。
+此处只有两个同源起点、三个新rollout、一个更新与重复使用的开发窗口，不能追认旧32步遗忘的历史原因，
+也没有证明改掉任何损失项会提升完整对局。下一项定位应保留相同接受步数，并补充新的对局/例外窗口。
