@@ -4,7 +4,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from ygorl.nets.action_filter import ActionRiskHead, soft_filter
+from ygorl.nets.action_filter import ActionRiskHead, soft_filter  # noqa: E402
 
 
 def test_filter_preserves_legality_support_and_actual_log_probs():
