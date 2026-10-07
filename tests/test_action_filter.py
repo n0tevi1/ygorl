@@ -116,3 +116,20 @@ def test_extreme_spread_keeps_entropy_finite():
     assert torch.isfinite(out.logits).all()
     assert torch.isfinite(-(out.logits.softmax(-1) * out.logits.log_softmax(-1)).sum())
     assert out.logits.softmax(-1).tolist() == [[1.0, 0.0, 0.0]]
+
+
+def test_single_candidate_penalty_preserves_other_odds_and_never_increases_target():
+    torch.manual_seed(19)
+    logits = torch.randn(32, 5)
+    legal = torch.ones_like(logits, dtype=torch.bool)
+    legal[:, -1] = False
+    support = torch.zeros_like(legal)
+    support[:, 0] = True
+    scores = torch.rand_like(logits)
+    output = soft_filter(logits, scores, legal, support, threshold=0.5)
+    base = logits.masked_fill(~legal, -torch.inf).softmax(-1)
+    actual = output.logits.softmax(-1)
+    assert (actual[:, 0] <= base[:, 0] + 1e-7).all()
+    assert torch.allclose(actual[:, 1] / actual[:, 2], base[:, 1] / base[:, 2], atol=1e-6)
+    assert (actual[:, 1:4] >= base[:, 1:4] - 1e-7).all()
+    assert (actual[:, -1] == 0).all()

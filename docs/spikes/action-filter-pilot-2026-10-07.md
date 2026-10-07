@@ -1,5 +1,8 @@
 # 动作风险过滤器首轮旁路实验（2026-10-07，#218）
 
+**后续状态**：[合理例外检查](action-filter-exceptions-2026-10-07.md)已证明冻结history候选会压低避免立即败北的自灰，
+双候选与仅Ash惩罚均未通过。下文零误标仅适用于局部偏好标签，候选不进入共同训练。
+
 ## 实现与注册
 
 组件`src/ygorl/nets/action_filter.py`提供独立`ActionRiskHead`和`soft_filter`；
