@@ -1,7 +1,7 @@
 # 可学习动作过滤器：设计候选（2026-10-07）
 
-跟踪[#218](https://github.com/n0tevi1/ygorl/issues/218)。状态：研究设计，尚未实现或启动masker训练。
-当前PPO损失干预继续按既定协议运行，本方案不修改其目标或样本。
+跟踪[#218](https://github.com/n0tevi1/ygorl/issues/218)。状态：候选设计已进入[首轮旁路实现与实验](action-filter-pilot-2026-10-07.md)，尚未接入PPO或部署。
+前序PPO损失干预已结束，本实验保持独立目标与样本。
 
 ## 目标与边界
 
