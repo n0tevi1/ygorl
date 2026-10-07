@@ -48,3 +48,22 @@ warm128−initial比较回答棋力问题；不改变该研究门槛、模型、
 逐节点原子写入结果；整个诊断身份绑定协议提交、driver、原始语料manifest/validation和长研究身份。
 每节点重核SHA；完成后从保存预测独立重算逐局指标与交叉bootstrap，再更新#61/#83/#92的专属段落。
 历史研究文件、正式长研究、主监控和原有issues正文均保留。
+
+## 实际启动与验证
+
+协议提交`659c690`先于本诊断评分。三seed各64行预检：完整网络与所选Q计算一致；
+重新计算的warm0与封存确认预测最大Q绝对误差分别8.57e−7/1.11e−6/8.94e−7（CPU/GPU浮点差异）。
+30个合成节点fixture使用封存预测加明示扰动，独立核验原始物理winner/player标签、逐局MSE/EV/远端MSE、
+全部交叉bootstrap；篡改contrast被拒绝。该fixture不是PPO保留结果，记录在`audit-preflight.json`。
+研究driver lint/format/compile及presubmit通过。产品源码/测试/native仍与`ceda223`相同，
+复用该版本真实ROCm完整测试1,511 passed/3 skipped；未声称本次重跑完整测试。
+
+诊断身份SHA `17a8d3145f9fa3e2f691751c6e7869cb6ca696d7071a0090e876b6fbe82db26a`。
+服务`ygorl-terminal-retention-20261006.service`于 **2026-10-06 20:38:54 PDT**启动，
+InvocationID `d6aba873db084d75827c356e6efcbd98`，工作目录`codex-fusion-repeat-bound`。
+已验证真实评分进展：seed0/warm/u0的32个语料batch中完成4个；尚无完整节点诊断结论。
+#61/#83/#92已实际同步新增诊断段落；完成时独立审计通过才发布最终比较。
+
+同时长训练保持运行：20:32 PDT快照393/768更新、32,866训练终局，0截断/错误；
+seed0/warm Greedy胜率update32为123/256（48.05%）、update128为161/256（62.89%）。
+这是已看到的单seed部分结果，不能替代预定三seed完整主结果，也不能据此改保留诊断阈值或选节点。
