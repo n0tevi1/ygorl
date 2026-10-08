@@ -28,7 +28,7 @@ def validate_existing():
 
 
 def statistics(scores):
-    rng = np.random.default_rng(2026100802)
+    rng = np.random.default_rng(2026100805)
     seed_indices = rng.integers(0, 3, (20000, 3))
     deal_indices = rng.integers(0, 64, (20000, 64))
 
@@ -139,7 +139,7 @@ def main():
         "candidate_counts": counts,
         "training_phases": phases,
         "criterion_to_test_longer_training": proceed,
-        "bootstrap_seed": 2026100802,
+        "bootstrap_seed": 2026100805,
         "replicates": 20000,
         "training_seeds": 3,
         "deal_clusters": 64,

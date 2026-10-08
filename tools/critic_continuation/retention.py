@@ -88,7 +88,7 @@ def analyze():
                 actual = legacy.core.game_metrics(stored["prediction"], stored["data"])
                 assert actual == row["metrics"]
                 rows[label] = row
-    rng = np.random.default_rng(2026100803)
+    rng = np.random.default_rng(2026100806)
     si, di = rng.integers(0, 3, (20000, 3)), rng.integers(0, 128, (20000, 128))
     results = {}
     for arm in ("cold", "warm"):
@@ -113,7 +113,7 @@ def analyze():
             "study_sha256": sha(ROOT / "identity.json"),
             "nodes": rows,
             "contrasts": results,
-            "bootstrap_seed": 2026100803,
+            "bootstrap_seed": 2026100806,
             "interpretation": "Fixed BC task only; not on-policy calibration or proof of harmful forgetting",
         },
     )

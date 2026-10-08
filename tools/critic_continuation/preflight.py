@@ -11,12 +11,27 @@ import torch
 
 from analyze import statistics
 from audit import audit_statistics
-from run import BC, DRIVERS, HISTORY, OLD, PREVIOUS, ROOT, inputs, play, sha, source_record, verify_restored
+from run import (
+    BC,
+    DRIVERS,
+    HISTORY,
+    INITIAL,
+    OLD,
+    PREVIOUS,
+    ROOT,
+    inputs,
+    play,
+    sha,
+    source_record,
+    verify_restored,
+    Watch,
+    assert_equal,
+)
 from ygorl.agents.registry import agent_factory
 from ygorl.cards.ydk import Deck
 from ygorl.engine.duel import DuelConfig, PlayerRules
 from ygorl.eval.arena import GameSpec
-from ygorl.train.checkpoint import load_checkpoint
+from ygorl.train.checkpoint import load_actor, load_checkpoint
 from ygorl.train.registration import atomic_json
 from ygorl.train.trainer import Trainer
 
@@ -31,7 +46,7 @@ def check_statistics():
                 scores[f"seed-{sid}-{arm}-u{u}"] = np.concatenate([values, values[:1]])
     nodes, growth, proceed = statistics(scores)
     result = {
-        "bootstrap_seed": 2026100802,
+        "bootstrap_seed": 2026100805,
         "contrasts": {str(k): v for k, v in nodes.items()},
         "growth": growth,
         "criterion_to_test_longer_training": proceed,
@@ -87,8 +102,15 @@ def main():
         return Deck(name=d["name"], main=tuple(d["main"]), extra=tuple(d["extra"]), side=tuple(d["side"]))
 
     env, _ = inputs()
+    assert_equal(load_actor(INITIAL).net.state_dict(), load_actor(BC).net.state_dict(), "initial_actor_matches_bc")
+    try:
+        Watch(agent_factory(f"policy:{BC}")(0))
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("unsupported BC candidate adapter accepted")
     games = []
-    for i, opponent in enumerate(("greedy", f"policy:{OLD}", f"policy:{BC}", f"policy:{HISTORY}")):
+    for i, opponent in enumerate(("greedy", f"policy:{OLD}", f"policy:{INITIAL}", f"policy:{HISTORY}")):
         spec = GameSpec(
             pair=0,
             first=row["result"]["first"],
@@ -104,6 +126,27 @@ def main():
         result = play((i, spec, str(ROOT)))
         assert result["result"]["reason"] == "win" and "failure_trace" not in result
         games.append(result)
+    failed_path = ROOT.parent / "terminal-critic-continuation-2026-10-08/evaluation/initial/greedy.jsonl"
+    failed = json.loads(failed_path.read_text().splitlines()[1])
+    assert "has no attribute 'host'" in failed["result"]["error"]
+    failed_cfg = DuelConfig(**{**failed["config"], "player": PlayerRules(**failed["config"]["player"])})
+    spec = GameSpec(
+        pair=failed["result"]["pair"],
+        first=failed["result"]["first"],
+        seed=failed["result"]["seed"],
+        agent_seeds=tuple(failed["agent_seeds"]),
+        deck_a=deck(failed["deck_a"]),
+        deck_b=deck(failed["deck_b"]),
+        agent_a=agent_factory(f"policy:{INITIAL}"),
+        agent_b=agent_factory("greedy"),
+        env=env,
+        config=failed_cfg,
+    )
+    replay = play((100, spec, str(ROOT)))
+    assert replay["result"]["reason"] == "win" and "failure_trace" not in replay
+    assert replay["candidate_counts"]["material_cancel_available"] > 0
+    games.append(replay)
+
     from retention import preflight as retention_preflight
 
     report = {
@@ -120,7 +163,7 @@ def main():
     }
     atomic_json(ROOT / "preflight.json", report)
     print(
-        "PREFLIGHT PASSED: six exact GPU restores, four historical games, independent statistics and retention",
+        "PREFLIGHT PASSED: six exact GPU restores, four historical games plus failed initial-adapter replay, independent statistics and retention",
         flush=True,
     )
 

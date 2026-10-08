@@ -18,7 +18,7 @@ CONFIG = json.loads((ROOT / "config.json").read_text())
 IDENTITY = CONFIG["study_sha256"]
 UNIT = CONFIG["unit"]
 INVOCATION = CONFIG["invocation"]
-TAG = "ygorl-monitor:terminal-critic-continuation-2026-10-08"
+TAG = "ygorl-monitor:terminal-critic-continuation-restart-2026-10-08"
 START = f"<!-- {TAG}:start -->"
 END = f"<!-- {TAG}:end -->"
 CACHE = {}
@@ -195,7 +195,7 @@ def section(status):
         lines += ["", "研究尚未通过完整结果审计；不根据部分seed或节点作强度结论。"]
     lines += [
         "",
-        "独立监控证据：`out/research/terminal-critic-continuation-2026-10-08/monitor/`。每30秒检查；"
+        "独立监控证据：`out/research/terminal-critic-continuation-restart-2026-10-08/monitor/`。每30秒检查；"
         "本节每10分钟及完成/异常转换时同步。只读取实验，保留原STOP与失败数据，不修改参数或替换对局。",
         END,
     ]

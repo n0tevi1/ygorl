@@ -27,13 +27,14 @@ from ygorl.train.trainer import Trainer
 
 ROOT = Path(__file__).resolve().parent
 PREVIOUS = ROOT.parent / "terminal-critic-policy-long-2026-10-06"
-EVAL_SEED = 2026100801
+EVAL_SEED = 2026100804
 BASELINES = ("greedy", "old-256x2", "initial-128x2", "historical-rl")
 NODES = (128, 256, 512)
 DRIVERS = ("run.py", "analyze.py", "launch.py", "preflight.py", "audit.py", "watch.py", "retention.py")
 BC = ROOT.parent / "teacher-cancel-2026-10-05/models/128x2/policy.pt"
 OLD = ROOT.parent / "bounded-capacity-2026-10-05/models/256x2/policy.pt"
 SOLVER = ROOT.parent / "declaration-list-2026-10-05/build/bin/combosolver"
+INITIAL = PREVIOUS / "seed-0/cold/run/checkpoints/update_00000000.pt"
 HISTORY = PREVIOUS / "seed-0/warm/run/checkpoints/update_00000128.pt"
 
 
@@ -106,6 +107,9 @@ def expected_identity():
         "drivers": {name: sha(ROOT / name) for name in DRIVERS},
         "environment": env.stamp(),
         "decks": {m.deck.name: sha(m.path) for m in meta},
+        "initial_ppo_sha256": sha(INITIAL),
+        "aborted_study_sha256": sha(ROOT.parent / "terminal-critic-continuation-2026-10-08/identity.json"),
+        "aborted_stop_sha256": sha(ROOT.parent / "terminal-critic-continuation-2026-10-08/STOP.json"),
         "bc_sha256": sha(BC),
         "old_bc_sha256": sha(OLD),
         "historical_rl_sha256": sha(HISTORY),
@@ -293,6 +297,7 @@ def train(seed_id, arm):
 
 class Watch:
     def __init__(self, inner):
+        assert hasattr(inner, "host"), "candidate must use the PPO HostDuel adapter"
         self.inner = inner
         self.actions = []
         self.counts = {"material_cancel_available": 0, "material_cancel_masked": 0, "material_cancel_chosen": 0}
@@ -460,7 +465,7 @@ def consume():
     cfg = DuelConfig.from_environment(env)
     pairs = sample_pairings(len(meta), 64, EVAL_SEED)
     slots = pairing_slots([m.deck for m in meta], pairs, EVAL_SEED, cfg)
-    first = {"checkpoint": str(BC), "sha256": sha(BC)}
+    first = {"checkpoint": str(INITIAL), "sha256": sha(INITIAL)}
     manifest = {
         "study_sha256": sha(ROOT / "identity.json"),
         "pairings": pairs,
