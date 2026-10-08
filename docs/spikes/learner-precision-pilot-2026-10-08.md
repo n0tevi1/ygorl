@@ -112,6 +112,12 @@ The four drivers are `tools/precision_colab.py`, `precision_worker.py`,
 `precision_evaluate.py`, and `precision_watch.py`. The observer uses
 `tools/behavior_watch.py` with a separate output root and without `--publish`,
 so it does not replace the formal continuation study's issue block.
+Before starting that observer, connect its status interface: create the relative
+symlink `pipeline-status.json -> watch/latest.json` in the study root after the
+supervisor has written its first status. The observer keeps running for
+`monitoring` and drains outstanding replay work on `complete` or `stopped`.
+Check the observer service and fresh replay output explicitly; the precision
+supervisor's required-service checks cover controller and evaluator.
 The precision supervisor maintains its own comment on #60; #83 tracks strength
 and recovery interpretation. A controller process restart intentionally refuses
 automatic reuse of an existing study identity; inspect the retained artifacts
@@ -127,3 +133,6 @@ or scoring evaluation games. Runtime evidence belongs under
 `out/research/learner-precision-pilot-2026-10-08/`; source, registration, service
 identities, hardware precision proof and verified generations remain distinct
 artifacts.
+
+Actual launch, first verified updates, and the repaired observer startup are
+recorded in [the launch report](learner-precision-launch-2026-10-08.md).
