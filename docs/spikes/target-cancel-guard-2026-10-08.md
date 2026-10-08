@@ -1,6 +1,7 @@
 # SELECT_CARD取消循环修复（2026-10-08）
 
-关联#218、#83。正式terminal-critic continuation监测发现两局训练decision_limit：
+关联#218、#83；表示缺口后续追踪[#239](https://github.com/n0tevi1/ygorl/issues/239)。
+正式terminal-critic continuation监测发现两局训练decision_limit：
 update385、seed1792055546714535986，maliss/sky-striker，第4回合；
 update400、seed7153147779260123603，kewl-tune/maliss，第3回合。均到6000步。
 已有训练诊断保存完整跨update动作、强制动作跳过配置、实际卡组、规则及全部responses。
@@ -35,6 +36,12 @@ core/Lua源文件逐字节一致，仅host修复不同；来源核验见`core-so
 也在两host中逐条复现全部6000responses，确认2784次同型取消；证据另存
 `out/research/training-limit-audit-supplement-2026-10-08/407/`。
 
+三个例子都由78397661的墓地效果触发，且第二对象只有己方场上的一张卡可选。
+本地官方脚本`CardScripts/official/c78397661.lua`的`tdtg`明确用`repeat ... until fieldg~=nil`
+重选两个对象：cancel只返回对象选择，并不会撤回发动。可能更应检查更早的发动决策，
+但仅看回收己方卡不能宣布发动必错；需要包含后续收益的对照。guard只保证完成已经进入的选择，
+不能把其强制向前动作当作正确策略监督。
+
 三条真实前缀各以4个预先固定续行seed使用冻结u256 actor，两席selfplay；首次改变精确落在
 原第33次cancel，之前所有responses匹配。12/12健康终局且动作/响应/结果独立冷回放相同：
 
@@ -46,6 +53,14 @@ core/Lua源文件逐字节一致，仅host修复不同；来源核验见`core-so
 
 产物`fixed-continuations/{protocol.json,report.json}`。这些是已开封回归，不代表一般截断率下降幅度，
 也不是原训练策略的反事实后续（原策略跨update变化，接续模型/RNG不同）。
+
+随后update429（seed1275104883817376365，sky-striker/lunalight，turn5）出现第4例，
+双host同样核对6000responses，2845次SELECT_CARD取消；单独保存于supplement根`429/`。
+按同样4seed补做接续，首次guard介入d374，4/4健康终局并冷回放通过；总决策970/976/914/788，
+回合17/15/21/18。证据`fixed-continuations-fourth/`；累计16/16异常接续通过，不合并作独立棋力评估。
+
+完整本地presubmit **1577 passed、3 skipped（556.08s）**，原生构建与日志SHA已封存在
+`validation.json`、`presubmit-full.log`；跳过项为1项snapshot条件、2项需显式启用的网络测试。
 
 ## 更深的表示缺口：已验证与待验证
 
