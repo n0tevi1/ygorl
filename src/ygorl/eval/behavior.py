@@ -5,7 +5,33 @@ import math
 import statistics
 from collections import Counter
 
+from ygorl.engine import messages as M
+from ygorl.engine.tracker import _NOT_EVENTS
 from ygorl.eval.action_outcomes import action_intervals
+
+
+def has_game_event(events):
+    """Trace rows include Hint/Decision messages; match the tracker's progress rule."""
+    for event in events:
+        cls = getattr(M, event["type"], None)
+        # Unknown types conservatively reset the detector instead of inventing loops.
+        if not isinstance(cls, type) or not issubclass(cls, _NOT_EVENTS):
+            return True
+    return False
+
+
+def select_replay_games(rows):
+    """Fixed-index sample plus separate turn, decision and cancellation tails."""
+    chosen = {r["game_id"]: "fixed-index" for r in rows if r["game_id"] < 16}
+    if not rows:
+        return chosen
+    for field in ("turns", "decisions"):
+        worst = max(rows, key=lambda r: (r["result"][field], -r["game_id"]))
+        chosen.setdefault(worst["game_id"], "selected-" + field)
+    worst = max(rows, key=lambda r: (r["candidate_counts"].get("material_cancel_chosen", 0), -r["game_id"]))
+    if worst["candidate_counts"].get("material_cancel_chosen", 0):
+        chosen.setdefault(worst["game_id"], "selected-material-cancels")
+    return chosen
 
 
 def length_stats(values):
@@ -37,7 +63,7 @@ def summarize_trace(rows, candidate):
                 chain[e["chain_count"]] = e
             elif e["type"] == "ChainEnd":
                 chain.clear()
-        if events:  # tracker.events excludes hint/wait/decision messages
+        if has_game_event(events):
             repeats.clear()
             idle_segment = 0
         action = row["chosen"]
@@ -56,6 +82,7 @@ def summarize_trace(rows, candidate):
                     "kind": "no_event_repeat",
                     "decision": row["index"],
                     "player": row["player"],
+                    "candidate": row["player"] == candidate,
                     "action": action,
                     "repetitions": 8,
                 }
@@ -105,4 +132,11 @@ def summarize_trace(rows, candidate):
             findings.append(
                 {"kind": interval["kind"] + "_self_damage", "decision": interval["start"], "interval": interval}
             )
-    return {"counts": dict(counts), "findings": findings, "turn_actions": dict(turn_actions), "coverage": coverage}
+    return {
+        "analysis_version": 2,
+        "candidate_player": candidate,
+        "counts": dict(counts),
+        "findings": findings,
+        "turn_actions": dict(turn_actions),
+        "coverage": coverage,
+    }

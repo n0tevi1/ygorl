@@ -17,7 +17,7 @@ from behavior_replay import replay_game, sha
 from colab_checkpoint import run_lock
 from ygorl import _core
 from ygorl.data import load_environment
-from ygorl.eval.behavior import length_stats
+from ygorl.eval.behavior import length_stats, select_replay_games
 from ygorl.train.registration import atomic_json
 
 HEALTH = ("error", "retries", "unknown_messages", "undecodable_messages", "script_errors")
@@ -76,10 +76,7 @@ def snapshot(study):
         }
         if any(any(r["result"].get(k) for k in HEALTH) or r["result"]["reason"] != "win" for r in rows):
             alerts.append(key + ": unhealthy evaluation")
-        chosen = {r["game_id"]: "fixed-index" for r in rows if r["game_id"] < 16}
-        for field in ("turns", "decisions"):
-            worst = max(rows, key=lambda r: (r["result"][field], -r["game_id"]))
-            chosen.setdefault(worst["game_id"], "selected-" + field)
+        chosen = select_replay_games(rows)
         # Investigate tails first, while retaining fixed-index denominators separately.
         for r in sorted(rows, key=lambda r: (chosen.get(r["game_id"]) == "fixed-index", r["game_id"])):
             if r["game_id"] in chosen:
@@ -110,10 +107,11 @@ def publish(root, status):
     text += [
         "",
         "回合为引擎单方turn；未结束对局右删失。循环/自灰/自伤/提前停手均为调查信号，不自动标错。",
-        "固定索引样本与最长/最多决策选例分开保存；原结果匹配及冷回放核验后才纳入轨迹报告。",
-        f"行为信号（含选例，不能估算总体频率）：{status['replays']['signals']}。",
+        "固定索引样本与最长/最多决策/最多取消选例分开保存；原结果匹配及冷回放核验后才纳入轨迹报告。",
+        f"行为信号（含选例；ash_self为机会数，不是实际发动次数）：{status['replays']['signals']}。",
+        f"重复操作调查信号（不等于引擎错误）：{status.get('behavior_alerts', [])}。",
         f"异常：{status['alerts']}。",
-        "协议：docs/spikes/behavior-monitor-2026-10-08.md；证据：out/research/behavior-monitor-2026-10-08/。",
+        f"证据与协议：{root}/protocol.md；分析版本2（提示/决策消息不清空重复计数）。",
     ]
     start = "<!-- ygorl-behavior-monitor-20261008:start -->"
     end = "<!-- ygorl-behavior-monitor-20261008:end -->"
@@ -161,7 +159,7 @@ def main():
     }
     protocol = root / "protocol.md"
     if not protocol.exists():
-        shutil.copyfile(repo / "docs/spikes/behavior-monitor-2026-10-08.md", protocol)
+        shutil.copyfile(repo / "docs/spikes/behavior-progress-audit-2026-10-08.md", protocol)
     identity = {
         "study": str(study),
         "study_sha256": sha(study / "identity.json"),
@@ -198,6 +196,7 @@ def main():
                     report = path / "report.json"
                     if report.exists():
                         rec = json.loads(report.read_text())
+                        assert rec.get("analysis_version") == 2, "re-analyze legacy reports in a new observer root"
                         assert all(sha(path / k) == v for k, v in rec["files"].items())
                         reports[key] = rec
                         continue
@@ -207,6 +206,19 @@ def main():
                         pending[pool.submit(replay_game, (root, cell, row, selection))] = key
                         keys.add(key)
                 signals = Counter(f["kind"] for r in reports.values() for f in r["findings"])
+                status["behavior_alerts"] = [
+                    {
+                        "cell": cell,
+                        "game_id": game,
+                        "selection": r["selection"],
+                        "max_repetitions": r["counts"].get("max_same_choice_without_event", 0),
+                        "candidate_repeats": sum(
+                            f["kind"] == "no_event_repeat" and f.get("candidate", False) for f in r["findings"]
+                        ),
+                    }
+                    for (cell, game), r in sorted(reports.items())
+                    if r["counts"].get("max_same_choice_without_event", 0) >= 8
+                ]
                 status["replays"] = {
                     "completed": len(reports),
                     "running": len(pending),
@@ -230,13 +242,21 @@ def main():
                     ],
                 )
                 print(
-                    json.dumps({"time": time.time(), "replays": status["replays"], "alerts": status["alerts"]}),
+                    json.dumps(
+                        {
+                            "time": time.time(),
+                            "replays": status["replays"],
+                            "alerts": status["alerts"],
+                            "behavior_alerts": status["behavior_alerts"],
+                        }
+                    ),
                     flush=True,
                 )
                 if a.publish and time.monotonic() - last_publish > 600:
                     try:
                         publish(root, status)
                         last_publish = time.monotonic()
+                        atomic_json(root / "publication.json", {"published_unix": time.time()})
                     except subprocess.SubprocessError as exc:
                         atomic_json(root / "publication-error.json", {"error": repr(exc)})
                 state = json.loads((study / "pipeline-status.json").read_text())["stage"]
