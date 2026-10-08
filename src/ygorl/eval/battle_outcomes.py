@@ -48,3 +48,36 @@ def ordinary_battle(attacker, target=None):
         "damage": [max(-diff, 0), max(diff, 0)],
         "destroy": [int(diff < 0 or (diff == 0 and atk > 0)), int(diff > 0 or (diff == 0 and atk > 0))],
     }
+
+
+def decompose_battle_outcome(declaration, battle, damage):
+    """Post-outcome supervision, NEVER declaration-time model features.
+
+    ``damage`` is [self, opponent] damage after Battle through the local endpoint.
+    The native Battle message supplies calculation-time stats and destruction
+    flags. Deltas describe observations, not causal effect identities or value.
+    Unsupported calculation-time states return None, not a zero residual.
+    """
+
+    def row(atk, defense, opponent, position):
+        result = [0] * 23
+        result[4] = opponent
+        result[6] = {1: 1, 4: 3}.get(position, 0)
+        result[7] = 1
+        result[17:19] = [atk, defense]
+        return result
+
+    attacker = row(battle["attacker_atk"], battle["attacker_def"], 0, battle["attacker"]["position"])
+    target = None
+    if battle["target"]["location"] != 0:
+        target = row(battle["target_atk"], battle["target_def"], 1, battle["target"]["position"])
+    arithmetic = ordinary_battle(attacker, target)
+    if arithmetic is None:
+        return None
+    destroyed = [int(bool(battle["attacker_destroyed"])), int(bool(battle["target_destroyed"]))]
+    return {
+        "battle_arithmetic": arithmetic,
+        "numeric_damage_delta": [b - a for a, b in zip(declaration["damage"], arithmetic["damage"], strict=True)],
+        "non_arithmetic_damage_delta": [b - a for a, b in zip(arithmetic["damage"], damage, strict=True)],
+        "destruction_delta": [b - a for a, b in zip(arithmetic["destroy"], destroyed, strict=True)],
+    }
