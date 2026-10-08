@@ -20,7 +20,7 @@ def action_intervals(rows):
 
     def finish(kind, end, reason):
         interval = active.pop(kind)
-        interval.update(end=end, stop=reason, complete=reason in ("ChainEnd", "DamageStepEnd"))
+        interval.update(end=end, stop=reason, complete=reason in ("ChainEnd", "DamageStepEnd", "Win"))
         result.append(interval)
 
     last = -1
@@ -29,7 +29,7 @@ def action_intervals(rows):
         if index <= last:
             raise ValueError("trace decision indices must increase")
         last = index
-        coverage["trace_rows"] += 1
+        coverage["trace_rows"] += int(row["chosen"] is not None)
         for event in row["events"]:
             name = event["type"]
             if name in ("NewPhase", "NewTurn", "Win"):
@@ -62,6 +62,8 @@ def action_intervals(rows):
             if name == "DamageStepEnd" and "attack" in active:
                 finish("attack", index, name)
         action = row["chosen"]
+        if action is None:  # explicit final events, without inventing another decision/action
+            continue
         kind = "attack" if action["kind"] == "attack" else "chain" if action["kind"] in ("activate", "chain") else None
         if kind is not None:
             if kind == "attack" and kind in active:
