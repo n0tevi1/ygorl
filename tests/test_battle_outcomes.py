@@ -1,6 +1,6 @@
 import pytest
 
-from ygorl.eval.battle_outcomes import ordinary_battle
+from ygorl.eval.battle_outcomes import battle_relation_features, ordinary_battle
 
 
 def card(atk, defense=0, *, opponent=False, position=1, visible=1):
@@ -39,3 +39,15 @@ def test_direct_attack_and_hidden_information_abstention():
     assert ordinary_battle(card(65535)) is None
     with pytest.raises(ValueError, match="width"):
         ordinary_battle([1, 2])
+
+
+def test_relations_compare_the_relevant_public_stat():
+    assert battle_relation_features([0.5, 0, 0.9, 0.75, 0, 1]) == [-0.25, 0, 0.25, 0, 0, 0]
+    assert battle_relation_features([0.5, 0, 0.5, 0.75, 1, 0]) == [0, 0, 0, 1, 0, 0]
+    assert battle_relation_features([0.5, 0, 0, 0, 0, 0]) == [0.5, 0.5, 0, 0, 1, 0.5]
+
+
+@pytest.mark.parametrize("values", [[1, 0, 1, 0, 1, 1], [float("nan"), 0, 1, 0, 1, 0], [1, 2]])
+def test_relations_reject_ambiguous_or_invalid_inputs(values):
+    with pytest.raises(ValueError):
+        battle_relation_features(values)
