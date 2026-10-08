@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from ygorl import _core
 from ygorl.cards.cdb import CardVocab
@@ -74,7 +75,8 @@ def test_real_fusion_cancel_cycle_is_bounded_in_both_hosts_and_survives_snapshot
         session.close()
 
 
-def test_material_cancel_budget_resets_on_game_progress_player_or_decision_change():
+@pytest.mark.parametrize("cancel_mode", ("material", "target", "mixed"))
+def test_material_cancel_budget_resets_on_game_progress_player_or_decision_change(cancel_mode):
     import struct
 
     from ygorl.engine.duel import default_cards
@@ -94,16 +96,21 @@ def test_material_cancel_budget_resets_on_game_progress_player_or_decision_chang
         payload = struct.pack("<BBBIII", player, 0, 1, 1, 1, 0 if empty else 1)
         return record(C.MSG_SELECT_UNSELECT_CARD, payload + (b"" if empty else card(player)) + struct.pack("<I", 0))
 
+    def cancel_window(player, count):
+        if cancel_mode == "target" or (cancel_mode == "mixed" and count % 2):
+            return record(C.MSG_SELECT_CARD, struct.pack("<BBIII", player, 1, 1, 1, 1) + card(player))
+        return material(player)
+
     def feed(tracker, buffer):
         tracker.on_buffer(buffer, _core.DUEL_STATUS_AWAITING)
         return tracker.point()
 
     for reset in ("game_event", "player", "other_decision"):
         tracker = DuelTracker(DuelConfig(), 0, default_cards())
-        for _ in range(32):
+        for count in range(32):
             feed(tracker, target(0))
             tracker.act(0)
-            point = feed(tracker, material(0))
+            point = feed(tracker, cancel_window(0, count))
             cancel = next(i for i, a in enumerate(point.actions) if a.kind == "cancel")
             assert cancel not in point.undo
             tracker.act(cancel)
@@ -111,7 +118,7 @@ def test_material_cancel_budget_resets_on_game_progress_player_or_decision_chang
         feed(tracker, target(0))
         tracker.act(0)
         hint = record(C.MSG_HINT, struct.pack("<BBQ", 3, 0, 0))
-        point = feed(tracker, hint + material(0))
+        point = feed(tracker, hint + cancel_window(0, 32))
         assert cancel in point.undo
         # Even an exhausted budget cannot remove the sole legal exit.
         point = feed(tracker, material(0, empty=True))

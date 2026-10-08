@@ -318,7 +318,7 @@ class DuelTracker:
         for i, a in enumerate(actions):
             if a.kind == "cancel" and self._inside is not None:
                 undo.append(i)  # backs out of the command to the unchanged menu
-            elif (decision.TYPE == C.MSG_SELECT_UNSELECT_CARD and a.kind == "cancel"
+            elif (decision.TYPE in (C.MSG_SELECT_CARD, C.MSG_SELECT_UNSELECT_CARD) and a.kind == "cancel"
                   and self._selection_cancels >= MAX_SELECTION_CANCELS):  # fmt: skip
                 undo.append(i)  # repeated target/material cancellation without game progress (rule 6)
             elif (self._toggle is not None and decision.TYPE == C.MSG_SELECT_UNSELECT_CARD
@@ -347,8 +347,8 @@ class DuelTracker:
             self._toggle = (decision.player, action.kind, _card_key(action))
         if decision.TYPE == C.MSG_SELECT_UNSELECT_CARD:
             self._selection_steps += 1
-            if action.kind == "cancel":
-                self._selection_cancels += 1
+        if decision.TYPE in (C.MSG_SELECT_CARD, C.MSG_SELECT_UNSELECT_CARD) and action.kind == "cancel":
+            self._selection_cancels += 1
 
     def _restricted(self) -> bool:
         """The pending decision is the opponent's, in the learner's turn, under a restricting curriculum."""
