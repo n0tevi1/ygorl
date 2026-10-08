@@ -2,6 +2,24 @@
 
 from __future__ import annotations
 
+import math
+
+
+def battle_relation_features(numeric):
+    """Six public relations from [aATK,aDEF,tATK,tDEF,attack,defense].
+
+    Stats use the caller's common scale (the probe uses /4000). No outcome,
+    identity, or hidden information is consumed. Relations ignore card effects.
+    """
+    if len(numeric) != 6 or not all(math.isfinite(float(x)) for x in numeric):
+        raise ValueError("expected six finite public numeric features")
+    atk, _, tatk, tdef, attack, defense = map(float, numeric)
+    if attack not in (0, 1) or defense not in (0, 1) or attack + defense > 1:
+        raise ValueError("target position flags must be exclusive booleans")
+    direct = 1 - attack - defense
+    margin = atk - attack * tatk - defense * tdef
+    return [margin, max(margin, 0), max(-margin, 0), float(margin == 0), direct, direct * atk]
+
 
 def ordinary_battle(attacker, target=None):
     """Return damage [self, opponent] and destruction flags, or None if unsupported.
