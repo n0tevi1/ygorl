@@ -53,6 +53,36 @@ def greedy_moves(model: NimModel, max_pile: int = 15) -> dict[int, int]:
 # ------------------------------------------------------------------------------------------ layout
 
 
+def test_learner_sampling_reuses_probabilities_without_changing_rng_or_rows():
+    """The CPU probability tensor retained for PPO is exactly the one sampled, with the old RNG contract."""
+    torch.manual_seed(17)
+    specs = iter([1, 2, 7, 15])
+    model = NimModel(max_pile=15).eval()
+    col = RolloutCollector(NimEnv(4), model, lambda: Assignment(next(specs)), num_steps=1, seed=23)
+    for env_id in range(4):
+        col._new_game(env_id)
+    events = col._recv(4)
+    generator = torch.Generator().set_state(col.generator.get_state())
+    with torch.no_grad():
+        out = model(model.collate([ev.obs for ev in events]))
+        logp = torch.log_softmax(out.logits.float(), -1)
+        probs = logp.exp()
+        expected_actions = torch.multinomial(probs.cpu(), 1, generator=generator).squeeze(-1)
+        expected_logp = logp.cpu().gather(1, expected_actions[:, None]).squeeze(1)
+        cols = [[] for _ in events]
+        col._act_learner(events, cols)
+    assert torch.equal(col.generator.get_state(), generator.get_state())
+    for i, ev in enumerate(events):
+        row = cols[ev.env_id][0]
+        assert row.action == int(expected_actions[i])
+        assert row.log_prob == float(expected_logp[i])
+        assert row.value == float(out.v[i])
+        assert row.player == ev.player
+        torch.testing.assert_close(row.probs, probs[i], rtol=0, atol=0)
+        torch.testing.assert_close(row.q, out.q[i], rtol=0, atol=0)
+        assert col._slots[ev.env_id].rows == col._slots[ev.env_id].rows_here == 1
+
+
 def test_self_play_rollout_layout():
     torch.manual_seed(0)
     env = NimEnv(num_envs=3, max_pile=15)

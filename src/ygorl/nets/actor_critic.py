@@ -117,9 +117,11 @@ class ActorCritic(nn.Module):
         return ActorCriticOutput(_pad_to(out.logits, width, value=MASKED_LOGIT), _pad_to(out.q, width), out.v)
 
     def _forward(self, obs: Batch, privileged: Mapping[str, Tensor] | None) -> ActorCriticOutput:
-        f = self.actor.features(obs)
+        # forward() already removed padding. The public features() entry point scans the masks again,
+        # reading three device scalars into Python; both trunks can use the already-trimmed batch directly.
+        f = self.actor._features(obs)
         logits = self.actor.logits(f)
-        cf = f if self.critic_trunk is None else self.critic_trunk.features(obs)
+        cf = f if self.critic_trunk is None else self.critic_trunk._features(obs)
         priv = None
         if self.privileged is not None:
             if privileged is None:

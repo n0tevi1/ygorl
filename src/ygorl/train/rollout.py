@@ -332,10 +332,10 @@ class RolloutCollector:
         priv = model.collate_privileged([ev.privileged for ev in events], self.device)
         out = model(batch, priv)
         logp = torch.log_softmax(out.logits.float(), -1)
-        probs = logp.exp()
-        actions = torch.multinomial(probs.cpu(), 1, generator=self.generator).squeeze(-1)
+        probs = logp.exp().cpu()
+        actions = torch.multinomial(probs, 1, generator=self.generator).squeeze(-1)
         chosen = logp.cpu().gather(1, actions.unsqueeze(1)).squeeze(1)
-        q, v, probs = out.q.float().cpu(), out.v.float().cpu(), probs.cpu()
+        q, v = out.q.float().cpu(), out.v.float().cpu()
         for i, ev in enumerate(events):
             a = int(actions[i])
             slot = self._slots[ev.env_id]

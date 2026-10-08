@@ -700,3 +700,61 @@ def test_a_deck_order_critic_reads_the_next_draws_and_the_default_one_does_not()
         assert torch.equal(ordered(obs, priv).logits, ordered(obs, swapped).logits)
     with pytest.raises(ValueError, match="privileged"):
         ActorCritic(small(), privileged=False, deck_order=True)
+
+
+@pytest.mark.parametrize("shared_backbone", [False, True])
+@pytest.mark.parametrize("history", ["none", "lstm", "transformer"])
+@pytest.mark.parametrize("trim", [False, True])
+def test_actor_critic_single_trim_preserves_outputs_and_gradients(monkeypatch, shared_backbone, history, trim):
+    """Skipping the trunks' repeated scans preserves the original forward/backward, including padding."""
+    import copy
+    from types import MethodType
+
+    from ygorl.nets import actor_critic as ac_mod
+    from ygorl.nets.actor_critic import ActorCritic, ActorCriticOutput
+
+    torch.manual_seed(19)
+    stochastic = trim and history == "transformer" and not shared_backbone
+    cfg = small(history=history, dropout=0.2 if stochastic else 0, id_dropout=0.1 if stochastic else 0)
+    model = ActorCritic(cfg, privileged=True, privileged_dim=16, critic_hidden=16,
+                        shared_backbone=shared_backbone)  # fmt: skip
+    reference = copy.deepcopy(model)
+
+    def previous_forward(self, obs, privileged):
+        f = self.actor.features(obs)
+        logits = self.actor.logits(f)
+        cf = f if self.critic_trunk is None else self.critic_trunk.features(obs)
+        crit = self.critic(cf.context, cf.actions, cf.action_mask, self.privileged(privileged))
+        return ActorCriticOutput(logits, crit.q, crit.v)
+
+    reference._forward = MethodType(previous_forward, reference)
+    if not trim:
+        monkeypatch.setattr(ac_mod, "trim_padding", lambda obs: obs)
+        monkeypatch.setattr(PolicyNet, "trim_padding", False)
+    obs, priv = random_batch(3, seed=29), random_privileged(3)
+    # Guarantee different valid prefixes and trailing padding in every encoded sequence.
+    obs["actions"][:, 20:] = 0
+    obs["action_mask"][:, 20:] = False
+    obs["events"][:, 8:] = 0
+    obs["event_mask"][:, 8:] = False
+    mask = obs["action_mask"]
+    rng_before = torch.get_rng_state()
+    outputs, rng_after = [], []
+    for m in (model, reference):
+        torch.set_rng_state(rng_before)
+        outputs.append(m(obs, priv))
+        rng_after.append(torch.get_rng_state())
+    assert torch.equal(*rng_after)
+    for out in outputs:
+        assert out.logits.shape == out.q.shape == mask.shape
+        assert (out.logits[~mask] == MASKED_LOGIT).all()
+        assert (out.q[~mask] == 0).all()
+        (out.logits[mask].square().mean() + out.q[mask].square().mean() + out.v.square().mean()).backward()
+    for key in ("logits", "q", "v"):
+        torch.testing.assert_close(getattr(outputs[0], key), getattr(outputs[1], key), rtol=1e-6, atol=1e-6)
+    for (name, actual), (reference_name, expected) in zip(model.named_parameters(), reference.named_parameters()):
+        assert name == reference_name
+        if expected.grad is None:
+            assert actual.grad is None, name
+        else:
+            torch.testing.assert_close(actual.grad, expected.grad, rtol=1e-6, atol=1e-6, msg=name)

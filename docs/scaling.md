@@ -1,5 +1,11 @@
 # 训练规模与训练信号：现状、先前项目、选项（T4b.6 / T4b.7 / T4e.1）
 
+2026-10-08更新：当前GPU正式训练的学习器约占整步58–62%；独立固定rollout探针中，真实BF16
+更新与FP32均执行16个minibatch，平均耗时21.55对26.58秒。共享负载下仅两次测量，尚无棋力结论，
+正式实验未切换精度。已去掉重复padding扫描／概率拷贝，并区分分段profile与吞吐计时。
+后续优先做固定预算的精度对照、采样小批量／传输剖析和更短恢复间隔；
+细节见[最新基础设施审计](spikes/training-infra-audit-2026-10-08.md)。下文保留各日期历史测量。
+
 从零开始的 PPO 自博弈在 4 核 CPU 的预算内进展很小（[benchmarks.md](benchmarks.md)「PPO 步长」及其后的 3 小时续训）。本文记录原因、先前项目的做法，
 以及两类选项：**扩规模**（[#60](https://github.com/n0tevi1/ygorl/issues/60)）与**提高每份算力的训练信号**
 （[#61](https://github.com/n0tevi1/ygorl/issues/61)、[#62](https://github.com/n0tevi1/ygorl/issues/62)）。
