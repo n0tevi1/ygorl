@@ -115,6 +115,7 @@ def main() -> None:
     summary = {"label": args.label, "device": cfg.device, "envs": cfg.num_envs, "steps": cfg.steps,
                "min_batch": cfg.min_batch, "env_threads": cfg.env_threads, "collect_threads": cfg.collect_threads,
                "torch_threads": cfg.torch_threads, "overlap": cfg.overlap_collect, "bf16": cfg.bf16,
+               "learner_precision": cfg.learner_precision,
                "d_model": args.d_model, "layers": args.layers, "epochs": cfg.ppo.epochs,
                "minibatch": cfg.ppo.minibatch_size, "rows": kept[0]["rows"],
                "collect_s": mean("collect_s"), "update_s": mean("update_s"), "step_s": mean("step_s"),

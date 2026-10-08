@@ -437,7 +437,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 
 **GPU**（`TrainConfig.device` / `--device cuda`，ROCm 也叫 `cuda`）：学习器、行动网络、BC 先验与钉住的对手都放到该设备；
 收集的整段观测在设备上拼好，优势估计仍在 CPU 上算（逐行数据小），checkpoint 一律按 CPU 加载。ROCm 上权重梯度走 `ygorl.nets.gemm` 的按 `K` 切分，
-并自动打开融合注意力（原因与实测见 [benchmarks.md](benchmarks.md)「GPU 学习器」）。两个**实验开关**，默认关闭：
+并自动打开融合注意力（原因与实测见 [benchmarks.md](benchmarks.md)「GPU 学习器」）。以下**实验选项**默认不启用：
 
 - `overlap_collect`（`--overlap`）：更新进行时在另一个线程（GPU 上另一个 stream）用「更新开始前的权重」的副本收集下一段；联赛记账
   （快照、评估、checkpoint）只在两步之间、没有收集在跑时进行。代价是每段数据落后一次更新，偏离设计的同步 PPO（[scaling.md](scaling.md) S3），采用前要先改设计。
@@ -446,6 +446,12 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
   更新作用域关闭参数cast缓存，保证每个Adam步后的forward读取新权重；采样时权重不变，保留缓存。
   早期特定配置曾测得GPU更新快10–20%，但不是当前硬件/配置保证；回归期间的CLI对照不能证明更新阶段BF16无收益。
   新配置需分别验证真实dtype、成本与强度，CPU上也不保证更快。
+- `learner_precision`（`--learner-precision inherit|fp32|bf16`）：默认`inherit`沿用`--bf16`的更新精度，
+  旧checkpoint也保持这个默认值。显式`fp32`或`bf16`只覆盖学习器整个update（含warmup、reference和BC prior），
+  采样与bootstrap仍由`--bf16`控制；权重保持FP32，更新内继续禁用cast缓存。
+  例如`--device cuda --learner-precision bf16`保留FP32采样，只对学习器启用BF16；
+  `--device cuda --bf16 --learner-precision fp32`则反过来。配置和checkpoint保存该选择，benchmark也输出此字段。
+  用相同训练预算独立验证成本、实际minibatch数与棋力后再决定是否采用，不能仅据微基准提速替换正式配方。
 
 `tools/bench_train.py` 测 `Trainer.step()` 的收集 / 更新耗时、行/秒与（AMD GPU 上的）忙碌率。
 另外输出一次更新内部的细分（#72）：

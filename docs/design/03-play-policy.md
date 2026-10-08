@@ -282,6 +282,12 @@ Trainer将非error截断追加到truncations.jsonl；原errors.jsonl保留并补
 collector作用域内权重不变，可保留缓存；overlap collector使用独立acting副本。
 回归需在每个真实Adam步后将当前作用域的logits与禁用缓存的fresh forward逐元素比较，覆盖至少两步。
 
+2026-10-08独立学习器精度：`learner_precision`可选`inherit`（默认）、`fp32`、`bf16`。
+`inherit`保留上述`bf16`同时控制采样和更新的行为，旧checkpoint缺失该字段时同样继承。
+显式值只覆盖完整`PPOLearner.update`的autocast，包含warmup、reference/BC prior；采样和bootstrap
+仍由原`bf16`控制，权重仍存FP32，更新内继续关闭cast缓存。配置、CLI、checkpoint和benchmark须记录该选择。
+该开关用于隔离采样数值变化的速度/强度对照，不改变默认训练配方；实际GPU forward回归须覆盖两个方向的覆盖。
+
 ### 共享参数的reference EMA（2026-10-05）
 
 慢reference的更新公式对每个唯一参数/持久buffer恰好执行一次：

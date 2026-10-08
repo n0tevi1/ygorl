@@ -33,36 +33,59 @@ TINY = {"d_model": 16, "n_heads": 2, "board_layers": 1, "history_layers": 1}
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
-@pytest.mark.parametrize(("bf16", "warmup"), [(False, 0), (True, 0), (True, 1)])
-def test_training_forward_uses_requested_precision(tmp_path, monkeypatch, bf16, warmup):
+@pytest.mark.parametrize(
+    ("bf16", "learner_precision", "warmup"),
+    [
+        (False, "inherit", 0),
+        (True, "inherit", 0),
+        (True, "inherit", 1),
+        (False, "bf16", 0),
+        (False, "bf16", 1),
+        (True, "fp32", 0),
+        (True, "fp32", 1),
+    ],
+)
+def test_training_forward_uses_requested_precision(tmp_path, monkeypatch, bf16, learner_precision, warmup):
     cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", bf16=bf16, critic_warmup=warmup,
+                      learner_precision=learner_precision,
                       num_envs=2, steps=4, event_length=8, checkpoint_every=0, eval_every=0,
                       ppo=PPOConfig(epochs=1, minibatch_size=8))  # fmt: skip
     trainer = Trainer(cfg, tmp_path)
-    updating = False
-    outputs = []
+    phase = "acting"
+    outputs = {"acting": [], "bootstrap": [], "update": []}
     original = trainer.learner.update
+    original_assemble = trainer.collector._assemble
+
+    def assemble(*args, **kwargs):
+        nonlocal phase
+        phase = "bootstrap"
+        try:
+            return original_assemble(*args, **kwargs)
+        finally:
+            phase = "acting"
 
     def update(*args, **kwargs):
-        nonlocal updating
-        updating = True
+        nonlocal phase
+        phase = "update"
         try:
             return original(*args, **kwargs)
         finally:
-            updating = False
+            phase = "acting"
 
     def observe(module, args, result):
-        if updating:
-            outputs.append((torch.is_autocast_enabled("cuda"), result.logits.dtype))
+        outputs[phase].append((torch.is_autocast_enabled("cuda"), result.logits.dtype))
 
     monkeypatch.setattr(trainer.learner, "update", update)
+    monkeypatch.setattr(trainer.collector, "_assemble", assemble)
     hook = trainer.model.register_forward_hook(observe)
     try:
         rec = trainer.step()
     finally:
         hook.remove()
-    expected = torch.bfloat16 if bf16 else torch.float32
-    assert outputs and all(active == bf16 and dtype == expected for active, dtype in outputs)
+    learner_bf16 = bf16 if learner_precision == "inherit" else learner_precision == "bf16"
+    for name, enabled in (("acting", bf16), ("bootstrap", bf16), ("update", learner_bf16)):
+        expected = torch.bfloat16 if enabled else torch.float32
+        assert outputs[name] and all(active == enabled and dtype == expected for active, dtype in outputs[name])
     assert rec["critic_warmup"] == int(bool(warmup)) and rec["minibatches"] > 0
     assert torch.isfinite(torch.tensor(rec["loss"]))
     assert all(torch.isfinite(p).all() for p in trainer.model.parameters())
@@ -70,8 +93,10 @@ def test_training_forward_uses_requested_precision(tmp_path, monkeypatch, bf16, 
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
-def test_bf16_update_reads_current_weights_after_each_adam_step(tmp_path, monkeypatch):
-    cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", bf16=True, num_envs=2, steps=4,
+@pytest.mark.parametrize(("bf16", "learner_precision"), [(True, "inherit"), (False, "bf16")])
+def test_bf16_update_reads_current_weights_after_each_adam_step(tmp_path, monkeypatch, bf16, learner_precision):
+    cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", bf16=bf16, learner_precision=learner_precision,
+                      num_envs=2, steps=4,
                       event_length=8, checkpoint_every=0, eval_every=0,
                       ppo=PPOConfig(epochs=2, minibatch_size=8, target_kl=None))  # fmt: skip
     trainer = Trainer(cfg, tmp_path)
@@ -102,6 +127,7 @@ def test_bf16_update_reads_current_weights_after_each_adam_step(tmp_path, monkey
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA/ROCm GPU")
 def test_gpu_resume_restores_minibatch_and_collector_rng(tmp_path):
     cfg = TrainConfig(decks=PAIR, net=TINY, device="cuda", num_envs=2, steps=4, event_length=8,
+                      learner_precision="bf16",
                       checkpoint_every=0, eval_every=0, ppo=PPOConfig(epochs=1, minibatch_size=8))  # fmt: skip
     trainer = Trainer(cfg, tmp_path / "original")
     trainer.step()
@@ -112,9 +138,25 @@ def test_gpu_resume_restores_minibatch_and_collector_rng(tmp_path):
     expected_acting = torch.rand(32, generator=trainer.collector.generator)
     torch.manual_seed(234567)  # simulate unrelated activity/new process before resume
     resumed = Trainer.resume(path, tmp_path / "resumed", log=None)
+    assert resumed.cfg.learner_precision == "bf16" and not resumed.cfg.bf16
     assert torch.equal(torch.randperm(257, device=resumed.device), expected_perm)
     assert torch.equal(torch.rand(32), expected_cpu)
     assert torch.equal(torch.rand(32, generator=resumed.collector.generator), expected_acting)
+
+
+@pytest.mark.parametrize("bf16", [False, True])
+def test_legacy_checkpoint_without_learner_precision_inherits_bf16(tmp_path, bf16):
+    cfg = TrainConfig(decks=PAIR, net=TINY, bf16=bf16, num_envs=2, steps=4, event_length=8, eval_every=0)
+    trainer = Trainer(cfg, tmp_path / "original", log=None)
+    state = load_checkpoint(trainer.save())
+    del state["config"]["learner_precision"]
+    path = tmp_path / "legacy.pt"
+    torch.save(state, path)
+    resumed = Trainer.resume(path, tmp_path / "resumed", log=None)
+    assert resumed.cfg.learner_precision == "inherit" and resumed.cfg.bf16 == bf16
+    with resumed._autocast(learner=True):
+        assert torch.is_autocast_enabled("cpu") == bf16
+        assert not torch.is_autocast_cache_enabled()
 
 
 def test_cpu_checkpoint_does_not_access_cuda_rng(tmp_path, monkeypatch):
