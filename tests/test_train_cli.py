@@ -127,7 +127,24 @@ def test_train_tool_passes_overlap_and_bf16():
     spec = importlib.util.spec_from_file_location("train_ppo", Path(__file__).parents[1] / "tools" / "train_ppo.py")
     tool = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tool)
-    args = tool.build_parser().parse_args(["d.ydk", "--overlap", "--bf16", "--out", "run", "--updates", "3"])
+    args = tool.build_parser().parse_args(["d.ydk", "--overlap", "--bf16", "--learner-precision", "fp32",
+                                          "--out", "run", "--updates", "3"])  # fmt: skip
     cfg = tool.config_from_args(args, ["d.ydk"])
     assert cfg.overlap_collect and cfg.bf16 and cfg.decks == ("d.ydk",)
+    assert cfg.learner_precision == "fp32"
     assert (args.out, args.updates) == (Path("run"), 3)
+
+
+@pytest.mark.parametrize("precision", ["inherit", "fp32", "bf16"])
+@pytest.mark.parametrize("bf16", [False, True])
+def test_learner_precision_round_trip(precision, bf16):
+    cfg = TrainConfig(decks=DECKS, bf16=bf16, learner_precision=precision)
+    assert parse(cli.to_argv(cfg)) == cfg
+    assert TrainConfig.from_dict(cfg.to_dict()) == cfg
+
+
+def test_learner_precision_rejects_invalid_choice():
+    with pytest.raises(ValueError, match="learner_precision"):
+        TrainConfig(learner_precision="fp16")
+    with pytest.raises(SystemExit):
+        parse(["--learner-precision", "fp16"])

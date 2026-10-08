@@ -119,6 +119,7 @@ class TrainConfig:
     # a copy of the weights the update starts from, while the update runs; every rollout is then one update stale
     overlap_collect: bool = False
     bf16: bool = False  # experimental: bf16 autocast for acting and the update on a GPU
+    learner_precision: str = "inherit"  # update only: inherit bf16, or explicitly select fp32 / bf16
     torch_threads: int = 4  # during updates
     collect_threads: int = 2  # PyTorch threads while collecting (the env threads share the cores)
     bc_prior: str | None = None  # checkpoint of a BC policy: KL prior (ppo.kl_prior_coef)
@@ -136,6 +137,8 @@ class TrainConfig:
     log_games: bool = False
 
     def __post_init__(self) -> None:
+        if self.learner_precision not in ("inherit", "fp32", "bf16"):
+            raise ValueError("learner_precision must be inherit, fp32, or bf16")
         if self.register_every < 0 or (self.register_every and not self.register_matrix):
             raise ValueError("register_every must be nonnegative and needs register_matrix when enabled")
         if self.ppo.critic_target == "terminal" and not self.complete_games:
@@ -350,10 +353,11 @@ class Trainer:
             self.log(f"deck pool {ev.path}: {len(live)} evolved decks dealt, {len(hist)} history"
                      + "".join(f"; left out {p}" for p in ev.problems))  # fmt: skip
 
-    def _autocast(self, *, cache_enabled: bool = True):
-        return torch.autocast(
-            self.device.type, dtype=torch.bfloat16, enabled=self.cfg.bf16, cache_enabled=cache_enabled
-        )
+    def _autocast(self, *, learner: bool = False):
+        enabled = self.cfg.bf16
+        if learner and self.cfg.learner_precision != "inherit":
+            enabled = self.cfg.learner_precision == "bf16"
+        return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=enabled, cache_enabled=not learner)
 
     def _collect(self) -> Rollout:
         if self._stream is None:
@@ -393,7 +397,7 @@ class Trainer:
         torch.set_num_threads(cfg.torch_threads)
         t0 = time.perf_counter()
         # Adam mutates weights between minibatches: cached BF16 casts would become stale within this context.
-        with self._autocast(cache_enabled=False):
+        with self._autocast(learner=True):
             warm = self.cfg.critic_warmup > 0 and not self.counters.get("critic_warmup_done")
             stats = self.learner.update(ro, policy=not warm)
         update_s = time.perf_counter() - t0
