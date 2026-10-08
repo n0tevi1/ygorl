@@ -54,6 +54,10 @@ issues #61/#83/#92同步研究状态。完成前不发布部分seed的整体棋�
 复现需上述历史工件（非git内数据）和同一已编译native。先复制七个脚本至新的研究工件目录；这些脚本按其所在目录寻找兄弟历史工件。
 使用本worktree的`PYTHONPATH=src`、`YGORL_THIRD_PARTY=/home/ya0guang/Code/ygorl/third_party`，
 `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1`，运行该目录`preflight.py`。
+测试和正式服务均必须显式设置
+`YGORL_COMBO_SOLVER=/home/ya0guang/Code/ygorl/out/research/declaration-list-2026-10-05/build/bin/combosolver`。
+首次完整测试漏设该变量，落到旧的默认`build/combo-solver/bin/combosolver`，导致三项旧solver回归失败；
+指定协议绑定二进制后这三项 **3 passed / 2.57秒**。两种二进制SHA及原失败日志均保留，未修改测试或跳过失败。
 `registration.json`记录协议提交、协议SHA、完整测试日志SHA及监控预检SHA；再执行`run.py prepare`封存身份。
 `launch.py all`负责训练/评估/保留诊断及最终统计审计；由systemd用户服务whole-cgroup管理，超时48小时、无自动重启。
 独立`watch.py --publish`服务读取`monitor/config.json`中的正式服务InvocationID/身份SHA，每30秒检查，
