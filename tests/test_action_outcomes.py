@@ -71,3 +71,24 @@ def test_move_within_hand_does_not_count_as_gain_and_draw_is_separate():
 def test_reordered_trace_is_rejected():
     with pytest.raises(ValueError, match="increase"):
         action_intervals([row(1), row(0)])
+
+
+def test_explicit_terminal_events_keep_lethal_damage_without_an_extra_action():
+    intervals, coverage = action_intervals(
+        [
+            row(0, "attack"),
+            {
+                "index": 1,
+                "chosen": None,
+                "events": [{"type": "Damage", "player": 1, "amount": 2000}, {"type": "Win", "player": 0}],
+            },
+        ]
+    )
+    assert coverage["trace_rows"] == 1
+    assert intervals[0]["damage"] == [0, 2000] and intervals[0]["complete"]
+    assert intervals[0]["stop"] == "Win"
+
+
+def test_explicit_truncated_tail_does_not_claim_completed_outcome():
+    intervals, _ = action_intervals([row(0, "attack"), {"index": 1, "chosen": None, "events": []}])
+    assert not intervals[0]["complete"]
