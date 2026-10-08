@@ -6,7 +6,9 @@ can be checked using fresh sessions and action prefixes, without snapshot reuse.
 """
 
 import json
+import math
 import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 
 
@@ -15,10 +17,19 @@ class SearchBudget:
     nodes: int = 256
     depth: int = 48
     seconds: float = 20.0
+    transitions: int = 1024
+    path_steps: int = 128
 
     def __post_init__(self):
-        if self.nodes < 1 or not 1 <= self.depth <= 128 or self.seconds <= 0:
-            raise ValueError("positive budgets and depth <= 128 required")
+        if (
+            self.nodes < 1
+            or not 1 <= self.depth <= 128
+            or not math.isfinite(self.seconds)
+            or self.seconds <= 0
+            or self.transitions < 1
+            or not 1 <= self.path_steps <= 128
+        ):
+            raise ValueError("positive finite budgets and depth/path_steps <= 128 required")
 
 
 def position(session):
@@ -85,26 +96,45 @@ def _combine(player_node, statuses, complete):
     return other if complete and statuses and all(s == other for s in statuses) else "unknown"
 
 
-def search_action(session, action, player, budget=SearchBudget()):
+def search_action(session, action, player, budget=SearchBudget(), *, depth_mode="host", allocation="dfs"):
     """Force one root action, solve its continuation, and always restore the root."""
+    if depth_mode not in ("host", "branch") or allocation not in ("dfs", "fair"):
+        raise ValueError("unknown depth mode or allocation")
     p = session.point
     if p is None or p.player != player or p.turn_player != player or not 0 <= action < len(p.actions):
         raise ValueError("expected a legal action on the searching player's turn")
-    start, turn, used = time.monotonic(), p.turn, 0
+    start, turn, used, transitions = time.monotonic(), p.turn, 0, 0
+    root_branches = int(len(p.actions) > 1)
+    stats, leaves = Counter(), Counter()
     root = position(session)
     snap = session.snapshot()
 
-    def visit(depth):
-        nonlocal used
+    def visit(host_depth, branch_depth, node_limit):
+        nonlocal used, transitions
+        stats["max_host_depth"] = max(stats["max_host_depth"], host_depth)
+        stats["max_branch_depth"] = max(stats["max_branch_depth"], branch_depth)
         here = position(session)
         leaf = _leaf(session, player, turn)
         if leaf:
+            leaves[leaf[1]] += 1
             return {"position": here, "status": leaf[0], "reason": leaf[1]}
-        if used >= budget.nodes or time.monotonic() - start >= budget.seconds or depth >= budget.depth:
-            return {"position": here, "status": "unknown", "reason": "budget"}
+        depth = host_depth if depth_mode == "host" else branch_depth
+        limits = (
+            (used >= budget.nodes, "node_limit"),
+            (used >= node_limit, "allocation_limit"),
+            (transitions >= budget.transitions, "transition_limit"),
+            (time.monotonic() - start >= budget.seconds, "time_limit"),
+            (host_depth >= budget.path_steps, "path_limit"),
+            (depth >= budget.depth, "depth_limit"),
+        )
+        if reason := next((reason for exhausted, reason in limits if exhausted), None):
+            leaves[reason] += 1
+            return {"position": here, "status": "unknown", "reason": reason}
         used += 1
         p = session.point
         own = p.player == player
+        branching = int(len(p.actions) > 1)
+        stats["choice_nodes" if branching else "forced_nodes"] += 1
         # Order affects coverage, never completeness: low-policy choices remain included.
         priority = ("attack", "battle_phase", "yes", "finish", "pass", "no", "main2", "end_phase")
         order = sorted(
@@ -113,14 +143,21 @@ def search_action(session, action, player, budget=SearchBudget()):
         )
         saved, children = session.snapshot(), []
         try:
-            for i in order:
+            for offset, i in enumerate(order):
+                if transitions >= budget.transitions or time.monotonic() - start >= budget.seconds:
+                    break
                 session.restore(saved)
+                child_limit = node_limit
+                if allocation == "fair":
+                    quota = max(1, (node_limit - used) // (len(order) - offset))
+                    child_limit = min(node_limit, used + quota)
                 session.act(i)
-                child = visit(depth + 1)
+                transitions += 1
+                child = visit(host_depth + 1, branch_depth + branching, child_limit)
                 children.append({"action": i, "child": child})
                 if child["status"] == ("win" if own else "no_forced_win"):
                     break
-                if used >= budget.nodes or time.monotonic() - start >= budget.seconds:
+                if used >= node_limit or time.monotonic() - start >= budget.seconds:
                     break
         finally:
             session.restore(saved)
@@ -129,7 +166,8 @@ def search_action(session, action, player, budget=SearchBudget()):
 
     try:
         session.act(action)
-        tree = visit(1)
+        transitions += 1
+        tree = visit(1, root_branches, budget.nodes)
     finally:
         session.restore(snap)
     return {
@@ -141,6 +179,10 @@ def search_action(session, action, player, budget=SearchBudget()):
         "status": tree["status"],
         "tree": tree,
         "nodes": used,
+        "transitions": transitions,
+        "stats": dict(stats),
+        "leaf_reasons": dict(leaves),
+        "strategy": {"depth_mode": depth_mode, "allocation": allocation},
         "seconds": time.monotonic() - start,
         "budget": asdict(budget),
     }
