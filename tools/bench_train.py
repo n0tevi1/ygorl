@@ -6,7 +6,8 @@ Takes every training-config flag of tools/train_ppo.py (smaller defaults: ``--en
 Runs ``--updates`` steps with evaluation, snapshots and checkpoints off, drops the first (warm-up) and reports the
 mean collect / update seconds, decisions per second while collecting and rows per second overall; ``--json``
 appends one line per run for docs/benchmarks.md. On an AMD GPU the mean ``gpu_busy_percent``
-over the measured steps is included.
+over the measured steps is included. ``--profile`` adds synchronized learner-stage timings;
+leave it off for throughput comparisons, since those extra synchronization points affect timing.
 """
 
 from __future__ import annotations
@@ -76,6 +77,9 @@ def main() -> None:
     p.add_argument("decks", nargs="*", type=Path, help=".ydk files (default: tests/decks/*.ydk)")
     p.add_argument("--updates", type=int, default=6)
     p.add_argument(
+        "--profile", action="store_true", help="synchronize learner stages for detailed timing (adds overhead)"
+    )
+    p.add_argument(
         "--no-target-kl", action="store_true", help="always run every epoch (fixed update cost); = --target-kl 0"
     )
     p.add_argument("--label", default="", help="free-form tag stored in the JSON line")
@@ -91,7 +95,7 @@ def main() -> None:
     records = []
     with tempfile.TemporaryDirectory() as tmp:
         trainer = Trainer(cfg, tmp, log=None)
-        trainer.learner.timing = True  # time/<section> of each update (#72)
+        trainer.learner.timing = args.profile  # time/<section> of each update (#72), separate from throughput
         for i in range(args.updates):
             if i == 1:
                 busy.start()  # after the warm-up step
@@ -114,17 +118,21 @@ def main() -> None:
                "d_model": args.d_model, "layers": args.layers, "epochs": cfg.ppo.epochs,
                "minibatch": cfg.ppo.minibatch_size, "rows": kept[0]["rows"],
                "collect_s": mean("collect_s"), "update_s": mean("update_s"), "step_s": mean("step_s"),
-               "minibatches": mean("minibatches"), "decisions_per_s": round(mean("decisions_per_s")),
+               "minibatches": mean("minibatches"), "evaluated_minibatches": mean("evaluated_minibatches"),
+               "early_stop_rate": mean("early_stop"), "approx_kl": mean("approx_kl"),
+               "decisions_per_s": round(mean("decisions_per_s")),
                "rows_per_s": round(sum(r["rows"] for r in kept) / sum(r["step_s"] for r in kept)),
                "gpu_busy": busy.stop()}  # fmt: skip
     sections = sorted({k for r in kept for k in r if k.startswith("time/")})
+    summary["profile"] = args.profile
     summary["update_breakdown"] = {k[5:]: mean(k) for k in sections}
     summary["commit"] = _commit()
     summary["rocm"] = {"hip": torch.version.hip, "aotriton_experimental": os.environ.get("TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL"),
                        "hsa_override_gfx_version": os.environ.get("HSA_OVERRIDE_GFX_VERSION")} if torch.version.hip else None  # fmt: skip
-    total = summary["update_breakdown"].get("total") or 1.0
-    print("update breakdown: " + ", ".join(f"{k} {v:.3f} s ({v / total:.0%})" for k, v in summary["update_breakdown"].items()
-                                           if k != "total") + f"; total {total:.3f} s")  # fmt: skip
+    if args.profile:
+        total = summary["update_breakdown"].get("total") or 1.0
+        print("update breakdown: " + ", ".join(f"{k} {v:.3f} s ({v / total:.0%})" for k, v in summary["update_breakdown"].items()
+                                               if k != "total") + f"; total {total:.3f} s")  # fmt: skip
     print(json.dumps(summary))
     if args.json is not None:
         with args.json.open("a") as f:
