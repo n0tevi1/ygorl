@@ -1,6 +1,6 @@
 import copy
 
-from ygorl.eval.behavior import length_stats, summarize_trace
+from ygorl.eval.behavior import length_stats, select_replay_games, summarize_trace
 
 
 def row(index, events=(), player=0):
@@ -28,6 +28,37 @@ def test_repeated_choices_require_no_intervening_game_change():
     rows[5]["events"] = [{"type": "Damage", "player": 1, "amount": 100}]
     result = summarize_trace(rows, 0)
     assert result["counts"]["max_same_choice_without_event"] == 5 and not result["findings"]
+
+
+def test_real_trace_prompts_do_not_clear_repeats_but_moves_do():
+    rows = [row(i, [{"type": "Hint"}, {"type": "SelectUnselectCard"}]) for i in range(10)]
+    result = summarize_trace(rows, 0)
+    assert result["counts"]["max_same_choice_without_event"] == 10
+    assert result["findings"][0]["candidate"]
+    rows[5]["events"].insert(0, {"type": "Move", "card": 123})
+    result = summarize_trace(rows, 0)
+    assert result["counts"]["max_same_choice_without_event"] == 5
+    assert not result["findings"]
+    rows[5]["events"][0] = {"type": "FutureUnknownMessage"}
+    assert summarize_trace(rows, 0)["counts"]["max_same_choice_without_event"] == 5
+
+
+def test_cancel_tail_is_selected_without_changing_fixed_sample_or_length_tails():
+    rows = [
+        {
+            "game_id": i,
+            "result": {"turns": i, "decisions": 100 - i},
+            "candidate_counts": {"material_cancel_chosen": 32 if i in (20, 21) else 0},
+        }
+        for i in range(25)
+    ]
+    chosen = select_replay_games(rows)
+    assert all(chosen[i] == "fixed-index" for i in range(16))
+    assert chosen[24] == "selected-turns" and chosen[20] == "selected-material-cancels"
+    assert 21 not in chosen
+    for r in rows:
+        r["candidate_counts"]["material_cancel_chosen"] = 0
+    assert 20 not in select_replay_games(rows)
 
 
 def test_changes_in_player_or_public_board_do_not_count_as_same_state():
