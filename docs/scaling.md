@@ -69,7 +69,24 @@
 | S4 | 多机 actor | 线性扩展收集 | 依赖 S3 | 未开始 |
 | S5 | 模型侧提速：卡片 ID 嵌入稀疏更新或冻结（占 136 万参数中的 94 万）、事件窗口、GPU 上的 bf16 | 更新更快 | CPU 上 bf16 已测更慢（[benchmarks.md](benchmarks.md)）；GPU 上 bf16 更新快 10–20%（`--bf16`，实验开关） | 部分已做（CPU 等价改写约 1.46 倍）；GPU 忙碌 93–95% 后这是剩下的主要方向 |
 
-### Colab（2026-09-25）
+### Colab
+
+**2026-10-08 恢复试验**：新的 [L4 恢复协议](spikes/colab-recovery-2026-10-08.md) 将不可变 checkpoint 与对应指标前缀一起回传，
+验证 SHA、大小、训练状态、环境、计数和连续更新编号后才原子提升本机 latest。控制器持有运行锁，worker 检查有期限的 lease；
+换机前必须确认旧会话已终止。每台 VM 设独立释放定时器，试验限定总时间、分配次数和计算单元预算。
+`tools/colab_checkpoint.py` 是可复用的完整性逻辑；`colab_worker.py` / `colab_pilot.py` 是本次固定身份的工程试验，尚不是通用槽位调度器。
+入口为 `PYTHONPATH=src .venv/bin/python tools/colab_pilot.py --root out/research/colab-recovery-2026-10-08`，
+依赖该产物目录里的预先核验源码包、bootstrap、源检查点清单和已准备的首台会话，不能对新目录直接运行或并行启动。
+每次 pilot 的 `identity.json` 绑定源码包与三个 driver 的 SHA；`events.jsonl`、`remote-*.json`、`durable/latest.json` 保留证据。
+
+恢复不等于未中断训练的逐步重放：原生进行中对局没有序列化，会重新开始；首次 ROCm→CUDA 迁移明确重置设备 RNG，
+后续 CUDA→CUDA 才逐项验证保存状态完全相同。硬件迁移数据独立记录，不混入已登记的 ROCm 棋力主试验。
+
+本次两台 L4 的主动中断恢复已通过：连续8更新、131,072行、842个正常终局，0错误/截断，完整状态及指标前缀核验一致。
+step内443 rows/s，包含重建/上传/控制重试的控制器墙钟约13.9分钟，实际余额减少0.83 CU；结束时无活动会话。
+短试验不证明单机加速或棋力改善，后续用途是独立并行容量。准备/同步阶段抢占恢复、跨控制器重启、多运行队列仍未交付，#89保持开放。
+
+以下机器、速度、会话限制和回收时间为 **2026-09-25 历史实测**，不能据此推断当前账号配额或长 rollout 的速度：
 
 用 Google Colab CLI（`google-colab-cli`，`colab new --gpu L4`、`upload`、`exec -f`、`download`）把一部分训练搬到云端。账号的订阅附带 200 计算单元。
 

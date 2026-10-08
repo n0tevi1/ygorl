@@ -74,6 +74,8 @@ AMD GPU（ROCm，例如 Ryzen AI Max+ 395 的 Radeon 8060S 核显）：`uv sync 
 开发工具在 `dev` 依赖组（`uv sync` 默认安装）：pytest（单测）、ruff（格式化与 lint）。
 提交前跑 `tools/presubmit.sh`：原地格式化（`ruff format`）并 lint（`ruff check`），加 `--test` 再跑单测。CI 跑的是只检查、不改动的 `tools/presubmit.sh --check`。
 可以装成 git pre-commit 钩子（只检查，不改动暂存的内容，装法见脚本开头注释）。
+Colab恢复工程试验另需已认证的 `google-colab-cli`（当前0.7.2，安装 `uv tool install google-colab-cli`）；用法和限制见 `docs/spikes/colab-recovery-2026-10-08.md`。
+
 个别工具另有系统依赖：`tools/tsan/check.sh` 需要 ninja、GCC 的 libtsan 与 `setarch`（util-linux）；`tools/check_ygoprodeck.py` 需要能访问
 YGOPRODECK API 的网络；`tools/crosscheck_banlist.py` 需要能访问 YGOPRODECK 与 Yugipedia 的网络（`--from` 离线重跑）。CI 与云端会话 hook 另装 ccache 以加速重编。
 新增依赖用 `uv add <包名>`（可选组用 `uv add --optional <组> <包名>`）。
