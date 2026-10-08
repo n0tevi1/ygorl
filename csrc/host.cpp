@@ -971,7 +971,7 @@ std::vector<size_t> Tracker::undo() const {
         const Action& a = acts[i];
         if (a.kind == CANCEL && inside_ >= 0) {
             out.push_back(i);  // backs out of the command to the unchanged menu
-        } else if (d.type == MSG_SELECT_UNSELECT_CARD && a.kind == CANCEL &&
+        } else if ((d.type == MSG_SELECT_CARD || d.type == MSG_SELECT_UNSELECT_CARD) && a.kind == CANCEL &&
                    selection_cancels_ >= MAX_SELECTION_CANCELS) {
             out.push_back(i);  // target/material cancellation without game progress (rule 6)
         } else if (toggle_ && d.type == MSG_SELECT_UNSELECT_CARD && a.has_card &&
@@ -1029,7 +1029,9 @@ const std::string* Tracker::act(size_t index) {
     }
     if (d.type == MSG_SELECT_UNSELECT_CARD) {
         ++selection_steps_;
-        if (a.kind == CANCEL) ++selection_cancels_;
+    }
+    if ((d.type == MSG_SELECT_CARD || d.type == MSG_SELECT_UNSELECT_CARD) && a.kind == CANCEL) {
+        ++selection_cancels_;
     }
     if (state_->done()) {
         responses_.push_back(state_->response());
