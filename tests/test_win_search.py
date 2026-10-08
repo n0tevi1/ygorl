@@ -91,6 +91,38 @@ def test_budget_or_health_failure_is_unknown_not_a_negative_label():
     assert search_action(TreeSession(graph), 0, 0)["status"] == "unknown"
 
 
+def test_forced_prompts_do_not_hide_a_win_but_still_consume_compute():
+    graph = {"root": (0, ["a"]), "a": (1, ["b"]), "b": (0, ["c"]), "c": (1, ["win"])}
+    session = TreeSession(graph)
+    budget = SearchBudget(depth=2)
+    assert search_action(session, 0, 0, budget)["status"] == "unknown"
+    cert = search_action(session, 0, 0, budget, depth_mode="branch")
+    assert cert["status"] == "win" and cert["transitions"] == 4 and cert["nodes"] == 3
+    assert cert["stats"]["forced_nodes"] == 3
+    assert verify_certificate(cert, lambda: TreeSession(graph))["cold_verified"]
+    for budget in (SearchBudget(transitions=2), SearchBudget(path_steps=2), SearchBudget(nodes=1)):
+        cert = search_action(session, 0, 0, budget, depth_mode="branch")
+        assert cert["status"] == "unknown" and cert["transitions"] <= budget.transitions
+        assert session.state == "root"
+
+
+def test_fair_allocation_reaches_later_winning_choice_without_assuming_opponent_passes():
+    graph = {"root": (0, ["choice"]), "choice": (0, ["loop", "win"]), "loop": (0, ["loop"])}
+    budget = SearchBudget(nodes=8, depth=48)
+    assert search_action(TreeSession(graph), 0, 0, budget)["status"] == "unknown"
+    cert = search_action(TreeSession(graph), 0, 0, budget, allocation="fair")
+    assert cert["status"] == "win" and cert["nodes"] <= budget.nodes
+    assert verify_certificate(cert, lambda: TreeSession(graph))["cold_verified"]
+    graph["choice"] = (1, ["loop", "win"])
+    assert search_action(TreeSession(graph), 0, 0, budget, allocation="fair")["status"] == "unknown"
+
+
+@pytest.mark.parametrize("seconds", [float("nan"), float("inf"), 0])
+def test_nonfinite_or_zero_time_budget_is_rejected(seconds):
+    with pytest.raises(ValueError, match="positive finite"):
+        SearchBudget(seconds=seconds)
+
+
 def native_root(snapshots=False):
     deck = Deck(main=(91152256,) * 40)  # Celtic Guardian, 1400 ATK
     cfg = DuelConfig(max_turns=4, shuffle_decks=False, player=PlayerRules(starting_lp=1000))
