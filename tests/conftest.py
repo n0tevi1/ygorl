@@ -1,6 +1,11 @@
 """Shared fixtures."""
 
 import os
+import sys
+from pathlib import Path
+
+# Tool regression modules must collect independently, including CI without torch.
+sys.path.insert(0, str(Path(__file__).parents[1] / "tools"))
 
 # Small linear-algebra problems (the surrogate's ridge fits) run orders of magnitude slower when
 # OpenBLAS spreads them over threads on a loaded machine; the suite never needs threaded BLAS.

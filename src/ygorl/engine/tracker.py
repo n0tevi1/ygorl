@@ -178,6 +178,9 @@ class DuelTracker:
         for t, text in logs:
             if t == _core.LOG_TYPE_ERROR:
                 res.script_errors.append(text.decode("utf-8", "replace") if isinstance(text, bytes) else str(text))
+        if res.script_errors:
+            self.stop("error", "Lua script error: " + res.script_errors[0])
+            return  # Match the native host: do not act on messages from a failed script call.
         if self.record_messages:
             res.message_log.append(buf)
         if self.reference_log is not None:

@@ -126,12 +126,16 @@ def default_cards() -> CardDB:
 
 @cache
 def default_scripts() -> _core.ScriptDirectory:
-    from ygorl.engine.script_patches import fusion_override, synchro_override
+    from ygorl.engine.script_patches import chaos_angel_override, fusion_override, synchro_override
 
     directories = [str(p) for p in paths.script_directories()]
     original = _core.ScriptDirectory(directories)
     overrides = {}
-    for name, patch in (("proc_synchro.lua", synchro_override), ("proc_fusion.lua", fusion_override)):
+    for name, patch in (
+        ("proc_synchro.lua", synchro_override),
+        ("proc_fusion.lua", fusion_override),
+        ("c22850702.lua", chaos_angel_override),
+    ):
         replacement = patch(original.read(name))
         if replacement is not None:
             overrides[name] = replacement

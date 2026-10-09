@@ -209,11 +209,11 @@ def test_opening_rejects_engine_truncation_even_after_the_target_appears(demo, d
         play_opening(replay, Replayer(line), demo.targets, cards=db)
 
 
-def test_replays_reject_real_lua_errors_even_when_the_line_and_board_still_match(demo, db, tmp_path):
+def test_replays_reject_real_lua_errors_before_consuming_the_line(demo, db, tmp_path):
     from ygorl import _core, paths
     from ygorl.engine.duel import default_scripts
     from ygorl.engine.replay import load_yrp
-    from ygorl.solver.demo import DemoError, convert_line, verify_line
+    from ygorl.solver.demo import DemoError, convert_line, iter_steps, verify_line
 
     base = default_scripts()
     original = base.read("c14558127.lua")
@@ -226,13 +226,16 @@ def test_replays_reject_real_lua_errors_even_when_the_line_and_board_still_match
                  **{name: base.read(name) for name in ("proc_fusion.lua", "proc_synchro.lua")}}  # fmt: skip
     scripts = _core.ScriptDirectory([str(p) for p in paths.script_directories()], overrides)
     result = demo.replay(0).play(cards=db, scripts=scripts)
-    assert result.reason == "log_exhausted" and not result.retries
+    assert result.reason == "error" and not result.retries
+    assert not result.responses and "Lua script error" in result.error
     assert len(result.script_errors) == 3 and all("opening health regression" in e for e in result.script_errors)
     (line,) = demo_player_actions(demo)
     with pytest.raises(DemoError, match="script_errors=3"):
         play_opening(start_replay(demo), Replayer(line), demo.targets, cards=db, scripts=scripts)
     with pytest.raises(DemoError, match=f"opening {demo.deck['name']} hand {demo.hand_index}.*script_errors=3"):
         opening_report([demo], lambda i: Replayer(line), cards=db, scripts=scripts)
+    with pytest.raises(DemoError, match="script_errors=3"):
+        list(iter_steps(demo, cards=db, scripts=scripts))
     with pytest.raises(DemoError, match="script_errors=3"):
         verify_line(demo, cards=db, scripts=scripts)
     path = tmp_path / "line.yrpX"
