@@ -163,7 +163,7 @@ def test_actor_private_choice_and_unknown_identity():
 
 
 def test_selection_signature_and_warm_start_preserve_legacy_logits(tmp_path):
-    import torch
+    torch = pytest.importorskip("torch")
     from ygorl.nets import NetConfig, PolicyNet, collate
     from ygorl.train.checkpoint import Signature, warm_start
 
@@ -194,6 +194,7 @@ def test_selection_signature_and_warm_start_preserve_legacy_logits(tmp_path):
 
 
 def test_selection_training_checkpoint_resume_and_schema_rejection(tmp_path, monkeypatch):
+    pytest.importorskip("torch")
     from ygorl.nets import collate
     from ygorl.train.trainer import TrainConfig, Trainer
     from ygorl.train.ppo import PPOConfig
@@ -249,6 +250,7 @@ def test_selection_training_checkpoint_resume_and_schema_rejection(tmp_path, mon
 
 
 def test_selection_bc_demonstrations_and_cached_schema(tmp_path):
+    pytest.importorskip("torch")
     from ygorl.solver import read_jsonl
     from ygorl.train.bc import build_dataset
     from ygorl.train.heuristic_demos import save_data, data_identity, load_compatible_data
@@ -268,7 +270,7 @@ def test_selection_bc_demonstrations_and_cached_schema(tmp_path):
 
 
 def test_checkpoint_before_selection_flag_still_resumes(tmp_path):
-    import torch
+    torch = pytest.importorskip("torch")
     from ygorl.train.trainer import TrainConfig, Trainer
     from ygorl.train.ppo import PPOConfig
     from ygorl.train.checkpoint import save_checkpoint
