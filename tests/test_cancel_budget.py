@@ -30,6 +30,10 @@ def test_only_encoded_exit_survives_and_mask_never_enables_actions():
     np.testing.assert_array_equal(obs["action_mask"], [True, False, False])
     np.testing.assert_array_equal(alternatives["action_mask"], [True, True, False])
     assert obs["other"] is alternatives["other"] and info["intervened"] == 1
+    # The native all-undo fallback can re-enable cancel and another undo action.
+    # Baseline32 must preserve this mask exactly, even after its usual budget.
+    obs, info = restrict_cancel(point, alternatives, 40, 32)
+    assert obs is alternatives and info == {"intervened": 0, "sole_exit_preserved": 0}
     point.decision.TYPE = C.MSG_SELECT_CHAIN
     assert restrict_cancel(point, alternatives, 100, 0)[0] is alternatives
 

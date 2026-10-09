@@ -36,6 +36,10 @@ def restrict_cancel(point, observation, count, budget):
     mask = observation["action_mask"]
     require(bool(np.any(mask)), "empty baseline action mask")
     info = {"intervened": 0, "sole_exit_preserved": 0}
+    # The native guard already implements 32, including its all-undo fallback.
+    # Reapplying a subset of its rules could change that fallback's mask.
+    if budget == 32:
+        return observation, info
     if point.decision.TYPE not in (C.MSG_SELECT_CARD, C.MSG_SELECT_UNSELECT_CARD) or count < budget:
         return observation, info
     indices = [i for i, a in enumerate(point.actions) if i < len(mask) and mask[i] and a.kind == "cancel"]

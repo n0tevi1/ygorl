@@ -10,6 +10,8 @@ existing CheckpointAgent forward/sample, retaining its RNG and all other inputs.
 Use the Python session's existing selection-cancellation counter, including its
 player, decision-kind, and game-event resets. Never add actions hidden by the
 native mask or mask every encoded legal action. Opponents retain the usual guard.
+Budget 32 returns the native observation unchanged, including the native
+all-undo fallback; it must not reapply only the cancellation part of that guard.
 Candidate selection cancellation covers SELECT_CARD and SELECT_UNSELECT_CARD;
 it does not include chain pass, effect decline, or all other meanings of cancel.
 
