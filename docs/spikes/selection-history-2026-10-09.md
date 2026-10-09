@@ -59,14 +59,82 @@ small model is not evidence of playing strength or loop reduction. Artifacts:
 The first canary launcher failed at multiprocessing import; its failed log is
 retained separately, and the corrected run uses a main guard and one eval worker.
 
-## Next behavior experiment
+## Completed paired pilot (2026-10-09)
 
-Compare legacy vs selection-history training from the same fixed warm/u256 actor,
-with identical training seeds, critic initialization/warm-up, optimizer, deck pool,
-reward and cancellation guard. Record a pre-training baseline for each schema:
-new tokens alter inputs even before learning. First run a bounded pilot; do not
-retune on the four regression cases or interpret those selected cases as a
-population error rate. Evaluate full paired games and all selection opportunities:
-cancellation rate, repeated no-progress runs, successful target switching, health,
-win rate, turn distribution and its tail. A shorter game alone is not success.
-The original multi-seed critic-continuation study remains frozen and continues.
+Implementation merged in [#249](https://github.com/n0tevi1/ygorl/pull/249),
+commit `39b7dce`. Full presubmit on its exact source tree: **1716 passed,
+22 skipped**; GPU-specific follow-ups: **23 passed**. The skipped suite cases
+include 19 GPU cases covered by follow-ups, two opt-in network cases and one
+intentional snapshot condition. Isolated native solver tests require the current
+helper, rather than the old root build; see the retained validation record.
+
+The registered pilot used one training seed (249), the same fixed warm/u256
+actor **and trained critic** in both arms, fresh Adam/reference/pool, eight
+critic-only updates and 24 PPO updates. Reward, legal actions and cancellation
+guard were unchanged. It completed 467 legacy and 484 selection-history training
+games without errors or truncation. All 128 evaluation games completed normally.
+Each endpoint used the same 32 Greedy games: eight deck-pair blocks, both deck
+assignments and both starting players. This is a small behavior pilot, not a
+strength benchmark against top-level opponents.
+
+| Encoding / endpoint | Wins / 32 | Mean turns | p90 turns | Cancels / opportunities | Games with >=8 cancels without public progress |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Legacy initial | 23 | 9.8125 | 14.9 | 0 / 12 | 0 |
+| Legacy final | 21 | 9.59375 | 15.0 | 15 / 29 | 1 |
+| Selection initial | 23 | 9.875 | 14.9 | 0 / 11 | 0 |
+| Selection final | 23 | 9.03125 | 12.9 | 2 / 14 | 0 |
+
+Exploratory paired percentile bootstrap over the eight deck-pair blocks (100,000
+draws, analysis seed 20261009250): final selection minus legacy win rate
+**+6.25 percentage points, 95% interval [-9.375, +18.75]**; mean turns
+**-0.5625, interval [-2.50, +1.25]**. The before/after difference-in-differences
+for mean turns is -0.625, interval [-2.50, +1.15625]. These intervals condition
+on this one training seed; they do not cover training-seed variation. All cross
+zero. Selection's own win count stayed 23/32; it has not demonstrated a strength
+gain. Opportunities are policy-dependent and the cancellation difference is
+dominated by one game. Do not promote the schema or declare loops solved.
+
+Exact action/engine-response replays establish:
+
+- Legacy final game 1 repeats the same target choice and cancels 15 times at
+  decisions 91, 93, ..., 119. All cancellation observations have the same SHA256,
+  and cancellation probability stays 0.8873858. It then completes the choice and
+  wins on turn 6. This reproduces the observation aliasing on a new pilot game.
+- Selection final games 0 and 28 each cancel once, then choose a different target
+  and complete selection. These are target switches, not repeated loops; tactical
+  optimality is not established. The matched selection game 1 has no cancellation.
+- Forced-prefix diagnostics on the four original cases are mixed: both training
+  arms can reduce cancellation probability; legacy is better on some cases.
+  Adding the new inputs can initially increase cancellation probability. These
+  selected prefixes are not natural-policy mistake rates.
+
+Confirmed cause: the old representation omits accepted intermediate choices,
+including information needed to distinguish selected targets. Fixed by the
+opt-in actor-private history. Separately, gamma=1, turn discount=1 and no
+per-decision cost leave a state-preserving loop with the same winning suffix
+without a terminal-return penalty. The gradient-level reason that cancellation
+became strongly preferred remains unresolved; this pilot does not identify it.
+
+Artifacts under `out/research/selection-history-pilot-2026-10-09/`:
+`identity.json`, `protocol.md`, `report.json`, `paired-analysis.json`,
+`analyze.py`, `audit_games.py`, `audit-summary.json`, all raw evaluation JSONL
+and replay responses, `selected-case-probabilities.json`, and
+`causal-scope.md`. Full validation evidence is under
+`out/research/selection-history-canary-2026-10-09/VALIDATION.md`.
+
+## Registered independent replication
+
+`out/research/selection-history-replication-2026-10-09/` freezes three new paired
+training seeds (250, 251, 252), the same source and training budget, and 128 new
+Greedy games per initial/final endpoint. The 32 deck-pair blocks are shared across
+seeds/arms/endpoints: 1536 game executions are **not** 1536 independent samples.
+Report paired per-seed contrasts, initial-to-final changes, and seed variation;
+retain loop, health, turn-tail and win checks. Audit flagged games before labeling
+mistakes. No change to rewards or masks, no automatic promotion.
+
+Preflight verified identical inherited actor/critic tensors in both schemas. The
+independent training service and watchdog started on 2026-10-09, with checkpoints
+every update, a pre-optimizer health gate, ten-second parent heartbeat, a four-hour
+runtime limit, and persistent completion/failure handoff. Frozen identity SHA256:
+`9c7d89e44d27bcbfbb5af620d51e1f8a7a6749c966048f5d179e7f55caa7dbbd`.
+The original multi-seed critic-continuation study and runtime remain unchanged.
