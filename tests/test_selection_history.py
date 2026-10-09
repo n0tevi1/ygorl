@@ -265,3 +265,35 @@ def test_selection_bc_demonstrations_and_cached_schema(tmp_path):
     assert len(loaded) == len(data)
     with pytest.raises(ValueError, match="selection-history"):
         load_compatible_data(path, vocab=vocab, event_length=32)
+
+
+def test_checkpoint_before_selection_flag_still_resumes(tmp_path):
+    import torch
+    from ygorl.train.trainer import TrainConfig, Trainer
+    from ygorl.train.ppo import PPOConfig
+    from ygorl.train.checkpoint import save_checkpoint
+
+    decks = tuple(str(Path(__file__).parent / "decks" / f"{name}.ydk") for name in ("branded_despia", "snake_eye"))
+    cfg = TrainConfig(
+        decks=decks,
+        num_envs=2,
+        env_threads=1,
+        steps=8,
+        event_length=16,
+        net=dict(d_model=16, n_heads=2, board_layers=1, history_layers=1),
+        ppo=PPOConfig(epochs=1, minibatch_size=16),
+        eval_every=0,
+        torch_threads=1,
+        collect_threads=1,
+    )
+    old = Trainer(cfg, tmp_path / "old", log=None)
+    old.step()
+    state = old.state_dict()
+    state["net_config"].pop("selection_history")
+    state["config"]["net"].pop("selection_history", None)
+    path = save_checkpoint(state, tmp_path / "legacy.pt")
+    resumed = Trainer.resume(path, tmp_path / "resumed", log=None)
+    assert not resumed.net_config.selection_history
+    for key, value in old.model.state_dict().items():
+        torch.testing.assert_close(value, resumed.model.state_dict()[key], atol=0, rtol=0)
+    assert np.isfinite(resumed.step()["loss"])

@@ -288,7 +288,8 @@ class Trainer:
                 "evolved": self.evolved.state_dict() if self.evolved is not None else None}  # fmt: skip
 
     def _restore(self, state: dict) -> None:
-        if state["net_config"] != self.net_config.to_dict():
+        saved_net = {"selection_history": False, **state["net_config"]}
+        if saved_net != self.net_config.to_dict():
             raise ValueError("the checkpoint's network does not match the configuration")
         self.learner.load_state_dict(state["learner"])
         self.pool.load_state_dict(state["pool"], self._new_model)
