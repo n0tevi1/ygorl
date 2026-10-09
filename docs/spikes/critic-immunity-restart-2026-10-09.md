@@ -40,3 +40,12 @@ Retain service metadata after exit and require successful termination before mon
 completion; an empty terminal InvocationID alone is not a restart. Include retention
 progress in liveness checks. CPU evaluation can overlap GPU training; assess Colab
 parallelism only with checkpoint and artifact-identity guarantees preserved.
+
+Validation before launch: full `tools/presubmit.sh --test` passed 1,700 cases with
+22 skips in the restricted sandbox; all 19 GPU-dependent skipped cases were then
+covered on the actual ROCm device (17-case GPU filter plus all seven precision
+combinations; some overlap/CPU coverage). Three baseline skips remain. Six exact
+GPU checkpoint restores, statistical/retention preflight, 16 monitor/replay cases,
+and a response-decoded 24-turn native game passed. The new 64-cluster panel has
+zero deal-seed overlap with the three earlier studies. Logs and panel audit live
+in `out/research/terminal-critic-continuation-immunity-2026-10-09/`.
