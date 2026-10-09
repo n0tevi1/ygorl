@@ -5,6 +5,24 @@ from hashlib import sha256
 
 SYNCHRO_SHA256 = "cacd92d496ab653e6e5f304cb2b38b831e4f6d41ab1e842ffab909a0efb1543d"
 FUSION_SHA256 = "3779bd72c57d95ce7d330c04f9bc2479966337f50ad23ce3a1d5bf9304a6fdc9"
+CHAOS_ANGEL_SHA256 = "69ab42828aaf335d8caa90ce7e411674aefc30afa51f452d0d55001774a58afc"
+
+
+def chaos_angel_override(source: bytes | None) -> bytes | None:
+    """Evaluate prospective immunity without borrowing an unrelated chain's player/type."""
+    if source is None or sha256(source).hexdigest() != CHAOS_ANGEL_SHA256:
+        return None
+    text = source.decode("utf-8")
+    old = "\tlocal trig_p,trig_typ=Duel.GetChainInfo(0,CHAININFO_TRIGGERING_PLAYER,CHAININFO_TRIGGERING_TYPE)"
+    new = """\tlocal ce,trig_p,trig_typ=Duel.GetChainInfo(0,CHAININFO_TRIGGERING_EFFECT,CHAININFO_TRIGGERING_PLAYER,CHAININFO_TRIGGERING_TYPE)
+\tif ce~=te then
+\t\ttrig_p=te:GetHandlerPlayer()
+\t\tif Duel.GetReasonEffect()==te then trig_p=Duel.GetReasonPlayer() end
+\t\ttrig_typ=te:GetActiveType()
+\tend"""
+    assert text.count(old) == 1
+    return text.replace(old, new).encode("utf-8")
+
 
 # Only the library-created hand-material checks are known to preserve card levels and selected groups.
 # Keep this identity set private to the Lua chunk, rather than trusting card-provided labels or flags.
