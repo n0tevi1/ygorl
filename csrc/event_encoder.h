@@ -43,9 +43,10 @@ public:
     using Link = EventLink;
     using Window = EventWindow;
 
-    EventHistory(const CardDatabase* cards, const Vocab* vocab, size_t length, int64_t starting_lp);
+    EventHistory(const CardDatabase* cards, const Vocab* vocab, size_t length, int64_t starting_lp, bool selection_history = false);
     // Consume one engine message buffer ([u32 length][u8 type][payload]...).
     void feed(const std::string& buf);
+    void on_action(int player, uint8_t decision_type, const Action& action);
     // Last `length` tokens of `viewer` as [length, E_EVENT] row-major plus mask.
     void encode(int viewer, std::vector<int32_t>& events, std::vector<int32_t>& mask) const;
     size_t length() const { return length_; }
@@ -68,6 +69,8 @@ private:
     const CardDatabase* cards_;
     const Vocab* vocab_;
     size_t length_;
+    bool selection_history_ = false;
+    std::array<uint32_t, 2> selection_ordinals_{};
     std::array<std::deque<Row>, 2> tokens_;
     uint32_t turn_ = 0;
     int turn_player_ = 0;

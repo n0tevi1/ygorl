@@ -67,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--history", default="transformer", choices=("transformer", "lstm", "none"))
     parser.add_argument("--d-model", type=int, default=128)
     parser.add_argument("--layers", type=int, default=2, help="board and history Transformer layers (default 2)")
+    parser.add_argument("--selection-history", action="store_true", help="record actor-private selection history")
     parser.add_argument("--event-length", type=int, default=128, help="event tokens per observation (default 128)")
     parser.add_argument("--threads", type=int, default=2, help="torch threads (default 2)")
     parser.add_argument("--device", default="cpu", help="CPU or CUDA/ROCm device: cpu, cuda, cuda:0 (default cpu)")
@@ -129,7 +130,7 @@ def net_config(args: argparse.Namespace, vocab, text):
     return NetConfig(vocab_size=len(vocab), d_model=args.d_model, history=args.history, board_layers=args.layers,
                      history_layers=args.layers, id_embedding=not args.no_id_embedding, card_facts=args.card_facts,
                      card_text=not args.no_text, effect_text=not args.no_text,
-                     id_dropout=args.id_dropout).with_text(text)  # fmt: skip
+                     id_dropout=args.id_dropout, selection_history=args.selection_history).with_text(text)  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -226,6 +227,13 @@ def main(argv: list[str] | None = None) -> int:
     else:
         vocab = CardVocab.from_db(cards)
         event_length = args.event_length
+    selection_history = (
+        ckpt.net_config.selection_history
+        if args.no_train
+        else init.net_config.selection_history
+        if init is not None
+        else args.selection_history
+    )
     train_data = build_dataset(
         train_demos,
         vocab,
@@ -233,9 +241,11 @@ def main(argv: list[str] | None = None) -> int:
         env=env,
         event_length=event_length,
         include_synthetic_closing=args.include_synthetic_closing,
+        selection_history=selection_history,
     )
     heldout_data = build_dataset(heldout_demos, vocab, cards=cards, env=env, event_length=event_length,
-                                 include_synthetic_closing=args.include_synthetic_closing) if any(
+                                 include_synthetic_closing=args.include_synthetic_closing,
+                                 selection_history=selection_history) if any(
         d.status == "solved" for d in heldout_demos) else None  # fmt: skip
     report["data"]["train"]["samples"] = len(train_data)
     report["data"]["train"]["skipped"] = dict(train_data.skipped)
@@ -244,7 +254,9 @@ def main(argv: list[str] | None = None) -> int:
         from ygorl.train.heuristic_demos import concat, load_compatible_data, select
 
         def extra_data(path):
-            return load_compatible_data(path, vocab=vocab, event_length=event_length, environment=stamp)[0]
+            return load_compatible_data(
+                path, vocab=vocab, event_length=event_length, environment=stamp, selection_history=selection_history
+            )[0]
 
         if args.extra:
             extra = concat([extra_data(p) for p in args.extra])

@@ -242,7 +242,7 @@ def data_identity(vocab, event_length: int, environment: dict | None = None) -> 
 
 
 def load_compatible_data(path: str | Path, *, vocab, event_length: int,
-                         environment: dict | None = None) -> tuple[BCData, dict]:  # fmt: skip
+                         environment: dict | None = None, selection_history: bool = False) -> tuple[BCData, dict]:  # fmt: skip
     """Load extra BC samples only when their recorded identity matches the solver data / actor."""
     data, info = load_data(path)
     identity = info.get("identity")
@@ -252,6 +252,8 @@ def load_compatible_data(path: str | Path, *, vocab, event_length: int,
     for key, value in expected.items():
         if key not in identity or identity[key] != value:
             raise ValueError(f"{path}: BC data {key} mismatch; regenerate for the selected environment and actor")
+    if ("selection_history" in data.obs) != selection_history:
+        raise ValueError(f"{path}: BC data selection-history encoding differs; replay the demonstrations")
     events = data.obs.get("events")
     if events is None or events.ndim != 3 or events.shape[1] != event_length:
         raise ValueError(f"{path}: BC data event_length does not match its encoded observations")

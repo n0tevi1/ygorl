@@ -1067,6 +1067,8 @@ void HostDuel::start(const std::array<uint64_t, 4>& seed, uint64_t flags, const 
                      const std::vector<std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>& decks,
                      uint32_t max_turns, uint32_t max_decisions) {
     tracker_.reset();  // started() stays false unless this start() completes
+    if (selection_history_ && !event_length_)
+        throw std::invalid_argument("selection history requires a nonempty event window");
     events_.reset();
     core_ = std::make_unique<Duel>(seed, flags, team1, team2, cards_, scripts_);
     for (const char* base : {"constant.lua", "utility.lua"})
@@ -1077,7 +1079,7 @@ void HostDuel::start(const std::array<uint64_t, 4>& seed, uint64_t flags, const 
     }
     core_->start();
     tracker_ = std::make_unique<Tracker>(TrackerConfig{team1.starting_lp, max_turns, max_decisions}, cards_.get());
-    events_ = event_length_ ? std::make_shared<EventHistory>(cards_.get(), vocab_.get(), event_length_, team1.starting_lp)
+    events_ = event_length_ ? std::make_shared<EventHistory>(cards_.get(), vocab_.get(), event_length_, team1.starting_lp, selection_history_)
                             : nullptr;
     advance();
 }
@@ -1122,7 +1124,13 @@ int HostDuel::player() const {
 
 void HostDuel::act(size_t index) {
     require_started();
+    const auto& available = actions();
+    if (index >= available.size()) throw std::out_of_range("action index out of range");
+    const Action selected = available[index];
+    const int actor = tracker_->decision()->player;
+    const uint8_t decision_type = tracker_->decision()->type;
     const std::string* response = tracker_->act(index);
+    if (events_) events_->on_action(actor, decision_type, selected);
     if (response) {
         core_->set_response(*response);
         advance();
@@ -1132,6 +1140,7 @@ void HostDuel::act(size_t index) {
 void HostDuel::observe(Observation& out) {
     require_started();
     encode(*core_, *tracker_, actions(), *cards_, *vocab_, out);
+    out.selection_history = selection_history_;
     out.has_events = events_ != nullptr;
     if (events_) events_->encode(std::max(0, player()), out.events, out.event_mask);
 }

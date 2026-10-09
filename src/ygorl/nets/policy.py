@@ -133,6 +133,8 @@ class PolicyNet(nn.Module):
                         f.history_state)  # fmt: skip
 
     def _features(self, obs: Batch, state: HistoryState | None = None) -> Features:
+        if ("selection_history" in obs) != self.cfg.selection_history:
+            raise ValueError("selection-history encoding differs from network configuration")
         cards, glob = obs["cards"], obs["globals"]
         b = cards.shape[0]
         tokens = history_state = None

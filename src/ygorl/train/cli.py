@@ -75,6 +75,7 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--d-model", "net.d_model"),
         _f("--layers", ("net.board_layers", "net.history_layers"), "board and history Transformer layers"),
         _f("--history", "net.history", choices=("transformer", "lstm", "none")),
+        _f("--selection-history", "net.selection_history", "record actor-private selection actions in history"),
         _f("--no-id-embedding", "net.id_embedding", "drop the per-card ID embedding", negate=True),
         _f("--text-dir", "text_dir", "card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)"),
         _f("--card-facts", "net.card_facts", "use card_facts.npz in --text-dir (experimental)"),

@@ -145,7 +145,7 @@ def action_key(point, index: int) -> tuple:
 
 def line_steps(demo: Demonstration, line: int, vocab: CardVocab | None = None, *, cards=None, scripts=None,
                env: Environment | None = None, event_length: int = DEFAULT_EVENT_LENGTH,
-               player: int | None = DEMO_PLAYER) -> list[DemoStep]:  # fmt: skip
+               player: int | None = DEMO_PLAYER, selection_history: bool = False) -> list[DemoStep]:  # fmt: skip
     """Replay ``demo.lines[line]`` and describe every step (both players').
 
     With a ``vocab``, the non-forced decisions of ``player`` (at least two legal actions) carry their
@@ -155,7 +155,9 @@ def line_steps(demo: Demonstration, line: int, vocab: CardVocab | None = None, *
     ln = demo.lines[line]
     kwargs = {k: v for k, v in (("cards", cards), ("scripts", scripts)) if v is not None}
     session = DuelSession(demo.replay(line).duel(env, **kwargs))
-    observer = PointObserver(cards, vocab, event_length) if vocab is not None else None
+    observer = (
+        PointObserver(cards, vocab, event_length, selection_history=selection_history) if vocab is not None else None
+    )
     out: list[DemoStep] = []
     try:
         for step, idx in enumerate(ln.actions):
@@ -172,6 +174,8 @@ def line_steps(demo: Demonstration, line: int, vocab: CardVocab | None = None, *
             out.append(DemoStep(step, point.player, idx, len(point.actions), act.kind, card, obs,
                                 action_key(point, idx)))  # fmt: skip
             session.act(idx)
+            if observer is not None:
+                observer.on_decision(point, idx)
     finally:
         session.close()
     return out
@@ -195,7 +199,8 @@ def undone_steps(steps: Sequence[DemoStep]) -> set[int]:
 
 def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=None, scripts=None,
                   env: Environment | None = None, event_length: int = DEFAULT_EVENT_LENGTH,
-                  player: int = DEMO_PLAYER, include_synthetic_closing: bool = False) -> BCData:  # fmt: skip
+                  player: int = DEMO_PLAYER, include_synthetic_closing: bool = False,
+                  selection_history: bool = False) -> BCData:  # fmt: skip
     """Every verified line of every solved record (plain and ``--fire``) as training samples.
 
     Kept: the decisions of ``player`` with at least two legal actions whose demonstrated row is encoded
@@ -217,7 +222,7 @@ def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=Non
                 raise DemoError("solver_responses is outside the recorded response range")
             verify_line(demo, li, env=env, cards=cards, scripts=scripts)
             steps = line_steps(demo, li, vocab, cards=cards, scripts=scripts, env=env, event_length=event_length,
-                               player=player)  # fmt: skip
+                               player=player, selection_history=selection_history)  # fmt: skip
             undone = undone_steps(steps)
             for st in steps:
                 if st.player != player:
@@ -397,7 +402,10 @@ def play_opening(replay: Replay, agent, targets: Sequence[str], *, env: Environm
     """
     cards = cards if cards is not None else default_cards()
     kwargs = {k: v for k, v in (("cards", cards), ("scripts", scripts)) if v is not None}
-    session = DuelSession(replay.duel(env, **kwargs))
+    duel = replay.duel(env, **kwargs)
+    session = DuelSession(duel)
+    if hook := getattr(agent, "on_duel_start", None):
+        hook(duel)
     tracker = session.tracker
     observe = getattr(agent, "observe", None)
     actions: list[int] = []
@@ -418,6 +426,8 @@ def play_opening(replay: Replay, agent, targets: Sequence[str], *, env: Environm
                 capped = capped or point.player == player
                 idx = passive_action(point)
             session.act(idx)
+            if hook := getattr(agent, "on_decision", None):
+                hook(point, idx)
         _check_replay_health(tracker, require_turn2=True)
         board = board_summary(session.core, tracker.turn, (tracker.lp[0], tracker.lp[1]))
     finally:

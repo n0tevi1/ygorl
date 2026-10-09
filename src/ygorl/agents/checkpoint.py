@@ -74,7 +74,13 @@ class CheckpointAgent:
             raise NotImplementedError("policy agents support only curriculum='full' without augmented_start")
         vocab = self.policy.vocab
         passwords = [vocab.password(i) for i in range(vocab.FIRST_INDEX, len(vocab))]
-        host = _core.HostDuel(duel.cards.to_core(), duel.scripts, passwords, event_length=self.policy.event_length)
+        host = _core.HostDuel(
+            duel.cards.to_core(),
+            duel.scripts,
+            passwords,
+            event_length=self.policy.event_length,
+            selection_history=self.policy.net_config.selection_history,
+        )
         p = cfg.player
         player = (p.starting_lp, p.starting_hand, p.draw_per_turn)
         decks = [(list(m), list(e)) for m, e in duel.loaded_decks()]

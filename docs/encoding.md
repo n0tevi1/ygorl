@@ -333,3 +333,20 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 - Python 参考：`ygorl.env.events.EventHistory`；C++：`csrc/event_encoder.{h,cpp}`，经 `_core.HostDuel(..., event_length=L)`、`_core.HostPool(..., event_length=L)`（`EncodedVecEnv(event_length=L)`）输出 `events` / `event_mask`，另以 `_core.EventHistory` 单独暴露供差分测试。
 - `tests/test_events.py`：手工构造的灰流丽场景（A 发动增援检索，B 手里 5 张灰流丽、被问到连锁且选择不连锁 → 双方流里出现 `player` = B、触发 `search`、B 场上 0 张 / 手牌 5 张的 `abstain` token；B 连锁灰流丽时该环不产生 token）、信息集检验（B 手里是灰流丽还是无法响应的通常怪兽，A 在每个决策点的 token 流逐行相同）、对手抽卡 / 盖放 / 检索的隐藏、卡组序号置 0、手牌与场上张数逐决策点与核心查询一致、`L` 可配（0 / 1 / 8 / 300 与完整历史的末尾一致）、合成的第 5 次召唤与攻击宣言窗口、全部 46 种事件类型的随机报文（含截断与尾随字节）C++ 与 Python 逐元素一致、3 局真实对局 `HostDuel` 逐决策点一致、`EncodedVecEnv` 的形状与开关。
 - 验收：`uv run python tools/check_cpp_events.py --points 100000 --length 512`。2026-09-22 的一次运行：81 局、100,842 个决策点、0 处不一致（viewer 0 共 85,057 个 token；`abstain` 触发位：other 4,308、attack 476、search 443、spsummon_deck 213、send_deck_grave 61、fifth_summon 42）；`--length 8` 另跑 16 局 20,268 个决策点，0 处不一致。随机对局平均每回合约 20 个 token（每决策点 0.8 个）；真实 combo 回合会多得多，训练时按需调大 `L`。
+
+
+### 可选的玩家选择历史（2026-10-09）
+
+`selection_history=True` 在现有事件流末尾追加一种 `selection_choice` 类型（ID 47），
+记录每次被接受的 select / unselect / cancel / finish，包括尚未提交引擎响应的中间选择。
+仅行动玩家收到记录；对手连 token 数量也不可见。使用合法动作中已经提供的卡片信息，
+不从全知棋盘补查身份。原有合法动作、取消保护和奖励保持一致。
+
+`value1` 是 ACTION_KINDS 索引加一，`value2` 是决策消息类型，`value3` 是该玩家本局
+选择序号（1..65535，饱和；新局归零）。卡片、区域、回合、阶段、LP 复用事件字段。
+它记录已作出的选择，不推断“当前待召唤目标”；窗口仍只保留最近 L 个事件。
+新模式额外输出 `selection_history: int32[1] = [1]`，批处理/网络拒绝混用模式。
+
+默认关闭，旧检查点保持旧编码；新训练通过 `--selection-history` 显式开启。
+`PointObserver` 调用方需在每次成功执行动作后、读取下个点前调用 `on_decision(point, index)`。
+详细设计、真实失败案例和验收见 [选择历史修复](spikes/selection-history-2026-10-09.md)。

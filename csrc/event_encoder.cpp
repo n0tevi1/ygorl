@@ -19,7 +19,7 @@ enum Ev : int {
     EV_CANCEL_TARGET, EV_BECOME_TARGET, EV_CARD_SELECTED, EV_RANDOM_SELECTED, EV_ADD_COUNTER, EV_REMOVE_COUNTER,
     EV_CONFIRM_CARDS, EV_CONFIRM_DECKTOP, EV_CONFIRM_EXTRATOP, EV_DECK_TOP, EV_SHUFFLE_DECK, EV_SHUFFLE_HAND,
     EV_SHUFFLE_EXTRA, EV_SHUFFLE_SET_CARD, EV_SWAP_GRAVE_DECK, EV_REVERSE_DECK, EV_FIELD_DISABLED, EV_TOSS_COIN,
-    EV_TOSS_DICE, EV_HAND_RES, EV_ABSTAIN,
+    EV_TOSS_DICE, EV_HAND_RES, EV_ABSTAIN, EV_SELECTION_CHOICE,
 };
 
 // ygorl.env.events.TRIGGERS
@@ -157,8 +157,25 @@ bool slot_of(const Loc& loc, int& zone) {
 
 }  // namespace
 
-EventHistory::EventHistory(const CardDatabase* cards, const Vocab* vocab, size_t length, int64_t starting_lp)
-    : cards_(cards), vocab_(vocab), length_(length), lp_{starting_lp, starting_lp} {}
+EventHistory::EventHistory(const CardDatabase* cards, const Vocab* vocab, size_t length, int64_t starting_lp,
+                           bool selection_history)
+    : cards_(cards), vocab_(vocab), length_(length), selection_history_(selection_history),
+      lp_{starting_lp, starting_lp} {
+    if (selection_history && !length)
+        throw std::invalid_argument("selection history requires a nonempty event window");
+}
+
+void EventHistory::on_action(int player, uint8_t decision_type, const Action& action) {
+    if (!selection_history_ || (action.kind != SELECT && action.kind != UNSELECT &&
+                                action.kind != CANCEL && action.kind != FINISH)) return;
+    auto& ordinal = selection_ordinals_.at(player);
+    ordinal = std::min<uint32_t>(65535, ordinal + 1);
+    Card card, owner;
+    if (action.has_card) { card.present = true; card.code = action.card.code; }
+    if (action.description >> 20) { owner.present = true; owner.code = action.description >> 20; }
+    emit(EV_SELECTION_CHOICE, player, card, owner, action.has_card ? &action.card.loc : nullptr,
+         nullptr, static_cast<int>(action.kind) + 1, decision_type, ordinal, player);
+}
 
 int EventHistory::field_count(int player) const {
     int n = 0;

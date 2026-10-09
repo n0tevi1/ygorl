@@ -75,7 +75,7 @@ def main() -> int:
     specs = [s for k, (i, j) in enumerate(cells)
              for s in paired_specs(mine[i], theirs[j], args.pairs, derive_seed(args.seed, 1, k), config)]  # fmt: skip
     env = EncodedVecEnv(min(args.envs, len(specs)), args.threads, vocab=pol.vocab, event_length=pol.event_length,
-                        skip_forced=True)  # fmt: skip
+                        skip_forced=True, selection_history=pol.net_config.selection_history)  # fmt: skip
     records, stats = play_policies(env, specs, net_a, net_b, device=device, greedy=args.greedy, pairs_per_spec=2)
     rep = summarize(records, agent_a=f"policy:{args.checkpoint}", agent_b=f"policy:{args.opponent_checkpoint or args.checkpoint}",
                     deck_a="*", deck_b="*", seed=args.seed)  # fmt: skip
