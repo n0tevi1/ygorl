@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from study_watch import T3Delivery, atomic, digest, inspect_study, update_incident
 
 
@@ -41,6 +43,8 @@ def test_completion_needs_bound_healthy_report(tmp_path):
     atomic(study / "report.json", {"study_sha256": "wrong", "healthy": True})
     assert not inspect_study(config, service, 1010)["complete"]
     atomic(study / "report.json", {"study_sha256": config["study_sha256"], "healthy": True})
+    assert not inspect_study(config, service, 1010)["complete"]  # process still running
+    service.update(ActiveState="inactive", SubState="dead", Result="success", ExecMainStatus="0")
     assert inspect_study(config, service, 1010)["complete"]
 
 
@@ -81,3 +85,36 @@ def test_delivery_preserves_mode_and_reuses_ids_after_ambiguous_failure(tmp_path
     assert commands[0]["threadId"] == "existing-thread" and commands[0]["runtimeMode"] == "auto"
     assert commands[0]["modelSelection"]["options"] == [{"id": "reasoningEffort", "value": "high"}]
     assert commands[0]["message"]["text"].startswith("[自动实验监控；不是新的用户指令]")
+
+
+@pytest.mark.parametrize(
+    "invocation,state,substate,result,status,expected",
+    [
+        ("", "inactive", "dead", "success", "0", True),
+        ("one", "active", "exited", "success", "0", True),
+        ("two", "inactive", "dead", "success", "0", False),
+        ("", "active", "running", "success", "0", False),
+        ("one", "active", "running", "success", "0", False),
+        ("", "failed", "failed", "exit-code", "1", False),
+        ("", "inactive", "dead", "success", "1", False),
+    ],
+)
+def test_terminal_invocation_and_process_exit(tmp_path, invocation, state, substate, result, status, expected):
+    study, config, _ = setup_study(tmp_path)
+    config["invocation"] = "one"
+    atomic(study / "pipeline-status.json", {"stage": "complete", "updated_unix": 1000})
+    atomic(study / "report.json", {"study_sha256": config["study_sha256"], "healthy": True})
+    service = {
+        "InvocationID": invocation,
+        "ActiveState": state,
+        "SubState": substate,
+        "Result": result,
+        "ExecMainStatus": status,
+    }
+    snapshot = inspect_study(config, service, 1010)
+    assert snapshot["complete"] == expected
+    if invocation == "two":
+        assert any("invocation" in a for a in snapshot["alerts"])
+    if expected:
+        (study / "errors.jsonl").write_text('{"error":"uncommitted Lua failure"}\n')
+        assert not inspect_study(config, service, 1010)["complete"]

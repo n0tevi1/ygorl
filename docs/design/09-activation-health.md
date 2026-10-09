@@ -28,3 +28,12 @@ A stopped study is an unresolved incident, not successful monitor completion.
 Publication alone is not acknowledgment; monitoring must retain pending incidents
 and verify delivery/acknowledgment separately. Repaired training receives a new
 identity; previous STOP evidence and results are immutable.
+
+A completed service can lose its `InvocationID` when systemd discards inactive
+runtime metadata. An empty terminal ID is not evidence of a new invocation.
+Completion requires a bound healthy report, no STOP or raw failures, and a clean
+service exit (inactive/dead or active/exited, success, status 0). A nonempty changed
+ID remains an incident even with a healthy report; missing identity while running
+or before valid completion also remains an incident. Retain unit state after exit
+for future runs where possible. Do not finalize merely because a report appeared
+while the process is still running.
