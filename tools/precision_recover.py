@@ -3,6 +3,7 @@
 import argparse
 import importlib
 import json
+import math
 import re
 import subprocess
 import sys
@@ -47,6 +48,68 @@ def stopped_units(units):
             ["systemctl", "--user", "show", unit, "--property=ActiveState", "--value"], text=True, timeout=15
         ).strip()
         require(result in ("inactive", "failed"), f"prior service is not quiescent: {unit}: {result}")
+
+
+def admit_transport_stop(stop, events, audit):
+    """Only the original timeout stop or the specifically documented churn stop may resume."""
+    failures = [e for e in events if e["stage"] == "failed"]
+    require(failures and failures[-1] == audit["last_failure"], "audited failure differs")
+    if stop.get("source") == "precision_watch":
+        require(
+            failures[-1]["error"] == "RuntimeError('colab exec timed out; remote state is unknown')",
+            "not the audited transport failure",
+        )
+        require(
+            stop.get("reason", "").startswith("required controller service unexpectedly inactive:"),
+            "health or unrelated STOP requires separate investigation",
+        )
+        return
+    require(
+        stop.get("source") == "precision_recovery_transport_audit",
+        "health or unrelated STOP requires separate investigation",
+    )
+    require(
+        stop.get("reason")
+        == "Stop repeated poll transport recovery before exhausting original allocation budget; retain all verified artifacts pending fenced poll retry amendment.",
+        "unrelated operator STOP requires separate investigation",
+    )
+    require(failures[-1]["error"] == "RuntimeError('STOP.json requested study stop')", "operator STOP failure differs")
+    recorded = [e for e in events if e["stage"] == "transport_recovery"][-2:]
+    require(
+        len(recorded) == 2 and recorded == stop.get("transport_events") == audit.get("transport_events"),
+        "audited transport events differ",
+    )
+    require(
+        recorded[0]["time"] < recorded[1]["time"] <= stop["time"] <= failures[-1]["time"],
+        "operator stop chronology differs",
+    )
+    require(
+        not [e for e in failures[:-1] if e["time"] >= recorded[0]["time"]],
+        "additional failure requires separate investigation",
+    )
+    for event in recorded:
+        require(
+            re.fullmatch(r"RuntimeError\('colab exec failed; see cli-\d+\.log'\)", event["error"]) is not None,
+            "not an audited polling transport failure",
+        )
+        diagnostic = event.get("diagnostic", {})
+        if diagnostic.get("status"):
+            status = diagnostic["status"]
+            require(
+                status.get("stage") in ("running", "complete") and status.get("generation") == event["generation"],
+                "diagnostic worker failed or differs",
+            )
+            require(
+                status.get("counters", {}).get("errors") == 0 and status.get("counters", {}).get("truncated") == 0,
+                "diagnostic health requires separate investigation",
+            )
+        else:
+            require(
+                diagnostic.get("unverified_suffix_unknown") is True
+                and diagnostic.get("diagnostic_error")
+                == "RuntimeError('colab exec timed out; remote state is unknown')",
+                "unbound diagnostic uncertainty",
+            )
 
 
 def controller_class(frozen_repo):
@@ -117,18 +180,8 @@ def controller_class(frozen_repo):
                 "unbound endpoint helper",
             )
             events = [json.loads(s) for s in (self.root / "events.jsonl").read_text().splitlines()]
-            failures = [e for e in events if e["stage"] == "failed"]
-            require(failures and failures[-1] == self.audit["last_failure"], "audited failure differs")
-            require(
-                failures[-1]["error"] == "RuntimeError('colab exec timed out; remote state is unknown')",
-                "not the audited transport failure",
-            )
             stop = read(self.root / "STOP.json")
-            require(
-                stop.get("source") == "precision_watch"
-                and stop.get("reason", "").startswith("required controller service unexpectedly inactive:"),
-                "health or unrelated STOP requires separate investigation",
-            )
+            admit_transport_stop(stop, events, self.audit)
             stopped_units(self.audit["quiescent_units"])
             assignments = endpoint_call("list")
             require(not assignments["endpoints"], "server assignments still present; no replacement permitted")
@@ -246,6 +299,114 @@ def controller_class(frozen_repo):
                 value = {"diagnostic_error": repr(exc), "unverified_suffix_unknown": True}
             atomic(self.root / f"diagnostic-{self.generation}.json", value)
             return value
+
+        def poll_job(self, session, job):
+            """Retry only a fenced status/lease RPC, after a fresh read-only health probe."""
+
+            def rpc(*, probe=False):
+                self.guard()
+                remaining = self.deadline_unix - time.time()
+                require(remaining > 0, "original study deadline reached")
+                self.serial += 1
+                path = self.root / f"rpc-{self.serial:04d}.py"
+                path.write_text(f"""import json,pathlib,time,os,math
+root=pathlib.Path({job["out"]!r});lease=pathlib.Path({job["lease"]!r})
+now=time.time();old=json.loads(lease.read_text())
+rejected=None
+if old.get('generation')!={job["generation"]} or old.get('job_id')!={job["job_id"]!r}: rejected='wrong job or generation'
+elif not isinstance(old.get('expires_unix'),(int,float)) or not math.isfinite(old['expires_unix']): rejected='invalid lease expiry'
+elif now>=min(old['expires_unix'],{self.deadline_unix}): rejected='expired lease or deadline'
+if rejected:
+ print('YGORL_JSON:'+json.dumps({{'poll_rejected':rejected}}))
+else:
+ if not {probe!r}:
+  old['expires_unix']=min(now+300,{self.deadline_unix})
+  tmp=lease.with_suffix('.tmp');tmp.write_text(json.dumps(old));tmp.replace(lease)
+ pid=int((root/'worker.pid').read_text())
+ try:
+  os.kill(pid,0);alive=pathlib.Path(f'/proc/{{pid}}/stat').read_text().split(') ',1)[1].split()[0]!='Z'
+ except (ProcessLookupError,FileNotFoundError): alive=False
+ def read(name):
+  p=root/name;return json.loads(p.read_text()) if p.exists() else None
+ host=None
+ if {probe!r}:
+  try:
+   p=pathlib.Path(f'/proc/{{pid}}/status');worker=p.read_text().splitlines() if p.exists() else []
+   host={{'loadavg':pathlib.Path('/proc/loadavg').read_text().strip(),'cpus':os.cpu_count(),'memory':[line for line in pathlib.Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:')],'worker':[line for line in worker if line.startswith(('VmRSS:','Threads:'))]}}
+  except OSError as error: host={{'read_error':type(error).__name__}}
+ print('YGORL_JSON:'+json.dumps({{'alive':alive,'status':read('status.json'),'restore':read('restore.json'),'precision':read('precision-evidence.json'),'snapshots':sorted(str(p.parent) for p in (root/'snapshots').glob('*/precision-manifest.json')),'log_tail':(root/'worker.log').read_text()[-4000:],'host_probe':host,'poll_fence':{{'job_id':old['job_id'],'generation':old['generation'],'lease_expires_unix':old['expires_unix'],'server_unix':time.time()}}}}))
+""")
+                output = self.cli_call(["exec", "-s", session, "-f", str(path)], timeout=min(45, remaining))
+                lines = [s for s in output.splitlines() if s.startswith("YGORL_JSON:")]
+                require(bool(lines), "poll acknowledgement missing; execution outcome unknown")
+                value = json.loads(lines[-1].split(":", 1)[1])
+                require(not value.get("poll_rejected"), "poll fence rejected: " + str(value.get("poll_rejected")))
+                fence = value["poll_fence"]
+                require(
+                    all(math.isfinite(fence[k]) for k in ("lease_expires_unix", "server_unix")), "nonfinite poll fence"
+                )
+                require(
+                    fence["generation"] == job["generation"] and fence["job_id"] == job["job_id"],
+                    "poll acknowledgement fence differs",
+                )
+                status = value.get("status") or {}
+                require(status.get("generation", job["generation"]) == job["generation"], "worker generation differs")
+                return value
+
+            try:
+                return rpc()
+            except RuntimeError as exc:
+                # These are stable errors emitted by our CLI wrapper, not parsed remote traceback text.
+                if not str(exc).startswith(("colab exec failed;", "colab exec timed out;")):
+                    raise
+                self.event(
+                    "poll_transport_error",
+                    job_id=job["job_id"],
+                    generation=job["generation"],
+                    error=repr(exc),
+                    outcome="unknown; only lease/status RPC may have executed",
+                )
+                try:
+                    info = rpc(probe=True)
+                except ValueError:
+                    raise  # a confirmed fence/identity rejection must stop the study
+                except Exception as probe_error:
+                    self.event(
+                        "poll_probe_unavailable",
+                        job_id=job["job_id"],
+                        generation=job["generation"],
+                        error=repr(probe_error),
+                    )
+                    raise exc  # existing endpoint-confirmed cleanup handles unresolved transport failure
+                atomic(self.root / f"poll-probe-{job['generation']}-{self.serial}.json", info)
+                status = info.get("status") or {}
+                require(status.get("stage") != "failed", "poll probe reports worker failure")
+                require(info["alive"] or status.get("stage") == "complete", "poll probe reports dead worker")
+                require(status.get("stage") in ("running", "complete"), "poll probe cannot establish healthy worker")
+                updated = status.get("updated_unix", float("nan"))
+                require(
+                    math.isfinite(updated) and 0 <= info["poll_fence"]["server_unix"] - updated <= 300,
+                    "poll probe status is stale or has invalid time",
+                )
+                counts = status.get("counters", {})
+                require(
+                    all(not isinstance(value, (int, float)) or math.isfinite(value) for value in counts.values()),
+                    "poll probe reports nonfinite counters",
+                )
+                origin = job["identity"]["origin_counts"]
+                require(counts.get("errors", 0) <= origin.get("errors", 0), "poll probe reports training errors")
+                games = counts.get("games", 0) - origin.get("games", 0)
+                truncated = counts.get("truncated", 0) - origin.get("truncated", 0)
+                require(games < 100 or truncated / games <= 0.01, "poll probe reports unhealthy truncations")
+                lease_margin = info["poll_fence"]["lease_expires_unix"] - info["poll_fence"]["server_unix"]
+                require(
+                    lease_margin >= 60 and self.deadline_unix - time.time() >= 60,
+                    "insufficient lease/deadline margin for poll retry",
+                )
+                self.event(
+                    "poll_retry", job_id=job["job_id"], generation=job["generation"], lease_margin=lease_margin, retry=1
+                )
+                return rpc()  # exactly one retry; its transport failure follows existing cleanup/recovery
 
         def main(self, plan_only=False):
             with checkpoint.run_lock(self.root / "controller"):
