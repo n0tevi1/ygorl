@@ -128,6 +128,7 @@ def convert_line(yrp: YrpFile, targets: Sequence[TargetCard | str], *, responses
         for k, raw in enumerate(wanted):
             point = session.point
             if point is None:
+                _check_replay_health(tracker)
                 raise DemoError(f"the duel stopped ({tracker.result.reason} {tracker.result.error}) before response {k} "
                                 f"of {len(wanted)}")  # fmt: skip
             response = canonical_response(point.decision, raw)
@@ -297,9 +298,11 @@ def iter_steps(demo: Demonstration, line: int = 0, *, env: Environment | None = 
         for i, idx in enumerate(ln.actions):
             point = session.point
             if point is None:
+                _check_replay_health(session.tracker)
                 raise DemoError(f"step {i}: the duel stopped ({session.tracker.result.reason}) before the line ended")
             yield point, idx
             session.act(idx)
+        _check_replay_health(session.tracker)
         if session.tracker.result.responses != ln.responses:
             raise DemoError("the action indices do not reproduce the recorded responses")
     finally:
@@ -321,6 +324,7 @@ def verify_line(demo: Demonstration, line: int = 0, *, env: Environment | None =
         for i, idx in enumerate(ln.actions):
             point = session.point
             if point is None:
+                _check_replay_health(tracker)
                 raise DemoError(f"step {i}: the duel stopped ({tracker.result.reason}) before the line ended")
             if not 0 <= idx < len(point.actions):
                 raise DemoError(

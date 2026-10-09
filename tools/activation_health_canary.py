@@ -14,7 +14,7 @@ from critic_continuation.run import assert_equal, unhealthy
 from ygorl.solver.resume import implementation_identity
 from ygorl.train.checkpoint import load_checkpoint
 from ygorl.train.registration import atomic_json
-from ygorl.train.trainer import Trainer
+from ygorl.train.trainer import TrainConfig, Trainer
 
 
 def sha(path):
@@ -34,6 +34,8 @@ def main():
     assert implementation_identity(Path(identity["solver"]), Path(__file__)) == identity["implementation"]
     assert sha(Path(__file__).parent / "critic_continuation/run.py") == identity["helper_sha256"]
     assert not (root / "pipeline-status.json").exists(), "retain partial runs; create a new recovery identity"
+    for deck, expected in identity["deck_sha256"].items():
+        assert sha(deck) == expected
     source_state = load_checkpoint(source)
     start = source_state["counters"]
     atomic_json(root / "pipeline-status.json", {"stage": "starting", "updated_unix": time.time()})
@@ -65,8 +67,21 @@ def main():
     try:
         trainer = CheckedTrainer.resume(source, root / "run", log=lambda msg: print(msg, flush=True))
         actual = trainer.state_dict()
-        for key in ("learner", "pool", "schedule", "counters", "best", "league", "rng", "evolved"):
+        for key in (
+            "net_config",
+            "vocab",
+            "environment",
+            "learner",
+            "pool",
+            "schedule",
+            "counters",
+            "best",
+            "league",
+            "rng",
+            "evolved",
+        ):
             assert_equal(actual[key], source_state[key], key)
+        assert trainer.cfg.to_dict() == TrainConfig.from_dict(source_state["config"]).to_dict()
         assert not trainer.cfg.bf16 and trainer.cfg.learner_precision in ("inherit", "fp32")
         atomic_json(
             root / "start-audit.json",
