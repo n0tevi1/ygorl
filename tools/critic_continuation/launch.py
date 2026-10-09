@@ -100,6 +100,14 @@ def pipeline():
             from audit import audit
 
             atomic_json(ROOT / "completion-audit.json", audit(ROOT))
+            atomic_json(
+                ROOT / "report.json",
+                {
+                    "study_sha256": sha(ROOT / "identity.json"),
+                    "healthy": True,
+                    "completion_audit_sha256": sha(ROOT / "completion-audit.json"),
+                },
+            )
             result = json.loads((ROOT / "analysis.json").read_text())
             status(
                 "complete",

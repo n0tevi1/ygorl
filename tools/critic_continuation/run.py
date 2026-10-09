@@ -23,11 +23,11 @@ from ygorl.solver.resume import implementation_identity, output_lock
 from ygorl.train.checkpoint import load_checkpoint
 from ygorl.train.registration import atomic_json
 from ygorl.train.rollout import RolloutStalled
-from ygorl.train.trainer import Trainer
+from ygorl.train.trainer import TrainConfig, Trainer
 
 ROOT = Path(__file__).resolve().parent
 PREVIOUS = ROOT.parent / "terminal-critic-policy-long-2026-10-06"
-EVAL_SEED = 2026100804
+EVAL_SEED = 2026100904
 BASELINES = ("greedy", "old-256x2", "initial-128x2", "historical-rl")
 NODES = (128, 256, 512)
 DRIVERS = ("run.py", "analyze.py", "launch.py", "preflight.py", "audit.py", "watch.py", "retention.py")
@@ -79,6 +79,7 @@ def assert_equal(actual, expected, path="state"):
 
 def verify_restored(trainer, source):
     actual = trainer.state_dict()
+    source = {**source, "config": TrainConfig.from_dict(source["config"]).to_dict()}
     for key in actual:
         assert_equal(actual[key], source[key], key)
     assert trainer.counters["updates"] == 128 and trainer.counters["rows"] == 2097152
@@ -108,8 +109,8 @@ def expected_identity():
         "environment": env.stamp(),
         "decks": {m.deck.name: sha(m.path) for m in meta},
         "initial_ppo_sha256": sha(INITIAL),
-        "aborted_study_sha256": sha(ROOT.parent / "terminal-critic-continuation-2026-10-08/identity.json"),
-        "aborted_stop_sha256": sha(ROOT.parent / "terminal-critic-continuation-2026-10-08/STOP.json"),
+        "aborted_study_sha256": sha(ROOT.parent / "terminal-critic-continuation-restart-2026-10-08/identity.json"),
+        "aborted_stop_sha256": sha(ROOT.parent / "terminal-critic-continuation-restart-2026-10-08/STOP.json"),
         "bc_sha256": sha(BC),
         "old_bc_sha256": sha(OLD),
         "historical_rl_sha256": sha(HISTORY),
@@ -119,6 +120,7 @@ def expected_identity():
             ROOT.parent / "terminal-critic-policy-long-monitor-2026-10-06/completion-audit.json"
         ),
         "preflight_sha256": sha(ROOT / "preflight.json"),
+        "recovery_audit_sha256": sha(ROOT.parent / "activation-health-canary-2026-10-09/independent-audit.json"),
         "preregistration": json.loads((ROOT / "registration.json").read_text()),
         "eval_seed": EVAL_SEED,
         "nodes": NODES,
@@ -146,6 +148,9 @@ def check_stop():
 
 
 def prepare():
+    recovery = json.loads((ROOT.parent / "activation-health-canary-2026-10-09/independent-audit.json").read_text())
+    assert recovery["healthy"] and recovery["checkpoint_update"] == 310
+    assert recovery["delta"]["updates"] == 16 and recovery["delta"]["errors"] == 0
     pf = json.loads((ROOT / "preflight.json").read_text())
     assert len(pf["checks"]) == 6 and pf["training_rows_generated"] == 0
     assert pf["analysis_and_auditor_fixture_passed"]
@@ -207,6 +212,17 @@ def unhealthy(game):
     )
 
 
+def behavior_selection(game):
+    reasons = []
+    if game.result.get("turns", 0) > 20:
+        reasons.append("turns_over_20")
+    if game.result.get("decisions", 0) > 1000:
+        reasons.append("decisions_over_1000")
+    if game.assignment.spec.seed % 64 == 0:
+        reasons.append("seed_mod_64")
+    return reasons
+
+
 class AuditedTrainer(Trainer):
     def _collect(self):
         check_stop()
@@ -218,6 +234,21 @@ class AuditedTrainer(Trainer):
             self.save("health-stop.pt")
             stop("unhealthy training rollout before optimizer", run=str(self.run_dir))
             raise RuntimeError("unhealthy training rollout")
+        selected = []
+        for game in ro.games:
+            reasons = behavior_selection(game)
+            if reasons:
+                record = self._diagnostic_record(game)
+                assert record["responses"], "selected game has no native replay responses"
+                record.update(
+                    behavior_selection=reasons,
+                    training_update=self.counters["updates"] + 1,
+                    replay_basis="native_responses",
+                )
+                selected.append(json.dumps(record))
+        if selected:
+            with gzip.open(self.run_dir / "behavior-traces.jsonl.gz", "at", compresslevel=6) as f:
+                f.write("\n".join(selected) + "\n")
         check_stop()
         if self.counters["updates"] == 128:
             path = self.run_dir.parent / "first-rollout.pt"

@@ -61,8 +61,6 @@ def inspect_study(config, service, now):
     ]
     if not complete and progress and now - max(progress) > 1800:
         alerts.append("no training/evaluation progress for 30 minutes")
-    if config.get("invocation") and service.get("InvocationID") != config["invocation"]:
-        alerts.append("study service invocation changed")
     if complete:
         report = root / config["completion_report"]
         if not report.is_file():
@@ -71,13 +69,26 @@ def inspect_study(config, service, now):
             report_data = json.loads(report.read_text())
             if report_data.get("study_sha256") != config["study_sha256"] or not report_data.get("healthy"):
                 alerts.append("completion report identity/health failed")
+    clean_exit = (
+        (service.get("ActiveState"), service.get("SubState")) in (("inactive", "dead"), ("active", "exited"))
+        and service.get("Result") == "success"
+        and service.get("ExecMainStatus") == "0"
+    )
+    if service.get("ActiveState") == "failed" or service.get("Result") not in (None, "success"):
+        alerts.append("study service failed: " + str(service.get("Result")))
+    if complete and service.get("ExecMainStatus") not in (None, "0"):
+        alerts.append("study service returned nonzero status")
+    if config.get("invocation") and service.get("InvocationID") != config["invocation"]:
+        # systemd may discard identity after normal exit. Never exempt an actual new ID.
+        if service.get("InvocationID") or not (complete and clean_exit and not alerts):
+            alerts.append("study service invocation changed or unavailable before verified completion")
     return {
         "checked_unix": now,
         "pipeline": state,
         "service": service,
         "alerts": alerts,
         "failed_rollouts": errors,
-        "complete": complete and not alerts,
+        "complete": complete and clean_exit and not alerts,
     }
 
 
@@ -215,6 +226,8 @@ def main():
                     "--property=ActiveState",
                     "--property=SubState",
                     "--property=InvocationID",
+                    "--property=Result",
+                    "--property=ExecMainStatus",
                 ],
                 text=True,
                 timeout=15,
