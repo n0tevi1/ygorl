@@ -143,7 +143,8 @@ def test_unsupported_curriculum_settings_are_rejected(db, vocab, config):
     assert env.pending() == 0
 
 
-def test_skip_forced_plays_the_same_games_without_single_action_points(db, vocab):
+@pytest.mark.parametrize("selection_history", [False, True])
+def test_skip_forced_plays_the_same_games_without_single_action_points(db, vocab, selection_history):
     """skip_forced auto-plays decisions with exactly one choosable row (one legal action, or several that are
     equivalent copies) inside the C++ loop: the games are unchanged (the only choice is taken either way), but no
     such point reaches Python (performance)."""
@@ -153,8 +154,9 @@ def test_skip_forced_plays_the_same_games_without_single_action_points(db, vocab
         return int(legal[int(obs["globals"].sum() + obs["actions"][legal].sum()) % len(legal)])
 
     def run(skip):
-        env = EncodedVecEnv(4, 2, cards=db, vocab=vocab, skip_forced=skip)
+        env = EncodedVecEnv(4, 2, cards=db, vocab=vocab, skip_forced=skip, selection_history=selection_history)
         games, results, seen, forced, copies = specs(5), {}, 0, 0, 0
+        histories = {}
         pending = iter(enumerate(games))
         for e in range(4):
             i, spec = next(pending)
@@ -170,14 +172,17 @@ def test_skip_forced_plays_the_same_games_without_single_action_points(db, vocab
                         results[ev.env_id] = [nxt[0]]
                         env.reset(ev.env_id, nxt[1])
                     continue
+                if ev.obs["action_mask"].sum() > 1:
+                    histories.setdefault(results[ev.env_id][0], []).append(ev.obs["events"].tobytes())
                 seen += 1
                 forced += int(ev.obs["action_mask"].sum()) == 1
                 copies += int(ev.obs["action_mask"].sum()) == 1 and ev.obs["globals"][20] > 1
                 env.step(ev.env_id, by_state(ev.obs))
-        return [done[i] for i in range(len(games))], seen, forced, copies
+        return [done[i] for i in range(len(games))], seen, forced, copies, histories
 
-    plain, seen_plain, forced_plain, copies_plain = run(False)
-    skipped, seen_skip, forced_skip, _ = run(True)
+    plain, seen_plain, forced_plain, copies_plain, histories_plain = run(False)
+    skipped, seen_skip, forced_skip, _, histories_skip = run(True)
+    assert histories_plain == histories_skip
     assert [key(r) for r in skipped] == [key(r) for r in plain]
     assert forced_plain > copies_plain > 0 and forced_skip == 0
     assert seen_skip == seen_plain - forced_plain

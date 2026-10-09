@@ -47,10 +47,20 @@ class PolicyAgent:
         self.temperature = temperature
         self.last_probs: list[float] | None = None
 
+    def on_duel_start(self, duel) -> None:
+        hook = getattr(self.policy, "on_duel_start", None)
+        if hook is not None:
+            hook(duel)
+
     def observe(self, point: DecisionPoint, core) -> None:
         hook = getattr(self.policy, "observe", None)
         if hook is not None:
             hook(point, core)
+
+    def on_decision(self, point: DecisionPoint, index: int) -> None:
+        hook = getattr(self.policy, "on_decision", None)
+        if hook is not None:
+            hook(point, index)
 
     def act(self, point: DecisionPoint) -> int:
         scores = [float(s) for s in self.policy(point)]

@@ -212,9 +212,9 @@ class Trainer:
         self.model = self._new_model()
         if init is not None:
             added = warm_start(self.model.actor, init)
-            added = f"; new card views start fresh: {added}" if added else ""
+            added = f"; new input features start fresh: {added}" if added else ""
             self.log(f"initialized the actor from {cfg.init_from} (the critic starts fresh{added})")
-        signature = Signature.of(self.vocab, cfg.event_length)
+        signature = Signature.of(self.vocab, cfg.event_length, self.net_config.selection_history)
         prior = None
         if cfg.bc_prior:
             loaded = load_actor(cfg.bc_prior, cfg.text_dir)
@@ -241,7 +241,8 @@ class Trainer:
                                          evolved=self.evolved)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
-                                 skip_forced=cfg.skip_forced, record_actions=True)  # fmt: skip
+                                 skip_forced=cfg.skip_forced, record_actions=True,
+                                 selection_history=self.net_config.selection_history)  # fmt: skip
         # the acting network: the model itself, or a copy refreshed before each overlapped collection
         self.acting = copy.deepcopy(self.model) if cfg.overlap_collect else self.model
         self._pending: Rollout | None = None
@@ -287,7 +288,8 @@ class Trainer:
                 "evolved": self.evolved.state_dict() if self.evolved is not None else None}  # fmt: skip
 
     def _restore(self, state: dict) -> None:
-        if state["net_config"] != self.net_config.to_dict():
+        saved_net = {"selection_history": False, **state["net_config"]}
+        if saved_net != self.net_config.to_dict():
             raise ValueError("the checkpoint's network does not match the configuration")
         self.learner.load_state_dict(state["learner"])
         self.pool.load_state_dict(state["pool"], self._new_model)

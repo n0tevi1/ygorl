@@ -340,7 +340,8 @@ def _play_batched(cells, rows, slots, config: DuelConfig, device: str, envs: int
     out: dict[tuple[int, int], list[GameRecord]] = {}
     for signature, group in groups.items():
         env = EncodedVecEnv(min(envs, 4 * len(slots)), threads, vocab=group[0][2][0][0].vocab,
-                            event_length=signature.event_length, skip_forced=True)  # fmt: skip
+                            event_length=signature.event_length, skip_forced=True,
+                            selection_history=signature.selection_history)  # fmt: skip
         for i, j, (ca, sa), (cb, sb) in group:
             specs, seeds = [], []
             for s, decks, slot_seeds in slots:

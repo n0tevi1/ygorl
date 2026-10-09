@@ -130,6 +130,11 @@ class NetPolicy:
             self._net, self._vocab, self._event_length = ckpt.net, ckpt.vocab, ckpt.event_length
         return self._net
 
+    def on_duel_start(self, duel) -> None:
+        self._observer = None
+        self._core = None
+        self._last = -1
+
     def observe(self, point, core) -> None:
         if self._observer is None or point.index < self._last:
             _ = self.net  # loads the checkpoint: vocab, event length
@@ -137,10 +142,16 @@ class NetPolicy:
                 from ygorl.engine.duel import default_cards
 
                 self._cards = default_cards()
-            self._observer = PointObserver(self._cards, self._vocab, self._event_length)
+            self._observer = PointObserver(
+                self._cards, self._vocab, self._event_length, selection_history=self.net.cfg.selection_history
+            )
         self._observer.observe(point)
         self._core = core
         self._last = point.index
+
+    def on_decision(self, point, index) -> None:
+        if self._observer is not None:
+            self._observer.on_decision(point, index)
 
     def __call__(self, point) -> list[float]:
         if self._observer is None or self._core is None:
