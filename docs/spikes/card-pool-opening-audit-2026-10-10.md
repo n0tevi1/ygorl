@@ -1,5 +1,9 @@
 # Opening-deal reuse: evaluation correction and critic follow-up
 
+Follow-up: [Runick critic bias mechanism audit](runick-critic-bias-2026-10-10.md)
+traces the private fit's remaining overestimation to competing training gradients
+and misleading LP/deck-count sensitivity, with exact replay and explicit limits.
+
 The card-pool follow-ups did not generate the fresh opening deals claimed in
 previous reports. Exact result/response replay and new engine RNG seeds passed,
 but neither check proves opening independence. Preserve the original artifacts;
