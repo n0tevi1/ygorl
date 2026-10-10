@@ -58,7 +58,7 @@ from ygorl.train.selfplay import DeckPool, EvolvedDecks, SelfPlaySchedule, Snaps
 SMALL_NET = {"d_model": 64, "n_heads": 4, "board_layers": 1, "history_layers": 1}
 
 
-DEFAULT_EVENT_LENGTH = 64
+PPO_EVENT_LENGTH = 64  # a fresh PPO run's event window (the encoders default to env.events.DEFAULT_EVENT_LENGTH = 128)
 
 
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ class TrainConfig:
     complete_games: bool = False  # experimental: one whole game per env per update, steps unused
     steps: int = 128  # rows per environment slot per rollout (T)
     min_batch: int | None = None  # ready decisions per forward pass (default num_envs // 2)
-    # event tokens per observation (window mode); None: the --init-from checkpoint's, else DEFAULT_EVENT_LENGTH. A
+    # event tokens per observation (window mode); None: the --init-from checkpoint's, else PPO_EVENT_LENGTH. A
     # Trainer always stores the number it used (checkpoints, resume)
     event_length: int | None = None
     skip_forced: bool = True  # decisions with one choosable row are played in C++ and produce no rows
@@ -274,7 +274,7 @@ class Trainer:
         """``cfg`` with its event window settled: a warm start keeps the window its network was trained with (like
         its vocab) unless ``event_length`` is set; a set one that differs is used, with a warning."""
         if cfg.event_length is None:
-            n = init.event_length if init is not None else DEFAULT_EVENT_LENGTH
+            n = init.event_length if init is not None else PPO_EVENT_LENGTH
             if init is not None:
                 self.log(f"event length {n}, as {cfg.init_from} was trained with")
             return replace(cfg, event_length=n)

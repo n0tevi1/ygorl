@@ -554,7 +554,7 @@ def test_a_warm_start_keeps_its_event_window_unless_one_is_set(run, tmp_path):
     from ygorl.nets import PolicyNet
     from ygorl.nets.agent import save_checkpoint as save_policy
     from ygorl.train.checkpoint import load_policy
-    from ygorl.train.trainer import DEFAULT_EVENT_LENGTH
+    from ygorl.train.trainer import PPO_EVENT_LENGTH
 
     trainer, _ = run
     bc = save_policy(tmp_path / "bc.pt", PolicyNet(trainer.net_config), trainer.vocab, event_length=24)
@@ -566,7 +566,7 @@ def test_a_warm_start_keeps_its_event_window_unless_one_is_set(run, tmp_path):
     assert Trainer(_small_cfg(init_from=str(bc)), tmp_path / "b", log=logs.append).cfg.event_length == 16
     assert any("warning" in m and "24 event tokens" in m for m in logs)
     fresh = Trainer(dc_replace(_small_cfg(), event_length=None), tmp_path / "c", log=None)
-    assert fresh.cfg.event_length == DEFAULT_EVENT_LENGTH
+    assert fresh.cfg.event_length == PPO_EVENT_LENGTH
 
 
 def test_init_from_rejects_a_different_network_or_vocab(run, vocab, tmp_path):

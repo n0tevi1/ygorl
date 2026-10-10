@@ -64,7 +64,7 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--steps", "steps", "rows per column per rollout, T"),
         _f("--min-batch", "min_batch", "ready decisions per forward pass (default: --envs // 2)"),
         _f("--event-length", "event_length",
-           "event tokens per observation (default: the --init-from checkpoint's, else trainer.DEFAULT_EVENT_LENGTH "
+           "event tokens per observation (default: the --init-from checkpoint's, else trainer.PPO_EVENT_LENGTH "
            "= 64)"),
         _f("--keep-forced", "skip_forced",
            "also make rows of decisions with a single legal action (default: played in C++, no rows)", negate=True),
