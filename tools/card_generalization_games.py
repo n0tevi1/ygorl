@@ -166,7 +166,7 @@ def verify(root):
     assert str(torch.__version__) == identity["torch"]
 
 
-def run(root):
+def run(root, worker=play):
     root = root.resolve()
     state = {"stage": "starting", "completed": 0}
     done = threading.Event()
@@ -197,7 +197,7 @@ def run(root):
                 pending = set()
                 for _ in range(reg["workers"]):
                     if (j := next(it, None)) is not None:
-                        pending.add(pool.submit(play, root, j))
+                        pending.add(pool.submit(worker, root, j))
                 while pending:
                     assert time.time() < deadline, "wall budget expired"
                     assert not (root / "STOP.json").exists(), "external STOP"
@@ -205,7 +205,7 @@ def run(root):
                     for f in finished:
                         rows.append(f.result())
                         if (j := next(it, None)) is not None:
-                            pending.add(pool.submit(play, root, j))
+                            pending.add(pool.submit(worker, root, j))
                     state.update(completed=len(rows), total=len(jobs))
                     atomic(root / "progress.json", {**state, "updated_unix": time.time()})
         verify(root)
