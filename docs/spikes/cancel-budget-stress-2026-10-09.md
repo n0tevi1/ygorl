@@ -97,3 +97,10 @@ On completion, independently audit all results, review newly lost games and
 selection exceptions, and decide whether a configurable deployment/training
 trial is justified. Budget1 remains a hypothesis; win retention and tactical
 selection checks matter more than making the cancellation metric zero.
+
+## Confirmation completed
+
+The 1,536-game follow-up completed. Cancellation reductions replicated, but
+ordinary-game strength and length did not improve. The single lost win was
+reproduced and diagnosed using a controlled sampling-alignment experiment.
+See [confirmation results, target-route completion and next diagnostic](cancel-budget-confirmation-2026-10-09.md).
