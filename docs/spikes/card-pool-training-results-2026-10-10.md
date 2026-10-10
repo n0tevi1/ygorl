@@ -3,7 +3,9 @@
 Latest: the larger fresh-opening confirmation has no paired interval excluding
 zero. Neither a strength gain nor reliable retention benefit is established. A
 separate, concrete required-material deselection no-op was found and repaired;
-that repair is not evidence of a training-policy gain. See confirmation below.
+that repair is not evidence of a training-policy gain. The independent root-action
+confirmation now finds conditional benefits in **both** checkpoint directions;
+it does not establish a one-way forgetting mechanism. See confirmation below.
 
 From the same seed0 warm-u512 checkpoint, both arms trained 16 PPO updates
 (262,144 rows each). Fixed retained the 20-deck pool; expanded added legal
@@ -272,3 +274,74 @@ Link-interface validation: 83 focused patch/action/health tests and 111
 replay/duel/native-host/pool integration tests passed; Ruff and whitespace checks
 passed. The fix eliminates the ten ignored deselections in the recorded case,
 with identical final outcome; no policy win-rate improvement is claimed.
+
+## Independent root confirmation: benefits in both directions
+
+All 924 branches completed healthy, without limits, and with exact cold replays.
+The 28 original-stream canaries reproduce their sources. All 248 frozen file
+hashes and saved result/replay records verified; the registered analysis completed.
+The other 896 branches cover 16 new paired streams per action at all 28 roots.
+
+| Selected source outcomes | Roots | Original action wins | Other checkpoint's action wins | Paired mean turn change |
+|---|---:|---:|---:|---:|
+| Fixed loses, start wins | 20 | 134/320 | 156/320 | -0.41 |
+| Start loses, fixed wins | 8 | 55/128 | 67/128 | -1.30 |
+
+The first group's conditional gain shrank from +13.33 to +6.88 points. Its
+deck-out losses fell from 172 to 149, but mean duration barely moved; per-training-
+seed win deltas were +1.25, +12.50 and +12.50 points. The reverse group now also
+improves (+9.38 points), unlike the pilot's zero difference. Selecting actions from
+the checkpoint that won a particular opening can help either checkpoint. This is
+evidence for state-specific decision differences, not a general claim that fixed
+continuation forgot how to play or that the start checkpoint is a superior teacher.
+The original population retention comparisons remain uncertain.
+
+Per-root effects are heterogeneous. These are wins out of 16 new streams, holding
+the losing checkpoint's continuation policy fixed:
+
+| Source game | Forced root choice | Original → alternative wins |
+|---|---|---:|
+| 483 | Main Phase 2 → Mystical Space Typhoon | 2 → 15 |
+| 1264 | activate Wousu's optional recovery → decline | 0 → 7 |
+| 1274 | Ash opponent's Runick Tip → pass | 5 → 12 |
+| 2038 | one Ritual-material choice → another | 7 → 13 |
+| 494 | pass → Ash opponent's Runick Golden Droplet | 11 → 6 |
+| 2040 | one Ritual-material choice → another | 6 → 2 |
+
+Exact-prefix context replay finds Grave of the Super Ancient Organism face-up
+against a Special Summoned Lava Golem in game 483; the root has no legal attack.
+It also finds two Dimensional Fissures, Gozen Match and Runick Fountain on the
+opponent's field. Activating removal is a credible way to change the lock, but
+this experiment leaves target selection and subsequent play to the policy; it
+does not prove an immediate lethal or that every removal target is good.
+The same root's MST probability falls from 15.44% in start to 0.285% in fixed.
+Both checkpoints still prefer Main Phase 2; the source winner's sampled action
+is not the winner policy's most likely action.
+
+Game 1264 is Wousu's optional graveyard recovery, whose effect requires a discard;
+it is not evidence that every optional effect should be activated. Game 1274's
+Ash targets the opponent's Runick Tip, not the agent's own effect. Together with
+the negative swaps, these examples rule out turning the current results into a
+generic card blacklist or copying every action from a winning trajectory.
+Context and probability audit artifacts are retained with the completed study.
+
+## Next: separate root probability changes from subsequent play
+
+A registered 498-branch factorial audit includes **all nine** roots whose absolute
+paired difference was at least four wins out of 16 in the confirmation, including
+three adverse swaps and one root from the reverse checkpoint direction. At each
+identical shared prefix, evaluate every supported legal action under both start
+and fixed continuation policies, using eight new paired streams (trial IDs 20–27).
+The 18 original-policy controls must reproduce their full source games. Prefix
+actions, options, masks, board, LP, player and turn agree across the two sources.
+
+The analysis will cross the two root probability distributions with each fixed
+continuation policy's estimated action values. This separates a probability shift
+at the root from differences in the ability to play after that action. It remains
+a conditional diagnosis on selected states, with shared correlated streams and
+small per-action samples; no population-strength conclusion, automatic label,
+mask, training export or promotion follows. Two CPU workers, a bounded runtime,
+health/progress monitoring and exact replays remain required. The runtime remains
+frozen at the source panel's pre-Link-fix version to preserve the comparison.
+Evidence: `card-pool-root-confirmation-2026-10-10` and
+`card-pool-action-factorial-2026-10-10` in the research output directory.
