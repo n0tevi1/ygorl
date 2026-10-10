@@ -5,7 +5,10 @@ zero. Neither a strength gain nor reliable retention benefit is established. A
 separate, concrete required-material deselection no-op was found and repaired;
 that repair is not evidence of a training-policy gain. The independent root-action
 confirmation now finds conditional benefits in **both** checkpoint directions;
-it does not establish a one-way forgetting mechanism. See confirmation below.
+it does not establish a one-way forgetting mechanism. The all-action follow-up
+shows substantial continuation dependence and weakens several action labels.
+Critic calibration and action discrimination are now a separate investigation;
+see the latest sections below.
 
 From the same seed0 warm-u512 checkpoint, both arms trained 16 PPO updates
 (262,144 rows each). Fixed retained the 20-deck pool; expanded added legal
@@ -345,3 +348,81 @@ health/progress monitoring and exact replays remain required. The runtime remain
 frozen at the source panel's pre-Link-fix version to preserve the comparison.
 Evidence: `card-pool-root-confirmation-2026-10-10` and
 `card-pool-action-factorial-2026-10-10` in the research output directory.
+
+## All-action factorial: several proposed action labels fail to stabilize
+
+All 498 branches completed healthy and without limits, with exact cold replays
+and all 18 source controls reproduced. Runtime and frozen input hashes verified;
+registered analysis reproduced byte-for-byte. Each action/continuation-policy cell
+has only eight fresh streams. These selected states are not a strength benchmark.
+
+At game 483's MST root, fixed continuation wins 5/8 after MST versus 4/8 after
+Main Phase 2, substantially weaker than the previous 15/16 versus 2/16. Start
+continuation wins 3/8 under either action. At Wousu's optional recovery root,
+both continuation policies win 2/8 after activating versus 1/8 after declining;
+the earlier advantage for declining does not replicate. Do not export either
+state's previous binary outcome comparison as a certified training label.
+
+Other examples retain conditional differences: at root 1274, passing instead of
+Ash on Runick Tip wins 3/8 versus 1/8 under fixed continuation and 6/8 versus 2/8
+under start. At root 2038, the Wousu material choice wins 8/8 under fixed and 7/8
+under start, versus 4/8 and 5/8 for the originally selected Kusanagi. Small cells
+and the exact opponent/hidden state still limit these conclusions.
+
+Root 2040 exposes continuation dependence. With the same forced Kusanagi
+selection, fixed wins 1/8 and start 6/8. Crossing root probabilities with each
+continuation policy's action estimates gives:
+
+| Root 2040 continuation | Start root probabilities | Fixed root probabilities |
+|---|---:|---:|
+| Start | 43.46% | 52.80% |
+| Fixed | 25.92% | 22.80% |
+
+These are conditional, Monte Carlo weighted estimates, not full-game evaluation
+win rates. They show why a root probability change alone cannot explain this
+case. A saved-replay audit of all 240 policy pairs finds 236 later divergences
+and four identical games. In the Kusanagi example the first differences include
+search/recovery choices, triggering Saji, attack order, normal summoning Ash,
+and placement. There is no single established material-selection implementation
+bug behind the continuation gap.
+
+## Critic evolution: measure calibration separately from actor strength
+
+A read-only inspection of both critics at the nine roots reproduces the actor
+probabilities and uses privileged input only for the critic. At MST root 483,
+fixed Q values for the three actions are approximately 0.802 / 0.800 / 0.810
+with V=0.873, despite this small rollout panel yielding only 2–5 wins per eight
+continuations. At other roots Q rankings differ from the observed action ranks.
+These are diagnostic signals: fixed evaluation opponents differ from the critic's
+training league, and eight samples cannot establish true action values.
+
+The next registered audit replays **all 2,304 original population-panel games**,
+with no selection by outcome. It samples the first learner main-phase prompt
+per turn and compares V, chosen Q and policy-weighted Q with terminal return.
+Errors are averaged within each game before aggregation, with separate arm,
+training-seed, deck, opponent, turn, LP and public-card-presence breakdowns.
+Original response bytes, results, action masks and actor probabilities must
+match; no policy sampling, optimizer step or hidden information enters the actor.
+Presence of a reviewed continuous card is not itself a tactical-error label.
+
+The initial audit stopped after 73 completed games on an actor-parity assertion.
+Game 68 reproduced a 1.6987e-6 difference: standalone PolicyNet pads action
+features before its head, whereas ActorCritic scores the trimmed action width.
+The repaired audit compares archived probabilities through the canonical actor
+inference path and logs the combined-head difference separately. The same failed
+game then reproduced all response bytes and its result. The original STOP is
+retained; a new study adds it to the health canaries and restarts all games.
+
+Critic improvements require two stages. First hold the actor fixed and compare
+critic calibration and action discrimination on separate data. Depending on the
+audit, test additional critic training on fresh complete trajectories, better
+coverage of difficult states/actions, or a separate critic backbone. Then compare
+otherwise identical RL continuations to establish whether the critic change
+improves actual play without degrading familiar decks or increasing loops/turn
+tails. Better critic loss alone does not justify policy promotion. The current
+evaluation games remain evaluation data; do not silently turn them into training
+examples or use privileged critic inputs at actor inference.
+
+Evidence: `card-pool-action-factorial-2026-10-10` (including suffix-divergence and
+critic audits), `card-pool-critic-calibration-2026-10-10` (preserved failure), and
+`card-pool-critic-calibration-restart-2026-10-10` in the research output directory.
