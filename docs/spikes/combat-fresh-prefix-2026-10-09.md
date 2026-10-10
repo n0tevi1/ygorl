@@ -50,6 +50,8 @@ long-game tail remains unresolved.
 
 ## Next: all supported root actions, original-policy continuation
 
+Completed: see [all-action results and independent confirmation](combat-root-action-sweep-2026-10-09.md).
+
 Root: `out/research/combat-root-action-sweep-2026-10-09/`.
 Identity: `dfc32df86674d86cd4e405a2f834364bf055c0d0c53b4ab4e53a8189995f4e1e`.
 The previous attack/battle-entry initial-choice restriction is removed for
@@ -79,5 +81,6 @@ all negative results. Do not turn an in-sample best action into a training label
 without independent confirmation. A4096-decision bound and health checks remain;
 cutoffs must not be silently dropped. The direct-effect and long-game original
 controls passed real preflight. Two CPU workers, a three-hour cap, per-branch
-saved results and an independent watchdog are running. Formal training,
+saved results and an independent watchdog completed the study. All992 branches
+and30 original controls passed review. Formal training,
 rewards and policy defaults remain unchanged.
