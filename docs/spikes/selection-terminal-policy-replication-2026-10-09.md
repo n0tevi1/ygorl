@@ -122,3 +122,10 @@ The restart uses two workers, a three-hour cap, per-game durable records,
 10-second heartbeat and an independent watchdog. Formal training runtime and
 policy/mask defaults are unchanged. Completion or failure is delivered to the
 research thread; delivery does not itself acknowledge or resolve an event.
+
+## Follow-up completed
+
+The registered 1,128-game cancellation-budget study completed and passed its
+independent audit. Budget1 is a confirmation candidate, with strong cancellation
+reduction but no established ordinary-game shortening or population strength
+guarantee. See [results and the new three-checkpoint confirmation](cancel-budget-stress-2026-10-09.md).
