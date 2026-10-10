@@ -15,6 +15,7 @@ from pathlib import Path
 import torch
 
 from colab_checkpoint import atomic, sha
+from colab_epoch_launch import launch_code, receipt_code, validate_receipt
 from colab_owned_endpoint import endpoint_call, owned_endpoint
 from colab_pilot import Pilot
 
@@ -82,6 +83,31 @@ class TransferPilot(Pilot):
                 self.event("status_retry", session=self.session, attempt=attempt + 1, error=str(exc))
                 if attempt == 2 or self.absent():
                     raise
+
+    def launch_epoch(self, command, directory, identity):
+        self.read_remote(
+            self.session,
+            "import pathlib,time\npathlib.Path('/content/lease').write_text(str(time.time()+300))\nprint('YGORL_JSON:{}')",
+        )
+        code = launch_code(
+            command,
+            directory,
+            identity,
+            {
+                "PYTHONPATH": "/content/ygorl/src",
+                "YGORL_LEASE": "/content/lease",
+                "OMP_NUM_THREADS": "2",
+            },
+        )
+        try:
+            receipt = self.remote(self.session, code)
+        except RuntimeError as exc:
+            self.event("launch_ack_missing", identity=identity, error=str(exc))
+            # Query the durable receipt, never repeat an ambiguous Popen RPC.
+            receipt = self.read_remote(self.session, receipt_code(directory))
+        receipt = validate_receipt(receipt, command, identity)
+        self.event("launch_verified", identity=identity, pid=receipt["pid"])
+        return receipt
 
     def stop_owned(self):
         if self.session is None:
@@ -175,27 +201,18 @@ class TransferPilot(Pilot):
             "--stop-after",
             str(epoch),
         ]
-        self.remote(
-            self.session,
-            f"""import json,pathlib,subprocess,os,time
-p=pathlib.Path('/content/epoch.exit');p.unlink(missing_ok=True)
-pathlib.Path('/content/lease').write_text(str(time.time()+300))
-env=dict(os.environ,PYTHONPATH='/content/ygorl/src',YGORL_LEASE='/content/lease',OMP_NUM_THREADS='2')
-wrapper={("import pathlib,subprocess; p=subprocess.run(" + repr(cmd) + '); pathlib.Path("/content/epoch.exit").write_text(str(p.returncode))')!r}
-f=open('/content/epoch.log','w');p=subprocess.Popen(['/content/ygorl/.venv/bin/python','-c',wrapper],env=env,stdout=f,stderr=subprocess.STDOUT,start_new_session=True)
-print('YGORL_JSON:'+json.dumps({{'pid':p.pid}}))
-""",
-        )
+        launch_dir = remote_dir + f"/epoch-{epoch}"
+        self.launch_epoch(cmd, launch_dir, {"study": self.identity_sha, "job": name, "epoch": epoch})
         errors = 0
         while True:
             self.guard()
             try:
                 status = self.read_remote(
                     self.session,
-                    """import json,pathlib,time
+                    f"""import json,pathlib,time
 pathlib.Path('/content/lease').write_text(str(time.time()+300))
-p=pathlib.Path('/content/epoch.exit')
-print('YGORL_JSON:'+json.dumps({'exit':p.read_text().strip() if p.exists() else None}))
+p=pathlib.Path({(launch_dir + "/exit")!r})
+print('YGORL_JSON:'+json.dumps({{'exit':p.read_text().strip() if p.exists() else None}}))
 """,
                 )
                 errors = 0
@@ -213,7 +230,7 @@ print('YGORL_JSON:'+json.dumps({'exit':p.read_text().strip() if p.exists() else 
             if status["exit"] is not None:
                 break
             time.sleep(20)
-        self.cli_call(["download", "-s", self.session, "/content/epoch.log", str(dest / f"epoch-{epoch}.log")])
+        self.cli_call(["download", "-s", self.session, launch_dir + "/stdout.log", str(dest / f"epoch-{epoch}.log")])
         assert status["exit"] == "0", f"worker failed {name} epoch {epoch}"
         expected = self.read_remote(
             self.session,

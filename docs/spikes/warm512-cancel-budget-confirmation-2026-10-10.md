@@ -39,3 +39,39 @@ Tests cover native/reference masks on real target and material cancellation wind
 Then evaluate the starting checkpoint and both u528 endpoints on 16 fresh paired deal clusters, all four opponents, with each inference budget32/1: **1,536 games**. Unguarded evaluation of the guard-trained actor is essential to distinguish learning from guard support. Review retention before any larger continuation. Single-seed canary results cannot select a universally better recipe. No default or policy promotion is authorized by this report alone.
 
 Evidence: `out/research/warm512-cancel-budget-review-2026-10-10/review.py`, `review.json`, `review.log`; original reports and 3,072 replay/result files under the confirmation study. Related #83, #218, #239.
+
+## Training canary completed: no policy promotion
+
+Both seed0 arms completed 16 updates / 262,144 new rows, with 1,869 games for
+budget32 and 1,896 for budget1. Training reported zero errors and truncations.
+The 1,536-game fresh panel completed with zero engine-health errors/limits;
+all cold replays matched and their stored hashes were checked.
+
+Each cell below has 256 games across the same four opponents and 16 deck-pair
+clusters. “Guard” means budget1 at inference; otherwise inference uses budget32.
+
+| Checkpoint | Inference | Win rate | Mean turns | Games with >1 repeated selection cancel |
+|---|---|---:|---:|---:|
+| Initial u512 | sample | 81.25% | 8.922 | 10 |
+| Initial u512 | guard | 80.08% | 8.945 | 0 |
+| Train budget32 u528 | sample | 81.64% | 9.121 | 15 |
+| Train budget32 u528 | guard | 81.64% | 9.094 | 0 |
+| Train budget1 u528 | sample | 76.56% | 9.055 | 13 |
+| Train budget1 u528 | guard | 75.78% | 9.105 | 0 |
+
+Holding inference mode fixed, budget1 training minus budget32 has win-rate
+difference **−5.08 pp** (paired deck-cluster bootstrap 95% CI −11.72 to +1.95)
+without the guard, and **−5.86 pp** (−12.11 to +0.78) with it. These exploratory
+intervals are conditional on one training seed and a small fixed opponent/pair
+panel. They do not prove a population-level regression, and do not support
+claiming improvement or noninferiority. Mean turns do not show a useful decrease.
+
+The guard mechanically removes repeated cancels, but budget1 training does not
+reliably internalize that behavior: disabling the guard still produces repeat
+cancels in 13/256 games, with a maximum of 32. No automatic promotion or reward
+change. The next strength decision needs paired replication across training
+seeds and review of divergent games; cancellation count alone is insufficient.
+
+Evidence: `out/research/warm512-cancel-training-canary-2026-10-10/analysis.json`
+and its reproducible `analyze.py`; original report, checkpoints and replays remain
+unchanged. Related #83, #218, #239.

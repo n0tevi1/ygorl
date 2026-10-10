@@ -111,3 +111,39 @@ Data, model architecture, training order and statistical protocol are unchanged.
 The primary novel-action subset contains 282 decisions from 18 source hands;
 no alias-equivalent reserved cards occur in training. This small diagnostic
 must not be interpreted as a comprehensive unfamiliar-deck strength test.
+
+## Second transport incident and local backend amendment
+
+The first recovery retained three verified epochs of seed-0 ID training, then
+its epoch-4 **launch** RPC timed out. This is a different path from status reads:
+remote execution may have succeeded even though the acknowledgement is missing.
+The previous status-only fix was incomplete. The actual execution outcome of
+that epoch is unknown; no unverified epoch is counted. Endpoint cleanup proved
+the owned VM was absent. Both historical STOP files and the last full checkpoint
+remain intact; the original two Colab allocations are exhausted.
+
+`card_transfer_colab.py` now launches each epoch under a durable, identity-bound
+claim/receipt and separate exit/log paths. After a lost acknowledgement, query
+the receipt without repeating the launch RPC. A missing, mismatched, or claimed
+but unconfirmed launch fails closed. The claim is written before spawning;
+repeating the same accepted request returns the prior PID, while an ambiguous
+claim never spawns another worker. Tests exercise real subprocess execution,
+lost acknowledgements, duplicate requests, ambiguous claims and wrong receipts.
+This recovery path has fault-injection coverage; it has not yet been exercised
+on another live Colab VM, and no additional allocation is authorized by this
+experiment's registration.
+
+The separate `card-generalization-local-2026-10-10` study reruns **all nine jobs
+from scratch** on the same local AMD Radeon 8060S / ROCm runtime. It retains the
+same data, seeds, epoch counts, arm order, initialization, adaptation and analysis
+plan, but registers the backend change explicitly. Do not combine the partial
+L4 metrics with the local comparison. No new Colab allocation is made; the local
+controller inherits the original absolute deadline and uses an independent
+watchdog, exclusive controller lock, full epoch checkpoints and digest validation.
+This remains a small offline imitation diagnostic, not a gameplay result.
+
+Local launch was verified on the real AMD GPU: seed-0 ID epochs 1 and 2 completed
+and checkpoint/metric hashes passed validation. Runtime source is frozen at
+`74c0e1a`; the separate documentation worktree does not modify that running tree.
+The launch-recovery and checkpoint-integrity tests plus checkpoint/generalization
+regressions pass (32 tests); repository format/lint checks pass (363 files).
