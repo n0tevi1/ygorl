@@ -141,3 +141,9 @@ L4 metrics with the local comparison. No new Colab allocation is made; the local
 controller inherits the original absolute deadline and uses an independent
 watchdog, exclusive controller lock, full epoch checkpoints and digest validation.
 This remains a small offline imitation diagnostic, not a gameplay result.
+
+Local launch was verified on the real AMD GPU: seed-0 ID epochs 1 and 2 completed
+and checkpoint/metric hashes passed validation. Runtime source is frozen at
+`74c0e1a`; the separate documentation worktree does not modify that running tree.
+The launch-recovery and checkpoint-integrity tests plus checkpoint/generalization
+regressions pass (32 tests); repository format/lint checks pass (363 files).
