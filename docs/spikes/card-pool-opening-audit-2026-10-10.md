@@ -244,3 +244,54 @@ new STOP after an acknowledged warning, repeated polls, cause persistence and
 same-cause recurrence after recovery; all19 monitor tests pass. The previously
 missed STOP has now been recorded as its own acknowledged incident, and the
 corrected monitor is running on recovery.
+
+## Recovery complete; first private-critic fit improves MSE but not Runick bias
+
+Recovery retained all1,280 games and reproduced its frozen identity/cache
+verification. Eligible games are512/256/511 for train/validation/test, with
+3,115/1,591/3,220 cached rows. The single zero-idle test game remains explicitly
+recorded. The restored corpus is the original registered sample, not a new
+independent replication.
+
+`card-pool-critic-refresh-fit-2026-10-10` then executed the registered short-fit
+plan. Actor and shared trunk stayed frozen; only private critic and privileged
+encoder parameters changed. Exact replay preflight compared cached and full-model
+private gradients (maximum absolute difference7.45e-8); a private optimizer step
+preserved the actor hash. Three optimizer-shuffle seeds each selected learning
+rate1e-4, epoch4 on validation. Selection was sealed before test scores were read;
+no test-driven refit occurred. All selected actor hashes match, and baseline plus
+selected test metrics were independently reproduced exactly.
+
+| Test mean Q/V MSE | All511 eligible games | Familiar256 | Runick63 |
+|---|---:|---:|---:|
+| Unchanged critic | 0.7118 | 0.6506 | 1.0910 |
+| Train-mean constant | 0.8356 | 0.8474 | 0.9094 |
+| Train-only affine calibration | 0.6737 | 0.6069 | 1.1594 |
+| Private fits (three shuffle seeds) | 0.6253–0.6312 | 0.5648–0.5684 | 1.0227–1.0300 |
+
+These are paired evaluations on the same fixed actor's trajectories and the
+same held-out deals. Optimizer shuffle seeds do not add independent test samples
+or policy training runs. The overall point-estimate reduction is about11–12%,
+with familiar performance also improving and all three fits outperforming the
+affine control on aggregate MSE. This establishes a limited supervised-fitting
+signal, not improved policy play: the actor was unchanged throughout.
+
+The target Runick issue remains: V bias rises from+0.2337 to+0.2984–0.3008 even
+though V MSE falls from1.0969 to1.0261–1.0326. For shuffle seed202610110202, error
+variance falls from1.0423 to0.9356 while squared bias increases from0.0546 to0.0905;
+thus an MSE improvement can coexist with worse mean overestimation. Runick MSE
+also remains worse than the train-mean constant control. An indiscriminate affine
+shift worsens the Runick slice further. Do not call these fits a repair of the
+Runick calibration failure or deploy them to main RL training on this evidence.
+
+The post-evaluation decomposition also finds increased Runick V bias on train
+(+0.324 to+0.368) and validation (+0.164 to+0.221), not only test. Outcome
+frequencies differ between splits, but held-out sampling shift alone cannot
+explain the direction. Next investigation examines state-conditional error
+(including reviewed-card presence and turn/LP strata) and the effect of optimizing
+aggregate MSE rather than conditional calibration. It must distinguish weaker-opponent adaptation from
+training-league value quality. Any further fit needs a new registered objective
+and independent confirmation data; current test results must not be used for
+repeated selection. Matched RL continuation remains necessary to establish a
+policy benefit. Evidence: `selection.json`, `report.json`,
+`completion-verification.json` and `bias-decomposition.json` under the fit study.
