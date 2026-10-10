@@ -147,3 +147,76 @@ and checkpoint/metric hashes passed validation. Runtime source is frozen at
 `74c0e1a`; the separate documentation worktree does not modify that running tree.
 The launch-recovery and checkpoint-integrity tests plus checkpoint/generalization
 regressions pass (32 tests); repository format/lint checks pass (363 files).
+
+## Completed three-seed local diagnostic
+
+All nine runs completed six epochs on the same AMD/ROCm runtime; all final
+checkpoint hashes and the predeclared analysis hash were verified. Original
+Colab partial metrics were not included. Epoch 4 is the fixed zero-shot boundary;
+epoch 6 follows two epochs on 12 additional training hands.
+
+Hand-macro results on novel-action decisions (NLL lower is better):
+
+| Arm | Epoch 4 NLL | Epoch 4 teacher agreement | Epoch 6 NLL | Epoch 6 teacher agreement |
+|---|---:|---:|---:|---:|
+| ID | 1.38519 | 38.91% | 1.22265 | 43.67% |
+| Real text | 1.36540 | 40.02% | 1.22354 | 42.91% |
+| Shuffled text | 1.42579 | 40.89% | 1.23056 | 43.80% |
+
+The fixed primary comparison, real text minus ID, is **−0.01979 NLL**, crossed
+seed/hand bootstrap 95% CI **[−0.05674, +0.01658]**. Real text minus shuffled
+text is **−0.06038 [−0.11046, −0.01042]**, with the same direction in all three
+seeds and all three selected deck families. This is evidence that the correct
+card/text mapping helps relative to the shuffled control on this task; it is
+not clear evidence of an incremental benefit over ID. Shuffled text itself has
+worse NLL than ID, and action agreement ranks the arms differently. Do not
+reinterpret that control comparison as demonstrated gameplay improvement.
+
+After adaptation, text minus ID is **+0.00089 [−0.02713, +0.02666]**: no supported
+text advantage in few-shot adaptation. Familiar-hand NLL differences are +0.00212
+before adaptation and +0.01112 afterward (both intervals cross zero). All arms'
+familiar-hand mean NLL worsens after the held-out-only adaptation; this is a
+retention concern, not a measured loss of win rate.
+
+The primary subset has 282 decisions in 18 hands. Of these, 236 teacher actions
+actually refer to reserved cards; membership in the primary subset was defined
+by the offered legal candidates without looking at the teacher label. The
+three families contribute 51/44/187 rows (Lunalight/Sky Striker/Tearlaments).
+Intervals are conditional on these three lists and a small hand sample. No
+semantic switch or model promotion is made on this evidence.
+
+Evidence: `out/research/card-generalization-local-2026-10-10/analysis.json`,
+frozen `analyze.py`, reports and epoch checkpoints. Follow-up is the independent
+full-game coverage panel below, not tuning this held-out label test.
+
+## Registered full-game coverage panel
+
+`out/research/card-coverage-fullgame-2026-10-10/` fixes 1,024 games before
+inspection: three current warm-u512 training seeds plus a Greedy control,
+against Greedy and the historical 256x2 policy. Four familiar targets
+(Blue-Eyes, Branded, Sky Striker, Tearlaments) and four RL-pool-held-out targets
+(Labrynth, Kashtira, Tenpai Dragon, Runick) each face Maliss and Ryzeal Mitsurugi
+anchors, with two independently seeded deals, both deck assignments and both
+first-player assignments. The same deals and agent seeds are reused across
+policy/control cells; familiar/held-out target pairs also share anchor shuffles.
+
+Held-out lists are the existing corpus medoids, with ranked/qualifier provenance
+in that stored corpus. All lists are validated against the frozen environment;
+no online claim about current metagame strength is made. Their unique card
+counts are 33/26/38/35, of which 23/13/22/29 are absent from the audited corrected
+BC inputs. Every card has a known vocabulary index. Full historical RL exposure
+is not certified, so call this **RL-pool-held-out**, not strictly never seen.
+
+Primary reporting separates the policy piloting a target from facing it, includes
+paired improvement over Greedy on identical deals, and retains per-deck,
+per-opponent and per-training-seed results. This control reduces—but cannot
+remove—confounding from intrinsic deck strength and Greedy's own competence.
+Secondary reporting includes turn/decision tails, game limits, repeated selections,
+self-negation/self-damage warning signals and engine health. Warnings are not
+automatic tactical-error labels. Limits stay in the denominator and are reported
+separately. No training or policy promotion is part of this panel.
+
+Two CPU workers, two-hour maximum, independent study watchdog, frozen source,
+checkpoints, deck/data/runtime hashes. First run the 16 preselected unfamiliar-deck
+seed0-vs-Greedy health games; any engine or cold-replay mismatch preserves the
+failed case and stops. Every game stores the full trace and a verified cold replay.
