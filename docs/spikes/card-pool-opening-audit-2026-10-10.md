@@ -284,9 +284,12 @@ also remains worse than the train-mean constant control. An indiscriminate affin
 shift worsens the Runick slice further. Do not call these fits a repair of the
 Runick calibration failure or deploy them to main RL training on this evidence.
 
-Next investigation separates outcome-frequency differences between train,
-validation and test from state-conditional error (including reviewed-card
-presence and turn/LP strata). It must distinguish weaker-opponent adaptation from
+The post-evaluation decomposition also finds increased Runick V bias on train
+(+0.324 to+0.368) and validation (+0.164 to+0.221), not only test. Outcome
+frequencies differ between splits, but held-out sampling shift alone cannot
+explain the direction. Next investigation examines state-conditional error
+(including reviewed-card presence and turn/LP strata) and the effect of optimizing
+aggregate MSE rather than conditional calibration. It must distinguish weaker-opponent adaptation from
 training-league value quality. Any further fit needs a new registered objective
 and independent confirmation data; current test results must not be used for
 repeated selection. Matched RL continuation remains necessary to establish a
