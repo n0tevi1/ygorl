@@ -95,26 +95,10 @@ checked. The [earlier same-input credit analysis](selection-exit-credit-2026-10-
 remains valid; correcting the short-return sign on selected winning exits alone
 was insufficient to establish better play.
 
-## Fixed-budget replication running
+## Fixed-budget replication completed
 
-Study: `out/research/selection-terminal-policy-replication-2026-10-09/`, identity
-`ac5bd4dcf1d5cb1d82622145ffd27b683df675dbb5beeb4453d9f0d1566f3a7e`.
-Two additional training seeds266 and267 use the **same** original source and
-unchanged two-arm protocol: each arm 24 ×16 complete games. This tests training
-sampling variability, not independent pretrained sources. No hyperparameter
-selection from the pilot and no automatic promotion.
-
-A fresh shared panel (Python Random seed20261009266) has 32 blocks /128 games
-per endpoint. Each child reevaluates the identical initial model; exact duplicate
-initial outcomes must match, and they must not be counted as extra evidence.
-Report seeds separately, preserving shared-block dependence in any aggregate.
-Keep all training rollouts, pre/post checkpoints, minibatches and evaluation
-replays. Each child runs full health/initialization/credit audits and all repeated
-input probes before the parent can declare completion.
-
-The sequential service has a two-hour cap, per-update checkpoints, 10-second
-parent heartbeat and independent watchdog. The first child passed objective
-preflight and entered training. Any failure retains STOP and exits; no automatic
-failed-game replacement. No formal immunity runtime/default has changed. Strength,
-selection-completion, retention and broader opponents remain required before
-adoption; cancellation reduction alone will not be a promotion criterion.
+The two additional seeds266/267 completed with all health and credit audits.
+Neither establishes a strength benefit; the candidate remains unpromoted and
+further identical terminal-credit trials are not queued. See the
+[replication report and cancellation-budget follow-up](selection-terminal-policy-replication-2026-10-09.md)
+for per-seed results, shared-panel uncertainty and the next experiment.
