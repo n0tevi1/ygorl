@@ -100,3 +100,9 @@ also prevents treating Q under the original policy as if it were Q under a
 heuristic teacher. The fixed hidden states and selected action choice mean this
 is a conditional diagnostic, not a general strength evaluation. No reward or
 mask defaults change; formal PPO continues independently.
+
+## Policy handoff completed
+
+All192 first-action/continuation runs completed and were independently audited.
+The result distinguishes first-action bottlenecks from remaining sequence errors;
+see [policy-handoff results and controlled prefix study](combat-policy-handoff-2026-10-09.md).
