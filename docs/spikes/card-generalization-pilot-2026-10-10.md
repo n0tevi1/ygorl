@@ -91,3 +91,23 @@ with and without semantic inputs. Begin with legal, functional corpus lists and
 small replacements; compare dynamic mutation to a fixed expanded pool only after
 coverage gains are established. Keep the current cancellation-budget canary
 unchanged, and do not combine its data with a changed deck distribution.
+
+## Setup transport incident and bounded restart
+
+The first Colab allocation compiled successfully and identified NVIDIA L4, but
+its first read-only setup-status RPC timed out after 180 seconds. No training
+started. The watchdog delivered incident
+`94877b403be4b8fd9fa8c42bb27f80532160519c27bfacf2bd03aaf7dd4eaa2c`,
+which was acknowledged; original STOP/logs remain intact. The owned endpoint was
+terminated and the direct server API confirmed no remaining assignments.
+
+The controller now retries only idempotent status/lease queries, at most three
+40-second attempts, checking endpoint existence after failure. Allocation and
+worker-launch mutations are not blindly retried. Tests cover transient timeout,
+confirmed preemption and persistent bounded failure. The restart at
+`out/research/card-generalization-pilot-restart-2026-10-10/` retains the original
+absolute deadline, initial compute balance and one already-consumed allocation.
+Data, model architecture, training order and statistical protocol are unchanged.
+The primary novel-action subset contains 282 decisions from 18 source hands;
+no alias-equivalent reserved cards occur in training. This small diagnostic
+must not be interpreted as a comprehensive unfamiliar-deck strength test.

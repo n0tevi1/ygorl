@@ -33,8 +33,10 @@ class TransferPilot(Pilot):
         assert sha(Path(__file__)) == identity["controller_sha256"]
         assert 0 < self.reg["max_hours"] <= 2 and 0 < self.reg["max_units"] <= 6
         assert 0 < self.reg["max_allocations"] <= 2
-        self.end = time.time() + self.reg["max_hours"] * 3600
-        self.deadline = time.monotonic() + self.reg["max_hours"] * 3600
+        self.end = min(time.time() + self.reg["max_hours"] * 3600, self.reg.get("deadline_unix", float("inf")))
+        self.deadline = time.monotonic() + max(0, self.end - time.time())
+        self.prior_allocations = self.reg.get("prior_allocations", 0)
+        assert isinstance(self.prior_allocations, int) and 0 <= self.prior_allocations < self.reg["max_allocations"]
         self.serial = int(time.time())
         self.events = root / "events.jsonl"
         self.owned = []
@@ -62,6 +64,25 @@ class TransferPilot(Pilot):
     def absent(self):
         return self.endpoint not in endpoint_call("list")["endpoints"]
 
+    def read_remote(self, session, code):
+        """Retry only known idempotent status/lease reads, never launches or allocations."""
+        assert session == self.session
+        for attempt in range(3):
+            self.guard()
+            self.serial += 1
+            path = self.root / f"rpc-{self.serial:04d}.py"
+            path.write_text(code)
+            try:
+                output = self.cli_call(["exec", "-s", self.session, "-f", str(path)], timeout=40)
+                lines = [line for line in output.splitlines() if line.startswith("YGORL_JSON:")]
+                if not lines:
+                    raise RuntimeError("status response missing")
+                return json.loads(lines[-1].split(":", 1)[1])
+            except RuntimeError as exc:
+                self.event("status_retry", session=self.session, attempt=attempt + 1, error=str(exc))
+                if attempt == 2 or self.absent():
+                    raise
+
     def stop_owned(self):
         if self.session is None:
             return
@@ -79,8 +100,8 @@ class TransferPilot(Pilot):
 
     def setup(self):
         self.guard()
-        assert len(self.owned) < self.reg["max_allocations"], "allocation budget"
-        self.session = f"ygorl-card-transfer-20261010-vm{len(self.owned)}"
+        assert len(self.owned) + self.prior_allocations < self.reg["max_allocations"], "allocation budget"
+        self.session = f"ygorl-card-transfer-20261010-vm{len(self.owned) + self.prior_allocations}"
         assert not (Path.home() / ".config/colab-cli/history" / (self.session + ".jsonl")).exists(), (
             "reused session name"
         )
@@ -112,7 +133,7 @@ class TransferPilot(Pilot):
         until = min(self.end, time.time() + 1500)
         while time.time() < until:
             self.guard()
-            status = self.remote(
+            status = self.read_remote(
                 self.session,
                 "import json,pathlib\np=pathlib.Path('/content/setup.exit')\nprint('YGORL_JSON:'+json.dumps({'exit':p.read_text().strip() if p.exists() else None}))",
             )
@@ -169,7 +190,7 @@ print('YGORL_JSON:'+json.dumps({{'pid':p.pid}}))
         while True:
             self.guard()
             try:
-                status = self.remote(
+                status = self.read_remote(
                     self.session,
                     """import json,pathlib,time
 pathlib.Path('/content/lease').write_text(str(time.time()+300))
@@ -194,7 +215,7 @@ print('YGORL_JSON:'+json.dumps({'exit':p.read_text().strip() if p.exists() else 
             time.sleep(20)
         self.cli_call(["download", "-s", self.session, "/content/epoch.log", str(dest / f"epoch-{epoch}.log")])
         assert status["exit"] == "0", f"worker failed {name} epoch {epoch}"
-        expected = self.remote(
+        expected = self.read_remote(
             self.session,
             f"""import hashlib,pathlib,json
 p=pathlib.Path({remote_dir!r})/'latest.pt'
