@@ -37,3 +37,16 @@ ID remains an incident even with a healthy report; missing identity while runnin
 or before valid completion also remains an incident. Retain unit state after exit
 for future runs where possible. Do not finalize merely because a report appeared
 while the process is still running.
+
+A payment can itself remove prospective targets. In the October 10 Clown Crew
+Malabarisme incident, the tribute filter excluded the released monster but counted
+its attached Equip Card; paying the cost removed both, before target selection.
+The content-pinned correction excludes equips attached to that particular tribute
+candidate. It preserves hand tributes and field tributes with an independent target.
+It does not add a silent nil-target return to conceal the illegal cost, or reject
+legal activations whose target subsequently leaves during a chain. Regression tests
+cover the recorded Python/native failure, unchanged prefix observations, surviving
+choices, and target loss at resolution. This is a scoped dependency correction,
+not a general solver for every effect that can change target availability on payment.
+Repaired evaluations also receive a fresh identity and rerun both treatment arms;
+never silently splice repaired games into a stopped comparison.

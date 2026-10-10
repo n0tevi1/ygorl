@@ -6,6 +6,25 @@ from hashlib import sha256
 SYNCHRO_SHA256 = "cacd92d496ab653e6e5f304cb2b38b831e4f6d41ab1e842ffab909a0efb1543d"
 FUSION_SHA256 = "3779bd72c57d95ce7d330c04f9bc2479966337f50ad23ce3a1d5bf9304a6fdc9"
 CHAOS_ANGEL_SHA256 = "69ab42828aaf335d8caa90ce7e411674aefc30afa51f452d0d55001774a58afc"
+CLOWN_CREW_SHA256 = "7fbfd6cee3ed1d90c78fd02c42d70bf47436176dc75ca793281ca71e1996b4fd"
+
+
+def clown_crew_override(source: bytes | None) -> bytes | None:
+    """Do not pay a tribute cost whose only remaining targets are its attached equips."""
+    if source is None or sha256(source).hexdigest() != CLOWN_CREW_SHA256:
+        return None
+    text = source.decode("utf-8")
+    old = """function s.rthcostfilter(c)
+\treturn Duel.IsExistingTarget(Card.IsAbleToHand,0,LOCATION_ONFIELD,LOCATION_ONFIELD,1,c)
+end"""
+    new = """function s.rthremainingfilter(tc,rc)
+\treturn tc:IsAbleToHand() and tc:GetEquipTarget()~=rc
+end
+function s.rthcostfilter(c)
+\treturn Duel.IsExistingTarget(s.rthremainingfilter,0,LOCATION_ONFIELD,LOCATION_ONFIELD,1,c,c)
+end"""
+    assert text.count(old) == 1
+    return text.replace(old, new).encode("utf-8")
 
 
 def chaos_angel_override(source: bytes | None) -> bytes | None:
