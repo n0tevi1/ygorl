@@ -34,15 +34,15 @@ import torch
 from torch import Tensor, nn
 
 from ygorl.engine.outcome import TRUNCATED
+from ygorl.env.driver import EnvStalled, StallWatch
 from ygorl.nets.batch import policy_logits
 
 TRUNCATION_REASONS = TRUNCATED  # games the host stopped: bootstrapped, not terminal (ygorl.engine.outcome)
 
 
-class RolloutStalled(RuntimeError):
-    """No environment produced an event for ``stall_timeout``: an engine is stuck inside a duel. Its worker thread
-    never returns, so destroying the environment pool (joining its threads) would hang too: the caller should save
-    what it needs and end the process with ``os._exit`` (tools/train_ppo.py does)."""
+class RolloutStalled(EnvStalled):
+    """No environment produced an event for ``stall_timeout`` during a rollout (:class:`ygorl.env.driver.EnvStalled`:
+    save, then end the process with ``os._exit``)."""
 
 
 @dataclass(frozen=True)
@@ -166,7 +166,7 @@ class RolloutCollector:
         # no event from any environment for this long while some are still owed rows: an engine stuck inside one
         # duel (its worker thread never returns) -- raise instead of waiting forever; None = wait forever
         self.stall_timeout = stall_timeout
-        self._last_event: dict[int, float] = {}
+        self._watch = StallWatch(env, stall_timeout, describe=self._describe, error=RolloutStalled)
         self.generator = torch.Generator().manual_seed(seed)
         self._slots: list[_Slot | None] = [None] * env.num_envs
         self._held: dict[int, Any] = {}  # env -> pending learner decision (the bootstrap state)
@@ -269,35 +269,15 @@ class RolloutCollector:
         return ro
 
     def _recv(self, n: int) -> list:
-        if self.stall_timeout is None:
-            return self.env.recv(n)
-        start = time.monotonic()
-        while True:
-            got = self.env.recv(n, timeout=min(60.0, self.stall_timeout))
-            now = time.monotonic()
-            for ev in got:
-                self._last_event[ev.env_id] = now
-            if got:
-                return got
-            if now - start >= self.stall_timeout:
-                raise RolloutStalled(self._stall_report(now))
+        return self._watch.recv(n, owing=[e for e in range(self.env.num_envs) if e not in self._held])
 
-    def _stall_report(self, now: float) -> str:
-        """Which environments owe events and how long they have been silent (the stuck duel is among them)."""
-        waiting = [e for e in range(self.env.num_envs) if e not in self._held]
-        waiting.sort(key=lambda e: self._last_event.get(e, 0.0))
-        lines = []
-        for e in waiting[:8]:
-            slot = self._slots[e]
-            a = slot.assignment if slot is not None else None
-            spec = getattr(a, "spec", None)
-            lines.append(f"env {e}: silent {now - self._last_event.get(e, now):.0f}s, game rows {slot.rows if slot else 0}, "
-                         f"seed {getattr(spec, 'seed', None)}, first {getattr(spec, 'first', None)}, "
-                         f"{dict(a.info) if a is not None else {}}")  # fmt: skip
-        return (
-            f"no environment event for {self.stall_timeout:.0f}s while {len(waiting)} environment(s) still owe "
-            "rows (an engine stuck inside a duel?); longest silent:\n  " + "\n  ".join(lines)
-        )
+    def _describe(self, env_id: int) -> str:
+        """A slot's game, for a stall report (the stuck duel is among the silent ones)."""
+        slot = self._slots[env_id]
+        a = slot.assignment if slot is not None else None
+        spec = getattr(a, "spec", None)
+        return (f"game rows {slot.rows if slot else 0}, seed {getattr(spec, 'seed', None)}, "
+                f"first {getattr(spec, 'first', None)}, {dict(a.info) if a is not None else {}}")  # fmt: skip
 
     # -- game bookkeeping ---------------------------------------------------------------------------
     def _new_game(self, env_id: int) -> None:
@@ -308,7 +288,7 @@ class RolloutCollector:
                 raise RuntimeError("a pool game needs opponents(snapshot_id)")
             opponent = self.opponents(assignment.opponent)
         self._slots[env_id] = _Slot(assignment, opponent)
-        self._last_event[env_id] = time.monotonic()
+        self._watch.started(env_id)
         self.games_started += 1
         self.env.reset(env_id, assignment.spec)
 
