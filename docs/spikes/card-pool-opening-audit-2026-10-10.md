@@ -207,3 +207,40 @@ anchored to the matching invocation's systemd monotonic process-start timestamp.
 It never exempts existing stale heartbeats, STOP, rollout failures, dead processes
 or invocation changes. Restarting the watcher cannot renew this period. Original
 incident evidence is retained; 17 monitor regression tests pass.
+
+## Critic collection stopped on a valid zero-sample game; recovery
+
+The corpus stopped after 1,247 committed completions; 1,248 complete cached
+records existed after in-flight work settled. Game1248 ended normally on turn2
+before the learner received any `SelectIdleCmd`: the opponent paid a lethal LP
+cost and the learner won. The learner had chain prompts, but none of the
+registered idle prompts. Exact replay and engine health passed. The assertion
+that every healthy game must yield an idle sample was incorrect.
+
+The amendment preserves the registered sampling population: retain the full game
+and an explicit `no_eligible_idle` record with empty predictions/features. Do not
+replace its opening, invent a fallback state, or silently drop the game. Report
+both total-game and eligible-game denominators and zero-sample counts per split;
+critic losses remain conditional on eligible idle states. The test-game outcome
+was inspected to debug this failure; no fit hyperparameters were changed from
+that outcome. Claims of literal complete test-outcome blindness must therefore
+include this operational exception.
+
+`card-pool-critic-refresh-recovery-2026-10-10` binds and reuses 1,248 completed
+records, replays only the unfinished critic audit for game1248 and collects the
+remaining31 games. All reused job/result/replay/cache/prediction hashes are bound
+in the recovery identity. Original STOP and failure evidence are untouched.
+Preflight replay verified both the exact zero-sample case and an ordinary
+three-sample game. Fitting must wait for complete recovery/cache verification.
+
+The monitor recorded this real STOP but did not redeliver it: incident IDs were
+keyed only by study identity and `attention` kind, so the earlier acknowledged
+startup warning swallowed subsequent failures. The repair keys episodes by
+cause and occurrence, retains prior incidents, gives a new STOP a fresh pending
+acknowledgment, and allows the same fault to notify again after recovery.
+Secondary stale/inactive symptoms of an existing STOP remain deduplicated.
+Watcher restarts do not create duplicate active episodes. Regression tests cover
+new STOP after an acknowledged warning, repeated polls, cause persistence and
+same-cause recurrence after recovery; all19 monitor tests pass. The previously
+missed STOP has now been recorded as its own acknowledged incident, and the
+corrected monitor is running on recovery.

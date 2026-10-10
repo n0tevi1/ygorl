@@ -113,14 +113,32 @@ def update_incident(monitor, config, snapshot):
     prior = json.loads(path.read_text()) if path.exists() else None
     kind = "attention" if snapshot["alerts"] else "complete" if snapshot["complete"] else None
     if kind is None:
+        if prior and prior["kind"] == "attention" and not prior.get("cleared_unix"):
+            prior["cleared_unix"] = snapshot["checked_unix"]
+            atomic(path, prior)
         return prior
-    key = hashlib.sha256(json.dumps([config["study_sha256"], kind], sort_keys=True).encode()).hexdigest()
-    if prior and prior["id"] == key:
+    alerts = snapshot["alerts"]
+    # A STOP/fatal rollout remains the same cause when secondary symptoms such
+    # as stale heartbeats or an inactive service appear. A later STOP must not
+    # inherit the acknowledgment of an unrelated startup warning.
+    primary = sorted(
+        a
+        for a in alerts
+        if a.startswith(("study STOP:", "study service invocation"))
+        or a in ("study identity changed", "failed rollouts recorded (including those not committed to metrics)")
+    )
+    cause = [config["study_sha256"], kind, primary or sorted(alerts), snapshot.get("failed_rollouts", [])]
+    signature = hashlib.sha256(json.dumps(cause, sort_keys=True).encode()).hexdigest()
+    if prior and prior.get("signature") == signature and not prior.get("cleared_unix"):
         return prior
+    # Include occurrence identity so a recovered incident that recurs cannot
+    # accidentally load the old on-disk acknowledgment.
+    key = hashlib.sha256(json.dumps([signature, snapshot["checked_unix"], uuid.uuid4().hex]).encode()).hexdigest()
     if prior:
         atomic(monitor / f"incident-{prior['id']}.json", prior)
     incident = {
         "id": key,
+        "signature": signature,
         "kind": kind,
         "created_unix": snapshot["checked_unix"],
         "alerts": snapshot["alerts"],
