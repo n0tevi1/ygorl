@@ -75,3 +75,9 @@ failure in this selected state, not a reason to always answer yes or attack.
 Wait for the complete prefix comparison before estimating how consistently this
 intervention helps. No training labels, reward change or checkpoint promotion
 has been made from these selected examples.
+
+## Prefix study completed
+
+All168 prefix runs completed, including an important harmful partial-prefix
+counterexample. See [prefix results and fresh coverage](combat-prefix-handoff-2026-10-09.md)
+for full counts, control verification and the new768-game cohort.
