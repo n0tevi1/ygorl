@@ -79,6 +79,38 @@ def test_failed_uncommitted_rollout_and_stop_do_not_count_as_complete(tmp_path):
     assert not (monitor / "finished.json").exists()
 
 
+def test_new_stop_does_not_inherit_acknowledged_startup_warning(tmp_path):
+    study, config, service = setup_study(tmp_path)
+    monitor = tmp_path / "monitor"
+    monitor.mkdir()
+    first = update_incident(monitor, config, inspect_study(config, service, 2000))
+    first["acknowledgment"] = {"id": first["id"]}
+    first["delivery"] = {"verified_unix": 2000}
+    atomic(monitor / "incident.json", first)
+    atomic(study / "STOP.json", {"reason": "no eligible samples"})
+    second = update_incident(monitor, config, inspect_study(config, service, 2010))
+    assert second["id"] != first["id"]
+    assert second["acknowledgment"] is None and second["delivery"] is None
+    assert any("no eligible samples" in a for a in second["alerts"])
+    assert json.loads((monitor / f"incident-{first['id']}.json").read_text()) == first
+    assert update_incident(monitor, config, inspect_study(config, service, 2020)) == second
+
+
+def test_same_warning_after_recovery_is_a_new_occurrence(tmp_path):
+    study, config, service = setup_study(tmp_path)
+    monitor = tmp_path / "monitor"
+    monitor.mkdir()
+    first = update_incident(monitor, config, inspect_study(config, service, 2000))
+    first["acknowledgment"] = {"id": first["id"]}
+    atomic(monitor / "incident.json", first)
+    atomic(study / "pipeline-status.json", {"stage": "running", "updated_unix": 2001})
+    cleared = update_incident(monitor, config, inspect_study(config, service, 2002))
+    assert cleared["cleared_unix"] == 2002
+    second = update_incident(monitor, config, inspect_study(config, service, 2200))
+    assert second["id"] != first["id"] and second["signature"] == first["signature"]
+    assert second["acknowledgment"] is None
+
+
 def test_completion_needs_bound_healthy_report(tmp_path):
     study, config, service = setup_study(tmp_path)
     atomic(study / "pipeline-status.json", {"stage": "complete", "updated_unix": 1000})
