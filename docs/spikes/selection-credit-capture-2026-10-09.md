@@ -176,8 +176,7 @@ KL error 2.2352e-8, within the prospectively declared numerical gate. Artifacts:
 `attribute-rows-u53.py`, `row-attribution-u53.json`. This second batch limits the
 claim: harmful interference is demonstrated at update 35, not on every update.
 
-A fixed-budget independent collection-seed replication is now registered and
-running at `out/research/selection-credit-replication-2026-10-09/`: seed 263,
+A fixed-budget independent collection-seed replication was registered at `out/research/selection-credit-replication-2026-10-09/`: seed 263,
 legacy arm, 24 updates, same source checkpoint and all-state capture. Identity
 SHA256 `9c45b0b41a3ce379ec7760fa70852b61b0170449027146a72806c2f9d85630e4`.
 Its frozen protocol audits every qualifying high-probability repeated group;
@@ -186,3 +185,56 @@ It includes the numerical baseline gates, same three actor-row interventions,
 health gate, heartbeat, watchdog and durable checkpoints. Same source checkpoint
 means this is not independent-initialization evidence. No production learning
 change or schema promotion has been made.
+
+
+## Independent collection-seed replication completed
+
+Seed 263 finished all 24 legacy updates: 49,152 rows, 299 games, zero errors or
+truncations, 72 chosen cancel rows (144 applied minibatch visits). All four groups
+meeting the predeclared >=90% probability and identical-input-repeat rule were
+analyzed. Each case has two passing numerical baseline replays and three fixed
+actor-row interventions; no cases were discarded based on outcomes.
+
+| Update / repeated rows | Before | Recorded after | Loop PPO only, all entropy/KL | Loop actor only | Other actor rows only |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 33 / 9 | 92.0554% | 88.6642% | 92.0303% | 94.1268% | 88.3951% |
+| 37 / 7 | 95.0004% | 92.6567% | 93.1935% | 94.7082% | 93.2441% |
+| 43 / 19 | 96.9788% | 99.1809% | 97.0561% | 97.1975% | 99.2153% |
+| 56 / 8 | 93.9950% | 91.6987% | 94.9253% | 96.0781% | 91.8363% |
+
+All variants retain the complete critic losses and original batch denominator,
+Adam state and step schedule. The u56 loop-actor-only variant would disagree
+with the original KL guard on three minibatches; all other listed variants
+match original acceptance. Maximum baseline state error across this panel is
+3.1665e-7, probability error 3.5763e-7. These remain numerical, not bitwise,
+replays. No new trajectories are generated in the attribution comparisons.
+
+The second seed reproduces substantial harmful interference at u43: ordinary
+PPO raises cancellation 96.9788% → 99.1809%, but omitting other states' policy
+loss yields only 97.0561%. The other three ordinary updates lower cancellation.
+This supports a batch-dependent mechanism across two collection seeds; it does
+not establish its population frequency, a full history of the original formal
+model, or a tested remedy. All continuations share the same initialization.
+
+Representation caveat: identical actor observations are **not** proof of identical
+private pending choices. In seed262/u35, intervening select rows choose three
+different encoded card identities (passwords 60461804, 22908820, 87758525), yet
+the subsequent cancel inputs are identical. Some individual cancels therefore
+switch targets; they must not all be labeled mistakes. Consecutive returns to
+the same selected identity also occur. The attribution above concerns the
+aliased actor input and its recorded losses, not a tactical judgment that every
+recorded cancel should be prohibited. Evidence: capture `context-rows-35.json`.
+
+Panel artifacts: `out/research/selection-credit-attribution-2026-10-09/`, identity
+`ebf0b08fd3acbab614d6074b48eb60174d904222f0795a44077c8651e4d46594`,
+`panel.json`, all per-update baseline/variant reports, `report.json`, `summary.json`.
+Both completion events were inspected and acknowledged.
+
+Next registered analysis: `selection-credit-kind-attribution-2026-10-09`, two
+harmful cases (seed262/u35, seed263/u43) and a contrasting case (seed263/u33).
+After two numerical baseline checks, separately omit PPO policy-loss rows of
+every action kind present, retaining all other terms and the original schedule.
+Report all categories and numerical/KL limitations, not just favorable results.
+This asks which other-state learning signals produce interference and informs
+a later separately registered intervention; it is not a production change.
+The service has durable reports, heartbeat and an independent watchdog.
