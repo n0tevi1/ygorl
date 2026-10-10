@@ -114,4 +114,96 @@ agent matrix, duel and monitoring suites; lint and whitespace checks passed. Two
 end-to-end frozen-runtime preflight games also passed actual-order checks, full
 cold replay, critic response replay and actor-probability parity. The replacement
 run passed all 18 registered health canaries and entered full evaluation with an
-independent invocation-bound monitor. Completion results remain pending.
+independent invocation-bound monitor. Completion results are verified below.
+
+
+## Corrected panel completed
+
+All 2,304 games completed without engine-health failures or limits. Every saved
+result and replay hash was verified, actual replay-loaded orders matched the
+64 registered new pairs, critic replay/probability checks passed, and both
+registered analyses reproduced byte-for-byte under the bound interpreter.
+The completion incident was acknowledged after verification. These are the same
+nine existing checkpoints; new numbers do not represent newly trained models.
+
+| Metric | Start u512 | Fixed u528 | Expanded u528 |
+|---|---:|---:|---:|
+| All wins / 768 | 501 (65.23%) | 512 (66.67%) | 507 (66.02%) |
+| Mean turns, all | 11.61 | 12.07 | 11.29 |
+| Familiar wins / 384 | 249 | 258 | 247 |
+| Added-list wins / 384 | 252 | 254 | 260 |
+| Runick wins / 96 | 63 | 55 | 69 |
+| Runick mean turns | 21.25 | 22.05 | 21.81 |
+| Added-list deck-out losses | 29 | 29 | 17 |
+| Self-Ash choices / offered windows | 9/361 | 8/349 | 6/321 |
+| Candidate repeat-selection games | 2 | 4 | 2 |
+
+Added-list fixed-minus-start is +0.52 percentage points, crossed seed/deal
+bootstrap interval [-9.38, +10.68]; expanded-minus-start is +2.08 points
+[-6.77, +10.94]; expanded-minus-fixed is +1.56 points [-6.51, +9.64].
+No paired win interval excludes zero, including familiar retention. Expanded has
+promising Runick/deck-out point estimates but not established general strength
+or retention benefit. Four deals per target/anchor and three existing policy
+seeds still provide limited coverage. Comparing these means with the older
+reused-opening panel would confound opening distribution with policy progress.
+
+The critic conclusion changes materially:
+
+| Runick V diagnostic | Start | Fixed | Expanded |
+|---|---:|---:|---:|
+| Mean signed error | +0.047 | +0.210 | -0.076 |
+| MSE | 0.888 | 1.019 | 0.845 |
+| Reviewed-card-present V bias | +0.356 | +0.514 | +0.234 |
+| Reviewed-card-present V MSE | 1.014 | 1.163 | 0.990 |
+
+The earlier claim that all three Runick critics were worse than zero prediction
+(MSE1) does not survive new openings. Fixed-pool continuation retains a
+conditional overestimation signal, especially when reviewed cards are present.
+The state-conditioned samples contain 61/67/62 games respectively. Actor
+trajectories differ between arms, reviewed-card presence is not a verified lock,
+and fixed opponents differ from the training league; these are descriptive
+calibration diagnostics rather than proof that particular critic weights caused
+losses. Familiar V bias remains negative (-0.237/-0.271/-0.226), arguing against
+an indiscriminate global downward value adjustment.
+
+Behavior is not solved: 23 self-Ash choices occurred in 1,031 offered windows,
+and eight games triggered repeated-selection warnings. Game388 contains a
+four-action select/select/unselect/unselect material cycle with changing legal
+menus, ending when a third material is selected. This differs from the ignored
+required-material deselection bug; all games eventually terminated. Warnings
+remain review signals, not automatic tactical-error labels. Evidence is saved
+in `completion-verification.json`, `analysis.json`, `critic-analysis.json` and
+per-game traces under `card-pool-fresh-deals-2026-10-10`.
+
+## Independent critic adaptation corpus started
+
+`card-pool-critic-refresh-data-2026-10-10` now collects 512 training, 256
+validation and 512 test games with the fixed seed0-u528 actor. Its 320 explicit
+new ordered pairs are mutually split-disjoint and disjoint from all prior
+coverage/retention panels, including this corrected evaluation. Two full-game
+preflights verified replay parity and equivalence between cached-feature critic
+outputs and full model outputs. Eight registered health canaries precede the
+full collection. No actor or critic parameters are updated during collection.
+
+Only first learner idle prompts per turn are cached, together with privileged
+inputs and terminal returns. Every full game has a cold replay; truncation,
+health failure or missing learner samples stops corpus construction without
+silently dropping a case. Validation/test outcome scores are not summarized
+before model selection. The fitting plan is registered: private critic and
+privileged encoder only, frozen actor/shared trunk, equal Q/V game-weighted MC
+loss, learning rates1e-5 and1e-4, epochs0/1/4 and three optimizer-shuffle seeds.
+Select by validation error, retaining epoch0; evaluate selected fits once on test
+and compare with unchanged, train-mean and train-only affine controls. Cached
+private-gradient parity must be checked before fitting. This is one behavior
+actor, not three independent policy training runs. Success would establish
+limited supervised calibratability, not an RL or gameplay improvement; matched
+continuations and familiar retention remain subsequent gates.
+
+A startup monitoring race was observed and investigated: the first poll ran about
+four seconds before the initial heartbeat file existed and treated missing time
+as epoch0. The process was already running, passed canaries, and had no failed
+games. The monitor now grants at most180 seconds only for a missing first file,
+anchored to the matching invocation's systemd monotonic process-start timestamp.
+It never exempts existing stale heartbeats, STOP, rollout failures, dead processes
+or invocation changes. Restarting the watcher cannot renew this period. Original
+incident evidence is retained; 17 monitor regression tests pass.

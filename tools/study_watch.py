@@ -28,7 +28,7 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def inspect_study(config, service, now):
+def inspect_study(config, service, now, *, monotonic_now=None):
     root = Path(config["study"])
     alerts = []
     if digest(root / "identity.json") != config["study_sha256"]:
@@ -52,7 +52,23 @@ def inspect_study(config, service, now):
     if not complete:
         if service.get("ActiveState") not in ("active", "activating"):
             alerts.append("study service is not active")
-        if now - state.get("updated_unix", 0) > 180:
+        # The watcher can start before Python imports/identity checks write the
+        # first heartbeat. Anchor a missing-file grace period to the *bound
+        # process start*, never to watcher restarts or wall-clock timestamps.
+        try:
+            started = int(service.get("ExecMainStartTimestampMonotonic", "0")) / 1_000_000
+        except (TypeError, ValueError):
+            started = 0
+        mono = time.monotonic() if monotonic_now is None else monotonic_now
+        starting = (
+            not state_path.exists()
+            and service.get("ActiveState") in ("active", "activating")
+            and bool(config.get("invocation"))
+            and service.get("InvocationID") == config["invocation"]
+            and started > 0
+            and 0 <= mono - started <= 180
+        )
+        if not starting and now - state.get("updated_unix", 0) > 180:
             alerts.append("pipeline heartbeat stale (>180 seconds)")
     progress = [
         p.stat().st_mtime
@@ -228,6 +244,7 @@ def main():
                     "--property=InvocationID",
                     "--property=Result",
                     "--property=ExecMainStatus",
+                    "--property=ExecMainStartTimestampMonotonic",
                 ],
                 text=True,
                 timeout=15,
