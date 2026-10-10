@@ -68,6 +68,8 @@ effects remain conditional on fixed deals, hidden states and fitted actors.
 
 ## Registered independent suffix confirmation
 
+Completed: see [independent confirmation and full-game sampling comparison](combat-root-confirmation-2026-10-09.md).
+
 Root: `out/research/combat-root-confirmation-2026-10-09/`.
 Identity: `921fed2204470124908e620d3d1ab65de76f84ea3c62b443e6973cc94a1179b7`.
 Six selected states,14 state/action pairs,64 new suffix streams each and six
@@ -92,5 +94,6 @@ other branches retain results and candidate same-turn action/probability
 traces. Independent review requires the calibration response/step transcripts
 to match the original records exactly. A real calibration replay and one new
 suffix preflight passed. Two CPU workers, a three-hour cap, saved per-branch
-results and an independent watchdog are active. Formal training and policy
+results and an independent watchdog completed the902-branch study. Independent
+review passed all records and calibration transcripts. Formal training and policy
 defaults are unchanged; the long-game root cause remains open.
