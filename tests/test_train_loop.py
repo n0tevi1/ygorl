@@ -464,13 +464,11 @@ def test_train_tool_runs_resumes_and_summarizes(tmp_path, capsys):
     assert tool.main([str(tmp_path / "missing.ydk"), "--updates", "1"]) == 2  # decks are checked like the CLI
 
 
-def test_padding_trimming_leaves_the_ppo_update_unchanged(db, vocab, monkeypatch):
+def test_padding_trimming_leaves_the_ppo_update_unchanged(db, vocab):
     """The learner cuts the rollout's padding once and the net cuts each batch's: the same update either way."""
     import copy
 
-    from ygorl.nets import actor_critic as ac_mod
-    from ygorl.nets.policy import PolicyNet, trim_padding
-    from ygorl.train import ppo as ppo_mod
+    from ygorl.nets.policy import padding_trimmed
     from ygorl.train.ppo import PPOLearner
 
     col = collector(db, vocab, max_decisions=120, steps=24)
@@ -479,12 +477,10 @@ def test_padding_trimming_leaves_the_ppo_update_unchanged(db, vocab, monkeypatch
     results = []
     for trim in (False, True):
         model = copy.deepcopy(base)
-        monkeypatch.setattr(PolicyNet, "trim_padding", trim)
-        for mod in (ppo_mod, ac_mod):
-            monkeypatch.setattr(mod, "trim_padding", trim_padding if trim else (lambda obs: obs))
         learner = PPOLearner(model, PPOConfig(minibatch_size=16, epochs=2))
         torch.manual_seed(3)
-        stats = learner.update(ro)
+        with padding_trimmed(trim):
+            stats = learner.update(ro)
         results.append((stats, {k: v.detach().clone() for k, v in model.state_dict().items()}))
     (s0, p0), (s1, p1) = results
     for key in ("loss", "policy_loss", "entropy", "kl_ref", "q_loss", "v_loss", "approx_kl"):
@@ -493,20 +489,18 @@ def test_padding_trimming_leaves_the_ppo_update_unchanged(db, vocab, monkeypatch
         assert torch.allclose(p0[name].float(), p1[name].float(), atol=1e-5, rtol=1e-4), name
 
 
-def test_actor_critic_heads_on_the_trimmed_batch_match_the_padded_one(db, vocab, monkeypatch):
+def test_actor_critic_heads_on_the_trimmed_batch_match_the_padded_one(db, vocab):
     """ActorCritic scores only the batch's used action rows and pads logits / Q back to the input width."""
-    from ygorl.nets import actor_critic as ac_mod
     from ygorl.nets.heads import MASKED_LOGIT
-    from ygorl.nets.policy import PolicyNet
+    from ygorl.nets.policy import padding_trimmed
 
     ro = collector(db, vocab, max_decisions=120, steps=24).collect()
     model = tiny_model(vocab)
     obs, priv = ro.obs, ro.privileged
     with torch.no_grad():
         trimmed = model(obs, priv)
-        monkeypatch.setattr(PolicyNet, "trim_padding", False)
-        monkeypatch.setattr(ac_mod, "trim_padding", lambda o: o)
-        padded = model(obs, priv)
+        with padding_trimmed(False):
+            padded = model(obs, priv)
     mask = obs["action_mask"]
     assert trimmed.logits.shape == padded.logits.shape == trimmed.q.shape == mask.shape
     assert mask.sum(1).max() < mask.shape[1]  # the trimmed run really dropped columns

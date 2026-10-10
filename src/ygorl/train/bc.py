@@ -40,7 +40,7 @@ from ygorl.env.encoding import MAX_OPTIONS, canonical_action
 from ygorl.env.events import DEFAULT_EVENT_LENGTH
 from ygorl.env.observer import PointObserver
 from ygorl.nets.batch import OBS_KEYS, to_tensors
-from ygorl.nets.policy import PolicyNet
+from ygorl.nets.policy import PolicyNet, trim_padding
 from ygorl.solver.batch import PASSIVE_OPPONENT, _order_with_hand, sample_hand
 from ygorl.solver.demo import PASSIVE_KINDS, DemoError, Demonstration, _check_replay_health, verify_line
 from ygorl.solver.targets import board_summary, board_summary_missing, parse_targets
@@ -69,7 +69,10 @@ class BCData:
         return len(self.actions)
 
     def batch(self, idx: np.ndarray, device: torch.device | str | None = None) -> tuple[dict, torch.Tensor]:
-        """Samples ``idx`` as tensors, with the padding rows no sample of the batch uses cut off (:func:`trim_padding`)."""
+        """Samples ``idx`` as tensors, with the padding rows no sample of the batch uses cut off
+        (:func:`ygorl.nets.policy.trim_padding`, on the numpy arrays before they are copied: on turn-1 demonstrations,
+        about 60 of 160 card rows, 4 of 128 action rows and 38 of 128 event tokens in use, a training step takes
+        about 40% of the untrimmed time)."""
         return to_tensors(trim_padding({k: v[idx] for k, v in self.obs.items()}), device), torch.as_tensor(
             self.actions[idx], device=device
         )
@@ -79,31 +82,6 @@ class BCData:
         idx = np.flatnonzero(keep) if keep.dtype == bool else keep
         return BCData({k: v[idx] for k, v in self.obs.items()}, self.actions[idx], [self.meta[i] for i in idx],
                       Counter(self.skipped))  # fmt: skip
-
-
-def trim_padding(obs: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
-    """Drop the trailing card / action / event rows that are padding in every sample of a batch.
-
-    Exact for :class:`PolicyNet`: padding card rows are masked out of attention, actions do not attend
-    to each other, and the history is causal with the valid tokens first (docs/nets.md). The logits
-    come back ``[B, A']`` with ``A'`` the widest legal action set of the batch. On turn-1 demonstrations
-    (on average 60 of 160 card rows, 4 of 128 action rows and 38 of 128 event tokens in use) a training
-    step takes about 40% of the untrimmed time.
-    """
-    out = dict(obs)
-
-    def used(mask: np.ndarray) -> int:
-        cols = np.flatnonzero(mask.any(0))
-        return int(cols[-1]) + 1 if len(cols) else 1
-
-    n = used(obs["cards"][..., 0] > 0)
-    out["cards"] = obs["cards"][:, :n]
-    a = used(obs["action_mask"] != 0)
-    out["actions"], out["action_mask"] = obs["actions"][:, :a], obs["action_mask"][:, :a]
-    if "event_mask" in obs:
-        t = used(obs["event_mask"] != 0)
-        out["events"], out["event_mask"] = obs["events"][:, :t], obs["event_mask"][:, :t]
-    return out
 
 
 @dataclass

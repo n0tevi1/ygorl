@@ -13,8 +13,11 @@ belief)`` is the actor head on top of it (belief features enter detached).
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 
+import numpy as np
 import torch
 from torch import Tensor, nn
 
@@ -68,10 +71,14 @@ class PolicyOutput:
         return self.logits.argmax(-1)
 
 
-def _prefix_length(mask: Tensor) -> int:
-    """Length of the longest valid prefix over the batch (valid rows come first in every observation)."""
+def _prefix_length(mask) -> int:
+    """Length of the longest valid prefix over the batch (valid rows come first in every observation); at least 1.
+    ``mask``: a tensor or a numpy array, ``[..., N]``."""
     if mask.shape[-1] == 0:
         return 0
+    if isinstance(mask, np.ndarray):
+        cols = np.flatnonzero(mask.reshape(-1, mask.shape[-1]).any(0))
+        return int(cols[-1]) + 1 if len(cols) else 1
     pos = torch.arange(1, mask.shape[-1] + 1, device=mask.device)
     return max(1, int((mask.to(pos.dtype) * pos).max()))
 
@@ -84,14 +91,32 @@ def _pad_to(x: Tensor | None, length: int, dim: int = 1, value=0) -> Tensor | No
     return torch.cat([x, x.new_full(shape, value)], dim)
 
 
-def trim_padding(obs: Batch) -> Batch:
+_TRIM = True  # see padding_trimmed
+
+
+@contextmanager
+def padding_trimmed(enabled: bool) -> Iterator[None]:
+    """Turn padding trimming (:func:`trim_padding` everywhere: the nets, the PPO update, BC batches) on or off inside
+    the block. Results do not depend on it; tests use it to check that, debugging to rule it out."""
+    global _TRIM
+    old, _TRIM = _TRIM, enabled
+    try:
+        yield
+    finally:
+        _TRIM = old
+
+
+def trim_padding(obs):
     """Cut the trailing padding rows of cards, actions and events to the batch's longest valid row.
 
     Observations list their valid rows first (docs/encoding.md), padding rows are masked everywhere and action
-    rows only reference existing card rows, so every valid output is unchanged by the cut. Batches without card
-    and action rows (other models' observations, e.g. the Nim test env) pass through untouched.
+    rows only reference existing card rows, so every valid output is unchanged by the cut. ``obs`` holds tensors
+    (a collated batch) or numpy arrays (BC samples before they become tensors). Batches without card and action
+    rows (other models' observations, e.g. the Nim test env) pass through untouched, and so does everything while
+    :func:`padding_trimmed` is off. Callers cut where it saves the most: the PPO update once per rollout, the
+    actor-critic per minibatch, BC per batch of samples, :class:`PolicyNet` on its own input.
     """
-    if "cards" not in obs or "actions" not in obs:
+    if not _TRIM or "cards" not in obs or "actions" not in obs:
         return obs
     out = dict(obs)
     n_cards = _prefix_length(obs["cards"][..., 0] > 0)
@@ -105,9 +130,6 @@ def trim_padding(obs: Batch) -> Batch:
 
 
 class PolicyNet(nn.Module):
-    # Cut padding before the heavy work (same results, see trim_padding); a switch for tests and debugging.
-    trim_padding: bool = True
-
     def __init__(self, cfg: NetConfig, text: TextFeatures | None = None) -> None:
         super().__init__()
         self.cfg = cfg
@@ -122,7 +144,8 @@ class PolicyNet(nn.Module):
 
     # -- trunk -------------------------------------------------------------------
     def features(self, obs: Batch, state: HistoryState | None = None) -> Features:
-        if not self.trim_padding:
+        # cut padding before the heavy work (same results, see trim_padding)
+        if not _TRIM:
             return self._features(obs, state)
         f = self._features(trim_padding(obs), state)
         events = obs.get("events")
