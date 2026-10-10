@@ -274,7 +274,7 @@ def load_actor_critic(path: str | Path, text_dir: str | Path | None = None) -> L
 def warm_start(actor: PolicyNet, source: LoadedPolicy) -> list[str]:
     """Copy ``source``'s weights into ``actor``, a new network over the same vocab. The two networks must be the same
     except for added card views (:data:`CARD_VIEW_FIELDS`) or enabling selection history. New card views
-    keep their zero-output initialization; selection history inserts a zero event-type row. Returns the config fields that differ (empty = an exact copy)."""
+    are explicitly zeroed; selection history inserts a zero event-type row. Returns the config fields that differ (empty = an exact copy)."""
     old, new = source.net_config.to_dict(), actor.cfg.to_dict()
     differ = sorted(k for k in old.keys() | new.keys() if old.get(k) != new.get(k))
     if set(differ) - CARD_VIEW_FIELDS - {"selection_history"} or (
@@ -302,6 +302,12 @@ def warm_start(actor: PolicyNet, source: LoadedPolicy) -> list[str]:
     missing, unexpected = actor.load_state_dict(state, strict=not differ)
     if unexpected or any(not any(m in k for m in CARD_VIEW_MODULES) for k in missing):
         raise ValueError(f"{source.path}: weights do not fit (missing {missing}, unexpected {unexpected})")
+    # Constructors use ordinary random text projections for training from scratch.
+    # Only newly added views must start silent when transferring an existing policy.
+    # Do not reset a projection that already has learned weights in the source.
+    with torch.no_grad():
+        for name in missing:
+            actor.get_parameter(name).zero_()
     return differ
 
 
