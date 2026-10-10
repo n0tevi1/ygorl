@@ -1,5 +1,9 @@
 # Card-pool expansion canary: no established gain after 16 updates
 
+Latest: independent seeds1/2 did not reproduce the added-own deficit. Expansion
+mostly preserves added-facing performance that fixed continuation loses; it has
+not established improvement over the starting actor. See replication below.
+
 From the same seed0 warm-u512 checkpoint, both arms trained 16 PPO updates
 (262,144 rows each). Fixed retained the 20-deck pool; expanded added legal
 Labrynth, Kashtira, Tenpai Dragon and Runick lists. Full state restoration was
@@ -90,3 +94,66 @@ Evidence: `out/research/card-pool-training-canary-2026-10-10/{analysis.json,
 training-exposure.json,first-divergences.json}`. Replication registration and
 frozen runtime bindings: `out/research/card-pool-training-replication-2026-10-10/`.
 Related: #36, #83, #105, #218; prior coverage/lock report in PR #284.
+
+## Independent seeds 1/2: own-deck deficit does not replicate
+
+Both seeds completed both 16-update arms. All 1,536 evaluation games were healthy,
+with no limits and exact cold replay matches. All 16 checkpoints, frozen inputs,
+parent/child report hashes and saved replays verified; all three registered
+analysis outputs reproduced byte-for-byte. Original seed0 discovery is excluded
+from the following pooled results. Each cell has 128 games across two seeds.
+
+| Candidate role / target group | Start u512 | Fixed u528 | Expanded u528 |
+|---|---:|---:|---:|
+| Pilot familiar decks | 123/128 | 125/128 | 123/128 |
+| Face familiar decks | 78/128 | 74/128 | 80/128 |
+| Pilot added decks | 112/128 | 113/128 | 114/128 |
+| Face added decks | 89/128 | 75/128 | 88/128 |
+| Total | 402/512 | 387/512 | 405/512 |
+
+Expanded-minus-fixed added-own performance is +0.78 points, conditional interval
+[-7.81, +7.81], with seed differences -1.56 / +3.13 points. The original -10.94
+point own-deck deficit is not a reliable basis for rejecting expansion.
+
+Added-facing expanded-minus-fixed is +10.16 points, interval [0.00, +21.88],
+with both seeds positive (+12.50 / +7.81). But expanded-minus-start is -0.78
+points, interval [-10.94, +9.38]. This distinction matters: the evidence supports
+investigating **retention versus fixed-pool deterioration**, not claiming new
+strength. Two-seed crossed bootstrap intervals are fragile and conditional on
+these lists, opponents and openings. Familiar-facing effects vary by seed.
+
+There is no general turn-length improvement. Added-facing means are 13.55 /
+15.40 / 15.14 turns (start / fixed / expanded). Facing Runick, wins are 17/32 /
+9/32 / 14/32, and mean turns 24.72 / 30.41 / 29.81. Expanded's better result than
+fixed remains below the starting policy in this selected matchup.
+
+## Repeated-selection signals remain
+
+Games with more than one consecutive selection cancel: 1 / 7 / 10 across the
+512 evaluations per candidate. Only 0 / 3 / 3 games cross the eight-identical-
+choice warning threshold; small cancel counts can be legitimate target revision.
+Trace audit locates those warnings in Branded material selection and Sky Striker
+selection dialogs (`SelectCard` / `SelectUnselectCard`), with several reaching the
+existing 32-cancel guard. This repeats the known selection-control failure class;
+it does not establish a new engine bug or prove all ten expanded games are errors.
+These games are piloting familiar decks, so they do not account for the separate
+added-facing retention gap. Keep the cancellation rule fixed for causal comparison.
+Self-Ash remains sparse: 1/241 / 1/230 / 1/236 offered windows; correlated
+opportunities and tiny counts cannot certify this behavior has been repaired.
+
+## Next: larger fresh-opening retention confirmation
+
+Freeze all nine existing start/fixed/expanded checkpoints from training seeds
+0/1/2. Run 2,304 games facing the four familiar and four added lists, two anchors,
+two opponents, both seats and four new deals per target/anchor. New engine seeds
+are disjoint from discovery and replication. No new training, mutation, feature
+switch, mask change or policy promotion. Primary comparisons are fixed-minus-start
+and expanded-minus-start facing added decks; expanded-minus-fixed is secondary.
+Report per seed, opponent, deck, turn tails, deck-outs and familiar retention.
+
+This increases opening coverage for a specific apparent forgetting pattern. It
+is not a new independent training-seed replication or unseen-family test. Inputs,
+all checkpoint hashes and the analysis are frozen; independent health/progress
+monitoring and exact cold replays remain required. Evidence is retained under
+`card-pool-training-replication-2026-10-10` (including `repeat-audit.json`) and
+`card-pool-retention-confirmation-2026-10-10` in the research output directory.
