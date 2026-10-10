@@ -40,6 +40,10 @@ def play(root, job):
         env = load_environment(job["environment"])
         args = (job["seed"], env, Deck(**job["deck_a"]), Deck(**job["deck_b"]))
         duel = Duel(*args, config=cfg, first=job["first"], record_steps=True)
+        if "opening_deal" in job:
+            from ygorl.eval.panel_deals import validate_loaded_deal
+
+            validate_loaded_deal(job, duel)
         agents = [make_agent(s, seed) for s, seed in zip(job["agents"], job["agent_seeds"], strict=True)]
         session = DuelSession(duel)
         for a in agents:
@@ -183,6 +187,11 @@ def run(root, worker=play):
         jobs = json.loads((root / "panel.json").read_text())
         reg = json.loads((root / "registration.json").read_text())
         assert len(jobs) == reg["games"] and len({j["id"] for j in jobs}) == len(jobs)
+        if reg.get("fresh_opening_deals"):
+            from ygorl.eval.panel_deals import validate_panel
+
+            prior = [j for path in reg["prior_panels"] for j in json.loads(Path(path).read_text())]
+            atomic(root / "opening-audit.json", validate_panel(jobs, prior_jobs=prior))
         deadline = time.time() + reg["max_hours"] * 3600
         rows = []
         canary = set(reg["canary_ids"])
