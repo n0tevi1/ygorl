@@ -83,3 +83,8 @@ Three real preflight modes passed. The first example wins at T1 and T0.5 but
 loses under argmax, already showing why one cannot assume deterministic play
 helps. Two CPU workers, a three-hour cap, per-game results and an independent
 watchdog are active. Formal PPO, reward and inference defaults are unchanged.
+
+The full-game sampling comparison has [completed with independent review](policy-sampling-fullgame-2026-10-09.md).
+All 2,304 games were healthy. Argmax increased cancellations tenfold without
+establishing a general win benefit; identical-input loops were reproduced and a
+fresh four-arm confirmation is running.
