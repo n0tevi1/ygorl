@@ -54,3 +54,13 @@ preflight passed. The CPU-only two-worker service and independent watchdog are
 running, with a three-hour cap and exact transcript/identity checks. Conditional
 wins, if found, require further review before being used as teaching examples.
 Formal training, rewards and policy/mask defaults remain unchanged.
+
+## Follow-up correction and completed results
+
+The phase-entry study completed and its768 transcripts were independently checked.
+Subsequent implementation review found that this battle-exit driver's fresh
+Greedy forgot the externally forced attacker before target selection. The counts
+and recorded outcomes above remain intact; they are a weaker diagnostic than a
+correctly initialized combat chooser. See [context fix and completed three-arm
+sensitivity](combat-probe-context-2026-10-09.md) for the correction, all651-window
+results, five conditional earlier-win candidates, and active-opponent follow-up.
