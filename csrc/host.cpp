@@ -1137,9 +1137,28 @@ void HostDuel::act(size_t index) {
     }
 }
 
+void HostDuel::set_cancel_budget(uint32_t budget) {
+    if (budget != 0 && budget != 1 && budget != 4 && budget != MAX_SELECTION_CANCELS)
+        throw std::invalid_argument("cancel_budget must be 0, 1, 4 or 32");
+    cancel_budget_ = budget;
+}
+
 void HostDuel::observe(Observation& out) {
     require_started();
     encode(*core_, *tracker_, actions(), *cards_, *vocab_, out);
+    // Intersect the fully encoded mask, including its native all-undo fallback.
+    // Budget32 is exactly the existing behavior. Preserve a sole encoded exit.
+    const auto* decision = tracker_->decision();
+    if (cancel_budget_ != MAX_SELECTION_CANCELS && decision &&
+        (decision->type == MSG_SELECT_CARD || decision->type == MSG_SELECT_UNSELECT_CARD) &&
+        tracker_->selection_cancels() >= cancel_budget_) {
+        auto restricted = out.action_mask;
+        const auto& acts = actions();
+        for (size_t i = 0; i < acts.size() && i < restricted.size(); ++i)
+            if (acts[i].kind == CANCEL) restricted[i] = 0;
+        if (std::any_of(restricted.begin(), restricted.end(), [](auto x) { return x != 0; }))
+            out.action_mask = std::move(restricted);
+    }
     out.selection_history = selection_history_;
     out.has_events = events_ != nullptr;
     if (events_) events_->encode(std::max(0, player()), out.events, out.event_mask);

@@ -50,9 +50,24 @@ def test_real_windows_with_python_native_masks_and_snapshot(fixture, budget):
     host = _core.HostDuel(
         duel.cards.to_core(), duel.scripts, [vocab.password(i) for i in range(vocab.FIRST_INDEX, len(vocab))]
     )
+    guarded = _core.HostDuel(
+        duel.cards.to_core(),
+        duel.scripts,
+        [vocab.password(i) for i in range(vocab.FIRST_INDEX, len(vocab))],
+        cancel_budget=budget,
+    )
     p = cfg.player
     player = (p.starting_lp, p.starting_hand, p.draw_per_turn)
     host.start(
+        list(duel.core_seed),
+        cfg.rule_flags,
+        player,
+        player,
+        [(list(m), list(e)) for m, e in duel.loaded_decks()],
+        cfg.max_turns,
+        cfg.max_decisions,
+    )
+    guarded.start(
         list(duel.core_seed),
         cfg.rule_flags,
         player,
@@ -66,6 +81,7 @@ def test_real_windows_with_python_native_masks_and_snapshot(fixture, budget):
     def step(index):
         session.act(index)
         host.act(index)
+        guarded.act(index)
 
     try:
         for idx in data["actions"]:
@@ -78,6 +94,9 @@ def test_real_windows_with_python_native_masks_and_snapshot(fixture, budget):
             for key in py:
                 np.testing.assert_array_equal(py[key], native[key])
             altered, info = restrict_cancel(point, native, count, budget)
+            guarded_obs = guarded.observe()
+            for key in altered:
+                np.testing.assert_array_equal(guarded_obs[key], altered[key])
             py_altered, _ = restrict_cancel(point, py, count, budget)
             np.testing.assert_array_equal(altered["action_mask"], py_altered["action_mask"])
             cancel = next(i for i, a in enumerate(point.actions) if a.kind == "cancel")
@@ -101,6 +120,6 @@ def test_real_windows_with_python_native_masks_and_snapshot(fixture, budget):
         # Explicit original actions are still legal engine responses under this inference restriction.
         step(cancel)
         assert session.point.decision.TYPE == C.MSG_SELECT_CARD
-        assert host.result()["responses"] == session.tracker.result.responses
+        assert guarded.result()["responses"] == host.result()["responses"] == session.tracker.result.responses
     finally:
         session.close()
