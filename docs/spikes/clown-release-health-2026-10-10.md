@@ -47,3 +47,25 @@ the failing deal or claim a policy benefit from the crash fix. Run the failed po
 case and all 32 cell/arm smoke games first, then restart with its own independent
 monitor and immutable source/runtime/data/checkpoint identity. Existing formal
 training retains its original runtime identity.
+
+## Verified restart
+
+The isolated runtime is commit `885e063` on `codex/clown-health-runtime`, based on
+`50385d4`; the runtime binding differs from the failed study only in the Python
+source digest. Native binary, tools, cards/scripts, environment, deck pool, checkpoint
+hashes and the complete panel are unchanged. Its 21 health tests pass; main-branch
+engine/replay validation passes 143 tests.
+
+All 34 complete policy preflights pass health and cold replay. The original failing
+argmax-budget1 policy case has exactly the same first 392 recorded steps, then
+finishes normally in 11 turns / 503 decisions. The sampled counterpart finishes
+in 9 turns / 683 decisions. Both are candidate wins, but these two health probes
+are not evidence of comparative strength.
+
+The full paired rerun is launched at
+`out/research/policy-inference-clown-restart-2026-10-10/`, identity
+`71c5afbc608ab29c9fe35455f06a9a0aa86b8aa4437cc168774f57750030bc22`.
+Service `ygorl-policy-inference-clown-restart-20261010.service` invocation
+`a06140c5ad314f71a4ce56f389a06cfd`; independent watchdog
+`ygorl-policy-inference-clown-restart-watch-20261010.service` invocation
+`be7adac351ed471fbb3ad030b952e5d5`. No automatic policy promotion is enabled.
