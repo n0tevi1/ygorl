@@ -55,10 +55,29 @@ def test_cancel_tail_is_selected_without_changing_fixed_sample_or_length_tails()
     chosen = select_replay_games(rows)
     assert all(chosen[i] == "fixed-index" for i in range(16))
     assert chosen[24] == "selected-turns" and chosen[20] == "selected-material-cancels"
-    assert 21 not in chosen
+    assert chosen[21] == "selected-material-cancel-threshold"
     for r in rows:
         r["candidate_counts"]["material_cancel_chosen"] = 0
     assert 20 not in select_replay_games(rows)
+
+
+def test_smaller_cancel_total_can_hide_the_only_no_progress_repeat():
+    rows = [
+        {
+            "game_id": i,
+            "result": {"turns": i, "decisions": 300 - i},
+            "candidate_counts": {"material_cancel_chosen": {147: 9, 200: 8, 201: 7, 214: 11}.get(i, 0)},
+        }
+        for i in range(256)
+    ]
+    chosen = select_replay_games(rows)
+    assert {147, 200, 214} <= chosen.keys() and 201 not in chosen
+    assert all(chosen[i] == "fixed-index" for i in range(16))
+    traces = {147: [row(i) for i in range(9)], 214: [row(i) for i in range(11)]}
+    traces[214][6]["events"] = [{"type": "Move"}]
+    findings = {game: summarize_trace(trace, 0)["findings"] for game, trace in traces.items() if game in chosen}
+    assert findings[147][0]["kind"] == "no_event_repeat"
+    assert not findings[214]
 
 
 def test_changes_in_player_or_public_board_do_not_count_as_same_state():
