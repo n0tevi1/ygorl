@@ -11,6 +11,10 @@ name, help, negation, choices. Three functions use the table::
 The network switches set keys of ``TrainConfig.net`` (NetConfig overrides): only keys whose value differs from
 ``base.net`` (or NetConfig's default) are written. Decks are the tools' positional arguments, not flags. A new config
 field needs a row here; tests/test_train_cli.py fails until it has one.
+
+Tools that train an actor without PPO (tools/train_bc.py) take only :data:`ACTOR_FLAGS` (``only=``), with their own
+base config, and build the network with ``TrainConfig.actor_config``: the same switches give the same network, so a
+PPO run can ``--init-from`` the result.
 """
 
 from __future__ import annotations
@@ -174,10 +178,19 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
 )  # fmt: skip
 
 
-def add_arguments(parser: argparse.ArgumentParser, base=None) -> None:
-    """Add every config flag to ``parser`` (groups as in :data:`FLAGS`), with defaults from ``base``."""
+# the network an actor reads: its widths, history, card views and event window
+ACTOR_FLAGS = ("--d-model", "--layers", "--history", "--selection-history", "--no-id-embedding", "--text-dir",
+               "--card-facts", "--no-text", "--id-dropout", "--event-length")  # fmt: skip
+
+
+def add_arguments(parser: argparse.ArgumentParser, base=None, only: tuple[str, ...] | None = None) -> None:
+    """Add every config flag (or those named in ``only``) to ``parser``, in the groups of :data:`FLAGS`, with defaults
+    from ``base``."""
     base = _base(base)
     for title, flags in FLAGS:
+        flags = [f for f in flags if only is None or f.flag in only]
+        if not flags:
+            continue
         group = parser if title is None else parser.add_argument_group(title)
         for f in flags:
             default, tp = _get(base, f.keys[0]), _type(f.keys[0])
@@ -201,11 +214,14 @@ def add_arguments(parser: argparse.ArgumentParser, base=None) -> None:
             group.add_argument(f.flag, **kw)
 
 
-def from_args(args: argparse.Namespace, decks, base=None):
-    """The :class:`TrainConfig` of parsed ``args`` (from a parser :func:`add_arguments` built) and ``decks``."""
+def from_args(args: argparse.Namespace, decks, base=None, only: tuple[str, ...] | None = None):
+    """The :class:`TrainConfig` of parsed ``args`` (from a parser :func:`add_arguments` built, with the same ``only``)
+    and ``decks``; fields without a flag in ``only`` keep ``base``'s value."""
     base = _base(base)
     values = {}
     for f in _flags():
+        if only is not None and f.flag not in only:
+            continue
         value = getattr(args, f.dest)
         if f.negate:
             value = not value

@@ -169,6 +169,11 @@ class TrainConfig:
     def critic(self) -> CriticConfig:
         return CriticConfig.from_train_config(self.to_dict())
 
+    def actor_config(self, vocab_size: int, text: TextFeatures | None) -> NetConfig:
+        """The actor's network: :attr:`net` over a vocab of ``vocab_size``, widened for the frozen tables in
+        ``text`` (loaded from :attr:`text_dir`). tools/train_bc.py builds its network here too."""
+        return NetConfig(**{**self.net, "vocab_size": vocab_size}).with_text(text)
+
     @classmethod
     def from_dict(cls, data: dict) -> TrainConfig:
         known = {f.name for f in fields(cls)}
@@ -215,7 +220,7 @@ class Trainer:
             self.vocab = init.vocab if init is not None else CardVocab.from_db(self.cards)
         self.vocab_text = vocab_to_text(self.vocab, self.run_dir / "vocab.json")
         text = TextFeatures.load(cfg.text_dir, self.vocab) if cfg.text_dir else None
-        self.net_config = NetConfig(**{**cfg.net, "vocab_size": len(self.vocab)}).with_text(text)
+        self.net_config = cfg.actor_config(len(self.vocab), text)
         self._text = text
         torch.manual_seed(derive_seed(cfg.seed, 0))
         self.model = self._new_model()

@@ -117,6 +117,9 @@ OMP_NUM_THREADS=1 uv run ygorl arena tests/decks --agent-a policy:out/bc12/polic
 
 求解器的搜索按墙钟预算、未固定 `--solver-seed`，重跑得到的线可能不同（数量与下表同一量级）。
 
+网络开关（含上面的卡片视角）就是 PPO 训练的那几行（`ygorl.train.cli.ACTOR_FLAGS`，经 `ygorl.train.bc.add_network_arguments` 加入，默认值换成 BC 的：
+`--d-model 128`、`--layers 2`、`--event-length 128`）；网络由 `TrainConfig.actor_config` 构造，所以同样的开关在 BC 与 PPO 里得到同一个网络。
+
 | 数据 | 训练集 | held-out |
 |------|------|------|
 | 起手（plain） | 300（解出 158、未解出 141、`unverified` 1） | 100（解出 62） |
