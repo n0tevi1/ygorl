@@ -69,3 +69,16 @@ Service `ygorl-policy-inference-clown-restart-20261010.service` invocation
 `a06140c5ad314f71a4ce56f389a06cfd`; independent watchdog
 `ygorl-policy-inference-clown-restart-watch-20261010.service` invocation
 `be7adac351ed471fbb3ad030b952e5d5`. No automatic policy promotion is enabled.
+
+## Final validation
+
+The broad suite initially completed with 1,687 passed, 40 failed and 23 skipped.
+All 40 failures were subsequently resolved and passed: 37 explicitly selected nodes
+passed after the final board-probe fixture and test-environment repair; the three
+external-solver failures passed within a 37-test solver-file run after an isolated
+rebuild with the repository's existing solver patches. The initial environment had
+an unwritable default Numba cache, an uninitialized worktree header, and a stale
+root combo-solver binary. Shared native binaries were not replaced. GPU/network
+and unsupported-snapshot skips remain; no GPU-kernel claim is made by this Lua fix.
+Commands/results and unresolved-failure count are recorded in
+`out/research/clown-target-health-2026-10-10/validation.json` and adjacent test logs.
