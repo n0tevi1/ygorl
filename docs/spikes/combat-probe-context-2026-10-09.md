@@ -150,3 +150,10 @@ errors. The cap bounds the loop but the policy still repeats it.
 Greedy147's400 LP loss attacked a facedown target. Its later-revealed1200 DEF
 must not be treated as information the policy had when attacking. These signals
 need context, not automatic bad-action labels. Keep #83/#218/#239 open.
+
+## Full-panel completion
+
+The mask-constrained full-panel study completed with768 exact original replays.
+It finds six earlier-win windows (one new) and no positive among92 long-game
+windows. See [full-panel results and the losing-attack counterexample](combat-mask-fullpanel-2026-10-09.md)
+for the complete counts and native-mask follow-up.
