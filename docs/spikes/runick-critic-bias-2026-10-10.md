@@ -1,5 +1,8 @@
 # Runick critic bias: gradient conflict and misleading resource signals
 
+Follow-up: [public-resource × calibration factorial](critic-resource-factorial-2026-10-10.md)
+has completed its registered fit and launched independent both-role confirmation.
+
 The private critic refresh improved aggregate prediction error, but its Runick
 mean signed error increased. The new diagnostic identifies a local training
 mechanism for that increase and a concrete representation weakness. It does not
