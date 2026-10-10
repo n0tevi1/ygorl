@@ -157,6 +157,6 @@ legacy and do not promote this experiment based on the small pilot.
 
 The [warm/u512 follow-up](warm-u512-repeat-audit-2026-10-09.md) records five new
 formal-study replay audits, paired checkpoint progress, retention, and a bounded
-credit-assignment diagnostic. The latter records actual PPO row terms but lacks
-high-confidence loop coverage; it must not be presented as a resolved gradient
-cause. No card-specific penalty or blanket cancellation ban was introduced.
+credit-assignment diagnostic. Expanded [credit capture](selection-credit-capture-2026-10-09.md)
+now includes a high-confidence loop and independently checked row terms, but
+full parameter-space attribution remains unresolved. No card-specific penalty or blanket cancellation ban was introduced.

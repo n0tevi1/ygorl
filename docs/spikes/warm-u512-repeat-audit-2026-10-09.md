@@ -45,10 +45,13 @@ The credit diagnostic's startup monitor race is resolved in its fresh launcher: 
 
 Evidence: this directory's paired-progress.json, retention-audit.json, cancel-paired.json and reproducible scripts; sibling warm-u512-repeat60/49/180, warm-u512-repeat-initial168, warm-u512-repeat-historical123 directories (all dated 2026-10-09); selection-history-replication-2026-10-09/paired-analysis.json; selection-credit-audit-2026-10-09/{report.json,coverage-analysis.json,startup-race.md}.
 
-Next diagnostic is running: `out/research/selection-credit-coverage-2026-10-09/`,
-24 real PPO updates per arm, fresh seed261, same fixed source models. It additionally
-retains complete observations, per-row estimator inputs and completed-game metadata
-for replay linkage. Actor/critic/Adam/reference inherited; pool/env state reset.
-No reward/objective/mask changes or model promotion. The one-hour service cap,
-per-update checkpoints and independent watchdog are active. Identity SHA256:
+Expanded coverage completed: `out/research/selection-credit-coverage-2026-10-09/`,
+24 real PPO updates per arm, seed 261, 329/310 healthy games. It captured a
+high-probability loop and actual local loss terms. Its saved observations and
+estimator inputs omitted privileged critic tensors and intermediate optimizer
+states; a same-seed reconstruction stopped before optimizer when rewards differed.
+The [full-capture follow-up](selection-credit-capture-2026-10-09.md) preserves that
+STOP, records complete updates in new data, and demonstrates harmful interference
+from other policy rows on one captured batch, with a contrasting second batch.
+No reward/objective/mask changes or model promotion. Coverage identity SHA256:
 `eb57e28759ef39396e7073b07700652058028d70df50bdc39dc5f3025871fa07`.
