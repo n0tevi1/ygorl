@@ -131,10 +131,20 @@ private:
 
 bool is_declarable(const CardRecord& card, const std::vector<uint64_t>& opcodes);
 
+// How a duel ended, in engine-player order: what a C++ host reports (the fields of engine.tracker.DuelResult it has;
+// reasons and the winner rule are engine.outcome's).
+struct DuelOutcome {
+    int winner = -1, win_reason = -1;  // -1: a draw / no MSG_WIN
+    std::string reason, error;
+    uint32_t turns = 0, decisions = 0, retries = 0, unknown_messages = 0;
+    std::array<int64_t, 2> lp{};
+    std::vector<std::string> script_errors, responses;
+};
+
 struct TrackerConfig {
     uint32_t starting_lp = 8000;
     uint32_t max_turns = 200;
-    uint32_t max_decisions = 20000;
+    uint32_t max_decisions = 6000;  // HostDuel::start always passes the Python DuelConfig's limits; same defaults
 };
 
 // Limits of the no-op undo rules 3, 5 and 6 (docs/encoding.md 「撤销类空操作」). Process-wide, like
@@ -217,7 +227,8 @@ public:
     const std::vector<std::string>& responses() const { return responses_; }
     const std::string& reason() const { return reason_; }
     const std::string& error() const { return error_; }
-    int winner() const;  // engine player, -1 for draw / none
+    int winner() const;  // engine player, -1 for draw / none (engine.outcome.winner)
+    DuelOutcome outcome() const;
     int win_reason() const { return win_reason_; }
     uint32_t retries() const { return retries_; }
     uint32_t unknown_messages() const { return unknown_; }

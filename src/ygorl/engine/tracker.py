@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from ygorl import _core
 from ygorl.engine import messages as M
+from ygorl.engine import outcome as O
 from ygorl.engine.actions import Action, DecisionState, make_decision
 from ygorl.engine.curriculum import FULL, allowed_actions, auto_action
 from ygorl.engine.undo import DEFAULT_LIMITS, UndoRules
@@ -75,7 +76,7 @@ class DecisionPoint:
 @dataclass
 class DuelResult:
     winner: int | None  # 0 = deck_a / agent_a, 1 = deck_b / agent_b, None = draw
-    reason: str  # "win", "turn_limit", "decision_limit", "end", "error", "log_exhausted" (replay)
+    reason: str  # an ygorl.engine.outcome reason: "win", "end", "turn_limit", "decision_limit", "error", ...
     win_reason: int | None = None  # MSG_WIN reason: WIN_REASON_LP, WIN_REASON_DECK_OUT, or 0x10+ (card effects)
     turns: int = 0
     decisions: int = 0
@@ -152,6 +153,12 @@ class DuelTracker:
         self._learner = seat_of_deck(first, config.learner)  # engine player of the learning deck
 
     @property
+    def engine_winner(self) -> int | None:
+        """The engine seat a MSG_WIN named so far (None: no MSG_WIN, or a draw), before any limit or error; the
+        credited winner is :meth:`finish`'s."""
+        return self._engine_winner
+
+    @property
     def awaiting(self) -> bool:
         return not self.done and self.state is not None
 
@@ -169,7 +176,7 @@ class DuelTracker:
             if t == _core.LOG_TYPE_ERROR:
                 res.script_errors.append(text.decode("utf-8", "replace") if isinstance(text, bytes) else str(text))
         if res.script_errors:
-            self.stop("error", "Lua script error: " + res.script_errors[0])
+            self.stop(O.ERROR, "Lua script error: " + res.script_errors[0])
             return  # Match the native host: do not act on messages from a failed script call.
         if self.record_messages:
             res.message_log.append(buf)
@@ -202,7 +209,7 @@ class DuelTracker:
             elif isinstance(msg, M.Win):
                 self._engine_winner = msg.player if msg.player in (0, 1) else None
                 res.win_reason = msg.reason
-                res.reason = "win"
+                res.reason = O.WIN
             elif isinstance(msg, M.Retry):
                 retried = True
                 res.retries += 1
@@ -212,33 +219,33 @@ class DuelTracker:
                 res.undecodable_messages += 1
 
         # The core keeps processing after MSG_WIN; like EDOPro's host we stop at the first one.
-        if res.reason == "win":
+        if res.reason == O.WIN:
             self.done = True
             return
         if status == _core.DUEL_STATUS_END:
-            self.stop("end")
+            self.stop(O.END)
             return
         if status != _core.DUEL_STATUS_AWAITING:
             self._engine_steps += 1
             if self._engine_steps >= MAX_ENGINE_STEPS:
-                self.stop("error", f"engine loop: no decision after {MAX_ENGINE_STEPS} engine steps")
+                self.stop(O.ERROR, f"engine loop: no decision after {MAX_ENGINE_STEPS} engine steps")
             return
         self._engine_steps = 0
         if decision is None and retried:
             self._consecutive_retries += 1
             if self._consecutive_retries > MAX_CONSECUTIVE_RETRIES:
-                self.stop("error", "response rejected repeatedly (MSG_RETRY)")
+                self.stop(O.ERROR, "response rejected repeatedly (MSG_RETRY)")
                 return
             decision = self._last_decision
         else:
             self._consecutive_retries = 0
         if decision is None:
-            self.stop("error", "engine awaits a response but sent no decodable decision")
+            self.stop(O.ERROR, "engine awaits a response but sent no decodable decision")
             return
         self._last_decision = decision
         decision = M.hide_private(decision)  # what the decider may see (the message log keeps the raw bytes)
         if self.turn > self.config.max_turns:
-            self.stop("turn_limit")
+            self.stop(O.TURN_LIMIT)
             return
         self.decision = decision
         self.undo_rules.on_decision(decision)
@@ -254,11 +261,11 @@ class DuelTracker:
             return self._point
         res, state, decision = self.result, self.state, self.decision
         if res.decisions >= self.config.max_decisions:
-            self.stop("decision_limit")
+            self.stop(O.DECISION_LIMIT)
             return None
         actions = state.actions()
         if not actions:
-            self.stop("error", f"no legal action for {decision.name}")
+            self.stop(O.ERROR, f"no legal action for {decision.name}")
             return None
         self._allowed = None
         if self._restricted():
@@ -326,12 +333,7 @@ class DuelTracker:
 
     def finish(self) -> DuelResult:
         res, lp = self.result, self.lp
-        engine_winner = self._engine_winner
-        if res.reason in ("turn_limit", "decision_limit", "error"):
-            # the turn limit is a rule (the higher LP wins); the decision limit only stops a loop: a draw, so that
-            # looping while ahead never counts as a win (mirror of Tracker::winner)
-            engine_winner = (None if lp[0] == lp[1] or res.reason != "turn_limit"
-                             else (0 if lp[0] > lp[1] else 1))  # fmt: skip
+        engine_winner = O.winner(res.reason, self._engine_winner, lp)
         res.winner = None if engine_winner is None else deck_of_seat(self.first, engine_winner)
         res.turns = self.turn
         res.lp = (lp[seat_of_deck(self.first, 0)], lp[seat_of_deck(self.first, 1)])

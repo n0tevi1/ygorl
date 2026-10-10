@@ -31,6 +31,7 @@ from ygorl.cards.ydk import Deck
 from ygorl.data.environment import Environment, PlayerRules
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
+from ygorl.engine import outcome as O
 from ygorl.engine.curriculum import FULL, MODES
 
 # the host-side tracker lives in ygorl.engine.tracker; its public names are re-exported here for existing callers
@@ -285,7 +286,7 @@ class Duel:
                 try:
                     status = core.process()
                 except _core.ScriptBudgetExceeded as e:  # a script search that would not end (_core budget)
-                    tracker.stop("error", str(e))
+                    tracker.stop(O.ERROR, str(e))
                     break
                 buf = core.get_message()
                 if observer is not None:
@@ -297,7 +298,7 @@ class Duel:
                     continue
                 if responses is not None:
                     if len(tracker.result.responses) >= len(responses):
-                        tracker.stop("log_exhausted")
+                        tracker.stop(O.LOG_EXHAUSTED)
                         break
                     response = responses[len(tracker.result.responses)]
                     tracker.use_response(response)
@@ -379,7 +380,7 @@ class DuelSession:
             try:
                 status = core.process()
             except _core.ScriptBudgetExceeded as e:
-                tracker.stop("error", str(e))
+                tracker.stop(O.ERROR, str(e))
                 return
             tracker.on_buffer(core.get_message(), status, core.pop_logs())
             if tracker.done:

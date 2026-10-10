@@ -6,6 +6,7 @@
 
 ```
 ygorl.engine.duel      Duel(seed, env, deck_a, deck_b).run(agent_a, agent_b) / .replay(responses)；DuelSession；种子 / 洗牌
+ygorl.engine.outcome   结束原因、哪些算截断、算谁赢（winner），两个主机共用
 ygorl.engine.tracker   DuelTracker：消费消息缓冲区、决策点、撤销类空操作、课程代答、对局结果（DecisionPoint / DuelResult）
 ygorl.engine.undo      UndoRules：撤销类空操作的六条规则与其上限（UndoLimits，与 C++ 共用），见 encoding.md
 ygorl.engine.actions   决策消息 → 合法动作列表（多选拆步）→ set_response 字节
@@ -137,6 +138,10 @@ print(result.summary())
 - 引擎玩家 0 先攻；`first=1` 让 b 先攻。结果按 (a, b) 顺序报告。
 - 核心在 `MSG_WIN` 之后仍会继续处理，主机（EDOPro 与我们）在第一个 `MSG_WIN` 处结束对局。胜负原因：1 = LP，2 = 卡组耗尽，0x10 以上为卡片特殊胜利。
 - 回合上限（`DuelConfig.max_turns`）触发时 LP 高者胜，相等为平局；决策数上限（`max_decisions`，默认 6,000）只截断死循环，记为平局（[cli.md](cli.md)）。
+- **对局结果**（`outcome.py`）：结束原因的名字（`WIN`、`END`、`TURN_LIMIT`、`DECISION_LIMIT`、`ERROR`、回放的 `LOG_EXHAUSTED`）、
+  哪些是主机截断（`HOST_LIMITS`；`TRUNCATED` 另含 `ERROR`，训练按截断自举、示范与回放检查不信任这类对局）以及算谁赢的规则
+  `outcome.winner(reason, MSG_WIN 的玩家, lp)` 都只写在这里；C++ 的 `Tracker::winner` 是它的镜像，两个主机的结果字典都由
+  `DuelOutcome`（`Tracker::outcome()`）一处生成。`DuelTracker.engine_winner` 是到目前为止 `MSG_WIN` 指名的座位（不经上限与错误改写）。
 - **主机追踪器**（`tracker.py`）：`Duel.run` / `replay`、`DuelSession` 与 `VecDuelEnv` 都通过 `DuelTracker` 推进同一份主机逻辑：
   逐个消费核心的消息缓冲区（LP、回合、阶段、事件、待答决策），把决策拆成 `DecisionPoint` 子步并把动作变成
   `set_response` 字节，标出撤销类空操作，按课程模式代答，最后按 (a, b) 顺序给出 `DuelResult`。它不依赖 `duel.py`

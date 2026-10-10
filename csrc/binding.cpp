@@ -166,25 +166,25 @@ py::dict privileged_dict(const host::Privileged& p) {
     return d;
 }
 
-// Owns a DecisionState plus the record it was decoded from (for fuzz tests against actions.py).
-py::dict result_dict(const host::PoolEvent& e) {
+py::dict outcome_dict(const host::DuelOutcome& o) {
     py::dict d;
-    d["winner"] = e.winner < 0 ? py::object(py::none()) : py::object(py::int_(e.winner));
-    d["reason"] = e.reason;
-    d["win_reason"] = e.win_reason < 0 ? py::object(py::none()) : py::object(py::int_(e.win_reason));
-    d["turns"] = e.turns;
-    d["lp"] = py::make_tuple(e.lp[0], e.lp[1]);
-    d["decisions"] = e.decisions;
+    d["winner"] = o.winner < 0 ? py::object(py::none()) : py::object(py::int_(o.winner));
+    d["reason"] = o.reason;
+    d["win_reason"] = o.win_reason < 0 ? py::object(py::none()) : py::object(py::int_(o.win_reason));
+    d["turns"] = o.turns;
+    d["lp"] = py::make_tuple(o.lp[0], o.lp[1]);
+    d["decisions"] = o.decisions;
     py::list responses;
-    for (const auto& r : e.responses) responses.append(py::bytes(r));
+    for (const auto& r : o.responses) responses.append(py::bytes(r));
     d["responses"] = responses;
-    d["error"] = e.error;
-    d["retries"] = e.retries;
-    d["unknown_messages"] = e.unknown_messages;
-    d["script_errors"] = e.script_errors;
+    d["error"] = o.error;
+    d["retries"] = o.retries;
+    d["unknown_messages"] = o.unknown_messages;
+    d["script_errors"] = o.script_errors;
     return d;
 }
 
+// Owns a DecisionState plus the record it was decoded from (for fuzz tests against actions.py).
 class PyDecisionState {
 public:
     PyDecisionState(py::bytes record, std::shared_ptr<CardDatabase> cards) : cards_(std::move(cards)) {
@@ -454,25 +454,7 @@ PYBIND11_MODULE(_core, m) {
             }
             return privileged_dict(p);
         }, "Training-only opponent ground truth (docs/encoding.md); never feed it to the actor.")
-        .def("result", [](host::HostDuel& h) {
-            const auto& t = h.tracker();
-            py::dict d;
-            int w = t.winner();
-            d["winner"] = w < 0 ? py::object(py::none()) : py::object(py::int_(w));
-            d["reason"] = t.reason();
-            d["win_reason"] = t.win_reason() < 0 ? py::object(py::none()) : py::object(py::int_(t.win_reason()));
-            d["turns"] = t.turn();
-            d["lp"] = py::make_tuple(t.lp()[0], t.lp()[1]);
-            d["decisions"] = t.decisions();
-            py::list responses;
-            for (const auto& r : t.responses()) responses.append(py::bytes(r));
-            d["responses"] = responses;
-            d["retries"] = t.retries();
-            d["unknown_messages"] = t.unknown_messages();
-            d["script_errors"] = t.script_errors();
-            d["error"] = t.error();
-            return d;
-        });
+        .def("result", [](host::HostDuel& h) { return outcome_dict(h.tracker().outcome()); });
 
     py::class_<host::HostPool>(m, "HostPool",
         "Vectorized env with the step loop, action states and encoder in C++ (env i on thread i % threads).")
@@ -510,7 +492,7 @@ PYBIND11_MODULE(_core, m) {
                 // 6th element: training-mode ground truth, None in inference mode and at game end
                 py::object priv = e.has_privileged && !e.done ? py::object(privileged_dict(e.privileged)) : py::none();
                 if (e.done)
-                    out.append(py::make_tuple(e.env_id, true, e.player, py::none(), result_dict(e), priv));
+                    out.append(py::make_tuple(e.env_id, true, e.player, py::none(), outcome_dict(e.outcome), priv));
                 else
                     out.append(py::make_tuple(e.env_id, false, e.player, observation_dict(e.obs), py::none(), priv));
             }

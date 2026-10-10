@@ -38,6 +38,7 @@ from ygorl.data.environment import Environment, PlayerRules
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
 from ygorl.engine.duel import Duel, DuelConfig, DuelResult, expand_seed, seat_of_deck
+from ygorl.engine.outcome import HOST_LIMITS
 
 FORMAT = "ygorl-replay"
 FORMAT_VERSION = 1
@@ -63,7 +64,6 @@ _PRIVATE_HINTS = {1, 2, 3, 5}
 # MSG_WIN reason of the packet written for a game stopped by a turn / decision limit: EDOPro shows it as
 # "[loser] Time limit up" (its host writes the same reason when a player runs out of time).
 WIN_REASON_LIMIT = 0x3
-_LIMIT_REASONS = ("turn_limit", "decision_limit")
 
 
 class ReplayEnvironmentMismatch(ValueError):
@@ -90,7 +90,7 @@ class Replay:
     environment: dict | None = None  # {"version", "fingerprint"} or None
     engine: dict = field(default_factory=dict)
     max_turns: int = 200
-    max_decisions: int = 20000
+    max_decisions: int = 20000  # files without the field (.yrp imports): high, not to cut a recorded game short
     result: dict = field(default_factory=dict)
     steps: list[dict] = field(default_factory=list)
     curriculum: str = "full"  # DuelConfig.curriculum / learner / augmented_start (T2.6); absent in older files
@@ -270,7 +270,7 @@ class Replay:
         host = _HostStream(struct.pack("<BIIHHHH", 0, lp, lp, len(loaded[0][0]), len(loaded[0][1]), len(loaded[1][0]),
                                        len(loaded[1][1])))  # fmt: skip
         duel.replay(self.responses, observer=host)
-        if not host.won and self.result.get("reason") in _LIMIT_REASONS:
+        if not host.won and self.result.get("reason") in HOST_LIMITS:
             winner = self.result.get("winner")
             seat = 2 if winner is None else seat_of_deck(duel.first, winner)
             host.packets += _packet(

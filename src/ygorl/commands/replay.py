@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from ygorl.commands import SIDES, CommandError, add_env_option, describe_result, load_replay, replay_env
+from ygorl.engine.outcome import DECISION_LIMIT, LOG_EXHAUSTED
 
 _COMPARED = ("winner", "reason", "win_reason", "turns", "lp")
 
@@ -56,8 +57,8 @@ def run(args: argparse.Namespace) -> int:
                 # (log_exhausted) instead of reaching the limit, and before 2026-09-24 the higher LP won where it is a
                 # draw now. Its winner and reason are a scoring rule, not something the log reproduces; the responses,
                 # turns and LP still must match.
-                limit = (rep.result and rep.result.get("reason") == "decision_limit"
-                         and got["reason"] in ("decision_limit", "log_exhausted"))  # fmt: skip
+                limit = (rep.result and rep.result.get("reason") == DECISION_LIMIT
+                         and got["reason"] in (DECISION_LIMIT, LOG_EXHAUSTED))  # fmt: skip
                 diff = [k for k in _COMPARED if rep.result and got[k] != rep.result.get(k)
                         and not (limit and k in ("winner", "reason"))]  # fmt: skip
                 if result.responses != rep.responses:

@@ -42,6 +42,7 @@ from ygorl.engine.duel import (
     expand_seed,
     seat_of_deck,
 )
+from ygorl.engine import outcome as O
 from ygorl.engine.tracker import DuelTracker
 
 
@@ -132,7 +133,7 @@ class VecDuelEnv:
         for env_id, status, buf, logs, error in self._pool.recv(need, timeout_ms):
             tracker = self._trackers[env_id]
             if status < 0:
-                tracker.stop("error", error)
+                tracker.stop(O.ERROR, error)
             else:
                 tracker.on_buffer(buf, status, logs)
             self._emit(env_id)

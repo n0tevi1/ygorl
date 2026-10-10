@@ -71,7 +71,7 @@ def play(candidate, opponent, teacher, slots, config, device, mode, pass_bias=-4
             "error": res.get("error", ""),
             "turns": res["turns"],
             "decisions": res["decisions"],
-            "lp": [res["lp"][first], res["lp"][1 - first]],
+            "lp": [res["lp"][game.spec.seat_of_deck(0)], res["lp"][game.spec.seat_of_deck(1)]],
             "intervention": game.state["intervention"],
         }
 

@@ -35,7 +35,7 @@ def play(root, task):
     from ygorl.cards.ydk import Deck
     from ygorl.data import load_environment
     from ygorl.data.environment import PlayerRules
-    from ygorl.engine.duel import Duel, DuelConfig, DuelSession, ScriptedAgent
+    from ygorl.engine.duel import Duel, DuelConfig, DuelSession, ScriptedAgent, seat_of_deck
     from ygorl.engine.replay import Replay
 
     torch.set_num_threads(1)
@@ -66,7 +66,10 @@ def play(root, task):
                 assert asdict(p.actions[row["choice"]]) == row["chosen"]
                 assert p.turn == row["turn"] and p.player == row["player"] and list(p.lp) == row["lp"]
                 choice = row["choice"]
-                if p.player == raw["first"] and row["decision_type"] in ("SelectBattleCmd", "SelectIdleCmd"):
+                if p.player == seat_of_deck(raw["first"], 0) and row["decision_type"] in (
+                    "SelectBattleCmd",
+                    "SelectIdleCmd",
+                ):
                     legal = [a for a, ok in zip(row["options"], row["mask"], strict=True) if ok]
                     windows.append(
                         dict(
@@ -90,7 +93,7 @@ def play(root, task):
                     row = trace[p.index]
                     assert choice == row["choice"] and asdict(p.actions[choice]) == row["chosen"], "prefix mismatch"
                 if p.index == task["decision"]:
-                    assert p.player == raw["first"]
+                    assert p.player == seat_of_deck(raw["first"], 0)
                     assert public_board(session.core) == row["board"] and list(p.lp) == row["lp"]
                     assert actor.host.observe()["action_mask"][task["action"]]
                     root_probability = actor.last_probs[task["action"]]

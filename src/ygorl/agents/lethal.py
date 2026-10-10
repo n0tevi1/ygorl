@@ -24,6 +24,7 @@ from ygorl.agents.greedy import GreedyAgent
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
 from ygorl.engine.duel import Duel, DecisionPoint, DuelSession
+from ygorl.engine.outcome import WIN
 
 PASSIVE_KINDS = ("end_phase", "pass", "no", "cancel", "finish")
 TRIGGERS = (C.MSG_SELECT_IDLECMD, C.MSG_SELECT_BATTLECMD)
@@ -168,7 +169,7 @@ class LethalAgent:
             line.append((_signature(p), idx))
             shadow.act(idx)
         clean = clean and self._clean(shadow.tracker.events, me)
-        won = shadow.done and shadow.tracker.result.reason == "win" and shadow.tracker._engine_winner == me
+        won = shadow.done and shadow.tracker.result.reason == WIN and shadow.tracker.engine_winner == me
         return (line if won else None), clean
 
     @staticmethod

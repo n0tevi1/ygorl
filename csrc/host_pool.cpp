@@ -38,6 +38,7 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
     PoolEvent ev;
     ev.env_id = env;
     auto& host = slots_[env];
+    std::string error;
     try {
         if (job.reset) {
             host = std::make_unique<HostDuel>(cards_, scripts_, vocab_);
@@ -74,25 +75,18 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
         if (!host || !host->started()) {  // start() failed: there is no game to report on
             host.reset();
             ev.done = true;
-            ev.reason = "error";
-            ev.error = e.what();
+            ev.outcome.reason = "error";
+            ev.outcome.error = e.what();
             return ev;
         }
-        ev.error = e.what();
+        error = e.what();
     }
-    const Tracker& t = host->tracker();
     ev.done = true;
-    ev.winner = t.winner();
-    ev.win_reason = t.win_reason();
-    ev.reason = ev.error.empty() ? t.reason() : "error";
-    if (ev.error.empty()) ev.error = t.error();
-    ev.turns = t.turn();
-    ev.decisions = t.decisions();
-    ev.lp = t.lp();
-    ev.responses = t.responses();
-    ev.retries = t.retries();
-    ev.unknown_messages = t.unknown_messages();
-    ev.script_errors = t.script_errors();
+    ev.outcome = host->tracker().outcome();
+    if (!error.empty()) {  // a host exception ends the game as an error (the tracker's winner of the moment stays)
+        ev.outcome.reason = "error";
+        ev.outcome.error = error;
+    }
     host.reset();
     return ev;
 }

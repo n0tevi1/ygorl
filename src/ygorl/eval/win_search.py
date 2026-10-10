@@ -81,7 +81,7 @@ def _leaf(session, player, turn):
     if session.done:
         if r.reason != "win":
             return "unknown", r.reason
-        won = session.tracker._engine_winner == player and session.tracker.turn == turn
+        won = session.tracker.engine_winner == player and session.tracker.turn == turn
         return ("win" if won else "no_forced_win"), "terminal"
     if session.point.turn != turn:
         return "no_forced_win", "next_turn"

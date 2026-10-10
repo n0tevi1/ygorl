@@ -13,6 +13,8 @@ from collections import deque
 
 import numpy as np
 import torch
+
+from ygorl.engine.outcome import TURN_LIMIT
 from torch import Tensor, nn
 
 from ygorl.env.encoded import EncodedEvent
@@ -68,7 +70,7 @@ class NimEnv:
             return
         self._player[env_id] ^= 1
         if self.max_moves is not None and self._moves[env_id] >= self.max_moves:
-            result = {"winner": None, "reason": "turn_limit", "decisions": self._moves[env_id]}
+            result = {"winner": None, "reason": TURN_LIMIT, "decisions": self._moves[env_id]}
             self._ready.append(EncodedEvent(env_id, self._player[env_id], None, result))
             return
         self._emit(env_id)
