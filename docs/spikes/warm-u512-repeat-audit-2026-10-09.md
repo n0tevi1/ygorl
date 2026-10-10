@@ -44,3 +44,11 @@ Seed250 new-history game36 repeats 14 times despite distinct inputs, P(cancel) 9
 The credit diagnostic's startup monitor race is resolved in its fresh launcher: write a dated starting state before launching services. The original alert occurred before any heartbeat existed, and the same invocation then progressed normally. Evidence and acknowledgment are retained; no STOP cleared or active service restarted.
 
 Evidence: this directory's paired-progress.json, retention-audit.json, cancel-paired.json and reproducible scripts; sibling warm-u512-repeat60/49/180, warm-u512-repeat-initial168, warm-u512-repeat-historical123 directories (all dated 2026-10-09); selection-history-replication-2026-10-09/paired-analysis.json; selection-credit-audit-2026-10-09/{report.json,coverage-analysis.json,startup-race.md}.
+
+Next diagnostic is running: `out/research/selection-credit-coverage-2026-10-09/`,
+24 real PPO updates per arm, fresh seed261, same fixed source models. It additionally
+retains complete observations, per-row estimator inputs and completed-game metadata
+for replay linkage. Actor/critic/Adam/reference inherited; pool/env state reset.
+No reward/objective/mask changes or model promotion. The one-hour service cap,
+per-update checkpoints and independent watchdog are active. Identity SHA256:
+`eb57e28759ef39396e7073b07700652058028d70df50bdc39dc5f3025871fa07`.
