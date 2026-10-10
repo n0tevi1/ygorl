@@ -1,14 +1,15 @@
 # Card-pool expansion canary: no established gain after 16 updates
 
-Latest: the larger fresh-opening confirmation has no paired interval excluding
-zero. Neither a strength gain nor reliable retention benefit is established. A
-separate, concrete required-material deselection no-op was found and repaired;
-that repair is not evidence of a training-policy gain. The independent root-action
-confirmation now finds conditional benefits in **both** checkpoint directions;
-it does not establish a one-way forgetting mechanism. The all-action follow-up
-shows substantial continuation dependence and weakens several action labels.
-Critic calibration and action discrimination are now a separate investigation;
-see the latest sections below.
+Latest correction: the purported fresh-opening follow-up evaluations reused
+pre-shuffled deck orders. The 2,304-game retention panel contained only **16**
+distinct ordered deck pairs, repeated across nominal draws, checkpoints,
+opponents and seats. Its game outcomes and exact replays remain valid, but its
+fresh-opening interpretation and opening-cluster confidence intervals are
+withdrawn. The critic calibration replay inherits this limitation. See
+[the opening-deal audit](card-pool-opening-audit-2026-10-10.md) before interpreting
+any results below. No strength gain, general forgetting mechanism, or broad
+Runick calibration defect is established. Historical numbers are retained for
+traceability; conditional root-action experiments remain conditional evidence.
 
 From the same seed0 warm-u512 checkpoint, both arms trained 16 PPO updates
 (262,144 rows each). Fixed retained the 20-deck pool; expanded added legal
@@ -18,7 +19,7 @@ RNG were identical, with only the registered deck list changed. Text features,
 reward, inference and cancellation budget stayed fixed. This tests adaptation
 to those lists, **not** zero-shot generalization to unseen cards or families.
 
-All 768 fresh paired evaluation games were healthy, with no limits and exact
+All 768 paired evaluation games (reusing the earlier coverage deals) were healthy, with no limits and exact
 cold replay matches. Frozen inputs, eight training checkpoints, all saved result
 records and replay hashes were independently verified. Neither arm is promoted.
 
@@ -81,12 +82,12 @@ counts do not establish that either issue is fixed or that expansion caused it.
 Neither loops nor self-Ash occurs in the eight added-own discordant losses, so
 those warning signals do not explain that particular performance gap.
 
-## Independent replication
+## Replication registration (opening-independence claim corrected)
 
 Register training seeds 1 and 2 before reading their outcomes. Repeat the same
 16-update fixed/expanded intervention and evaluate start/fixed/expanded on a
-fresh common panel (768 games per seed, 1,536 total), disjoint from discovery
-opening seeds. Report each seed, own/facing roles, familiar retention and Runick
+common panel (768 games per seed, 1,536 total). Correction: core/agent seeds
+were disjoint from discovery, but deck orders were reused. Report each seed, own/facing roles, familiar retention and Runick
 separately; seed0 remains discovery evidence and is not pooled into confirmation.
 With only two replication seeds, even a pooled interval remains exploratory.
 
@@ -147,31 +148,33 @@ added-facing retention gap. Keep the cancellation rule fixed for causal comparis
 Self-Ash remains sparse: 1/241 / 1/230 / 1/236 offered windows; correlated
 opportunities and tiny counts cannot certify this behavior has been repaired.
 
-## Next: larger fresh-opening retention confirmation
+## Historical registration: intended fresh-opening retention confirmation (not achieved)
 
 Freeze all nine existing start/fixed/expanded checkpoints from training seeds
 0/1/2. Run 2,304 games facing the four familiar and four added lists, two anchors,
-two opponents, both seats and four new deals per target/anchor. New engine seeds
+two opponents, both seats and four intended new deals per target/anchor.
+Correction: the preparation copied draw0 deck orders into all four labels. Engine seeds
 are disjoint from discovery and replication. No new training, mutation, feature
 switch, mask change or policy promotion. Primary comparisons are fixed-minus-start
 and expanded-minus-start facing added decks; expanded-minus-fixed is secondary.
 Report per seed, opponent, deck, turn tails, deck-outs and familiar retention.
 
-This increases opening coverage for a specific apparent forgetting pattern. It
-is not a new independent training-seed replication or unseen-family test. Inputs,
+The intended increase in opening coverage was not achieved. This was also
+not a new independent training-seed replication or unseen-family test. Inputs,
 all checkpoint hashes and the analysis are frozen; independent health/progress
 monitoring and exact cold replays remain required. Evidence is retained under
 `card-pool-training-replication-2026-10-10` (including `repeat-audit.json`) and
 `card-pool-retention-confirmation-2026-10-10` in the research output directory.
 
-## Fresh 2,304-game confirmation: effects smaller and uncertain
+## Historical 2,304-game panel: fixed-opening outcomes; opening intervals withdrawn
 
 All registered games completed healthy with no limits and exact cold replays.
 Nine checkpoint hashes, all saved results/replays and frozen inputs verified;
 registered analysis reproduced byte-for-byte. These games are **facing** target
 decks with Maliss/Ryzeal Mitsurugi, not piloting the targets. Each cell pools
-384 games across three existing training seeds; this adds openings, not new
-independent training runs.
+384 games across three existing training seeds. Correction: nominal draws
+changed continuation RNG but reused the same opening orders; they add neither
+independent openings nor independent training runs.
 
 | Target group | Start u512 | Fixed u528 | Expanded u528 |
 |---|---:|---:|---:|
