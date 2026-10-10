@@ -157,3 +157,35 @@ def test_warm_start_may_add_card_views_only(tmp_path):
     assert all(torch.equal(new[k], v) for k, v in old.items()) and set(new) > set(old)
     with pytest.raises(ValueError, match="network"):
         warm_start(PolicyNet(replace(_net_config(), d_model=32)), source)
+
+
+@pytest.mark.parametrize("card_text,effect_text", [(True, False), (False, True), (True, True)])
+def test_new_text_views_preserve_logits_and_can_learn(tmp_path, card_text, effect_text):
+    from tests.test_nets import random_obs
+    from ygorl.nets import collate
+
+    source = load_actor(_bc(tmp_path)[0])
+    text = TextFeatures.random(len(VOCAB), 8, 8, np.random.default_rng(7))
+    cfg = _net_config(text, card_text=card_text, effect_text=effect_text)
+    grown = PolicyNet(cfg, text).eval()
+    warm_start(grown, source)
+    obs = collate([random_obs(np.random.default_rng(12), vocab=len(VOCAB))])
+    before = source.net(obs).logits.detach()
+    after = grown(obs).logits
+    torch.testing.assert_close(after, before, rtol=0, atol=0)
+    loss = -grown(obs).log_probs()[0, before.argmax(-1).item()]
+    loss.backward()
+    new = [(n, p) for n, p in grown.named_parameters() if n not in dict(source.net.named_parameters())]
+    assert new and any(p.grad is not None and p.grad.abs().sum() > 0 for _, p in new)
+
+
+def test_warm_start_keeps_learned_text_weights(tmp_path):
+    text = TextFeatures.random(len(VOCAB), 8, 8, np.random.default_rng(7))
+    cfg = _net_config(text)
+    path, trained = _bc(tmp_path, net=cfg, text=text)
+    from types import SimpleNamespace
+
+    source = SimpleNamespace(net=trained, net_config=cfg, path=path)
+    grown = PolicyNet(cfg, text)
+    assert warm_start(grown, source) == []
+    assert _same(grown.state_dict(), trained.state_dict())
