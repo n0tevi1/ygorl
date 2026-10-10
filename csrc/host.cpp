@@ -3,6 +3,7 @@
 #include "host.h"
 
 #include "event_encoder.h"
+#include "message_reader.h"
 
 #include <algorithm>
 #include <cstring>
@@ -19,59 +20,6 @@ namespace ygorl::host {
 namespace {
 
 constexpr int kMaxConsecutiveRetries = 8;
-
-struct DecodeError : std::runtime_error {
-    using std::runtime_error::runtime_error;
-};
-
-class Reader {
-public:
-    Reader(const uint8_t* data, size_t size) : p_(data), end_(data + size) {}
-    template <typename T>
-    T get() {
-        if (static_cast<size_t>(end_ - p_) < sizeof(T)) throw DecodeError("truncated payload");
-        T v;
-        std::memcpy(&v, p_, sizeof(T));
-        p_ += sizeof(T);
-        return v;
-    }
-    uint8_t u8() { return get<uint8_t>(); }
-    uint16_t u16() { return get<uint16_t>(); }
-    uint32_t u32() { return get<uint32_t>(); }
-    uint64_t u64() { return get<uint64_t>(); }
-    Loc loc_info() {
-        Loc l;
-        l.controller = u8();
-        l.location = u8();
-        l.sequence = u32();
-        l.position = u32();
-        return l;
-    }
-    Loc loc32() {
-        Loc l;
-        l.controller = u8();
-        l.location = u8();
-        l.sequence = u32();
-        return l;
-    }
-    Loc loc8() {
-        Loc l;
-        l.controller = u8();
-        l.location = u8();
-        l.sequence = u8();
-        return l;
-    }
-    CardRef card(Loc (Reader::*loc)()) {
-        CardRef c;
-        c.code = u32();
-        c.loc = (this->*loc)();
-        return c;
-    }
-
-private:
-    const uint8_t* p_;
-    const uint8_t* end_;
-};
 
 std::string pack_i32(std::initializer_list<int32_t> values) {
     std::string out(values.size() * 4, '\0');
@@ -137,20 +85,20 @@ std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
     if (size < 1 || !is_decision_type(data[0])) return std::nullopt;
     Decision d;
     d.type = data[0];
-    Reader r(data + 1, size - 1);
+    MessageReader r(data + 1, size - 1);
     try {
         d.player = r.u8();
         switch (d.type) {
             case MSG_SELECT_BATTLECMD: {
                 for (uint32_t n = r.u32(); n; --n) {
                     ChainOption o;
-                    o.card = r.card(&Reader::loc32);
+                    o.card = r.card(&MessageReader::loc32);
                     o.description = r.u64();
                     r.u8();
                     d.activatable.push_back(o);
                 }
                 for (uint32_t n = r.u32(); n; --n) {
-                    CardRef c = r.card(&Reader::loc8);
+                    CardRef c = r.card(&MessageReader::loc8);
                     bool direct = r.u8() != 0;
                     d.attackable.emplace_back(c, direct);
                 }
@@ -160,13 +108,13 @@ std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
             }
             case MSG_SELECT_IDLECMD: {
                 for (auto* list : {&d.summonable, &d.spsummonable})
-                    for (uint32_t n = r.u32(); n; --n) list->push_back(r.card(&Reader::loc32));
-                for (uint32_t n = r.u32(); n; --n) d.repositionable.push_back(r.card(&Reader::loc8));
+                    for (uint32_t n = r.u32(); n; --n) list->push_back(r.card(&MessageReader::loc32));
+                for (uint32_t n = r.u32(); n; --n) d.repositionable.push_back(r.card(&MessageReader::loc8));
                 for (auto* list : {&d.msetable, &d.ssetable})
-                    for (uint32_t n = r.u32(); n; --n) list->push_back(r.card(&Reader::loc32));
+                    for (uint32_t n = r.u32(); n; --n) list->push_back(r.card(&MessageReader::loc32));
                 for (uint32_t n = r.u32(); n; --n) {
                     ChainOption o;
-                    o.card = r.card(&Reader::loc32);
+                    o.card = r.card(&MessageReader::loc32);
                     o.description = r.u64();
                     r.u8();
                     d.activatable.push_back(o);
@@ -178,7 +126,7 @@ std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
             }
             case MSG_SELECT_EFFECTYN:
                 d.has_card = true;
-                d.card = r.card(&Reader::loc_info);
+                d.card = r.card(&MessageReader::loc_info);
                 d.description = r.u64();
                 break;
             case MSG_SELECT_YESNO:
@@ -193,15 +141,15 @@ std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
                 d.cancelable = r.u8() != 0;
                 d.min = r.u32();
                 d.max = r.u32();
-                for (uint32_t n = r.u32(); n; --n) d.cards.push_back(r.card(&Reader::loc_info));
+                for (uint32_t n = r.u32(); n; --n) d.cards.push_back(r.card(&MessageReader::loc_info));
                 break;
             case MSG_SELECT_UNSELECT_CARD:
                 d.finishable = r.u8() != 0;
                 d.cancelable = r.u8() != 0;
                 d.min = r.u32();
                 d.max = r.u32();
-                for (uint32_t n = r.u32(); n; --n) d.cards.push_back(r.card(&Reader::loc_info));
-                for (uint32_t n = r.u32(); n; --n) d.unselectable.push_back(r.card(&Reader::loc_info));
+                for (uint32_t n = r.u32(); n; --n) d.cards.push_back(r.card(&MessageReader::loc_info));
+                for (uint32_t n = r.u32(); n; --n) d.unselectable.push_back(r.card(&MessageReader::loc_info));
                 break;
             case MSG_SELECT_CHAIN: {
                 r.u8();  // special count
@@ -210,7 +158,7 @@ std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
                 r.u32();
                 for (uint32_t n = r.u32(); n; --n) {
                     ChainOption o;
-                    o.card = r.card(&Reader::loc_info);
+                    o.card = r.card(&MessageReader::loc_info);
                     o.description = r.u64();
                     r.u8();
                     d.chains.push_back(o);
@@ -231,7 +179,7 @@ std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
                 d.min = r.u32();
                 d.max = r.u32();
                 for (uint32_t n = r.u32(); n; --n) {
-                    d.cards.push_back(r.card(&Reader::loc32));
+                    d.cards.push_back(r.card(&MessageReader::loc32));
                     d.params.push_back(r.u8());
                 }
                 break;
@@ -239,7 +187,7 @@ std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
                 d.counter_type = r.u16();
                 d.count = r.u16();
                 for (uint32_t n = r.u32(); n; --n) {
-                    d.cards.push_back(r.card(&Reader::loc8));
+                    d.cards.push_back(r.card(&MessageReader::loc8));
                     d.params.push_back(r.u16());
                 }
                 break;
@@ -249,11 +197,11 @@ std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
                 d.min = r.u32();
                 d.max = r.u32();
                 for (uint32_t n = r.u32(); n; --n) {
-                    r.card(&Reader::loc_info);
+                    r.card(&MessageReader::loc_info);
                     d.must_params.push_back(r.u32());
                 }
                 for (uint32_t n = r.u32(); n; --n) {
-                    d.cards.push_back(r.card(&Reader::loc_info));
+                    d.cards.push_back(r.card(&MessageReader::loc_info));
                     d.params.push_back(r.u32());
                 }
                 break;
@@ -280,7 +228,7 @@ std::optional<Decision> decode_decision(const uint8_t* data, size_t size) {
             case MSG_ROCK_PAPER_SCISSORS:
                 break;
         }
-    } catch (const DecodeError&) {
+    } catch (const Truncated&) {
         return std::nullopt;
     }
     return d;
@@ -846,20 +794,8 @@ void Tracker::on_buffer(const std::string& buf, int status) {
     state_.reset();
     std::optional<Decision> decision;
     bool retried = false;
-    size_t pos = 0;
-    const auto* data = reinterpret_cast<const uint8_t*>(buf.data());
-    while (pos + 4 <= buf.size()) {
-        uint32_t len;
-        std::memcpy(&len, data + pos, 4);
-        if (len == 0 || pos + 4 + len > buf.size()) break;  // corrupt framing: ignore the rest
-        const uint8_t* rec = data + pos + 4;
+    for_each_record(reinterpret_cast<const uint8_t*>(buf.data()), buf.size(), [&](const uint8_t* rec, size_t len) {
         const uint8_t type = rec[0];
-        const size_t plen = len - 1;
-        auto u32_at = [&](size_t off) {
-            uint32_t v;
-            std::memcpy(&v, rec + 1 + off, 4);
-            return v;
-        };
         bool decoded = false;
         if (is_decision_type(type)) {
             if (auto d = decode_decision(rec, len)) {
@@ -868,34 +804,36 @@ void Tracker::on_buffer(const std::string& buf, int status) {
             }
         }
         if (is_game_event(type, decoded)) undo_rules_.on_game_event();
-        if (!is_decision_type(type)) {
+        if (is_decision_type(type)) return;
+        MessageReader r(rec + 1, len - 1);
+        try {  // a payload too short for its fields changes nothing (Python: UndecodableMessage)
             switch (type) {
                 case MSG_NEW_TURN:
-                    if (plen >= 1) {
-                        ++turn_;
-                        turn_player_ = rec[1];
-                    }
+                    turn_player_ = r.u8();
+                    ++turn_;
                     break;
                 case MSG_NEW_PHASE:
-                    if (plen >= 2) std::memcpy(&phase_, rec + 1, 2);
+                    phase_ = r.u16();
                     break;
                 case MSG_DAMAGE:
                 case MSG_PAY_LPCOST:
-                    if (plen >= 5 && rec[1] < 2) lp_[rec[1]] -= u32_at(1);
-                    break;
                 case MSG_RECOVER:
-                    if (plen >= 5 && rec[1] < 2) lp_[rec[1]] += u32_at(1);
+                case MSG_LPUPDATE: {
+                    const uint8_t player = r.u8();
+                    const uint32_t amount = r.u32();
+                    if (player >= 2) break;
+                    if (type == MSG_RECOVER) lp_[player] += amount;
+                    else if (type == MSG_LPUPDATE) lp_[player] = amount;
+                    else lp_[player] -= amount;  // the core does not clamp at 0
                     break;
-                case MSG_LPUPDATE:
-                    if (plen >= 5 && rec[1] < 2) lp_[rec[1]] = u32_at(1);
+                }
+                case MSG_WIN: {
+                    const uint8_t player = r.u8();
+                    win_reason_ = r.u8();
+                    engine_winner_ = player < 2 ? player : -1;
+                    reason_ = "win";
                     break;
-                case MSG_WIN:
-                    if (plen >= 2) {
-                        engine_winner_ = rec[1] < 2 ? rec[1] : -1;
-                        win_reason_ = rec[2];
-                        reason_ = "win";
-                    }
-                    break;
+                }
                 case MSG_RETRY:
                     retried = true;
                     ++retries_;
@@ -908,9 +846,9 @@ void Tracker::on_buffer(const std::string& buf, int status) {
                 default:
                     break;
             }
+        } catch (const Truncated&) {
         }
-        pos += 4 + len;
-    }
+    });
     if (reason_ == "win") {
         done_ = true;
         return;

@@ -1,5 +1,7 @@
 #include "duel_pool.h"
 
+#include "message_reader.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -14,15 +16,10 @@ namespace {
 constexpr uint8_t kMsgWin = MSG_WIN;
 
 bool contains_win(const std::string& buf) {
-    size_t pos = 0;
-    while (pos + 5 <= buf.size()) {
-        uint32_t len = 0;
-        std::memcpy(&len, buf.data() + pos, sizeof(len));
-        if (len == 0 || pos + 4 + len > buf.size()) return false;
-        if (static_cast<uint8_t>(buf[pos + 4]) == kMsgWin) return true;
-        pos += 4 + len;
-    }
-    return false;
+    bool win = false;
+    host::for_each_record(reinterpret_cast<const uint8_t*>(buf.data()), buf.size(),
+                          [&win](const uint8_t* rec, size_t) { win = win || rec[0] == kMsgWin; });
+    return win;
 }
 
 }  // namespace

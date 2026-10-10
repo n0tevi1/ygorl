@@ -1,5 +1,6 @@
 // Event token stream: C++ mirror of ygorl/env/events.py (spec: docs/encoding.md, 事件 token 流).
 #include "event_encoder.h"
+#include "message_reader.h"
 
 #include <algorithm>
 #include <cstring>
@@ -84,58 +85,6 @@ int rel(int player, int viewer) {
     if (player != 0 && player != 1) return 0;
     return player == viewer ? 1 : 2;
 }
-
-struct Truncated : std::runtime_error {
-    Truncated() : std::runtime_error("truncated payload") {}
-};
-
-class Reader {
-public:
-    Reader(const uint8_t* p, size_t n) : p_(p), end_(p + n) {}
-    template <typename T>
-    T get() {
-        if (static_cast<size_t>(end_ - p_) < sizeof(T)) throw Truncated();
-        T v;
-        std::memcpy(&v, p_, sizeof(T));
-        p_ += sizeof(T);
-        return v;
-    }
-    uint8_t u8() { return get<uint8_t>(); }
-    uint16_t u16() { return get<uint16_t>(); }
-    uint32_t u32() { return get<uint32_t>(); }
-    int32_t i32() { return get<int32_t>(); }
-    uint64_t u64() { return get<uint64_t>(); }
-    void skip(size_t n) {
-        if (static_cast<size_t>(end_ - p_) < n) throw Truncated();
-        p_ += n;
-    }
-    Loc loc_info() {
-        Loc l;
-        l.controller = u8();
-        l.location = u8();
-        l.sequence = u32();
-        l.position = u32();
-        return l;
-    }
-    Loc loc32() {
-        Loc l;
-        l.controller = u8();
-        l.location = u8();
-        l.sequence = u32();
-        return l;
-    }
-    Loc loc8() {
-        Loc l;
-        l.controller = u8();
-        l.location = u8();
-        l.sequence = u8();
-        return l;
-    }
-
-private:
-    const uint8_t* p_;
-    const uint8_t* end_;
-};
 
 Loc make_loc(uint8_t con, uint8_t location, uint32_t seq, uint32_t pos) {
     Loc l;
@@ -269,24 +218,18 @@ void EventHistory::close_windows() {
 }
 
 void EventHistory::feed(const std::string& buf) {
-    const auto* data = reinterpret_cast<const uint8_t*>(buf.data());
-    size_t pos = 0;
-    while (pos + 4 <= buf.size()) {
-        uint32_t len;
-        std::memcpy(&len, data + pos, 4);
-        if (len == 0 || pos + 4 + len > buf.size()) break;  // corrupt framing: the rest is one undecodable message
+    for_each_record(reinterpret_cast<const uint8_t*>(buf.data()), buf.size(), [this](const uint8_t* rec, size_t len) {
         try {
-            on_record(data + pos + 4, len);
+            on_record(rec, len);
         } catch (const Truncated&) {
             // undecodable payload: ignored (Python yields UndecodableMessage)
         }
-        pos += 4 + len;
-    }
+    });
 }
 
 void EventHistory::on_record(const uint8_t* rec, size_t len) {
     const uint8_t type = rec[0];
-    Reader r(rec + 1, len - 1);
+    MessageReader r(rec + 1, len - 1);
     auto card = [](uint32_t code, bool seen0 = true, bool seen1 = true) {
         Card c;
         c.present = true;
