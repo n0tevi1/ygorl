@@ -21,7 +21,8 @@ memory); it never tracks the board. Card stats come from the card database
 The same activation (card, location, effect) is used at most
 ``max_repeats`` times per turn, and at most ``max_turn_actions`` proactive
 main-phase actions are taken per turn, so effects that can be activated and
-cancelled repeatedly cannot stall a duel.
+cancelled repeatedly cannot stall a duel. With ``choosable_only`` it also never takes a masked no-op undo
+(``DecisionPoint.choosable``, the rows a network policy may pick); off by default, as its recorded numbers predate it.
 """
 
 from __future__ import annotations
@@ -56,8 +57,9 @@ class GreedyAgent:
     name = "greedy"
 
     def __init__(self, seed: int | None = None, *, cards: Mapping[int, Any] | None = None,
-                 max_repeats: int = 3, max_turn_actions: int = 100) -> None:  # fmt: skip
+                 max_repeats: int = 3, max_turn_actions: int = 100, choosable_only: bool = False) -> None:  # fmt: skip
         self.rng = random.Random(seed)
+        self.choosable_only = choosable_only
         self._cards = cards
         self.max_repeats = max_repeats
         self.max_turn_actions = max_turn_actions
@@ -86,6 +88,12 @@ class GreedyAgent:
 
     # -- entry point -------------------------------------------------------
     def act(self, point: DecisionPoint) -> int:
+        if self.choosable_only:
+            point, keep = point.only_choosable()
+            return keep[self._act(point)]
+        return self._act(point)
+
+    def _act(self, point: DecisionPoint) -> int:
         if point.turn != self._turn:
             self._turn, self._turn_actions = point.turn, 0
             self._used.clear()

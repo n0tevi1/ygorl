@@ -2,7 +2,7 @@
 
 The tracker consumes every engine message buffer (LP, turn, phase, events, the pending decision), turns the
 pending decision into :class:`DecisionPoint` sub-steps and their answers into ``set_response`` bytes, masks the
-no-op undo actions (docs/encoding.md 「撤销类空操作」), answers for a restricted opponent under a curriculum
+no-op undo actions (docs/encoding.md 「撤销类空操作」, through :class:`ygorl.engine.undo.UndoRules`), answers for a restricted opponent under a curriculum
 (:func:`ygorl.engine.curriculum.auto_action`) and reports the :class:`DuelResult`. :class:`ygorl.engine.duel.Duel`,
 :class:`ygorl.engine.duel.DuelSession` and :class:`ygorl.env.pool.VecDuelEnv` all drive the core through it; the C++
 mirror is ``Tracker`` in ``csrc/host.h``.
@@ -12,14 +12,14 @@ This module does not import :mod:`ygorl.engine.duel` (which re-exports its publi
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from ygorl import _core
-from ygorl.engine import constants as C
 from ygorl.engine import messages as M
 from ygorl.engine.actions import Action, DecisionState, make_decision
 from ygorl.engine.curriculum import FULL, allowed_actions, auto_action
+from ygorl.engine.undo import DEFAULT_LIMITS, UndoRules
 
 if TYPE_CHECKING:
     from ygorl.engine.duel import DuelConfig
@@ -56,7 +56,20 @@ class DecisionPoint:
     turn_player: int = 0  # engine player whose turn it is
     augmented_start: bool = False  # DuelConfig.augmented_start
     response_index: int = 0  # position this decision's response takes in DuelResult.responses
-    undo: tuple[int, ...] = ()  # actions that only undo the previous step (docs/encoding.md 「撤销类空操作」)
+    undo: tuple[int, ...] = ()  # masked no-op undo actions (docs/encoding.md 「撤销类空操作」; never all of them)
+
+    @property
+    def choosable(self) -> tuple[int, ...]:
+        """Indices of the actions a policy may choose: every action except :attr:`undo` (never empty)."""
+        undo = set(self.undo)
+        return tuple(i for i in range(len(self.actions)) if i not in undo)
+
+    def only_choosable(self) -> tuple[DecisionPoint, tuple[int, ...]]:
+        """This point offering only :attr:`choosable` actions, and the map from its indices back to this point's."""
+        if not self.undo:
+            return self, tuple(range(len(self.actions)))
+        keep = self.choosable
+        return replace(self, actions=[self.actions[i] for i in keep], undo=()), keep
 
 
 @dataclass
@@ -87,27 +100,14 @@ class DuelResult:
 
 
 _NOT_EVENTS = (M.Decision, M.Retry, M.Hint, M.Waiting, M.CardHint, M.PlayerHint, M.ShowHint)  # no game change
-_MENUS = (C.MSG_SELECT_IDLECMD, C.MSG_SELECT_BATTLECMD)
-# an effect activated this many times from a menu in one turn is masked there (docs/encoding.md 「撤销类空操作」 rule 3):
-# a negated monster can activate an unlimited ignition effect for free forever (Expurrely Happiness); real play
-# rarely activates one effect from the menu more than 3 times a turn
-MAX_MENU_ACTIVATIONS = 8
+# limits of the no-op undo rules 3, 5 and 6 (defaults; engine.undo.UndoLimits documents them, C++ writes them)
+MAX_MENU_ACTIVATIONS = DEFAULT_LIMITS.menu_activations
+MAX_SELECTION_STEPS = DEFAULT_LIMITS.selection_steps
+MAX_SELECTION_CANCELS = DEFAULT_LIMITS.selection_cancels
 # engine steps (process() calls) allowed between two decisions: a core that keeps processing without ever asking a
 # player would hang the duel (the decision limit never fires); real chains take a few thousand at most (mirror of
 # the C++ g_max_engine_steps)
 MAX_ENGINE_STEPS = 100_000
-# after this many steps in one SELECT_UNSELECT_CARD selection, unselecting is masked, so the selection can only move
-# forward (docs/encoding.md 「撤销类空操作」 rule 5): a policy that never picks the card a finish needs (Swordsoul
-# Blackout needs your Wyrm) would otherwise toggle the others until the decision limit
-MAX_SELECTION_STEPS = 32
-# Across target/material prompts with no game event, bound cancellations that only return to target selection.
-MAX_SELECTION_CANCELS = 32
-_INVERSE = {"select": "unselect", "unselect": "select"}
-
-
-def _card_key(action: Action) -> tuple | None:
-    c = action.card
-    return None if c is None else (c.code, c.loc.controller, c.loc.location, c.loc.sequence)
 
 
 class DuelTracker:
@@ -147,17 +147,7 @@ class DuelTracker:
         self._buffers = 0
         self._point: DecisionPoint | None = None
         self._allowed: list[int] | None = None  # point.actions -> state.actions() indices when filtered
-        # no-op undo tracking (docs/encoding.md 「撤销类空操作」): the player inside a command just started from a
-        # menu, and the last select / unselect of a SELECT_UNSELECT_CARD; any game event clears both
-        self._inside: int | None = None
-        self._toggle: tuple | None = None
-        # rule 5: steps of the current SELECT_UNSELECT_CARD selection (same player, no game event in between)
-        self._selection_steps = 0
-        self._selection_player = -1
-        self._selection_cancels = 0
-        self._selection_cancel_player = -1
-        self._activations: dict[tuple, int] = {}  # (player, card key, description) -> menu activations this turn
-        self._activations_turn = -1
+        self.undo_rules = UndoRules()  # docs/encoding.md 「撤销类空操作」
         self._stepped = False
         self._learner = seat_of_deck(first, config.learner)  # engine player of the learning deck
 
@@ -195,9 +185,7 @@ class DuelTracker:
         for msg in M.decode_buffer(buf):
             self.events.append(msg)
             if not isinstance(msg, _NOT_EVENTS):
-                self._inside = self._toggle = None
-                self._selection_steps = 0
-                self._selection_cancels = 0
+                self.undo_rules.on_game_event()
             if isinstance(msg, M.Decision):
                 decision = msg
             elif isinstance(msg, M.NewTurn):
@@ -253,17 +241,7 @@ class DuelTracker:
             self.stop("turn_limit")
             return
         self.decision = decision
-        if decision.player != self._inside or decision.TYPE in _MENUS:
-            self._inside = None  # another player's decision, or back at a menu: not inside a command any more
-        if self._toggle is not None and self._toggle[0] != decision.player:
-            self._toggle = None
-        if decision.TYPE != C.MSG_SELECT_UNSELECT_CARD or decision.player != self._selection_player:
-            self._selection_steps = 0  # not the same selection any more
-            self._selection_player = decision.player
-        if (decision.player != self._selection_cancel_player
-                or decision.TYPE not in (C.MSG_SELECT_CARD, C.MSG_SELECT_UNSELECT_CARD)):  # fmt: skip
-            self._selection_cancels = 0
-        self._selection_cancel_player = decision.player
+        self.undo_rules.on_decision(decision)
         self.state = make_decision(decision, self.cards)
         self._point = None
         self._stepped = False  # host answers only fresh decisions, never a half-built multi-select
@@ -289,7 +267,8 @@ class DuelTracker:
                 self._allowed, actions = allowed, [actions[i] for i in allowed]
         self._point = DecisionPoint(res.decisions, decision.player, self.turn, self.phase, (self.lp[0], self.lp[1]),
                                     decision, actions, state, tuple(self.events), self.turn_player,
-                                    self.config.augmented_start, len(res.responses), self._undo(decision, actions))  # fmt: skip
+                                    self.config.augmented_start, len(res.responses),
+                                    self.undo_rules.undo(decision, actions, self.turn))  # fmt: skip
         self.events = []
         return self._point
 
@@ -306,7 +285,7 @@ class DuelTracker:
             res.steps.append(_step_record(point, idx, probs))
         res.actions.append(idx)
         res.decisions += 1
-        self._note_undo(point.decision, point.actions[idx])
+        self.undo_rules.on_action(point.decision, point.actions[idx], self.turn)
         self._point = None
         self._stepped = True
         response = self.state.step(idx if self._allowed is None else self._allowed[idx])
@@ -314,44 +293,6 @@ class DuelTracker:
             res.responses.append(response)
             self.state = None
         return response
-
-    def _undo(self, decision: M.Decision, actions: list[Action]) -> tuple[int, ...]:
-        """Indices of ``actions`` that only undo the previous step (never all of them)."""
-        undo = []
-        for i, a in enumerate(actions):
-            if a.kind == "cancel" and self._inside is not None:
-                undo.append(i)  # backs out of the command to the unchanged menu
-            elif (decision.TYPE in (C.MSG_SELECT_CARD, C.MSG_SELECT_UNSELECT_CARD) and a.kind == "cancel"
-                  and self._selection_cancels >= MAX_SELECTION_CANCELS):  # fmt: skip
-                undo.append(i)  # repeated target/material cancellation without game progress (rule 6)
-            elif (self._toggle is not None and decision.TYPE == C.MSG_SELECT_UNSELECT_CARD
-                  and (_INVERSE.get(a.kind), _card_key(a)) == self._toggle[1:]):  # fmt: skip
-                undo.append(i)  # reverses the previous select / unselect
-            elif (decision.TYPE == C.MSG_SELECT_UNSELECT_CARD and a.kind == "unselect"
-                  and self._selection_steps >= MAX_SELECTION_STEPS):  # fmt: skip
-                undo.append(i)  # a long selection only moves forward from here (rule 5)
-            elif decision.TYPE in _MENUS and a.kind == "shuffle":
-                undo.append(i)  # reorders the hand, changes nothing else
-            elif (decision.TYPE in _MENUS and a.kind == "activate" and self._activations_turn == self.turn
-                  and self._activations.get((decision.player, _card_key(a), a.description), 0) >= MAX_MENU_ACTIVATIONS):  # fmt: skip
-                undo.append(i)  # the same effect again: repeated activation limit
-        return tuple(undo) if len(undo) < len(actions) else ()
-
-    def _note_undo(self, decision: M.Decision, action: Action) -> None:
-        if decision.TYPE in _MENUS:
-            self._inside = decision.player
-            if action.kind == "activate":
-                if self._activations_turn != self.turn:
-                    self._activations, self._activations_turn = {}, self.turn
-                key = (decision.player, _card_key(action), action.description)
-                self._activations[key] = self._activations.get(key, 0) + 1
-        self._toggle = None
-        if decision.TYPE == C.MSG_SELECT_UNSELECT_CARD and action.kind in _INVERSE:
-            self._toggle = (decision.player, action.kind, _card_key(action))
-        if decision.TYPE == C.MSG_SELECT_UNSELECT_CARD:
-            self._selection_steps += 1
-        if decision.TYPE in (C.MSG_SELECT_CARD, C.MSG_SELECT_UNSELECT_CARD) and action.kind == "cancel":
-            self._selection_cancels += 1
 
     def _restricted(self) -> bool:
         """The pending decision is the opponent's, in the learner's turn, under a restricting curriculum."""

@@ -224,6 +224,31 @@ PYBIND11_MODULE(_core, m) {
         [](bool reset) { return reset ? g_script_steps_peak.exchange(0) : g_script_steps_peak.load(); },
         py::arg("reset") = false, "Most script instructions (thousands) one engine call has run in this process.");
     py::register_exception<ScriptBudgetExceeded>(m, "ScriptBudgetExceeded", PyExc_RuntimeError);
+    auto limits_dict = [](const host::UndoLimits& l) {
+        py::dict d;
+        d["menu_activations"] = l.menu_activations;
+        d["selection_steps"] = l.selection_steps;
+        d["selection_cancels"] = l.selection_cancels;
+        return d;
+    };
+    m.def(
+        "undo_limits", [limits_dict]() { return limits_dict(host::undo_limits()); },
+        "Limits of the no-op undo rules 3, 5 and 6 (docs/encoding.md 「撤销类空操作」), read by both hosts when a duel "
+        "starts: {menu_activations, selection_steps, selection_cancels}.");
+    m.def(
+        "set_undo_limits",
+        [limits_dict](std::optional<uint32_t> menu_activations, std::optional<uint32_t> selection_steps,
+                      std::optional<uint32_t> selection_cancels) {
+            host::UndoLimits l = host::undo_limits();
+            if (menu_activations) l.menu_activations = *menu_activations;
+            if (selection_steps) l.selection_steps = *selection_steps;
+            if (selection_cancels) l.selection_cancels = *selection_cancels;
+            return limits_dict(host::set_undo_limits(l));
+        },
+        py::arg("menu_activations") = py::none(), py::arg("selection_steps") = py::none(),
+        py::arg("selection_cancels") = py::none(),
+        "Set some undo limits for duels started from now on (both hosts); returns the old limits.");
+    m.attr("DEFAULT_UNDO_LIMITS") = limits_dict(host::UndoLimits{});
     m.def(
         "ocg_version",
         []() {
@@ -406,6 +431,8 @@ PYBIND11_MODULE(_core, m) {
         .def("player", &host::HostDuel::player)
         .def("done", &host::HostDuel::done)
         .def("actions", [](host::HostDuel& h) { return action_list(h.actions()); })
+        .def("undo", [](host::HostDuel& h) { return h.tracker().undo(); },
+             "Indices of actions() masked by the no-op undo rules (the tracker's DecisionPoint.undo).")
         .def("act", [](host::HostDuel& h, size_t index) {
             py::gil_scoped_release release;
             h.act(index);

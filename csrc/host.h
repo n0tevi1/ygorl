@@ -137,6 +137,62 @@ struct TrackerConfig {
     uint32_t max_decisions = 20000;
 };
 
+// Limits of the no-op undo rules 3, 5 and 6 (docs/encoding.md 「撤销类空操作」). Process-wide, like
+// g_max_engine_steps: both hosts read them when a duel starts (the Python engine.undo.UndoRules through
+// _core.undo_limits()), so the defaults below are the only place they are written and a test that lowers them
+// lowers them for both hosts.
+struct UndoLimits {
+    uint32_t menu_activations = 8;    // rule 3: menu activations of one effect in one turn
+    uint32_t selection_steps = 32;    // rule 5: steps of one SELECT_UNSELECT_CARD selection before unselect is masked
+    uint32_t selection_cancels = 32;  // rule 6: target / material cancellations without game progress
+};
+UndoLimits undo_limits();
+UndoLimits set_undo_limits(const UndoLimits& limits);  // returns the previous limits
+// The cancel budget (HostDuel / HostPool) that masks nothing beyond rule 6: the default rule-6 limit.
+constexpr uint32_t CANCEL_BUDGET_OFF = UndoLimits{}.selection_cancels;
+
+// The no-op undo rules (docs/encoding.md 「撤销类空操作」 rules 1-6): which actions of a decision only undo the
+// previous step, or repeat without progress. Mirror of engine.undo.UndoRules; tests/test_undo.py plays both in
+// lockstep with lowered limits so every rule fires.
+class UndoRules {
+public:
+    UndoRules() : limits_(undo_limits()) {}
+    // Any game event (everything except decisions, retries and hints) ends the command / selection in progress.
+    void on_game_event();
+    // A new decision was asked (after on_game_event for the messages before it).
+    void on_decision(const Decision& d);
+    // Indices of ``acts`` that are masked (never all of them).
+    std::vector<size_t> undo(const Decision& d, const std::vector<Action>& acts, uint32_t turn) const;
+    // ``a`` was chosen at ``d`` in turn ``turn``.
+    void on_action(const Decision& d, const Action& a, uint32_t turn);
+    uint32_t selection_cancels() const { return selection_cancels_; }
+
+private:
+    UndoLimits limits_;
+    // rules 1 and 2: the player inside a command just started from a menu (-1: none), and the last select /
+    // unselect of a SELECT_UNSELECT_CARD
+    int inside_ = -1;
+    struct Toggle {
+        int player = -1;
+        Kind kind = SELECT;
+        uint32_t code = 0;
+        Loc loc;
+    };
+    std::optional<Toggle> toggle_;
+    // rule 5: steps of the current SELECT_UNSELECT_CARD selection (same player, no game event in between)
+    uint32_t selection_steps_ = 0;
+    int selection_player_ = -1;
+    // rule 6: cancellations across target/material prompts, until game progress / player / decision-kind change
+    uint32_t selection_cancels_ = 0;
+    int selection_cancel_player_ = -1;
+    // rule 3: menu activations of one effect this turn, keyed by (player, has card, code, controller, location,
+    // sequence, description)
+    using ActKey = std::tuple<int, bool, uint32_t, uint8_t, uint8_t, uint32_t, uint64_t>;
+    static ActKey act_key(int player, const Action& a);
+    std::map<ActKey, uint32_t> activations_;
+    uint32_t activations_turn_ = UINT32_MAX;
+};
+
 // Mirror of engine.tracker.DuelTracker, in engine-player order.
 class Tracker {
 public:
@@ -157,7 +213,7 @@ public:
     uint16_t phase() const { return phase_; }
     const std::array<int64_t, 2>& lp() const { return lp_; }
     uint32_t decisions() const { return decisions_; }
-    uint32_t selection_cancels() const { return selection_cancels_; }
+    uint32_t selection_cancels() const { return undo_rules_.selection_cancels(); }
     const std::vector<std::string>& responses() const { return responses_; }
     const std::string& reason() const { return reason_; }
     const std::string& error() const { return error_; }
@@ -167,8 +223,7 @@ public:
     uint32_t unknown_messages() const { return unknown_; }
     const std::vector<std::string>& script_errors() const { return script_errors_; }
     void on_logs(const std::vector<LogEntry>& logs);
-    // Indices of the current actions that only undo the previous step (docs/encoding.md 「撤销类空操作」;
-    // mirror of DuelTracker._undo); never all of them.
+    // Indices of the current actions masked by the no-op undo rules (UndoRules); never all of them.
     std::vector<size_t> undo() const;
 
 private:
@@ -187,39 +242,8 @@ private:
     std::optional<Decision> last_decision_;
     std::unique_ptr<DecisionState> state_;
     std::vector<std::string> responses_;
-    // no-op undo tracking: the player inside a command just started from a menu (-1: none), and the last
-    // select / unselect of a SELECT_UNSELECT_CARD; any game event clears both
-    int inside_ = -1;
-    struct Toggle {
-        int player = -1;
-        Kind kind = SELECT;
-        uint32_t code = 0;
-        Loc loc;
-    };
-    std::optional<Toggle> toggle_;
-    // rule 5 (mirror of DuelTracker._selection_steps): steps of the current SELECT_UNSELECT_CARD selection (same
-    // player, no game event in between); past MAX_SELECTION_STEPS unselecting is masked
-    uint32_t selection_steps_ = 0;
-    int selection_player_ = -1;
-    // rule 6: cancellations across target/material prompts, until game progress / player / decision-kind change
-    uint32_t selection_cancels_ = 0;
-    int selection_cancel_player_ = -1;
-    // repeated activation limit (rule 3, mirror of DuelTracker._activations): menu activations of one effect
-    // this turn, keyed by (player, has card, code, controller, location, sequence, description)
-    using ActKey = std::tuple<int, bool, uint32_t, uint8_t, uint8_t, uint32_t, uint64_t>;
-    static ActKey act_key(int player, const Action& a);
-    std::map<ActKey, uint32_t> activations_;
-    uint32_t activations_turn_ = UINT32_MAX;
+    UndoRules undo_rules_;
 };
-
-// An effect activated this many times from a menu in one turn is masked there (docs/encoding.md 「撤销类空操作」
-// rule 3; mirror of duel.MAX_MENU_ACTIVATIONS).
-constexpr uint32_t MAX_MENU_ACTIVATIONS = 8;
-
-// After this many steps in one SELECT_UNSELECT_CARD selection unselecting is masked, so it can only move forward
-// (docs/encoding.md 「撤销类空操作」 rule 5; mirror of duel.MAX_SELECTION_STEPS).
-constexpr uint32_t MAX_SELECTION_STEPS = 32;
-constexpr uint32_t MAX_SELECTION_CANCELS = 32;
 
 // Observation encoder (mirror of env.encoding.ObservationEncoder, docs/encoding.md).
 constexpr int N_CARDS = 160, F_CARD = 23, G_GLOBAL = 22, MAX_OPTIONS = 128, A_ACTION = 10;
@@ -286,7 +310,7 @@ private:
     std::vector<Action> empty_;
     size_t event_length_ = 0;
     bool selection_history_ = false;
-    uint32_t cancel_budget_ = MAX_SELECTION_CANCELS;
+    uint32_t cancel_budget_ = CANCEL_BUDGET_OFF;
     std::shared_ptr<EventHistory> events_;
 };
 

@@ -92,7 +92,7 @@ def play(job):
             actor = agents[duel.deck_of(point.player)]
             if actor is candidate:
                 obs = original_host.observe()
-                count = session.tracker._selection_cancels
+                count = session.tracker.undo_rules.selection_cancels
                 view.observation, info = restrict_cancel(point, obs, count, budget)
                 counts.update(info)
                 if info["intervened"]:
