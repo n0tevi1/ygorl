@@ -101,7 +101,11 @@ and variance; no promotion from reduced cancellation alone. The representation
 aliasing and sample variance remain limitations, and no card-specific rule or
 blanket cancel penalty is introduced.
 
-## Registered policy-credit pilot is running
+## Registered policy-credit pilot
+
+The pilot is complete. It does not establish a benefit from terminal policy
+credit; see the [paired results and replication](selection-terminal-policy-pilot-2026-10-09.md).
+The following records its original protocol.
 
 `out/research/selection-terminal-policy-pilot-2026-10-09/`, identity
 `65ca92ae4e8f7e7272bd0d9c671b2995522aebd123c01a1a292a434de7130d7a`:
