@@ -1,5 +1,12 @@
 # Cancellation credit: captured evidence and replay limits
 
+**Interpretation correction:** the earlier loop-row ablations removed other
+*samples*, including a `select` sample with the very same actor input. They did
+not isolate other *states*. The [exit-credit follow-up](selection-exit-credit-2026-10-09.md)
+separates these groups and shows that the same-input exit sample accounts for
+much of the change. Retain the measurements below, but do not cite them as proof
+that cross-state parameter interference is the dominant cause.
+
 The coverage diagnostic found a real high-probability cancellation loop, but its
 local policy derivatives do not explain the direction of the full model update.
 The original capture omitted privileged critic inputs and intermediate optimizer
@@ -144,11 +151,12 @@ normalization denominator in every arm:
 | Policy/entropy/KL terms on all **other** rows only | 97.2207% |
 
 None of these variants changes its own KL acceptance relative to the recorded
-schedule. On this captured update, other states' policy losses, propagated
-through shared policy parameters, drive the increase: excluding them reverses
-its direction. Excluding the loop rows' actor losses instead makes the increase
+schedule. On this captured update, policy losses outside the chosen cancellation subset
+drive the increase: excluding them reverses its direction. This excluded set
+also contains a same-input alternative-action sample, so the contrast does
+not isolate cross-state interference. Excluding the loop rows' actor losses instead makes the increase
 larger. Thus these loop rows provide a net correction which is outweighed by
-updates from other states. This is a parameter-space intervention, beyond the
+updates from other samples. This is a parameter-space intervention, beyond the
 original chosen-logit derivative observation. It is conditional on one batch,
 checkpoint and inherited optimizer; nonlinear effects need not add up, and it
 is not a complete historical explanation of how the high initial prior arose.
@@ -210,9 +218,8 @@ match original acceptance. Maximum baseline state error across this panel is
 replays. No new trajectories are generated in the attribution comparisons.
 
 The second seed reproduces substantial harmful interference at u43: ordinary
-PPO raises cancellation 96.9788% → 99.1809%, but omitting other states' policy
-loss yields only 97.0561%. The other three ordinary updates lower cancellation.
-This supports a batch-dependent mechanism across two collection seeds; it does
+PPO raises cancellation 96.9788% → 99.1809%, but omitting policy loss outside the cancellation subset yields only 97.0561%. The other three ordinary updates lower cancellation.
+This supports a batch-dependent sample interaction across two collection seeds; it does
 not establish its population frequency, a full history of the original formal
 model, or a tested remedy. All continuations share the same initialization.
 
@@ -235,6 +242,6 @@ harmful cases (seed262/u35, seed263/u43) and a contrasting case (seed263/u33).
 After two numerical baseline checks, separately omit PPO policy-loss rows of
 every action kind present, retaining all other terms and the original schedule.
 Report all categories and numerical/KL limitations, not just favorable results.
-This asks which other-state learning signals produce interference and informs
+This asks which other-sample learning signals produce interference and informs
 a later separately registered intervention; it is not a production change.
 The service has durable reports, heartbeat and an independent watchdog.
