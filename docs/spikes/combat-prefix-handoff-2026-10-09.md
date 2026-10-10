@@ -3,7 +3,9 @@
 Short demonstrations repair two selected continuations, but partial assistance
 can also turn a winning continuation into a loss. Preserve that counterexample;
 these results do not justify automatically applying or training on teacher
-prefixes. Fresh-state coverage is now running before a correction-training pilot.
+prefixes. Fresh-state coverage has completed; see the
+[coverage results and active-opponent validation](combat-fresh-coverage-2026-10-09.md)
+before a correction-training pilot.
 
 Root: `out/research/combat-prefix-handoff-2026-10-09/`.
 Identity: `d87ece65b1be677286272256588541ac6ef7566dcda4f9da290e897d3d255817`.
@@ -77,7 +79,7 @@ after the root turn changes cannot count as same-turn lethal. The six earlier
 positives were already checked against terminal turns in native follow-ups.
 
 The frozen panel/runtime identity is separate from `resolved-panel.json`, which
-binds newly generated baseline records. A complete real-game preflight passed;
-two CPU workers, three-hour cap and an independent watchdog are running.
-Fresh positives still require original-opponent/native-mask validation before
-considering teaching data. Formal PPO, rewards and policy defaults stay unchanged.
+binds newly generated baseline records. All 768 games passed independent review.
+Six positive windows in five games now undergo original-opponent/native-mask
+validation before considering teaching data. Formal PPO, rewards and policy
+defaults stay unchanged.
