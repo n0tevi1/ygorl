@@ -138,3 +138,25 @@ every update, a pre-optimizer health gate, ten-second parent heartbeat, a four-h
 runtime limit, and persistent completion/failure handoff. Frozen identity SHA256:
 `9c7d89e44d27bcbfbb5af620d51e1f8a7a6749c966048f5d179e7f55caa7dbbd`.
 The original multi-seed critic-continuation study and runtime remain unchanged.
+
+## Replication completed: no promotion
+
+All 1536 evaluations completed normally. Over the shared 128-game panel and three
+training seeds, final legacy wins 244/384 (63.542%), selection wins 253/384 (65.885%);
+mean turns 9.3047 vs9.6016. Seed-wise selection-minus-legacy win deltas are +1.563,
+0, +5.469pp; turn deltas +0.516, +0.711, -0.336. A crossed bootstrap preserving
+the common deal panel gives win +2.344pp [-4.427,+8.854] and turns +0.2969
+[-0.4036,+1.0547]. This exploratory interval has only three seeds and one source.
+No replicated turn benefit or demonstrated strength advantage.
+
+Final cancel counts are 28 vs 24, with zero vs one game containing >=8 consecutive
+cancels without public progress. The new-schema seed 250/game 36 loop has distinct
+inputs but 14 cancellations with probabilities 97.45%–99.03%. The input repair is
+verified; learning a good selection policy remains unresolved. Keep default
+legacy and do not promote this experiment based on the small pilot.
+
+The [warm/u512 follow-up](warm-u512-repeat-audit-2026-10-09.md) records five new
+formal-study replay audits, paired checkpoint progress, retention, and a bounded
+credit-assignment diagnostic. The latter records actual PPO row terms but lacks
+high-confidence loop coverage; it must not be presented as a resolved gradient
+cause. No card-specific penalty or blanket cancellation ban was introduced.
