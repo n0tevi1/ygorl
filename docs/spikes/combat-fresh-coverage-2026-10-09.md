@@ -109,6 +109,13 @@ action alone. Preserve `preflight/games/1.json`; a validated complete winning
 line is not evidence that its first action helps the current continuation
 policy. The full 192-branch run and independent watchdog have started.
 
+Trace comparison localizes the first continuation disagreement to decision482:
+after the same attack target and passes, the learned actor takes main2 with
+probability75.73%; the successful teacher instead attacks the opposing3500
+monster with its3600 attacker, then attacks directly with2600. This identifies
+an additional battle-exit decision in this branch, not a universal cause of
+long games or proof of how the actor internally represents combat.
+
 Measure same-turn wins, eventual wins and paired win-to-loss reversals, retaining
 the previously observed harmful partial-prefix example. This distinguishes a
 poor first choice from inability to finish the subsequent sequence before
