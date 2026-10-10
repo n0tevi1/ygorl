@@ -220,7 +220,9 @@ def collector(db, vocab, *, max_decisions, steps, selfplay=1.0, snapshot=False, 
     schedule = SelfPlaySchedule(DeckPool(decks, "cross"), pool, DuelConfig(max_decisions=max_decisions),
                                 selfplay_fraction=selfplay, seed=5)  # fmt: skip
     env = EncodedVecEnv(num_envs, 1, cards=db, vocab=vocab, privileged=True, event_length=16)
-    return RolloutCollector(env, model, schedule, steps, opponents=pool.get, seed=5)
+    return RolloutCollector(
+        env, model, schedule, steps, opponents=schedule.opponent, seed=5
+    )  # wired as the Trainer does
 
 
 def test_a_dealt_pair_keeps_its_snapshot_after_eviction(vocab):
@@ -657,33 +659,21 @@ def test_overlapped_collection_acts_with_the_weights_the_update_started_from(tmp
     assert len(trainer.pool) > 0
 
 
-def test_snapshot_admission_threshold_and_pool_results(tmp_path):
-    """snapshot_min_win_rate: a due snapshot joins only after the learner scored above the threshold in enough pool
-    games since the last one joined; an empty pool always takes one; pool results reach the snapshots."""
+def test_the_trainer_counts_snapshot_admissions_and_saves_the_league(tmp_path):
+    """Trainer.maybe_snapshot asks the league (tests/test_league.py has its rules) and counts the outcome; the league
+    state is saved under the checkpoint's pool / best / league keys."""
     from ygorl.train.rollout import Assignment, FinishedGame
 
     cfg = replace(_small_cfg(), snapshot_min_win_rate=0.55, snapshot_min_games=4)
     trainer = Trainer(cfg, tmp_path, log=None)
-    assert trainer.maybe_snapshot(1) and len(trainer.pool) == 1  # empty pool
-    assert not trainer.maybe_snapshot(2)  # no pool games yet
+    assert trainer.maybe_snapshot(1) and not trainer.maybe_snapshot(2)
     sid = trainer.pool.ids()[0]
-
-    def played(scores):
-        for s in scores:
-            g = FinishedGame(Assignment(None, sid, 0), None if s == 0.5 else (0 if s == 1 else 1), "win", False, 1, {})
-            trainer.pool.record(g.assignment.opponent, g.learner_score)
-            trainer.league["games"] += 1
-            trainer.league["points"] += g.learner_score
-
-    played([1, 0, 1, 0])  # 0.5: not above 0.55
-    assert not trainer.maybe_snapshot(3)
-    played([1, 1, 1, 1])  # 6 / 8 = 0.75
-    assert trainer.maybe_snapshot(4) and len(trainer.pool) == 2 and trainer.league == {"games": 0, "points": 0.0}
-    assert trainer.counters["snapshots"] == 2 and trainer.counters["snapshots_skipped"] == 2
-    info = {i["id"]: i for i in trainer.pool.info()}
-    assert info[sid]["games"] == 8 and info[sid]["learner_win_rate"] == round(6.5 / 9, 3)
+    trainer.league.record([FinishedGame(Assignment(None, sid, 0), 0, "win", False, 1, {}) for _ in range(4)])
+    assert trainer.maybe_snapshot(3)
+    assert trainer.counters["snapshots"] == 2 and trainer.counters["snapshots_skipped"] == 1
     state = trainer.state_dict()
-    assert state["league"] == {"games": 0, "points": 0.0}
+    assert state["league"] == {"games": 0, "points": 0.0} and state["best"] == trainer.best
+    assert state["pool"].keys() == trainer.pool.state_dict().keys() and "evolved" in state
 
 
 def test_pool_games_are_recorded_during_training(tmp_path):
@@ -694,7 +684,7 @@ def test_pool_games_are_recorded_during_training(tmp_path):
     trainer.train(max_updates=4)
     recorded = sum(i["games"] for i in trainer.pool.info())
     assert trainer.counters["snapshots"] == 4 and trainer.pool.sampling == "pfsp"
-    assert recorded > 0 and trainer.league["games"] <= recorded
+    assert recorded > 0 and trainer.league.window["games"] <= recorded
 
 
 def test_league_defaults_follow_design_i1():

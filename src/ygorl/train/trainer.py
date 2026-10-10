@@ -53,6 +53,7 @@ from ygorl.train.checkpoint import (
 )
 from ygorl.train.ppo import PPOConfig, PPOLearner
 from ygorl.train.rollout import Rollout, RolloutCollector, RolloutStalled
+from ygorl.train.league import League
 from ygorl.train.selfplay import DeckPool, EvolvedDecks, SelfPlaySchedule, SnapshotPool
 
 SMALL_NET = {"d_model": 64, "n_heads": 4, "board_layers": 1, "history_layers": 1}
@@ -271,8 +272,8 @@ class Trainer:
         self._warmup_ev: list[float] = []
         self.counters = {"critic_warmup_done": 0, "updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0, "snapshots": 0, "snapshots_skipped": 0}  # fmt: skip
-        self.league = {"games": 0, "points": 0.0}  # the learner's pool games since the last snapshot joined
-        self.best = {"score": None, "update": None}
+        self.league = League(self.pool, self.evolved, min_win_rate=cfg.snapshot_min_win_rate,
+                             min_games=cfg.snapshot_min_games)  # fmt: skip
         if state is not None:
             self._restore(state)
         (self.run_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
@@ -315,23 +316,17 @@ class Trainer:
             rng["cuda"] = torch.cuda.get_rng_state(self.device)
         return {"config": self.cfg.to_dict(), "net_config": self.net_config.to_dict(), "vocab": self.vocab_text,
                 "environment": self.environment.stamp() if self.environment is not None else None,
-                "learner": self.learner.state_dict(), "pool": self.pool.state_dict(),
-                "schedule": self.schedule.state_dict(), "counters": dict(self.counters), "best": dict(self.best), "league": dict(self.league),
-                "rng": rng,
-                "evolved": self.evolved.state_dict() if self.evolved is not None else None}  # fmt: skip
+                "learner": self.learner.state_dict(), **self.league.state_dict(),
+                "schedule": self.schedule.state_dict(), "counters": dict(self.counters), "rng": rng}  # fmt: skip
 
     def _restore(self, state: dict) -> None:
         saved_net = {"selection_history": False, **state["net_config"]}
         if saved_net != self.net_config.to_dict():
             raise ValueError("the checkpoint's network does not match the configuration")
         self.learner.load_state_dict(state["learner"])
-        self.pool.load_state_dict(state["pool"], self._new_model)
+        self.league.load_state_dict(state, self._new_model)
         self.schedule.load_state_dict(state["schedule"])
         self.counters.update(state["counters"])
-        self.best.update(state["best"])
-        self.league.update(state.get("league", {}))
-        if self.evolved is not None and state.get("evolved") is not None:
-            self.evolved.load_state_dict(state["evolved"])
         torch.set_rng_state(state["rng"]["torch"])
         self.collector.generator.set_state(state["rng"]["collector"])
         if self.device.type == "cuda" and "cuda" in state["rng"]:
@@ -403,18 +398,16 @@ class Trainer:
         self._stream.synchronize()  # the rollout's tensors are complete before the learner's stream reads them
         return ro
 
+    @property
+    def best(self) -> dict:
+        """Keep-best's score and update (``League.best``)."""
+        return self.league.best
+
     def maybe_snapshot(self, update: int) -> bool:
-        """Add a snapshot of the model to the pool, unless the admission threshold holds it back."""
-        cfg, lg = self.cfg, self.league
-        regular = [i for i in self.pool.ids() if i >= 0]
-        if cfg.snapshot_min_win_rate is not None and regular:
-            if lg["games"] < cfg.snapshot_min_games or lg["points"] / lg["games"] <= cfg.snapshot_min_win_rate:
-                self.counters["snapshots_skipped"] += 1
-                return False
-        self.pool.add(self.model, update=update)
-        self.counters["snapshots"] += 1
-        self.league.update(games=0, points=0.0)
-        return True
+        """Add a snapshot of the model to the pool, unless the admission threshold holds it back (League.admit)."""
+        joined = self.league.admit(self.model, update)
+        self.counters["snapshots" if joined else "snapshots_skipped"] += 1
+        return joined
 
     def step(self) -> dict:
         cfg = self.cfg
@@ -459,20 +452,7 @@ class Trainer:
         self._log_truncations(ro.games)
         if cfg.log_games:
             self._log_games(ro.games)
-        for g in ro.games:
-            if g.learner_score is not None and not g.truncated:
-                self.pool.record(g.assignment.opponent, g.learner_score)
-                self.league["games"] += 1
-                self.league["points"] += g.learner_score
-        evolved_games = 0
-        for g in ro.games:
-            did = g.assignment.info.get("evolved")
-            if did is None or g.truncated or g.reason == "error":
-                continue
-            seat = g.assignment.info["evolved_seat"]
-            evolved_games += 1
-            if self.evolved is not None and g.assignment.is_learner(seat):
-                self.evolved.record(did, 0.5 if g.winner is None else float(g.winner == seat))
+        evolved_games = self.league.record(ro.games)
         record = {"update": c["updates"], "time": round(time.time(), 1), **self._rollout_stats(ro, update_s),
                   "step_s": round(step_s, 2), "rows_per_s": ro.players.numel() / max(step_s, 1e-9),
                   **{k: round(v, 5) if isinstance(v, float) else v for k, v in stats.items()},
@@ -614,10 +594,8 @@ class Trainer:
                     f.write(json.dumps({"update": u, "vs": opponent, "report": rep.to_dict()}) + "\n")
         valid = all(r["valid"] for r in results.values())
         score = results[cfg.keep_best_by]["win_rate"] if cfg.keep_best_by and valid else None
-        is_best = score is not None and (self.best["score"] is None or score > self.best["score"])
+        is_best = self.league.offer_best(self.model, u, score)
         if is_best:
-            self.best = {"score": score, "update": u}
-            self.pool.set_best(self.model, update=u, score=score)
             path = self.save(f"update_{u:06d}.pt")  # re-save with the new best recorded
             shutil.copyfile(path, self.run_dir / "best.pt")
             shutil.copyfile(path, self.run_dir / "checkpoints" / "latest.pt")
