@@ -67,9 +67,35 @@ The production run and independent watchdog are active.
 original choice versus direct Heavy Borger activation,16 paired suffixes,
 32 branches. All16 original controls must match the preceding experiment.
 This distinguishes the attack-first route from its useful effect decision.
-The real original/direct-activation preflight passed; direct activation wins
-on turn9 in trial0, versus the original turn10 win. The full run and independent
-watchdog are active; the preflight alone is not the16-stream result.
+Completed and independently reviewed: all32 branches are healthy and all16
+original-arm full results and same-turn action/probability traces exactly match
+the preceding study. Completion was acknowledged after review.
+
+| First choice at cold52/490 | Same-turn wins /16 | Eventual wins /16 | Mean turns |
+| --- | ---: | ---: | ---: |
+| Original choice | 2 | 16 | 9.875 |
+| Attack then original policy | 0 | 11 | 11.375 |
+| Direct effect then original policy | 16 | 16 | 9.000 |
+
+Direct activation has no paired win-to-loss reversal in these16 suffixes. The
+same learned continuation policy can complete the effect choices when started
+with the direct activation. In this fixed state, prioritizing the effect is a
+better supported intervention than the teacher's attack-first route. It is not
+a guarantee over unseen states or hidden cards.
+At this exact root the model already assigns42.89% to direct activation and
+47.91% to its sampled main2 choice. Thus this is a prioritization failure in
+the sampled trajectory, not proof that the model never recognizes the effect.
+The burn-option choice after activation has probability1.0; successful forced
+continuations do not by themselves establish broad effect-selection skill.
+
+The earlier combat probe only tried attacks/battle entry as its initial
+interventions. It could discover the burn later in a winning sequence but
+could not compare direct activation at the root. Treat that search coverage
+restriction as a diagnostic limitation, not evidence that attacking is the
+appropriate label. Future correction-data generation must compare available
+effect initiations and measure outcomes under the learned continuation policy;
+whole-line teacher success alone remains insufficient. The336-branch prefix
+study continues independently, including the less efficient attack-first line.
 
 Neither experiment trains or promotes a policy. Their purpose is to identify
 which interventions merit a later correction pilot while preserving adverse
