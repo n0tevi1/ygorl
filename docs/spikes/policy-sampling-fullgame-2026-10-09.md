@@ -96,3 +96,9 @@ and decision limits count as non-wins in all denominators, are saved and alerted
 and mark completion nonhealthy. Other health, mask or identity failures STOP.
 No automatic temperature, mask, reward or training-label promotion. Formal PPO
 and its frozen runtime continue unchanged.
+
+The [fresh four-arm confirmation](policy-sampling-confirmation-2026-10-10.md)
+has completed all 3,072 healthy games. T0.5's win gain did not reproduce;
+argmax-budget1 removed 1,302 repeated decisions with identical retained step
+sequences and terminal outcomes on the 768 paired games. A broader matched-u512
+inference comparison is running; formal defaults remain unchanged.
