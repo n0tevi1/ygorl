@@ -7,6 +7,17 @@ SYNCHRO_SHA256 = "cacd92d496ab653e6e5f304cb2b38b831e4f6d41ab1e842ffab909a0efb154
 FUSION_SHA256 = "3779bd72c57d95ce7d330c04f9bc2479966337f50ad23ce3a1d5bf9304a6fdc9"
 CHAOS_ANGEL_SHA256 = "69ab42828aaf335d8caa90ce7e411674aefc30afa51f452d0d55001774a58afc"
 CLOWN_CREW_SHA256 = "7fbfd6cee3ed1d90c78fd02c42d70bf47436176dc75ca793281ca71e1996b4fd"
+LINK_SHA256 = "542adc5b1fac3f4b363dc3d736bbcfe1aa8c062e5bb41d13c0ea20c1684050be"
+
+
+def link_override(source: bytes | None) -> bytes | None:
+    """Do not offer deselection of required materials which Link.Target ignores."""
+    if source is None or sha256(source).hexdigest() != LINK_SHA256:
+        return None
+    old = b"local tc=Group.SelectUnselect(cg,sg,tp,finish,cancel,1,1)"
+    new = b"local tc=Group.SelectUnselect(cg,sg-mustg,tp,finish,cancel,1,1)"
+    assert source.count(old) == 1
+    return source.replace(old, new)
 
 
 def clown_crew_override(source: bytes | None) -> bytes | None:
