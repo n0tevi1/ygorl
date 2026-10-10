@@ -21,7 +21,7 @@ def has_game_event(events):
 
 
 def select_replay_games(rows):
-    """Fixed-index sample plus separate turn, decision and cancellation tails."""
+    """Fixed sample, length tails, and every game that could cross the cancel-repeat threshold."""
     chosen = {r["game_id"]: "fixed-index" for r in rows if r["game_id"] < 16}
     if not rows:
         return chosen
@@ -31,6 +31,12 @@ def select_replay_games(rows):
     worst = max(rows, key=lambda r: (r["candidate_counts"].get("material_cancel_chosen", 0), -r["game_id"]))
     if worst["candidate_counts"].get("material_cancel_chosen", 0):
         chosen.setdefault(worst["game_id"], "selected-material-cancels")
+    # The largest total need not contain the longest no-progress run. A game
+    # with nine consecutive cancels can be hidden by eleven split across prompts.
+    # Totals only select investigations; the trace determines whether it repeats.
+    for r in rows:
+        if r["candidate_counts"].get("material_cancel_chosen", 0) >= 8:
+            chosen.setdefault(r["game_id"], "selected-material-cancel-threshold")
     return chosen
 
 
