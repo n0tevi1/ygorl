@@ -78,6 +78,7 @@ class TrainConfig:
     min_batch: int | None = None  # ready decisions per forward pass (default num_envs // 2)
     event_length: int = 64  # event tokens per observation (window mode)
     skip_forced: bool = True  # decisions with one choosable row are played in C++ and produce no rows
+    cancel_budget: int = 32  # experimental environment mask, both learner and pool-opponent seats
     net: dict = field(default_factory=lambda: dict(SMALL_NET))  # NetConfig overrides (vocab_size is set)
     text_dir: str | None = None  # frozen text tables (T5.2); None = off
     privileged_critic: bool = True  # design I9: the critic sees the opponent ground truth
@@ -137,6 +138,8 @@ class TrainConfig:
     log_games: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.cancel_budget) is not int or self.cancel_budget not in (0, 1, 4, 32):
+            raise ValueError("cancel_budget must be 0, 1, 4 or 32")
         if self.learner_precision not in ("inherit", "fp32", "bf16"):
             raise ValueError("learner_precision must be inherit, fp32, or bf16")
         if self.register_every < 0 or (self.register_every and not self.register_matrix):
@@ -242,7 +245,7 @@ class Trainer:
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced, record_actions=True,
-                                 selection_history=self.net_config.selection_history)  # fmt: skip
+                                 selection_history=self.net_config.selection_history, cancel_budget=cfg.cancel_budget)  # fmt: skip
         # the acting network: the model itself, or a copy refreshed before each overlapped collection
         self.acting = copy.deepcopy(self.model) if cfg.overlap_collect else self.model
         self._pending: Rollout | None = None

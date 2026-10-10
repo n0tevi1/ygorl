@@ -50,10 +50,13 @@ class EncodedVecEnv:
     def __init__(self, num_envs: int, num_threads: int | None = None, cards=None, scripts=None,
                  vocab: CardVocab | None = None, privileged: bool = False,
                  event_length: int = DEFAULT_EVENT_LENGTH, skip_forced: bool = False,
-                 record_actions: bool = False, selection_history: bool = False) -> None:  # fmt: skip
+                 record_actions: bool = False, selection_history: bool = False, cancel_budget: int = 32) -> None:  # fmt: skip
         """``privileged=True`` is training mode: events also carry ``privileged`` (opponent ground truth).
 
         The default (inference mode) never computes it. Evaluation and play must use the default.
+        ``cancel_budget`` restricts repeated target/material cancellation for BOTH engine seats.
+        32 preserves existing behavior; 0/1/4 are experimental. It changes the native observation
+        mask before forced-action skipping, policy sampling and rollout storage, retaining a sole exit.
         ``event_length`` is the number of event tokens per observation (docs/encoding.md; 0 = none).
         ``skip_forced=True`` plays every decision with exactly one choosable row (one legal action, or only
         equivalent copies of one; docs/encoding.md) inside the C++ loop, so
@@ -61,6 +64,9 @@ class EncodedVecEnv:
         ``record_actions=True`` retains explicit step indices across calls until each game ends. Limits/errors
         carry ``action_indices`` for replay with the same ``skip_forced`` setting; healthy wins discard the trace.
         """
+        if type(cancel_budget) is not int or cancel_budget not in (0, 1, 4, 32):
+            raise ValueError("cancel_budget must be 0, 1, 4 or 32")
+        self.cancel_budget = cancel_budget
         self.cards = cards if cards is not None else default_cards()
         self.vocab = vocab if vocab is not None else CardVocab.from_db(self.cards)
         passwords = [self.vocab.password(i) for i in range(CardVocab.FIRST_INDEX, len(self.vocab))]
@@ -69,7 +75,7 @@ class EncodedVecEnv:
             raise ValueError("selection history requires a nonempty event window")
         self._pool = _core.HostPool(num_envs, threads, self.cards.to_core(),
                                     scripts if scripts is not None else default_scripts(), passwords,
-                                    privileged, event_length, skip_forced, selection_history)  # fmt: skip
+                                    privileged, event_length, skip_forced, selection_history, cancel_budget)  # fmt: skip
         self.num_envs = num_envs
         self.num_threads = threads
         self.privileged = privileged

@@ -157,6 +157,7 @@ public:
     uint16_t phase() const { return phase_; }
     const std::array<int64_t, 2>& lp() const { return lp_; }
     uint32_t decisions() const { return decisions_; }
+    uint32_t selection_cancels() const { return selection_cancels_; }
     const std::vector<std::string>& responses() const { return responses_; }
     const std::string& reason() const { return reason_; }
     const std::string& error() const { return error_; }
@@ -271,6 +272,7 @@ public:
     // Keep the last n event tokens per viewer from the next start() on (0 = no event stream).
     void set_event_length(size_t n) { event_length_ = n; }
     void set_selection_history(bool enabled) { selection_history_ = enabled; }
+    void set_cancel_budget(uint32_t budget);
 
 private:
     void advance();
@@ -284,6 +286,7 @@ private:
     std::vector<Action> empty_;
     size_t event_length_ = 0;
     bool selection_history_ = false;
+    uint32_t cancel_budget_ = MAX_SELECTION_CANCELS;
     std::shared_ptr<EventHistory> events_;
 };
 
