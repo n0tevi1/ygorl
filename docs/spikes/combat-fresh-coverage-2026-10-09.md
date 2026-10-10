@@ -100,6 +100,15 @@ original full-game results in the control arm; the other streams share suffix
 seeds across arms. The review groups by game **and decision**, preserving the
 two windows from game65 without merging them into one state.
 
+Four real preflight branches passed prefix, mask and health checks, covering
+both candidate seats. They already include an adverse intervention: warm72,
+trial0, wins on turn7 unassisted but loses on turn8 after forcing the first
+attack and handing control back. The complete heuristic continuation wins on
+turn5. In contrast, cold65's turn8 window wins immediately after the first
+action alone. Preserve `preflight/games/1.json`; a validated complete winning
+line is not evidence that its first action helps the current continuation
+policy. The full 192-branch run and independent watchdog have started.
+
 Measure same-turn wins, eventual wins and paired win-to-loss reversals, retaining
 the previously observed harmful partial-prefix example. This distinguishes a
 poor first choice from inability to finish the subsequent sequence before
