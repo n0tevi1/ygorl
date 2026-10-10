@@ -546,6 +546,29 @@ def test_init_from_and_bc_prior_accept_ppo_and_bc_checkpoints(run, vocab, tmp_pa
         assert all(p.requires_grad for p in t.model.actor.parameters())  # the copy trains
 
 
+def test_a_warm_start_keeps_its_event_window_unless_one_is_set(run, tmp_path):
+    """Like its vocab, a warm start keeps the event window its network was trained with (BC defaults to 128, PPO to
+    64); a run that sets another one uses it, with a warning. Checkpoints store the number used."""
+    from dataclasses import replace as dc_replace
+
+    from ygorl.nets import PolicyNet
+    from ygorl.nets.agent import save_checkpoint as save_policy
+    from ygorl.train.checkpoint import load_policy
+    from ygorl.train.trainer import DEFAULT_EVENT_LENGTH
+
+    trainer, _ = run
+    bc = save_policy(tmp_path / "bc.pt", PolicyNet(trainer.net_config), trainer.vocab, event_length=24)
+    logs = []
+    adopted = Trainer(dc_replace(_small_cfg(init_from=str(bc)), event_length=None), tmp_path / "a", log=logs.append)
+    assert adopted.cfg.event_length == 24 and any("event length 24" in m for m in logs)
+    assert load_policy(adopted.save()).event_length == 24
+    logs.clear()
+    assert Trainer(_small_cfg(init_from=str(bc)), tmp_path / "b", log=logs.append).cfg.event_length == 16
+    assert any("warning" in m and "24 event tokens" in m for m in logs)
+    fresh = Trainer(dc_replace(_small_cfg(), event_length=None), tmp_path / "c", log=None)
+    assert fresh.cfg.event_length == DEFAULT_EVENT_LENGTH
+
+
 def test_init_from_rejects_a_different_network_or_vocab(run, vocab, tmp_path):
     from dataclasses import replace as dc_replace
 

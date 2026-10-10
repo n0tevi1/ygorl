@@ -18,7 +18,8 @@ A policy checkpoint (``ygorl.nets.agent``, e.g. from BC) holds only an actor; :f
 two apart. This module is the one place that rebuilds networks from either:
 
 - :func:`load_actor`: the actor (:class:`ygorl.nets.PolicyNet`) of any checkpoint, for playing and evaluation;
-  :func:`load_policy` is the same for PPO checkpoints only;
+  :func:`load_policy` is the same for PPO checkpoints only; :func:`cached_actor` loads each file once per process
+  (the agents playing checkpoints: every game builds new agents);
 - :func:`load_actor_critic`: the whole :class:`ActorCritic` of a PPO checkpoint, with its critic options
   (:class:`CriticConfig`); :func:`build_actor_critic` builds a fresh one (the trainer, the snapshot pool);
 - :func:`warm_start`: copy a loaded actor into a new network, which may add card views;
@@ -27,7 +28,8 @@ two apart. This module is the one place that rebuilds networks from either:
 - :func:`torch_device`: the device networks run on (with the ROCm settings they need).
 
 Frozen text tables and card facts are not stored in checkpoints (docs/nets.md): they are reloaded from ``text_dir``
-or, for a PPO checkpoint, from its run's ``config["text_dir"]``; ``ygorl.nets.text.require_tables`` is the check.
+or else from the directory the checkpoint records (a PPO run's ``config["text_dir"]``, a policy checkpoint's
+``text_dir``); ``ygorl.nets.text.require_tables`` is the check.
 """
 
 from __future__ import annotations
@@ -43,7 +45,6 @@ import torch
 
 from ygorl.cards.cdb import CardVocab
 from ygorl.nets.actor_critic import ActorCritic
-from ygorl.nets.agent import vocab_passwords
 from ygorl.nets.config import NetConfig
 from ygorl.nets.policy import PolicyNet
 from ygorl.nets.text import TextFeatures, frozen_views, require_tables
@@ -127,7 +128,7 @@ class Signature:
 
     @classmethod
     def of(cls, vocab: CardVocab, event_length: int, selection_history: bool = False) -> Signature:
-        return cls(tuple(vocab_passwords(vocab)), int(event_length), selection_history)
+        return cls(tuple(vocab.passwords()), int(event_length), selection_history)
 
     def mismatches(self, other: Signature, *, event_length: bool = True) -> list[str]:
         """Why ``other`` cannot read this signature's observations, one readable reason per difference (empty =
@@ -249,13 +250,26 @@ def load_actor(path: str | Path, text_dir: str | Path | None = None) -> LoadedPo
         return load_policy(path, text_dir)
     if fmt != agent.CHECKPOINT_FORMAT:
         raise ValueError(f"{path}: not a ygorl policy checkpoint (format {fmt!r})")
-    text = None
-    if text_dir is not None:
-        data = torch.load(Path(path), map_location="cpu", weights_only=True, mmap=True)
-        text = _tables(NetConfig.from_dict(data["config"]), CardVocab(data["vocab"]), text_dir, path)
+    data = torch.load(Path(path), map_location="cpu", weights_only=True, mmap=True)
+    text = _tables(NetConfig.from_dict(data["config"]), CardVocab(data["vocab"]), text_dir or data.get("text_dir"),
+                   path)  # fmt: skip
     ckpt = agent.load_checkpoint(path, text)  # which checks the tables too (require_tables)
     return LoadedPolicy(_frozen(ckpt.net), ckpt.vocab, ckpt.event_length, ckpt.net.cfg, ckpt.environment, 0,
                         Path(path))  # fmt: skip
+
+
+def cached_actor(path: str | Path, text_dir: str | Path | None = None) -> LoadedPolicy:
+    """:func:`load_actor`, once per process, file version and ``text_dir``. The network is shared: do not train it
+    or move it to another device."""
+    p = Path(path).resolve()
+    if not p.is_file():
+        raise ValueError(f"no policy checkpoint at {path}")
+    return _cached_actor(str(p), p.stat().st_mtime_ns, None if text_dir is None else str(Path(text_dir).resolve()))
+
+
+@functools.lru_cache(maxsize=8)
+def _cached_actor(path: str, mtime_ns: int, text_dir: str | None) -> LoadedPolicy:
+    return load_actor(path, text_dir)
 
 
 def load_actor_critic(path: str | Path, text_dir: str | Path | None = None) -> LoadedActorCritic:
@@ -312,5 +326,5 @@ def warm_start(actor: PolicyNet, source: LoadedPolicy) -> list[str]:
 
 
 __all__ = ["FORMAT", "CriticConfig", "LoadedActorCritic", "LoadedPolicy", "Signature", "build_actor_critic",
-           "checkpoint_format", "load_actor", "load_actor_critic", "load_checkpoint", "load_policy", "save_checkpoint",
-           "torch_device", "vocab_from_text", "vocab_to_text", "warm_start"]  # fmt: skip
+           "cached_actor", "checkpoint_format", "load_actor", "load_actor_critic", "load_checkpoint", "load_policy",
+           "save_checkpoint", "torch_device", "vocab_from_text", "vocab_to_text", "warm_start"]  # fmt: skip

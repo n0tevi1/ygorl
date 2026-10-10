@@ -299,7 +299,9 @@ def main(argv: list[str] | None = None) -> int:
         meta = {"trainer": "bc", "task": "T4a.2", "data": report["data"], "bc": bc.__dict__,
                 "final": history[-1] if history else {}, "data_policy": report["data_policy"],
                 "training_device": report["device"]}  # fmt: skip
-        save_checkpoint(ckpt_path, net, vocab, event_length=event_length, environment=stamp, meta=meta)
+        save_checkpoint(
+            ckpt_path, net, vocab, event_length=event_length, environment=stamp, meta=meta, text_dir=args.text_dir
+        )
         print(f"checkpoint: {ckpt_path}", flush=True)
 
     report["checkpoint"] = str(ckpt_path)

@@ -21,7 +21,6 @@ PyTorch is limited to one thread per process.
 from __future__ import annotations
 
 import multiprocessing as mp
-from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -31,22 +30,16 @@ if TYPE_CHECKING:
     from ygorl.engine.duel import DecisionPoint, Duel
 
 
-@lru_cache(maxsize=8)
-def _load(path: str, mtime: float):
+def load_cached(path: str | Path):
+    """The checkpoint's actor, loaded once per process (``ygorl.train.checkpoint.cached_actor``); in worker processes
+    (parallel arena) PyTorch is limited to one thread first."""
     import torch
 
-    from ygorl.train.checkpoint import load_policy
+    from ygorl.train.checkpoint import cached_actor
 
     if mp.current_process().name != "MainProcess":
         torch.set_num_threads(1)
-    return load_policy(path)
-
-
-def load_cached(path: str | Path):
-    p = Path(path).resolve()
-    if not p.is_file():
-        raise ValueError(f"checkpoint not found: {path}")
-    return _load(str(p), p.stat().st_mtime)
+    return cached_actor(path)
 
 
 class CheckpointAgent:
@@ -72,12 +65,10 @@ class CheckpointAgent:
         cfg = duel.config
         if cfg.curriculum != "full" or cfg.augmented_start:
             raise NotImplementedError("policy agents support only curriculum='full' without augmented_start")
-        vocab = self.policy.vocab
-        passwords = [vocab.password(i) for i in range(vocab.FIRST_INDEX, len(vocab))]
         host = _core.HostDuel(
             duel.cards.to_core(),
             duel.scripts,
-            passwords,
+            self.policy.vocab.passwords(),
             event_length=self.policy.event_length,
             selection_history=self.policy.net_config.selection_history,
         )

@@ -15,6 +15,7 @@ from ygorl.train.checkpoint import (  # noqa: E402
     CriticConfig,
     Signature,
     build_actor_critic,
+    cached_actor,
     load_actor,
     load_actor_critic,
     load_policy,
@@ -58,10 +59,10 @@ def _ppo(tmp_path, critic=CriticConfig(), *, net=None, text=None, text_dir=None,
     return save_checkpoint(state, tmp_path / name), model
 
 
-def _bc(tmp_path, *, net=None, text=None, event_length=16, vocab=VOCAB, name="bc.pt"):
+def _bc(tmp_path, *, net=None, text=None, event_length=16, vocab=VOCAB, name="bc.pt", text_dir=None):
     torch.manual_seed(2)
     policy = PolicyNet(net or _net_config(text), text)
-    return agent.save_checkpoint(tmp_path / name, policy, vocab, event_length=event_length), policy
+    return agent.save_checkpoint(tmp_path / name, policy, vocab, event_length=event_length, text_dir=text_dir), policy
 
 
 def _same(a: dict, b: dict) -> bool:
@@ -118,6 +119,22 @@ def test_one_frozen_table_check_for_every_loader(tmp_path):
     assert _same(ac.model.state_dict(), model.state_dict())
     from_run, _ = _ppo(tmp_path, net=_net_config(text, card_facts=True), text=text, text_dir=str(feat), name="r.pt")
     assert load_policy(from_run).net.identity.archetype is not None
+
+
+def test_a_policy_checkpoint_finds_its_feature_directory(tmp_path):
+    """A BC checkpoint trained with card views records its feature directory, so every loader (and ``policy:``
+    agents, which pass no directory) rebuilds it, as a PPO checkpoint does through its run's text_dir."""
+    feat = _facts_dir(tmp_path)
+    text = TextFeatures.load(feat, VOCAB)
+    bc, policy = _bc(tmp_path, net=_net_config(text, card_facts=True), text=text, text_dir=feat)
+    assert torch.load(bc, weights_only=True)["text_dir"] == str(feat.resolve())
+    loaded = load_actor(bc)
+    assert loaded.net_config.n_archetypes == 1 and _same(loaded.net.state_dict(), policy.state_dict())
+    assert cached_actor(bc) is cached_actor(bc) and _same(cached_actor(bc).net.state_dict(), policy.state_dict())
+    net_policy = agent.NetPolicy.from_checkpoint(bc)
+    assert _same(net_policy.net.state_dict(), policy.state_dict())
+    with pytest.raises(ValueError, match="no policy checkpoint"):
+        cached_actor(tmp_path / "missing.pt")
 
 
 def test_signatures_explain_why_two_checkpoints_do_not_fit(tmp_path):

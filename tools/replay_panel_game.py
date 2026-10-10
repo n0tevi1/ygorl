@@ -66,7 +66,7 @@ def replay(manifest, candidate, opponent, pairing, game, environment, device, ou
     host = _core.HostDuel(
         duel.cards.to_core(),
         duel.scripts,
-        [vocab.password(i) for i in range(vocab.FIRST_INDEX, len(vocab))],
+        vocab.passwords(),
         event_length=policies[0].event_length,
     )
     player = config.player

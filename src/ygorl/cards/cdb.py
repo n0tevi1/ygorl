@@ -279,6 +279,10 @@ class CardVocab:
             raise KeyError(f"index {index} is a special token")
         return self._passwords[index - self.FIRST_INDEX]
 
+    def passwords(self) -> list[int]:
+        """The passwords in index order, from :data:`FIRST_INDEX` (what checkpoints and the C++ hosts store)."""
+        return list(self._passwords)
+
     def __len__(self) -> int:
         """Embedding table size, including the special tokens."""
         return len(self._passwords) + self.FIRST_INDEX
