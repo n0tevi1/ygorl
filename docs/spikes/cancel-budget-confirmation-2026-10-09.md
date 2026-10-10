@@ -102,3 +102,10 @@ Require exact original responses and steps after restoring all diagnostic
 snapshots. Stop on health, identity or replay mismatch. Formal training and
 policy/mask/reward defaults remain unchanged. Review positive cases and actual
 opponent response possibilities before deciding on a tactical learning change.
+
+## Battle-exit follow-up completed
+
+All768 replays were independently verified. Finite continuation search found no
+same-turn wins in the40 tested long-game windows. The completion-report schema
+issue was repaired with a separate audited proof. See [results and phase-entry
+follow-up](longgame-battle-audit-2026-10-09.md).
