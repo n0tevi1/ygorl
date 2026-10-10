@@ -52,6 +52,9 @@ Correction must be evaluated by resulting outcomes, not exact imitation alone.
 
 ## Next registered controls
 
+The336-branch prefix study has completed. See
+[prefix results and the all-action follow-up](combat-fresh-prefix-2026-10-09.md).
+
 `combat-fresh-prefix-2026-10-09/`, identity
 `3e71bb01c4fc5019fae62f8296418cbf73261ba9f52eb4e8bef5e9497807a0af`:
 the three unresolved windows ×16 suffix streams ×budgets1/2/4/8/16/32/64
@@ -60,7 +63,7 @@ consumption and original opponent. Budget1 must exactly reproduce the preceding
 result and same-turn action/probability trace. Retain every harmful partial
 prefix. Four real preflight branches passed after correcting a preflight-only
 relative reference path; the original failed preflight and identity are kept.
-The production run and independent watchdog are active.
+The production run completed; all336 branches and48 one-choice controls passed.
 
 `combat-direct-effect-2026-10-09/`, identity
 `e3e6f2aa71b4744935ff719157667f87c46193015a13ca10306dfdd7b171b50f`:
@@ -95,7 +98,8 @@ restriction as a diagnostic limitation, not evidence that attacking is the
 appropriate label. Future correction-data generation must compare available
 effect initiations and measure outcomes under the learned continuation policy;
 whole-line teacher success alone remains insufficient. The336-branch prefix
-study continues independently, including the less efficient attack-first line.
+study completed independently, including the less efficient attack-first line;
+see the linked results for the successor study.
 
 Neither experiment trains or promotes a policy. Their purpose is to identify
 which interventions merit a later correction pilot while preserving adverse
