@@ -69,7 +69,11 @@ remains **higher than before fitting**. Calibration slightly worsens Runick MSE
 relative to the matched control even while lowering bias. No correction or
 generalization success is claimed from these selection data.
 
-## Independent confirmation launched
+## Independent confirmation
+
+The confirmation is now complete. See the
+[paired results and role-coverage follow-up](critic-resource-confirmation-2026-10-10.md).
+It finds a small overall gain, with facing-Runick overestimation still unresolved.
 
 `critic-resource-confirmation-2026-10-10` was prepared before fitting and launched
 only after model selection and its verification were sealed. It contains 512
@@ -104,4 +108,5 @@ absent in core CI.
 Validation before publication: three focused tests pass (initial forward
 identity and actor freeze; control input isolation and feature orientation;
 exact calibration gradient); lint/format checks pass; all 12 selected validation
-scores reproduce exactly. Confirmation results are pending.
+scores reproduce exactly. Confirmation verification and uncertainty are recorded
+in the follow-up report linked above.
