@@ -31,9 +31,10 @@ namespace ygorl {
 
 // Engine steps (OCG_DuelProcess calls) allowed between two decisions before a duel is stopped as an engine loop:
 // a core that keeps processing without ever asking a player would otherwise hang its worker thread (the decision
-// limit never fires). Real chains take a few thousand steps at most. Mirror of engine.tracker.MAX_ENGINE_STEPS;
-// settable for tests (_core.set_max_engine_steps).
-inline std::atomic<uint32_t> g_max_engine_steps{100000};
+// limit never fires). Real chains take a few thousand steps at most. Shared by every host: the Python tracker reads it
+// when a duel starts (_core.max_engine_steps()); settable for tests (_core.set_max_engine_steps).
+constexpr uint32_t kDefaultMaxEngineSteps = 100000;
+inline std::atomic<uint32_t> g_max_engine_steps{kDefaultMaxEngineSteps};
 
 // Script instructions (in thousands) one process call may run before its scripts start failing and the duel is stopped
 // as an error (patches/ygopro-core/0004): a search that would take hours, e.g. a Fusion material check over many

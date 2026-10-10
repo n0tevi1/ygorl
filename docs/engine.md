@@ -149,7 +149,10 @@ print(result.summary())
   与各项上限常量都由 `ygorl.engine.duel` 再导出，旧的导入路径照常可用。C++ 的对应物是 `csrc/host.h` 的 `Tracker`。
 - **引擎步数上限**：两次决策之间最多 `MAX_ENGINE_STEPS`（100,000）次 `process()`；超过时对局以 `error`（「engine loop」）结束。
   没有它，一个一直处理、却不再向玩家要决策的核心会让所在的工作线程永远不返回（决策数上限管不到），训练就此挂住（2026-09-24 在语料训练中遇到一次）。
-  C++ 的 `HostDuel` / `HostPool` 与 `DuelPool` 和 Python 的 `DuelTracker` 各自检查；`_core.set_max_engine_steps(n)` 只供测试调整。
+  C++ 的 `HostDuel` / `HostPool` 与 `DuelPool` 和 Python 的 `DuelTracker` 各自检查同一个进程级上限（Python 在对局开始时读
+  `_core.max_engine_steps()`，残局的 `puzzle.run_until_stop` 也是）；`_core.set_max_engine_steps(n)` 只供测试调整，两边一起变。
+  Python 主机推进核心的循环只有一个：`engine.duel.advance(core, tracker, response, observer)`，`Duel.run` / `replay` 与 `DuelSession`
+  都用它，引擎步数、Lua 错误、脚本预算、各项上限等停止条件都在 tracker 或这一处。
 - **脚本指令预算**：步数上限管不到**单次** `process()` 调用内部（核心的 `OCG_DuelProcess` 自己会循环到产出消息为止）。
   2026-09-25 的评估卡死就在这里：融合素材检查（`proc_fusion.lua` 的 `Fusion.CheckSelectMixRep`，「X + 2 只以上」类素材）
   在候选素材多、又凑不出合法组合时，会无记忆地穷举有序子集，一次调用跑几个小时。补丁

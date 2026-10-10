@@ -282,20 +282,11 @@ class Duel:
                     hooks.append(agent.on_decision)
             if observer is not None:
                 observer.on_start(core)
+            response = None
             while True:
-                try:
-                    status = core.process()
-                except _core.ScriptBudgetExceeded as e:  # a script search that would not end (_core budget)
-                    tracker.stop(O.ERROR, str(e))
-                    break
-                buf = core.get_message()
-                if observer is not None:
-                    observer.on_buffer(core, buf)
-                tracker.on_buffer(buf, status, core.pop_logs())
+                advance(core, tracker, response, observer)
                 if tracker.done:
                     break
-                if not tracker.awaiting:
-                    continue
                 if responses is not None:
                     if len(tracker.result.responses) >= len(responses):
                         tracker.stop(O.LOG_EXHAUSTED)
@@ -317,7 +308,6 @@ class Duel:
                             hook(point, index)
                     if tracker.done:
                         break
-                core.set_response(response)
         finally:
             core.close()
         return tracker.finish()
@@ -326,6 +316,27 @@ class Duel:
         """Host-side bookkeeping for this duel (used by :meth:`run` and by the vectorized env)."""
         return DuelTracker(self.config, self.first, self.cards, record_messages=self.record_messages,
                            record_steps=self.record_steps, reference_log=reference_log)  # fmt: skip
+
+
+def advance(core: _core.Duel, tracker: DuelTracker, response: bytes | None = None, observer=None) -> None:
+    """Answer the core with ``response`` (if any), then run it until ``tracker`` awaits a response or the duel is over:
+    the one core loop of the Python host (:meth:`Duel.run` / :meth:`Duel.replay` and :class:`DuelSession`). Every
+    stop condition is the tracker's (engine loop, Lua error, limits) except the script budget, raised by the core
+    call itself. ``observer.on_buffer(core, buf)`` sees each buffer before the tracker."""
+    if response is not None:
+        core.set_response(response)
+    while True:
+        try:
+            status = core.process()
+        except _core.ScriptBudgetExceeded as e:  # a script search that would not end (_core budget)
+            tracker.stop(O.ERROR, str(e))
+            return
+        buf = core.get_message()
+        if observer is not None:
+            observer.on_buffer(core, buf)
+        tracker.on_buffer(buf, status, core.pop_logs())
+        if tracker.done or tracker.awaiting:
+            return
 
 
 @dataclass(frozen=True)
@@ -372,24 +383,13 @@ class DuelSession:
 
     def _advance(self, response: bytes | None) -> None:
         """Run the core until an agent decision is pending or the duel is over."""
-        tracker, core = self.tracker, self.core
         while True:
-            if response is not None:
-                core.set_response(response)
-                response = None
-            try:
-                status = core.process()
-            except _core.ScriptBudgetExceeded as e:
-                tracker.stop(O.ERROR, str(e))
+            advance(self.core, self.tracker, response)
+            if self.tracker.done:
                 return
-            tracker.on_buffer(core.get_message(), status, core.pop_logs())
-            if tracker.done:
-                return
-            if not tracker.awaiting:
-                continue
-            response = tracker.auto_response()
+            response = self.tracker.auto_response()
             if response is None:
-                tracker.point()  # may stop the duel (decision limit)
+                self.tracker.point()  # may stop the duel (decision limit)
                 return
 
     def result(self) -> DuelResult:
@@ -445,6 +445,7 @@ __all__ = [
     "DuelSession",
     "DuelTracker",
     "ScriptedAgent",
+    "advance",
     "deck_of_seat",
     "expand_seed",
     "run_duel",
