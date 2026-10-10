@@ -11,6 +11,12 @@ any results below. No strength gain, general forgetting mechanism, or broad
 Runick calibration defect is established. Historical numbers are retained for
 traceability; conditional root-action experiments remain conditional evidence.
 
+The corrected 2,304-game panel has now completed: overall wins are
+501/768, 512/768 and 507/768 (start/fixed/expanded), with no primary paired
+interval excluding zero. Runick V MSE is now0.888/1.019/0.845, so the prior
+all-arm overestimation conclusion does not generalize. Full corrected results
+and the independent critic adaptation corpus are in the linked opening audit.
+
 From the same seed0 warm-u512 checkpoint, both arms trained 16 PPO updates
 (262,144 rows each). Fixed retained the 20-deck pool; expanded added legal
 Labrynth, Kashtira, Tenpai Dragon and Runick lists. Full state restoration was

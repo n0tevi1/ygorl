@@ -17,6 +17,49 @@ def setup_study(tmp_path):
     return study, config, service
 
 
+def test_first_heartbeat_grace_is_bound_to_process_start_not_watcher_start(tmp_path):
+    study, config, service = setup_study(tmp_path)
+    (study / "pipeline-status.json").unlink()
+    config["invocation"] = "one"
+    service["ExecMainStartTimestampMonotonic"] = "1000000000"
+    assert not inspect_study(config, service, 9000, monotonic_now=1004)["alerts"]
+    # Recreating a watcher cannot extend a grace window anchored to this process.
+    assert (
+        "pipeline heartbeat stale (>180 seconds)" in inspect_study(config, service, 9000, monotonic_now=1181)["alerts"]
+    )
+    atomic(study / "STOP.json", {"reason": "startup failure"})
+    assert any("startup failure" in a for a in inspect_study(config, service, 9000, monotonic_now=1004)["alerts"])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"InvocationID": "two"},
+        {"ActiveState": "failed"},
+        {"ExecMainStartTimestampMonotonic": "0"},
+        {"ExecMainStartTimestampMonotonic": "bad"},
+        {"ExecMainStartTimestampMonotonic": "2000000000"},
+    ],
+)
+def test_first_heartbeat_grace_requires_valid_bound_live_process(tmp_path, change):
+    study, config, service = setup_study(tmp_path)
+    (study / "pipeline-status.json").unlink()
+    config["invocation"] = "one"
+    service.update({"ExecMainStartTimestampMonotonic": "1000000000", **change})
+    assert (
+        "pipeline heartbeat stale (>180 seconds)" in inspect_study(config, service, 9000, monotonic_now=1004)["alerts"]
+    )
+
+
+def test_startup_grace_never_exempts_an_existing_stale_heartbeat(tmp_path):
+    study, config, service = setup_study(tmp_path)
+    config["invocation"] = "one"
+    service["ExecMainStartTimestampMonotonic"] = "1000000000"
+    assert (
+        "pipeline heartbeat stale (>180 seconds)" in inspect_study(config, service, 9000, monotonic_now=1004)["alerts"]
+    )
+
+
 def test_failed_uncommitted_rollout_and_stop_do_not_count_as_complete(tmp_path):
     study, config, service = setup_study(tmp_path)
     (study / "errors.jsonl").write_text(json.dumps({"error": "Lua failure"}) + "\n")
