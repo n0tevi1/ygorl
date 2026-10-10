@@ -90,6 +90,8 @@ checks do not establish robustness over unknown opponent cards or responses.
 
 ## Fresh first-action handoff
 
+Completed: see [paired handoff results and adverse cases](combat-fresh-handoff-2026-10-09.md).
+
 Root: `out/research/combat-fresh-handoff-2026-10-09/`.
 Identity: `2b124d1a589955340d5bb3547018b186c722ee4a0732b96d436d49edea7b82e0`.
 Six windows × 16 paired suffix streams × original/force-first arms = 192 trials.
