@@ -121,8 +121,22 @@ rows. This avoids advancing chooser state/RNG with a rejected guess. The
 matched72-trial mask-constrained follow-up is registered at
 `out/research/combat-mask-continuation-2026-10-09/`, identity
 `56699d7f3b2001e539dbfc623d88764b10d65bb9dc272aa1ed1cefa252650b5b`.
-It requires zero candidate mask violations and keeps every original comparison;
-no previous result is overwritten.
+All72 trials completed with zero candidate mask violations. Each mode finds
+at least one winning line in all5 windows, against both passive and original
+opponents. Winning lines per12 trials are9/8/8 (legacy/context/public-current)
+for each opponent mode. This supersedes the three-window public-current count
+above **for the new constrained chooser**, without rewriting the previous run.
+Neither enforcing the mask nor active-opponent success proves general hidden-state
+robustness; these remain selected earlier-win examples.
+
+Next, recheck all651 windows on the full768-game panel with the constrained
+chooser, root `out/research/combat-mask-fullpanel-2026-10-09/`, identity
+`d1127941cda49e66aa617b92eed9acd1ef4776a2e92368f8a707f4fa822e9f06`.
+This snapshot driver uses `ObservationEncoder.action_mask`; the preceding72
+branches use the native policy host's mask. Their support must not be assumed
+identical without checks. Exact original replay restoration and source identity
+remain mandatory. Use the selected native-mask results as a comparison, and
+review additional positives before teaching or changing policy behavior.
 
 ## Repeated selection remains open
 
