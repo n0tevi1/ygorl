@@ -67,7 +67,11 @@ overestimation. Role-conditional calibration only partially limits the latter.
 Coverage is therefore not a sufficient correction for this bias. These are
 model-selection data, not confirmation evidence; no arm is promoted.
 
-## Independent confirmation running
+## Independent confirmation
+
+The confirmation is complete; see the
+[paired results and gradient-conflict audit](critic-role-conflict-2026-10-10.md).
+Facing-Runick regression reproduces, so these critics are not promoted.
 
 All input files and the registered plan are sealed. The previous 512-game
 confirmation is excluded from fitting and selection. After selection and
