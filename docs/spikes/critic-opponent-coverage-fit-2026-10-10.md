@@ -1,4 +1,9 @@
-# Critic opponent coverage: fit verified, fresh confirmation running
+# Critic opponent coverage: verified fit and confirmation
+
+Update: [fresh confirmation](critic-opponent-coverage-confirmation-2026-10-10.md)
+completed and independently verified all 512 games and four prediction groups.
+Pooled improvements replicate, but old-opponent and Runick/low-deck retention
+remain unresolved. The sections below preserve the fit-stage findings.
 
 The [opponent-distribution audit](critic-opponent-distribution-2026-10-10.md)
 found that identical early critic inputs can precede different return
@@ -62,8 +67,8 @@ these numbers are not an independent generalization result.
 
 ## Sealed fresh confirmation
 
-`critic-opponent-coverage-confirmation-2026-10-10` has started with an independent
-watchdog. It evaluates the frozen base and all three sealed residuals on the
+`critic-opponent-coverage-confirmation-2026-10-10` ran with an independent
+watchdog. It evaluated the frozen base and all three sealed residuals on the
 same 512 games / 128 new openings, paired across opponents and seats. None of
 these openings overlaps the 1,600 prior openings. No confirmation outcomes
 enter fitting or selection.
