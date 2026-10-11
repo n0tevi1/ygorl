@@ -151,6 +151,8 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 - Python 参考：`ygorl.env.encoding.ObservationEncoder`（`tests/test_encoding.py`）。
 - C++：`csrc/host.{h,cpp}`（决策解码、动作状态机、主机侧 tracker）与 `csrc/obs_encoder.cpp`（编码），通过 `ygorl._core.HostDuel` / `ygorl._core.DecisionState` 暴露。
+  消息缓冲区的分帧（`for_each_record`）与带边界检查的记录读取（`MessageReader`，负载太短抛 `Truncated`，对应 Python 的 `UndecodableMessage`）
+  只在 `csrc/message_reader.h` 写一次，决策解码、tracker、事件编码与 `DuelPool` 的胜负检查共用。
 - 校验：`tests/test_cpp_host.py` 对 19 种决策消息做随机报文 + 随机选择路径的差分测试（动作列表与应答字节必须与 `ygorl.engine.actions` 一致），并在 5 局真实对局中逐步比对动作、四个观测数组与终局；`uv run python tools/check_cpp_encoder.py --points 10000` 做验收。2026-09-22 的一次运行：8 局、10,530 个决策点、0 处不一致，覆盖 16 种决策类型（其余类型由差分测试覆盖）；2026-09-23 加入等价动作去重与撤销类空操作后重跑，同样 10,530 个决策点、0 处不一致。
 
 ## 训练态真值（privileged，T2.5）
