@@ -81,11 +81,13 @@ that LP alone explains the Runick problem.
 
 ## Next: equal-budget coverage and critic-only opponent conditioning
 
-`critic-opponent-coverage-data-2026-10-10` is collecting **1,024** games: 512
+`critic-opponent-coverage-data-2026-10-10` completed **1,024** healthy games: 512
 training and 512 validation, each balanced across old/mirror opponents, target
 lists, roles and seats. Its 256 openings are disjoint from 1,344 prior openings
 and across splits. Exact replays and critic feature caches are retained; no
-fitting occurs during collection. An independent watchdog monitors progress.
+fitting occurred during collection. All replay/cache hashes were independently
+verified. Training game 507 has no eligible idle sample: old-only fitting has
+255 eligible games versus 256 in the balanced arms.
 
 The subsequent registered fit compares three arms: old-only resource residual,
 balanced resource residual, and balanced resource residual plus a known-opponent
@@ -96,8 +98,9 @@ recorded but are excluded from primary arms. Zero-idle games stay in planned
 totals; any effective imbalance must be reported.
 
 All arms use training-only normalization, the existing ridge grid and the same
-512-game validation Q/V MSE for selection. New confirmation follows sealed
-selection. The opponent indicator adds one feature and is a diagnostic control,
+512-game validation Q/V MSE for selection. The [verified fit and fresh
+confirmation](critic-opponent-coverage-fit-2026-10-10.md) now follow this corpus.
+The opponent indicator adds one feature and is a diagnostic control,
 not unseen-opponent generalization or proof of an architecture-independent causal
 effect. Opponent/role/target retention, particularly Tearlaments, remains required.
 No actor, production reward or PPO checkpoint changes. Learner-policy-shift
