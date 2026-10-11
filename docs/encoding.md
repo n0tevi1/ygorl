@@ -132,8 +132,8 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 六条规则整体在一个模块里：Python `ygorl.engine.undo.UndoRules`，C++ `UndoRules`（`csrc/host.h`），两边接口相同
 （`on_game_event` / `on_decision` / `undo` / `on_action`），tracker 只负责喂消息。规则 3、5、6 的上限（`UndoLimits`：
-`menu_activations` 8、`selection_steps` 32、`selection_cancels` 32）只在 C++ 写一次，两个主机在对局开始时都从
-`_core.undo_limits()` 读；`ygorl.engine.undo.override_limits(...)`（`_core.set_undo_limits`，上限至少为 1）同时改两边。
+`menu_activations` 8、`selection_steps` 32、`selection_cancels` 32）只在 C++ 写一次，两个主机在构造 tracker 时都从
+`_core.undo_limits()` 读（`HostPool` 在工作线程开局时读，子进程各读各的，所以 `override_limits` 只用于本进程的 `Duel` / `DuelSession` / `HostDuel`）；`ygorl.engine.undo.override_limits(...)`（`_core.set_undo_limits`，上限至少为 1）同时改两边。
 `tests/test_undo.py` 把上限调低后让随机对局真的走到规则 1–5，逐个决策比对两个主机的 `undo`（规则 6 另见
 `test_target_cancel_guard.py` / `test_material_cancel_guard.py`）。
 

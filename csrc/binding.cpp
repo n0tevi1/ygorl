@@ -432,7 +432,8 @@ PYBIND11_MODULE(_core, m) {
         .def("done", &host::HostDuel::done)
         .def("actions", [](host::HostDuel& h) { return action_list(h.actions()); })
         .def("undo", [](host::HostDuel& h) { return h.tracker().undo(); },
-             "Indices of actions() masked by the no-op undo rules (the tracker's DecisionPoint.undo).")
+             "Indices of actions() masked by the no-op undo rules (the tracker's DecisionPoint.undo); call actions() first, "
+             "which applies the decision limit.")
         .def("act", [](host::HostDuel& h, size_t index) {
             py::gil_scoped_release release;
             h.act(index);

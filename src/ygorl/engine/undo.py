@@ -54,8 +54,10 @@ DEFAULT_LIMITS = UndoLimits(**_core.DEFAULT_UNDO_LIMITS)
 
 @contextmanager
 def override_limits(**limits: int) -> Iterator[UndoLimits]:
-    """Change some limits (``menu_activations``, ``selection_steps``, ``selection_cancels``) for duels started inside
-    the block, on both hosts; restores the old ones after. Process-wide: not for concurrent duels with other limits."""
+    """Change some limits (``menu_activations``, ``selection_steps``, ``selection_cancels``) for duels whose tracker is
+    built inside the block, on both hosts; restores the old ones after. Process-wide and read at construction: a
+    ``HostPool`` / ``EncodedVecEnv`` reset starts its duel later on a worker thread, and subprocesses (a parallel
+    arena) keep their own limits, so use it with ``Duel`` / ``DuelSession`` / ``HostDuel`` in this process."""
     old = _core.set_undo_limits(**limits)
     try:
         yield UndoLimits.current()
@@ -141,7 +143,7 @@ class UndoRules:
                 key = (decision.player, card_key(action), action.description)
                 self._activations[key] = self._activations.get(key, 0) + 1
         self._toggle = None
-        if kind == C.MSG_SELECT_UNSELECT_CARD and action.kind in _INVERSE:
+        if kind == C.MSG_SELECT_UNSELECT_CARD and action.kind in _INVERSE and action.card is not None:
             self._toggle = (decision.player, action.kind, card_key(action))
         if kind == C.MSG_SELECT_UNSELECT_CARD:
             self._selection_steps += 1
