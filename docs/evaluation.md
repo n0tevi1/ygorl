@@ -305,6 +305,9 @@ PYTHONPATH=src python tools/compare_checkpoints.py \
   critic 起手值（`tools/deckevo_critic_open.py`）、oracle 搜索在搜索点暂停真实对局（`tools/oracle_search.py`）用它。
   `play_policies`、`EncodedVecEnv.play`（测试 / 基准用的确定性选择）与 `run_games`（`VecDuelEnv` 上的 Python agent）都走它，
   调用方只写「怎么答一批决策」和「一局结束记什么」；驱动本身用假环境测试（`tests/test_driver.py`）。
+  给 `stall_timeout`（秒；`play_policies(..., stall_timeout=)` 同）时，一轮超过这么久没有任何事件就抛 `EnvStalled`，
+  列出沉默最久的槽位（卡在一局里的引擎否则会让调用方永远等下去）；看门狗 `StallWatch` 与训练的 rollout 收集共用，
+  `RolloutStalled` 是它的子类。默认不开（与以前一样一直等）。
   计分按 `GameSpec.deck_of_seat` / `seat_of_deck` 把引擎座位换成牌组。前向用 `nets.batch.policy_logits`（有 `policy_logits`
   就只算 actor），与训练的快照对手是同一个函数。
 

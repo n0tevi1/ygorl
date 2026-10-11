@@ -60,7 +60,8 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
                   *, device: torch.device | str = "cpu", min_batch: int | None = None, greedy: bool = False,
                   temperature: float = 1.0, pairs_per_spec: int = 2,
                   sample_seeds: Sequence[tuple[int, int]] | None = None,
-                  sampling: tuple[tuple[bool, float], tuple[bool, float]] | None = None) -> tuple[list[GameRecord], dict]:  # fmt: skip
+                  sampling: tuple[tuple[bool, float], tuple[bool, float]] | None = None,
+                  stall_timeout: float | None = None) -> tuple[list[GameRecord], dict]:  # fmt: skip
     """Play ``specs`` with ``policy_a`` on deck a and ``policy_b`` (default: the same module) on deck b.
 
     Returns one record per spec (spec order; ``pair`` = spec index // ``pairs_per_spec``) and timing stats. The
@@ -69,7 +70,8 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
     ``sample_seeds[i]`` (optional) seeds the decisions of deck a's and deck b's player in spec ``i`` instead of
     ``(game seed, first player, seat)``, e.g. to key them by something other than the seat (the agent matrix keys
     them by deck slot). ``sampling`` (optional) gives deck a's and deck b's player their own ``(greedy,
-    temperature)`` instead of the shared ``greedy`` / ``temperature``.
+    temperature)`` instead of the shared ``greedy`` / ``temperature``. ``stall_timeout`` (seconds, optional): raise
+    :class:`ygorl.env.driver.EnvStalled` instead of waiting forever on an engine stuck inside a duel.
     """
     policy_b = policy_a if policy_b is None else policy_b
     side_sampling = sampling if sampling is not None else ((greedy, temperature), (greedy, temperature))
@@ -139,7 +141,7 @@ def play_policies(env: EncodedVecEnv, specs: Sequence[GameSpec], policy_a: nn.Mo
         return actions
 
     decisions = drive(env, specs, decide, on_result, min_batch=min_batch, start=lambda i, spec: [0, 0],
-                      on_error=on_error)  # fmt: skip
+                      on_error=on_error, stall_timeout=stall_timeout)  # fmt: skip
     seconds = time.perf_counter() - t0
     stats = {"games": len(specs), "decisions": decisions, "seconds": seconds, "forwards": forwards,
              "forward_s": forward_s, "games_per_s": len(specs) / seconds if seconds else 0.0,

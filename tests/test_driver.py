@@ -166,3 +166,37 @@ def test_abandoned_games_end_without_a_result_and_free_their_slot():
     n = drive(env, [2, 1, 3, 2, 4], decide, lambda game, res: results.setdefault(game.index, res["actions"]))
     assert sorted(results) == [0, 3, 4] and sorted(env.abandoned) == [1, 3] and not env.games
     assert n == 2 + 2 + 4 and [s for _, s in env.resets] == [2, 1, 3, 2, 4]
+
+
+class StuckEnv(FakeEnv):
+    """Slot 1's engine never answers: its events are swallowed; recv takes a timeout like EncodedVecEnv's."""
+
+    def _emit(self, env_id: int) -> None:
+        if env_id != 1:
+            super()._emit(env_id)
+
+    def recv(self, min_events: int, timeout: float | None = None) -> list[Event]:
+        assert timeout is not None, "a watched driver always passes a timeout"
+        out, self.ready = self.ready, []  # fewer than min_events once only the stuck slot is left: a timeout
+        self.running -= sum(ev.result is not None for ev in out)
+        self.awaiting |= {ev.env_id for ev in out if ev.result is None}
+        return out
+
+
+def test_a_stuck_engine_raises_instead_of_hanging():
+    from ygorl.env.driver import EnvStalled
+
+    env = StuckEnv(2)
+    done = []
+    with pytest.raises(EnvStalled, match="no environment event") as err:
+        drive(env, [3, 4, 2], lambda ready: [0] * len(ready), lambda g, r: done.append(g.index), stall_timeout=0.05)
+    assert "env 1" in str(err.value) and "spec 1" in str(err.value)
+    assert sorted(done) == [0, 2]  # the other slot played its games before the stall was reported
+
+
+def test_the_rollout_stall_is_the_drivers():
+    pytest.importorskip("torch")
+    from ygorl.env.driver import EnvStalled
+    from ygorl.train.rollout import RolloutStalled
+
+    assert issubclass(RolloutStalled, EnvStalled)
