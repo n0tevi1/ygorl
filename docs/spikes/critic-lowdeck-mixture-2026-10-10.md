@@ -1,4 +1,9 @@
-# Low-deck coverage improves validation; fresh confirmation running
+# Low-deck coverage improves validation; confirmation reveals tradeoffs
+
+Update: [independent confirmation](critic-lowdeck-mixture-confirmation-2026-10-10.md)
+verified all 768 games and four prediction groups. Low-deck gains replicate,
+but own-Runick and familiar-retention regressions block adoption. A frozen-context
+diagnostic and its fresh confirmation are the next steps.
 
 The [opponent-coverage confirmation](critic-opponent-coverage-confirmation-2026-10-10.md)
 exposed persistent low-deck overestimation despite pooled gains. The follow-up
@@ -93,7 +98,7 @@ passing the original gates is insufficient for adoption.
 
 ## Next: separate broad and Runick confirmation panels
 
-`critic-lowdeck-mixture-confirmation-2026-10-10` is running with an independent
+`critic-lowdeck-mixture-confirmation-2026-10-10` ran with an independent
 watchdog: 512 broad games plus 256 Runick games, on 192 openings disjoint from
 all 1,856 prior openings. Four estimators score identical outcomes: frozen base,
 original broad-conditioned control, mixed25 and mixed50. Each panel is reported
