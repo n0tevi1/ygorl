@@ -1014,9 +1014,26 @@ void Tracker::on_logs(const std::vector<LogEntry>& logs) {
     if (!script_errors_.empty()) stop("error", "Lua script error: " + script_errors_.front());
 }
 
+DuelOutcome Tracker::outcome() const {
+    DuelOutcome o;
+    o.winner = winner();
+    o.win_reason = win_reason_;
+    o.reason = reason_;
+    o.error = error_;
+    o.turns = turn_;
+    o.decisions = decisions_;
+    o.retries = retries_;
+    o.unknown_messages = unknown_;
+    o.lp = lp_;
+    o.script_errors = script_errors_;
+    o.responses = responses_;
+    return o;
+}
+
 int Tracker::winner() const {
     if (reason_ == "turn_limit" || reason_ == "decision_limit" || reason_ == "error") {
-        // the turn limit is a rule (the higher LP wins); the decision limit only stops a loop: a draw
+        // the turn limit is a rule (the higher LP wins); the decision limit only stops a loop and an error is no
+        // outcome: draws (mirror of engine.outcome.winner)
         if (reason_ != "turn_limit" || lp_[0] == lp_[1]) return -1;
         return lp_[0] > lp_[1] ? 0 : 1;
     }

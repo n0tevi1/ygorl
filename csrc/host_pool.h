@@ -18,14 +18,7 @@ struct PoolEvent {
     Observation obs;  // valid when !done
     bool has_privileged = false;
     Privileged privileged;  // training mode only (HostPool privileged = true), valid when !done
-    // final result (valid when done)
-    int winner = -1, win_reason = -1;
-    std::string reason, error;
-    uint32_t turns = 0, decisions = 0;
-    uint32_t retries = 0, unknown_messages = 0;
-    std::vector<std::string> script_errors;
-    std::array<int64_t, 2> lp{};
-    std::vector<std::string> responses;
+    DuelOutcome outcome;  // valid when done
 };
 
 struct PoolJob {

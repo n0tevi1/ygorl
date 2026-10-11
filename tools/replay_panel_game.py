@@ -17,7 +17,7 @@ import torch
 
 from ygorl import _core
 from ygorl.data.environment import load_environment
-from ygorl.engine.duel import Duel, DuelConfig, DuelSession
+from ygorl.engine.duel import Duel, DuelConfig, DuelSession, deck_of_seat
 from ygorl.eval.agent_matrix import pairing_slots
 from ygorl.eval.batched import _uniform
 from ygorl.nets.batch import collate, policy_logits
@@ -90,7 +90,7 @@ def replay(manifest, candidate, opponent, pairing, game, environment, device, ou
                     raise RuntimeError(f"host desync at {point.index}")
                 obs = host.observe()
                 legal = np.flatnonzero(obs["action_mask"])
-                side = (first + point.player) % 2
+                side = deck_of_seat(first, point.player)
                 u = None
                 if len(legal) == 1:
                     action = int(legal[0])

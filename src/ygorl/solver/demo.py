@@ -29,6 +29,7 @@ from ygorl.data.environment import Environment
 from ygorl.engine import messages as M
 from ygorl.engine.branch import BranchError, actions_for_response
 from ygorl.engine.duel import DecisionPoint, Duel, DuelSession
+from ygorl.engine.outcome import TRUNCATED
 from ygorl.engine.replay import Replay, YrpFile
 from ygorl.solver.targets import TargetCard, board_summary, board_summary_missing, parse_targets
 
@@ -47,7 +48,7 @@ def _check_replay_health(tracker, *, require_turn2: bool = False) -> None:
     """A matching board cannot validate an errored or truncated execution."""
     result = tracker.result
     if (
-        result.reason in ("error", "decision_limit", "turn_limit")
+        result.reason in TRUNCATED
         or result.error
         or result.retries
         or result.script_errors

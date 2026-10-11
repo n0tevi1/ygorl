@@ -23,7 +23,7 @@ class TreeSession:
 
     @property
     def tracker(self):
-        return SimpleNamespace(result=self.result(), _engine_winner=0 if self.state == "win" else 1, turn=2)
+        return SimpleNamespace(result=self.result(), engine_winner=0 if self.state == "win" else 1, turn=2)
 
     def result(self):
         return DuelResult(

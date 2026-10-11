@@ -33,9 +33,10 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
+from ygorl.engine.outcome import TRUNCATED
 from ygorl.nets.batch import policy_logits
 
-TRUNCATION_REASONS = frozenset({"turn_limit", "decision_limit", "error"})
+TRUNCATION_REASONS = TRUNCATED  # games the host stopped: bootstrapped, not terminal (ygorl.engine.outcome)
 
 
 class RolloutStalled(RuntimeError):

@@ -18,6 +18,7 @@ import numpy as np
 from ygorl import _core
 from ygorl.cards.cdb import CardVocab
 from ygorl.engine.duel import Duel, default_cards, default_scripts, expand_seed
+from ygorl.engine.outcome import TRUNCATED
 from ygorl.env.driver import Game, drive
 from ygorl.env.events import DEFAULT_EVENT_LENGTH
 from ygorl.env.pool import GameSpec
@@ -109,7 +110,7 @@ class EncodedVecEnv:
         for e, done, player, obs, result, priv in self._pool.recv(min_events, timeout_ms):
             if done and self._action_traces is not None:
                 actions = self._action_traces.pop(e, [])
-                if result["reason"] in ("error", "turn_limit", "decision_limit") or any(
+                if result["reason"] in TRUNCATED or any(
                     result.get(k)
                     for k in ("error", "retries", "unknown_messages", "script_errors", "undecodable_messages")
                 ):
