@@ -77,3 +77,9 @@ The phase-boundary completion event `ae383d118f2b75bcd75258c5c967fa233c198836517
 The purpose is to check whether adverse Runick outcomes remain after controlling RNG alignment. Reseeding does not equalize different states, and a remaining gap would not by itself isolate battle restrictions from resource changes or subsequent policy behavior. Do not pool previous trials, tune on the outcomes, stop early or infer population-level strength from this post-hoc root. No fitting, action masking or promotion.
 
 Identity `537c6f0efc30a55931ea71ee87fc205a1a5f70d93b3513e082721e94b4e6daa0`; service `ygorl-critic-runick-rng-boundary-20261011.service`, invocation `52df931f7b0e4a458e8f739536fc1787`. Two workers, two-hour cap, original canary, per-game cold replay and independent watchdog. Sealed `analyze.py`, with the supplementary `HANDOFF.md`, defines completion handling. Reporting base is main `f72a465` (PR #329); frozen runtime and previous STOP evidence are unchanged.
+
+## Follow-up completed: Runick RNG control and optimizer interference
+
+The Runick boundary experiment is complete: activation wins18/64 versus attack32/64 with sequential coupling and30/64 with boundary coupling. Unlike root45, boundary actor inputs differ in every pair. The adverse conditional choice survives RNG alignment, but the battle restriction is not isolated as the sole cause.
+
+[The interference report](critic-ranking-interference-2026-10-11.md) records exact optimizer replay, controlled loss removal, parameter-path interventions and a new prospective collection. Other training-root updates counteract the existing Runick example and retention anchor; context-only fitting repairs this local ranking but remains an unpromoted hypothesis awaiting independent roots. It also documents a corrected secondary legal-argmax reporting bug in the loss-intervention script.
