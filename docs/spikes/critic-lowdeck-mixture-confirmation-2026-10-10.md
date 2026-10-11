@@ -1,5 +1,10 @@
 # Low-deck gains confirm, but resource-only correction harms retention
 
+Update: [frozen-context confirmation](critic-context-confirmation-2026-10-10.md)
+completed and independently verified all 768 games. Low-deck gains persist,
+but familiar/Tearlaments regressions against the same-data resource control
+remain. Context50 is not adopted into PPO.
+
 The [fixed-mixture fit](critic-lowdeck-mixture-2026-10-10.md) completed independent
 confirmation on 768 healthy games: 512 broad and 256 Runick, with 192 openings
 disjoint from 1,856 prior openings. All games have eligible idle samples.
@@ -99,7 +104,7 @@ retention success. This pilot adds capacity and reuses historical validation;
 only fresh confirmation can test its selected result. No prior confirmation
 outcomes enter fitting or ridge selection.
 
-`critic-context-mixture-confirmation-2026-10-10` is running with independent
+`critic-context-mixture-confirmation-2026-10-10` ran with independent
 monitoring: 512 broad +256 Runick games, 192 new openings disjoint from all
 2,048 prior openings. It scores frozen base, original control, same-data
 resource Mixed50 and Context50. Primary contrasts are Context50 versus both
