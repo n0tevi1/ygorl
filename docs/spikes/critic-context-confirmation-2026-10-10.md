@@ -101,7 +101,7 @@ advanced to full-game confirmation. At the lowest validation objective,
 own-Runick MSE is 0.73382 /0.72359 versus control 0.67532. The simple feature
 addition is insufficient; the negative result is retained.
 
-The next running study, `critic-head-refresh-pilot-2026-10-10`, moves from a
+The completed study, `critic-head-refresh-pilot-2026-10-10`, moves from a
 linear output correction to a bounded nonlinear critic-only update. Both arms
 start at the original conditioned control, keep its 14-feature correction
 fixed, and train the private critic encoder, critic trunk/heads and resource
@@ -114,8 +114,7 @@ the initial critic's predictions, not labels from confirmation. Both use
 32 full-batch Adam updates (lr=1e-4, norm clip=1), with model/optimizer
 checkpoints at 0/4/8/16/32. Unchanged step zero remains eligible; selection
 uses the existing validation/gates, including own-Runick, and can choose no
-adaptation. An independent watchdog is attached. No production PPO/actor
-change or critic improvement is claimed before verification and fresh testing.
+adaptation. No production PPO/actor change is made.
 The larger trainable critic capacity and repeated historical validation use
 make new confirmation essential before adopting any selected checkpoint.
 
@@ -123,3 +122,38 @@ Evidence is retained in `critic-context-mixture-confirmation-2026-10-10`
 (`analysis.json`, `completion-verification.json`, prediction/cache artifacts)
 and `critic-deckrace-audit-2026-10-10`. Actor/base parameters and all original
 sealed study reports remain unchanged.
+
+
+## Nonlinear critic pilot verification and fresh confirmation
+
+Independent verification reloads all ten checkpoints and exactly recomputes
+validation predictions/metrics, retention gates, and the eligible minimum-score
+selection. Step-zero predictions equal the original control, and actor hashes
+and saved actor tensors remain unchanged throughout the checkpoint series.
+This verification does not rerun the optimizer. Both arms select update 32:
+
+| Validation estimator | Broad Q/V MSE | Runick Q/V MSE | Own Runick Q/V MSE | Familiar Q/V MSE | Low-deck V MSE | Low-deck V bias |
+|---|---:|---:|---:|---:|---:|---:|
+| Original control | 0.58013 | 0.87981 | 0.67532 | 0.46763 | 1.56449 | +0.53912 |
+| Terminal only, u32 | 0.56352 | 0.74775 | 0.65817 | 0.47370 | 1.01969 | +0.26834 |
+| Anchored, u32 | 0.56312 | 0.75854 | 0.65799 | 0.46991 | 1.07220 | +0.28854 |
+
+All five registered validation gates pass at these selected checkpoints.
+Earlier checkpoints do not improve monotonically: terminal-only updates
+4/8/16 and anchored update 8 fail at least one gate. Anchoring has slightly
+better familiar error at u32 but slightly worse Runick/low-deck error. This
+single training/validation split does not establish a superior objective.
+
+`critic-head-refresh-confirmation-2026-10-10` is now running under a separate
+study service and watchdog. Its 512 broad plus 256 Runick games use 192 new
+openings, with zero overlap against 2,240 prior openings. It compares the frozen
+base, original conditioned control and both selected nonlinear critics on the
+same fixed-actor trajectories. All checkpoints and input dependencies are
+sealed before collection. The first 72 canary games precede the rest of the
+panel. Zero-idle outcomes, engine/replay health, familiar/old-opponent retention,
+each Runick role and paired-opening uncertainty remain mandatory.
+
+The head-pilot completion event was acknowledged after verification. The
+confirmation results are pending; no gameplay improvement, shorter-game effect,
+or PPO promotion is established. Full artifacts and the independent verifier
+are in `critic-head-refresh-pilot-2026-10-10`.
