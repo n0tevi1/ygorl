@@ -1,5 +1,7 @@
 # Wider battle-root coverage does not establish a critic improvement
 
+Follow-up: [independent-label replication](critic-coverage-label-replication-2026-10-11.md) finds that training-state MSE gains persist, while validation ranking remains sensitive to continuation sampling.
+
 The fixed 32-to-128-root training expansion fails to establish an improvement on its primary validation comparison. Both fitted heads have worse validation point estimates than the unchanged initialization. No model is promoted. These are privileged-critic action-ranking diagnostics with frozen continuation policies, not new public-actor gameplay results.
 
 ## Verified collection and fitting
