@@ -215,6 +215,10 @@ PYBIND11_MODULE(_core, m) {
         [](uint32_t n) { return g_max_engine_steps.exchange(n); },
         "Engine steps allowed between two decisions before a duel stops as an engine loop; returns the old value.");
     m.def(
+        "max_engine_steps", []() { return g_max_engine_steps.load(); },
+        "Engine steps allowed between two decisions (every host reads it when a duel starts).");
+    m.attr("DEFAULT_MAX_ENGINE_STEPS") = kDefaultMaxEngineSteps;
+    m.def(
         "set_max_script_steps",
         [](uint32_t n) { return g_max_script_steps.exchange(n); },
         "Script instructions (thousands) one engine call (process) may run before the duel stops as an error; returns the old "

@@ -14,7 +14,8 @@ from ygorl.cards.cdb import CardDB
 from ygorl.cards.ydk import load_ydk
 from ygorl.engine import constants as C
 from ygorl.engine import tracker as tracker_module
-from ygorl.engine.duel import Duel, DuelConfig, default_cards, expand_seed
+from ygorl.engine.duel import Duel, DuelConfig, DuelSession, default_cards, expand_seed
+from ygorl.engine.puzzle import Placement, Puzzle, run_until_stop
 from ygorl.env import GameSpec, run_games
 from ygorl.env.encoded import EncodedVecEnv, chooser
 
@@ -57,8 +58,8 @@ def test_cpp_duel_pool_stops_an_engine_loop(db, one_step):
     assert all(r.reason == "error" and "engine loop" in r.error for r in results)
 
 
-def test_python_tracker_stops_an_engine_loop(db, monkeypatch):
-    monkeypatch.setattr(tracker_module, "MAX_ENGINE_STEPS", 1)
+def test_python_tracker_stops_an_engine_loop(db, one_step):
+    """The same process-wide limit as the C++ hosts (_core.max_engine_steps(), read when the duel starts)."""
     s = specs()[0]
     r = Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first).run(
         RandomAgent(0), RandomAgent(1)
@@ -66,8 +67,33 @@ def test_python_tracker_stops_an_engine_loop(db, monkeypatch):
     assert r.reason == "error" and "engine loop" in r.error and r.winner is None
 
 
+def test_a_session_stops_like_a_run(db, one_step):
+    """DuelSession drives the core through the same loop (engine.duel.advance) as Duel.run."""
+    s = specs()[0]
+    session = DuelSession(Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first))
+    assert session.done and session.result().reason == "error" and "engine loop" in session.result().error
+
+
+def test_a_session_stops_a_script_past_its_budget(db, tiny_script_budget):
+    s = specs()[0]
+    session = DuelSession(Duel(s.seed, None, s.deck_a, s.deck_b, cards=db, config=s.config, first=s.first))
+    rng = RandomAgent(0)
+    while not session.done:
+        session.act(rng.act(session.point))
+    assert session.result().reason == "error" and "script budget" in session.result().error
+
+
+def test_a_puzzle_stops_an_engine_loop(one_step):
+    core = Puzzle((Placement(46986414, C.LOCATION_HAND),)).start()
+    try:
+        with pytest.raises(RuntimeError, match="engine loop"):
+            run_until_stop(core)
+    finally:
+        core.close()
+
+
 def test_the_default_limits_leave_real_games_alone(db):
-    assert _core.set_max_engine_steps(100_000) == 100_000 and tracker_module.MAX_ENGINE_STEPS == 100_000
+    assert _core.max_engine_steps() == tracker_module.MAX_ENGINE_STEPS == _core.DEFAULT_MAX_ENGINE_STEPS == 100_000
     assert _core.set_max_script_steps(100_000) == 100_000
     for res in EncodedVecEnv(2, 1, cards=db).play(specs(), chooser):
         assert res["reason"] != "error"

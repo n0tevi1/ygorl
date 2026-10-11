@@ -145,6 +145,7 @@ class DuelTracker:
         self._last_decision: M.Decision | None = None
         self._consecutive_retries = 0
         self._engine_steps = 0  # process() calls since the last decision
+        self._max_engine_steps = _core.max_engine_steps()  # process-wide, default MAX_ENGINE_STEPS
         self._buffers = 0
         self._point: DecisionPoint | None = None
         self._allowed: list[int] | None = None  # point.actions -> state.actions() indices when filtered
@@ -227,8 +228,8 @@ class DuelTracker:
             return
         if status != _core.DUEL_STATUS_AWAITING:
             self._engine_steps += 1
-            if self._engine_steps >= MAX_ENGINE_STEPS:
-                self.stop(O.ERROR, f"engine loop: no decision after {MAX_ENGINE_STEPS} engine steps")
+            if self._engine_steps >= self._max_engine_steps:
+                self.stop(O.ERROR, f"engine loop: no decision after {self._max_engine_steps} engine steps")
             return
         self._engine_steps = 0
         if decision is None and retried:

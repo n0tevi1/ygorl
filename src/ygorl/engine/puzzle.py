@@ -65,13 +65,17 @@ class Puzzle:
 
 
 def run_until_stop(core: _core.Duel) -> tuple[int, list[bytes]]:
-    """Process until the core awaits a response or the duel ends; return (status, message records)."""
+    """Process until the core awaits a response or the duel ends; return (status, message records). Raises
+    RuntimeError after ``_core.max_engine_steps()`` steps without either (an engine loop), like every host; a script
+    search past its budget raises ``_core.ScriptBudgetExceeded`` from the core call."""
     records: list[bytes] = []
-    while True:
+    limit = _core.max_engine_steps()
+    for _ in range(limit):
         status = core.process()
         records.extend(M.split_messages(core.get_message()))
         if status != _core.DUEL_STATUS_CONTINUE:
             return status, records
+    raise RuntimeError(f"engine loop: no decision after {limit} engine steps")
 
 
 def last_decision(records: list[bytes]) -> bytes | None:
