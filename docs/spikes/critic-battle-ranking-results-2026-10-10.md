@@ -26,7 +26,7 @@ Two useful examples requiring confirmation:
 - Root726, broad/fixed: attack5/16, main2 10/16, end phase7/16. Terminal refresh prefers main2; frozen/control/anchored prefer attack. The attack is not automatically a blunder: the 1200-ATK attacker faces both1500-ATK and750-ATK monsters, so the following target choice and effects matter.
 - Root1492, Runick-facing/fixed: effect activation11/16, the two attack choices3/16 and4/16, main2 6/16, end phase4/16. Frozen/control rank end phase highest; both refreshed critics rank main2 highest. All miss the empirically best effect action. This is an investigation lead, not a certified tactical label or proof of immediate lethal.
 
-## Confirmation is already running
+## Confirmation design (now complete)
 
 `critic-battle-ranking-confirmation-2026-10-10` retains **every one of the16 roots and55 actions**, regardless of pilot results. It uses64 new common suffix streams301–364 per action plus16 original controls: **3,536 games**, two workers, four-hour cap and independent watchdog.
 
@@ -63,6 +63,6 @@ Unclipped training reduces a few saturated errors but is slightly worse on both 
 
 The ablation completion `f3ee64d9de58c63b8352a8fde5359603b9720effdc25c18ca7e470bbf046e9ed` was acknowledged after verification. Results and checks: `critic-clamp-loss-ablation-2026-10-10/verification.json`.
 
-Next: complete the independent ranking confirmation, review persistent misranked actions in context, then decide whether action-conditional supervision on separate training roots is justified. First-idle training coverage and relative-action supervision remain unresolved mechanisms. The full declaration interface issue#319 remains open; none of these diagnostics changes its fixed128-row production limit.
+Update 2026-10-11: the independent confirmation is complete. The primary improvement did not replicate; a Droplet-versus-phase-transition misranking did. See [confirmation results and the separate training-data experiment](critic-battle-ranking-confirmation-2026-10-11.md). First-idle training coverage and relative-action supervision remain unresolved mechanisms. The full declaration interface issue#319 remains open; none of these diagnostics changes its fixed128-row production limit.
 
 Validation:30 focused critic/declaration tests passed; repository Ruff lint/format and diff checks passed. Existing models and original study artifacts remain preserved.
