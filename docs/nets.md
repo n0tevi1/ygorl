@@ -160,6 +160,7 @@ CPU 训练时的热点做了等价改写，都有与原写法逐项比对的单�
 
 - **裁掉填充**：`PolicyNet.features` 与 `ActorCritic.forward` 先把一批观测裁到最长的有效前缀（`nets.policy.trim_padding`），
   输出再补回原宽度（logits 补 `MASKED_LOGIT`、Q 补 0）；critic 的 Q 头因此不再给 128 行全打分。
+  同一个 `trim_padding` 也裁 BC 的 numpy 样本批与 PPO 的整条 rollout；`nets.policy.padding_trimmed(False)` 一处关掉所有裁剪（测试比对、排查用）。
 - **类别嵌入求和**（`CategoricalEmbedding`）：原写法 `table(idx).sum(-2)` 会生成 `[B, N, 列数, d]` 的中间张量，反向还要对
   上百万个下标排序。现在前向用 `F.embedding_bag(mode="sum")`；不超过 1,024 行的表（卡片 288、事件 453、全局 331 行）反向用
   多热计数矩阵乘梯度（`_SummedRows`，`gradcheck` 精确），更大的表（动作 2,454 行）用 `embedding_bag` 自带的反向。

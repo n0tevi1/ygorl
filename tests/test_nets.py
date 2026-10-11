@@ -25,6 +25,7 @@ from ygorl.nets import (  # noqa: E402
     count_parameters,
 )
 from ygorl.nets.heads import MASKED_LOGIT  # noqa: E402
+from ygorl.nets.policy import padding_trimmed  # noqa: E402
 
 DECKS = {p.stem: load_ydk(p) for p in sorted((Path(__file__).parent / "decks").glob("*.ydk"))}
 V = 300  # vocab size of the random tests
@@ -477,9 +478,9 @@ def test_trimming_padding_changes_nothing(real_obs, history):
     results, seen_lengths = [], []
     hook = net.action_encoder.register_forward_pre_hook(lambda m, args: seen_lengths.append(args[0].shape[1]))
     for trim in (False, True):
-        net.trim_padding = trim
         net.zero_grad()
-        out = net(batch)
+        with padding_trimmed(trim):
+            out = net(batch)
         f = out.features
         loss = -(out.log_probs().gather(1, out.greedy()[:, None])).mean() + f.context.square().mean()
         loss.backward()
@@ -579,8 +580,7 @@ def test_trimming_keeps_masked_copies_inside_the_action_list(real_obs):
     batch["action_mask"] = mask
     outs = []
     for trim in (False, True):
-        net.trim_padding = trim
-        with torch.no_grad():
+        with torch.no_grad(), padding_trimmed(trim):
             outs.append(net(batch).logits)
     assert torch.allclose(outs[1][mask], outs[0][mask], atol=1e-5) and (outs[1][~mask] == MASKED_LOGIT).all()
 
@@ -705,12 +705,11 @@ def test_a_deck_order_critic_reads_the_next_draws_and_the_default_one_does_not()
 @pytest.mark.parametrize("shared_backbone", [False, True])
 @pytest.mark.parametrize("history", ["none", "lstm", "transformer"])
 @pytest.mark.parametrize("trim", [False, True])
-def test_actor_critic_single_trim_preserves_outputs_and_gradients(monkeypatch, shared_backbone, history, trim):
+def test_actor_critic_single_trim_preserves_outputs_and_gradients(shared_backbone, history, trim):
     """Skipping the trunks' repeated scans preserves the original forward/backward, including padding."""
     import copy
     from types import MethodType
 
-    from ygorl.nets import actor_critic as ac_mod
     from ygorl.nets.actor_critic import ActorCritic, ActorCriticOutput
 
     torch.manual_seed(19)
@@ -728,9 +727,6 @@ def test_actor_critic_single_trim_preserves_outputs_and_gradients(monkeypatch, s
         return ActorCriticOutput(logits, crit.q, crit.v)
 
     reference._forward = MethodType(previous_forward, reference)
-    if not trim:
-        monkeypatch.setattr(ac_mod, "trim_padding", lambda obs: obs)
-        monkeypatch.setattr(PolicyNet, "trim_padding", False)
     obs, priv = random_batch(3, seed=29), random_privileged(3)
     # Guarantee different valid prefixes and trailing padding in every encoded sequence.
     obs["actions"][:, 20:] = 0
@@ -742,7 +738,8 @@ def test_actor_critic_single_trim_preserves_outputs_and_gradients(monkeypatch, s
     outputs, rng_after = [], []
     for m in (model, reference):
         torch.set_rng_state(rng_before)
-        outputs.append(m(obs, priv))
+        with padding_trimmed(trim):
+            outputs.append(m(obs, priv))
         rng_after.append(torch.get_rng_state())
     assert torch.equal(*rng_after)
     for out in outputs:
