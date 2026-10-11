@@ -236,7 +236,9 @@ class Trainer:
         for path in cfg.pin_opponents:
             pinned = load_actor(path, cfg.text_dir)
             if why := signature.mismatches(pinned.signature):
-                raise ValueError(f"{path}: the run and the pinned opponent differ: {'; '.join(why)}")
+                raise ValueError(f"{path}: the run and the pinned opponent differ: {'; '.join(why)}"
+                                 + (" (the run's event length came from --init-from; set --event-length)"
+                                    if self._adopted_event_length else ""))  # fmt: skip
             self.pool.pin(pinned.net.to(self.device), tag=f"pinned:{Path(path).name}")
         self.evolved = None
         if cfg.deck_pool is not None:
@@ -273,10 +275,14 @@ class Trainer:
     def _event_length(self, cfg: TrainConfig, init) -> TrainConfig:
         """``cfg`` with its event window settled: a warm start keeps the window its network was trained with (like
         its vocab) unless ``event_length`` is set; a set one that differs is used, with a warning."""
+        self._adopted_event_length = cfg.event_length is None and init is not None
         if cfg.event_length is None:
             n = init.event_length if init is not None else PPO_EVENT_LENGTH
             if init is not None:
-                self.log(f"event length {n}, as {cfg.init_from} was trained with")
+                pins = (
+                    " (pinned opponents must read the same; set --event-length to choose)" if cfg.pin_opponents else ""
+                )
+                self.log(f"event length {n}, as {cfg.init_from} was trained with{pins}")
             return replace(cfg, event_length=n)
         if init is not None and init.event_length != cfg.event_length:
             self.log(f"warning: {cfg.init_from} was trained with {init.event_length} event tokens per observation; "

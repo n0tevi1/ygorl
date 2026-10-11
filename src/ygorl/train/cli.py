@@ -32,6 +32,7 @@ class Flag:
     zero_none: bool = False  # 0 on the command line means None ("off")
     listing: str | None = None  # tuple fields: "csv" (one comma-separated value) or "append" (repeatable flag)
     path: bool = False  # stored as an absolute path
+    unset: str | None = None  # what a None default means, shown as the default in --help
 
     @property
     def dest(self) -> str:
@@ -63,9 +64,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--complete-games", "complete_games", "experimental: one complete game per env per update; --steps unused"),
         _f("--steps", "steps", "rows per column per rollout, T"),
         _f("--min-batch", "min_batch", "ready decisions per forward pass (default: --envs // 2)"),
-        _f("--event-length", "event_length",
-           "event tokens per observation (default: the --init-from checkpoint's, else trainer.PPO_EVENT_LENGTH "
-           "= 64)"),
+        _f("--event-length", "event_length", "event tokens per observation",
+           unset="an --init-from checkpoint's own, else trainer.PPO_EVENT_LENGTH = 64"),
         _f("--keep-forced", "skip_forced",
            "also make rows of decisions with a single legal action (default: played in C++, no rows)", negate=True),
         _f("--max-turns", "max_turns", "turn limit of a duel (default: the environment's)"),
@@ -194,6 +194,8 @@ def add_arguments(parser: argparse.ArgumentParser, base=None) -> None:
             shown = kw["default"]
             if shown not in (None, []) and "(default" not in (f.help or ""):
                 kw["help"] = f"{f.help} (default {shown})" if f.help else f"default {shown}"
+            elif shown is None and f.unset:
+                kw["help"] = f"{f.help} (default: {f.unset})"
             else:
                 kw["help"] = f.help
             group.add_argument(f.flag, **kw)

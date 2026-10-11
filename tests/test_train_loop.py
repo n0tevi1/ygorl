@@ -556,7 +556,7 @@ def test_a_warm_start_keeps_its_event_window_unless_one_is_set(run, tmp_path):
     from ygorl.train.checkpoint import load_policy
     from ygorl.train.trainer import PPO_EVENT_LENGTH
 
-    trainer, _ = run
+    trainer, out = run
     bc = save_policy(tmp_path / "bc.pt", PolicyNet(trainer.net_config), trainer.vocab, event_length=24)
     logs = []
     adopted = Trainer(dc_replace(_small_cfg(init_from=str(bc)), event_length=None), tmp_path / "a", log=logs.append)
@@ -567,6 +567,11 @@ def test_a_warm_start_keeps_its_event_window_unless_one_is_set(run, tmp_path):
     assert any("warning" in m and "24 event tokens" in m for m in logs)
     fresh = Trainer(dc_replace(_small_cfg(), event_length=None), tmp_path / "c", log=None)
     assert fresh.cfg.event_length == PPO_EVENT_LENGTH
+    pinned = dc_replace(
+        _small_cfg(init_from=str(bc), pin_opponents=(str(out / "checkpoints" / "latest.pt"),)), event_length=None
+    )  # the adopted 24 vs the pinned run's 16
+    with pytest.raises(ValueError, match="came from --init-from; set --event-length"):
+        Trainer(pinned, tmp_path / "d", log=None)
 
 
 def test_init_from_rejects_a_different_network_or_vocab(run, vocab, tmp_path):
