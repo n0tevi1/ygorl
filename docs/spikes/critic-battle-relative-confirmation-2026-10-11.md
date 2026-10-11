@@ -31,11 +31,13 @@ An action-centered covariance estimate puts the mean-label sampling-noise contri
 
 Artifacts: `analysis.json`, `analyze.py`, `changed-actions-audit.json`, `audit_changes.py`, `noise-audit.json`, `audit_noise.py`.
 
-## Next: independently resample every training target
+## Follow-up: independently resample every training target
+
+**Completed:** all 1,904 games passed verification. The new-suffix centered-MSE difference is −.000507, with a 95% interval [−.003893, +.002956]. The fitted-label advantage largely fails to repeat. See [target replication and label averaging](critic-battle-label-average-2026-10-11.md) for the full analysis, three controlled refits and the new fresh-deal confirmation. The protocol below records the original registration.
 
 On the original32 training roots, relative supervision reduces centered error **.021531 → .015286** and raises descriptive conditional wins **69.531% → 72.461%**. Those are fitted-label results, not validation. The next study distinguishes suffix-noise fitting from genuine root-specific learning that fails to transfer.
 
-`critic-battle-target-replication-2026-10-11` is running with **1,904 games**: all117 supported actions at every one of the32 original training roots ×16 new suffix streams701–716, plus32 original controls. Models/checkpoint hashes and predictions are frozen before collection; no optimization or checkpoint selection occurs. Every training root is retained regardless of previous result or disagreement.
+`critic-battle-target-replication-2026-10-11` was registered with **1,904 games**: all117 supported actions at every one of the32 original training roots ×16 new suffix streams701–716, plus32 original controls. Models/checkpoint hashes and predictions are frozen before collection; no optimization or checkpoint selection occurs. Every training root is retained regardless of previous result or disagreement.
 
 Primary: relative-step32 minus unchanged centered action MSE on **new outcomes only**, with50,000 shared-suffix-block bootstrap replicates (seed2026101105). Old-target fit is descriptive; do not pool it into the primary. Secondary diagnostics compare argmax outcomes and old/new label variability.
 
