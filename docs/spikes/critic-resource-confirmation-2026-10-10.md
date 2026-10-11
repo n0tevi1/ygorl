@@ -80,10 +80,13 @@ Audit confirmed the preceding critic corpus contains only `face-target` games:
 coverage gap, not yet a proven cause of all observed biases. It motivates a
 bounded data-coverage experiment before more architecture changes.
 
-`critic-role-coverage-data-2026-10-10` is collecting **512 new own-target games**:
+`critic-role-coverage-data-2026-10-10` has completed **512 new own-target games**:
 256 training and 256 validation, with 128 new openings and no overlap against
 576 prior openings. Train and validation opening sets are disjoint. The completed
 confirmation remains diagnostic/test data and is excluded from fitting/selection.
+
+The [data verification and registered fitting experiment](critic-role-coverage-fit-2026-10-10.md)
+record the next stage. All 512 games passed health and replay checks.
 
 The registered subsequent factorial holds training at 512 games per arm:
 
