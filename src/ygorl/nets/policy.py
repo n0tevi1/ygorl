@@ -97,7 +97,8 @@ _TRIM = True  # see padding_trimmed
 @contextmanager
 def padding_trimmed(enabled: bool) -> Iterator[None]:
     """Turn padding trimming (:func:`trim_padding` everywhere: the nets, the PPO update, BC batches) on or off inside
-    the block. Results do not depend on it; tests use it to check that, debugging to rule it out."""
+    the block. Results do not depend on it; tests use it to check that, debugging to rule it out. Process-wide, not
+    per thread: do not flip it while another thread runs a network (e.g. an overlapped collection)."""
     global _TRIM
     old, _TRIM = _TRIM, enabled
     try:
