@@ -106,12 +106,16 @@ another tradeoff:
 Reducing facing-Runick bias is possible, but these objectives sacrifice aggregate
 and own-Runick error. This is not an accepted fix. All arms use the same balanced
 validation selection criterion; none is chosen or modified using test outcomes.
-`critic-group-loss-confirmation-2026-10-10` is now running 512 new games on 128
+`critic-group-loss-confirmation-2026-10-10` completed 512 new games on 128
 openings, disjoint from 832 prior openings. It evaluates all three selected
 candidates, unchanged source and a fixed prior resource/calibration reference.
 Report roles, target lists and low-deck retention separately. This remains a
 single-initialization pilot; no inference defaults, actor parameters or rewards
 change.
+
+The [confirmation and resource-readout follow-up](critic-resource-readout-2026-10-10.md)
+reports a confirmed facing-Runick improvement with an own-role regression,
+representation diagnostics, and a new frozen Q/V residual confirmation.
 
 Artifacts: `critic-role-coverage-confirmation-2026-10-10` retains independent
 verification, predictions and paired analysis; `critic-role-shift-audit-2026-10-10`
