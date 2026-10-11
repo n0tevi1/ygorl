@@ -53,7 +53,7 @@ class League:
         w = self.window
         regular = [i for i in self.pool.ids() if i >= 0]
         if self.min_win_rate is not None and regular:
-            if w["games"] < self.min_games or w["points"] / w["games"] <= self.min_win_rate:
+            if not w["games"] or w["games"] < self.min_games or w["points"] / w["games"] <= self.min_win_rate:
                 return False
         self.pool.add(model, update=update)
         self.window = {"games": 0, "points": 0.0}

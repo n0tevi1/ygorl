@@ -31,6 +31,11 @@ def test_admission_needs_enough_pool_games_above_the_threshold():
     assert info[sid]["games"] == 8 and info[sid]["learner_win_rate"] == round(6.5 / 9, 3)
 
 
+def test_a_threshold_without_pool_games_holds_back_even_with_min_games_0():
+    league = League(SnapshotPool(4), min_win_rate=0.5, min_games=0)
+    assert league.admit(MODEL, 1) and not league.admit(MODEL, 2)  # no division by zero
+
+
 def test_without_a_threshold_every_due_snapshot_joins():
     league = League(SnapshotPool(2))
     assert all(league.admit(MODEL, u) for u in (1, 2, 3)) and len(league.pool) == 2  # oldest evicted
