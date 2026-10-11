@@ -116,7 +116,7 @@ initialization check, not three independently trained critics or RL runs.
 
 ## Next: paired opponent shift
 
-`critic-residual-opponent-shift-2026-10-10` is running 512 fresh games / 128
+`critic-residual-opponent-shift-2026-10-10` completed 512 fresh games / 128
 openings, disjoint from 1,216 prior openings. It replaces the previous greedy
 opponent with a frozen copy of the current u528 actor and retains old-256x2 as
 control: 256 games against each opponent, sharing opening deals and seats.
@@ -128,6 +128,10 @@ and role, then tests how that difference changes between opponents with paired
 opening resampling. Target retention, especially Tearlaments, remains required.
 This tests opponent-distribution transfer, not transfer after updating the
 learner's policy or encoder. The mirror opponent is not assumed to be stronger.
+
+The [opponent-shift results and identical-input audit](critic-opponent-distribution-2026-10-10.md)
+confirm a resource-residual gain under the mirror while identifying persistent
+opponent-dependent bias, and register a separate opponent-coverage experiment.
 
 Runtime and source/checkpoint/report hashes are sealed, and an independent
 watchdog monitors the study. No actor-facing promotion or checkpoint migration
