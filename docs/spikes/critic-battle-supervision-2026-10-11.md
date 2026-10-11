@@ -37,7 +37,7 @@ Relative-minus-absolute is +1.5625 pp, with an exploratory shared-suffix bootstr
 
 For each fitting study, independent verification reproduced nine validation forwards, all retention gates, checkpoint hashes, exact step0 parameter equality, actor hashes and the registered primary bootstrap. The second additionally checks every non-Q parameter. Optimizer training was not independently rerun. Artifacts include `registration.json`, `run.py`, `validation.json`, `verification.json` and `verify_fit.py`. Completion events `c93af862c6cfb4f5ae18d2e6cb15e50f24e568bcc13329b832a78afb28c1f937` and `92916b1a5fc7d6106b7ba2663a1a49dd5b71fb8c03d198319b7b4459bc7893b6` were acknowledged after verification.
 
-## Next conditional confirmation is running
+## Conditional confirmation (now complete)
 
 `critic-battle-relative-confirmation-2026-10-11` registers 64 distinct openings, eight per broad/Runick × old/mirror × own/face stratum, excluding all40 branch-pilot roots and the earlier16 ranking roots. Fixed hash order and the first battle prompt with2–6 supported actions determine inclusion, without consulting outcomes or critic errors. There are217 supported actions ×16 new common suffix streams601–616 plus64 original controls: **3,536 games**. Model predictions and checkpoint hashes were frozen before collecting suffix outcomes. The relative model changes13 of64 choices versus initialization. Identity SHA256: `baf59366ed7143ec14c52bf7d38fce774037578399f7225411384765eaab0bcb`.
 
@@ -46,3 +46,5 @@ Primary: fixed relative-step32 versus unchanged raw-Q argmax, equal weighting of
 These are new branch roots and streams, but their source validation trajectories previously contributed to calibration/retention panels. They are **not globally untouched game data**. No gradient fitting uses these openings; no new branch outcome is available when choices are frozen. Any favorable conditional result still needs fresh-deal full-game testing before a playing-strength claim.
 
 `tools/critic_branch_probe.py` provides research losses only. Tests cover equal root weighting with different action counts, ignored padding, selected-action gradient isolation, nonzero recovery gradients beyond the return range, target detachment, pairwise equivalence and invariance to common state offsets. Fifteen focused tests passed. Production PPO, rewards, actor inference and native engine are unchanged; declaration capacity issue#319 remains open.
+
+Update: the64-root confirmation found no demonstrated action-selection gain; see [results and the training-target replication](critic-battle-relative-confirmation-2026-10-11.md).
