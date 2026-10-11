@@ -39,6 +39,7 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
     ev.env_id = env;
     auto& host = slots_[env];
     std::string error;
+    bool failed = false;
     try {
         if (job.reset) {
             host = std::make_unique<HostDuel>(cards_, scripts_, vocab_);
@@ -79,13 +80,15 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
             ev.outcome.error = e.what();
             return ev;
         }
+        failed = true;
         error = e.what();
     }
     ev.done = true;
     ev.outcome = host->tracker().outcome();
-    if (!error.empty()) {  // a host exception ends the game as an error (the tracker's winner of the moment stays)
+    if (failed) {  // a host exception ends the game as an error: a draw (engine.outcome.winner), like VecDuelEnv
         ev.outcome.reason = "error";
         ev.outcome.error = error;
+        ev.outcome.winner = -1;
     }
     host.reset();
     return ev;

@@ -13,10 +13,9 @@ from collections import deque
 
 import numpy as np
 import torch
-
-from ygorl.engine.outcome import TURN_LIMIT
 from torch import Tensor, nn
 
+from ygorl.engine.outcome import TURN_LIMIT
 from ygorl.env.encoded import EncodedEvent
 from ygorl.nets.actor_critic import ActorCriticOutput
 from ygorl.nets.heads import MASKED_LOGIT
