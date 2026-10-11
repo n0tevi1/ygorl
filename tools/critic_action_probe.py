@@ -22,12 +22,15 @@ def trace_action_mask(native_mask, engine_action_count):
     return [bool(native_mask[i]) if i < len(native_mask) else False for i in range(engine_action_count)]
 
 
-def all_action_values(net, batch, *, ridge=None, opponents=None):
+def all_action_values(net, batch, *, ridge=None, opponents=None, clip=True):
     """Return Q[B,A], V[B]; preserve zero Q on illegal/padded action rows.
 
     ``candidates`` and ``context`` are frozen reference features. Detach them so
     a critic loss cannot accidentally update the actor. A ridge correction is
     broadcast to legal Q rows only; it is clipped after adding raw head outputs.
+    Set ``clip=False`` for action-ranking diagnostics: a state-only residual
+    preserves action differences before clipping; clipping may collapse them into
+    ties. The default retains the bounded calibration metric used in prior runs.
     Known opponent labels are a closed diagnostic vocabulary, not an inference
     mechanism for new opponents. Without a ridge, reproduce the raw base head.
     """
@@ -53,6 +56,9 @@ def all_action_values(net, batch, *, ridge=None, opponents=None):
         state = {k: ridge[k].to(device=features.device, dtype=features.dtype) for k in ["mean", "scale", "beta"]}
         design = torch.cat(((features - state["mean"]) / state["scale"], features.new_ones((len(features), 1))), -1)
         offset = design @ state["beta"]
-        q = (q.double() + offset[:, 0, None]).clamp(-1, 1)
-        v = (v.double() + offset[:, 1]).clamp(-1, 1)
+        q = q.double() + offset[:, 0, None]
+        v = v.double() + offset[:, 1]
+        if clip:
+            q = q.clamp(-1, 1)
+            v = v.clamp(-1, 1)
     return q.masked_fill(~mask, 0), v

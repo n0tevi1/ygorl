@@ -77,3 +77,24 @@ def test_trace_mask_preserves_prefix_and_reports_unsupported_tail_as_false():
     assert trace_action_mask(native, 0) == []
     with pytest.raises(ValueError, match="negative"):
         trace_action_mask(native, -1)
+
+
+def test_unclipped_residual_retains_action_differences_lost_at_saturation():
+    net, b = example()
+    ridge = dict(mean=torch.zeros(14).double(), scale=torch.ones(14).double(), beta=torch.zeros(15, 2).double())
+    ridge["beta"][-1] = torch.tensor([100.0, -100.0])
+    opponents = ["old-256x2"] * 3
+    raw_q, raw_v = all_action_values(net, b)
+    q, v = all_action_values(net, b, ridge=ridge, opponents=opponents, clip=False)
+    clipped, clipped_v = all_action_values(net, b, ridge=ridge, opponents=opponents)
+    for i in range(len(q)):
+        legal = b["action_mask"][i]
+        if int(legal.sum()) > 1:
+            assert raw_q[i, legal].max() > raw_q[i, legal].min()
+        torch.testing.assert_close(
+            q[i, legal] - q[i, legal][0], (raw_q[i, legal].double() - raw_q[i, legal][0].double())
+        )
+        assert bool((clipped[i, legal] == 1).all())
+    torch.testing.assert_close(v, raw_v.double() - 100)
+    assert bool((clipped_v == -1).all())
+    assert bool((q[~b["action_mask"]] == 0).all())
