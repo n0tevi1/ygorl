@@ -1,6 +1,6 @@
 # Battle-Q target replication and label averaging
 
-The original fitted-label advantage largely disappears when the same training roots receive new continuation outcomes. This supports investigating noisy targets, but neither proves that noise is the only cause nor establishes an improved critic. Three controlled refits passed retention checks. A separate 3,568-game evaluation on freshly shuffled deals is running. No actor or critic is promoted.
+The original fitted-label advantage largely disappears when the same training roots receive new continuation outcomes. This supports investigating noisy targets, but neither proves that noise is the only cause nor establishes an improved critic. Three controlled refits passed retention checks. The separate 3,568-game fresh-deal evaluation has now completed: the primary error difference is inconclusive and conditional wins are adverse. See [confirmation results and next diagnostic](critic-battle-label-average-confirmation-2026-10-11.md). No actor or critic is promoted. The following sections retain the original protocol.
 
 ## Independent target replication
 
@@ -33,7 +33,7 @@ All three step32 arms pass broad, old, familiar, own-Runick and low-deck retenti
 
 Before source outcomes, root selection was fixed to eight games per broad/Runick corpus × old/mirror opponent × own/face role stratum. Games are ordered by SHA256 of `fresh-root-selection-20261011:<id>`; the first learner battle prompt with 2–6 supported actions qualifies. Selection does not use winners, Q errors or model disagreement. All eight strata provided eight roots.
 
-`critic-battle-label-average-confirmation-2026-10-11` is running:
+`critic-battle-label-average-confirmation-2026-10-11` was registered as follows:
 
 - **64 roots, 219 actions, 16 fresh shared suffixes (801–816), 64 original controls: 3,568 games.**
 - Primary: pooled32-step32 minus old16-step32 centered action MSE, equal root weighting; 50,000 shared suffix-block bootstrap draws, seed 2026101106. Squared targets cancel in the paired loss difference.
