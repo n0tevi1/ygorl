@@ -100,13 +100,17 @@ The residual is linear, so this is not evidence of learned nonlinear interaction
 Correlated features, validation selection and outcome distributions can all
 affect these differences. A universal LP penalty remains unsupported.
 
-`critic-residual-ablation-confirmation-2026-10-10` is now running all eight
+`critic-residual-ablation-confirmation-2026-10-10` completed all eight
 selected views and two fixed references on another 512-game / 128-opening panel,
 disjoint from 1,088 prior openings. Primary comparisons are all resources versus
 without LP and without deck counts. An independent watchdog monitors progress,
 health and completion. The next analysis must again retain zero-idle games in
 outcome totals, report both-role retention and target slices, and preserve the
 sealed evidence. No actor or PPO checkpoint is changed.
+
+The [ablation confirmation and initialization replication](critic-residual-ablation-confirmation-2026-10-10.md)
+report another aggregate gain, inconclusive incremental LP/deck contributions,
+and failure to clearly reproduce the preceding own-role improvement.
 
 Artifacts under `out/research/` retain identities, registrations, selections,
 verification, predictions and paired analysis. The optional complete-opening
