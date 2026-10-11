@@ -65,7 +65,7 @@ def play(root, job):
             if actor is agents[0]:
                 per_turn[p.turn] += 1
                 actions[p.actions[choice].kind] += 1
-                max_cancels = max(max_cancels, session.tracker._selection_cancels)
+                max_cancels = max(max_cancels, session.tracker.undo_rules.selection_cancels)
             trace.append(
                 dict(
                     index=p.index,

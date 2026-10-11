@@ -7,6 +7,7 @@
 ```
 ygorl.engine.duel      Duel(seed, env, deck_a, deck_b).run(agent_a, agent_b) / .replay(responses)；DuelSession；种子 / 洗牌
 ygorl.engine.tracker   DuelTracker：消费消息缓冲区、决策点、撤销类空操作、课程代答、对局结果（DecisionPoint / DuelResult）
+ygorl.engine.undo      UndoRules：撤销类空操作的六条规则与其上限（UndoLimits，与 C++ 共用），见 encoding.md
 ygorl.engine.actions   决策消息 → 合法动作列表（多选拆步）→ set_response 字节
 ygorl.engine.messages  OCG_DuelGetMessage 缓冲区 → 类型化 Message（绝不抛异常）
 ygorl.engine.constants 由 tools/gen_constants.py 从 ocgapi_constants.h 生成

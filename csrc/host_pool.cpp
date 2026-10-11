@@ -11,7 +11,7 @@ HostPool::HostPool(size_t num_envs, size_t num_threads, std::shared_ptr<CardData
       event_length_(event_length),
       skip_forced_(skip_forced), selection_history_(selection_history), cancel_budget_(cancel_budget),
       slots_(num_envs) {
-    if (cancel_budget != 0 && cancel_budget != 1 && cancel_budget != 4 && cancel_budget != MAX_SELECTION_CANCELS)
+    if (cancel_budget != 0 && cancel_budget != 1 && cancel_budget != 4 && cancel_budget != CANCEL_BUDGET_OFF)
         throw std::invalid_argument("cancel_budget must be 0, 1, 4 or 32");
     pool_ = std::make_unique<WorkerPool<std::pair<int, PoolJob>, PoolEvent>>(
         num_envs, num_threads, [this](std::pair<int, PoolJob>& job) { return run(job.first, job.second); });

@@ -127,8 +127,20 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 
 动机：确定性的策略（argmax）会在「宣言攻击 → 取消选攻击对象 → 宣言攻击 …」这类来回里走不出去，直到决策数上限。
 不丢任何结局：每个被遮的动作只撤销上一步，任何用到它的路线都可以去掉这段来回、在更早的决策上直接选别的；最优策略用不着它。
-更长的循环（例如选 A、选 B、取消 A、取消 B）仍然可能，决策数上限兜底（默认 6,000，到达记为平局，见 [cli.md](cli.md)）。规则 3–6 遮住的动作不是撤回，不回到同一决策。主机把这些行的下标放在 `DecisionPoint.undo`（C++ `Tracker::undo()`），
-编码器在等价动作去重之后再遮；`skip_forced` 按遮完的 mask 判定。`tests/test_undo.py` 在随机对局里验证：随机策略每次真的走了被遮的动作，
+更长的循环（例如选 A、选 B、取消 A、取消 B）仍然可能，决策数上限兜底（默认 6,000，到达记为平局，见 [cli.md](cli.md)）。规则 3–6 遮住的动作不是撤回，不回到同一决策。主机把这些行的下标放在 `DecisionPoint.undo`（C++ `Tracker::undo()`，Python 里绑定为 `HostDuel.undo()`），
+`DecisionPoint.choosable` 是其余的下标（策略可选的行，从不为空）；编码器在等价动作去重之后再遮；`skip_forced` 按遮完的 mask 判定。
+
+六条规则整体在一个模块里：Python `ygorl.engine.undo.UndoRules`，C++ `UndoRules`（`csrc/host.h`），两边接口相同
+（`on_game_event` / `on_decision` / `undo` / `on_action`），tracker 只负责喂消息。规则 3、5、6 的上限（`UndoLimits`：
+`menu_activations` 8、`selection_steps` 32、`selection_cancels` 32）只在 C++ 写一次，两个主机在构造 tracker 时都从
+`_core.undo_limits()` 读（`HostPool` 在工作线程开局时读，子进程各读各的，所以 `override_limits` 只用于本进程的 `Duel` / `DuelSession` / `HostDuel`）；`ygorl.engine.undo.override_limits(...)`（`_core.set_undo_limits`，上限至少为 1）同时改两边。
+`tests/test_undo.py` 把上限调低后让随机对局真的走到规则 1–5，逐个决策比对两个主机的 `undo`（规则 6 另见
+`test_target_cancel_guard.py` / `test_material_cancel_guard.py`）。
+
+不经过编码器的 agent（Random、Greedy 等直接从 `point.actions` 里选）默认仍可能选到被遮的行，它们的历史数字因此保持可比；
+`random:choosable` / `greedy:choosable`（`RandomAgent(choosable_only=True)`、`GreedyAgent(choosable_only=True)`）只在
+`DecisionPoint.choosable` 里选，与网络策略面对同一组动作。`DecisionPoint.only_choosable()` 给出只含可选动作的决策点和下标映射，
+其它 agent 要同样处理时用它。`tests/test_undo.py` 在随机对局里验证：随机策略每次真的走了被遮的动作，
 下一次决策都与之前那个决策完全相同。
 
 已知简化：手牌序号在对手看来可能带信息（例如对手见过被检索公开的那张卡加到了手牌末位），合并后总是用序号最小的副本；洗切手牌（`shuffle`）被规则 4 遮住，不能用来隐藏。SELECT_SUM 的 `value` 只存求和参数的低 16 位，高 16 位（另一种等级）不同的同名卡会被合并；同名卡的这一半只有被效果改过才会不同，实际极少。

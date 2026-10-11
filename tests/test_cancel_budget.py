@@ -88,7 +88,7 @@ def test_real_windows_with_python_native_masks_and_snapshot(fixture, budget):
             step(idx)
         for count in range(budget + 1):
             point = session.point
-            assert session.tracker._selection_cancels == count
+            assert session.tracker.undo_rules.selection_cancels == count
             py = encoder.encode(point, session.core)
             native = host.observe()
             for key in py:
@@ -114,8 +114,8 @@ def test_real_windows_with_python_native_masks_and_snapshot(fixture, budget):
         forward = next(i for i, a in enumerate(point.actions) if a.kind == "select" and altered["action_mask"][i])
         session.act(forward)
         session.restore(snapshot)
-        assert session.tracker._selection_cancels == budget
-        after, _ = restrict_cancel(session.point, host.observe(), session.tracker._selection_cancels, budget)
+        assert session.tracker.undo_rules.selection_cancels == budget
+        after, _ = restrict_cancel(session.point, host.observe(), session.tracker.undo_rules.selection_cancels, budget)
         np.testing.assert_array_equal(after["action_mask"], altered["action_mask"])
         # Explicit original actions are still legal engine responses under this inference restriction.
         step(cancel)

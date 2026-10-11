@@ -17,6 +17,8 @@ def test_random_is_registered_and_seeded():
     assert [a.act(Point(10)) for _ in range(20)] == [b.act(Point(10)) for _ in range(20)]
     with pytest.raises(ValueError, match="random takes no argument"):
         make_agent("random:x")
+    assert make_agent("random:choosable", seed=7).choosable_only and not a.choosable_only
+    assert make_agent("greedy:choosable", seed=7).choosable_only
 
 
 def test_unknown_agent_lists_the_available_ones():

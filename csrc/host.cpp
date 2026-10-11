@@ -8,6 +8,7 @@
 #include <cstring>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <set>
 #include <stdexcept>
 
@@ -866,12 +867,7 @@ void Tracker::on_buffer(const std::string& buf, int status) {
                 decoded = true;
             }
         }
-        if (is_game_event(type, decoded)) {
-            inside_ = -1;
-            toggle_.reset();
-            selection_steps_ = 0;
-            selection_cancels_ = 0;
-        }
+        if (is_game_event(type, decoded)) undo_rules_.on_game_event();
         if (!is_decision_type(type)) {
             switch (type) {
                 case MSG_NEW_TURN:
@@ -943,53 +939,105 @@ void Tracker::on_buffer(const std::string& buf, int status) {
         stop("turn_limit");
         return;
     }
-    if (decision->player != inside_ || is_menu(decision->type)) inside_ = -1;
-    if (toggle_ && toggle_->player != decision->player) toggle_.reset();
-    if (decision->type != MSG_SELECT_UNSELECT_CARD || decision->player != selection_player_) {
-        selection_steps_ = 0;  // not the same selection any more
-        selection_player_ = decision->player;
-    }
-    if (decision->player != selection_cancel_player_ ||
-        (decision->type != MSG_SELECT_CARD && decision->type != MSG_SELECT_UNSELECT_CARD)) {
-        selection_cancels_ = 0;
-    }
-    selection_cancel_player_ = decision->player;
+    undo_rules_.on_decision(*decision);
     state_ = std::make_unique<DecisionState>(*decision, cards_);
 }
 
-Tracker::ActKey Tracker::act_key(int player, const Action& a) {
+namespace {
+std::mutex g_undo_limits_mutex;
+UndoLimits g_undo_limits;
+}  // namespace
+
+UndoLimits undo_limits() {
+    std::lock_guard<std::mutex> lock(g_undo_limits_mutex);
+    return g_undo_limits;
+}
+
+UndoLimits set_undo_limits(const UndoLimits& limits) {
+    // 0 would mask before any step was taken (and the hosts count a missing activation differently)
+    if (limits.menu_activations == 0 || limits.selection_steps == 0 || limits.selection_cancels == 0)
+        throw std::invalid_argument("undo limits must be at least 1");
+    std::lock_guard<std::mutex> lock(g_undo_limits_mutex);
+    UndoLimits old = g_undo_limits;
+    g_undo_limits = limits;
+    return old;
+}
+
+UndoRules::ActKey UndoRules::act_key(int player, const Action& a) {
     if (!a.has_card) return {player, false, 0, 0, 0, 0, a.description};
     return {player, true, a.card.code, a.card.loc.controller, a.card.loc.location, a.card.loc.sequence, a.description};
 }
 
-std::vector<size_t> Tracker::undo() const {
+void UndoRules::on_game_event() {
+    inside_ = -1;
+    toggle_.reset();
+    selection_steps_ = 0;
+    selection_cancels_ = 0;
+}
+
+void UndoRules::on_decision(const Decision& d) {
+    if (d.player != inside_ || is_menu(d.type)) inside_ = -1;  // another player's decision, or back at a menu
+    if (toggle_ && toggle_->player != d.player) toggle_.reset();
+    if (d.type != MSG_SELECT_UNSELECT_CARD || d.player != selection_player_) {
+        selection_steps_ = 0;  // not the same selection any more
+        selection_player_ = d.player;
+    }
+    if (d.player != selection_cancel_player_ || (d.type != MSG_SELECT_CARD && d.type != MSG_SELECT_UNSELECT_CARD)) {
+        selection_cancels_ = 0;
+    }
+    selection_cancel_player_ = d.player;
+}
+
+std::vector<size_t> UndoRules::undo(const Decision& d, const std::vector<Action>& acts, uint32_t turn) const {
     std::vector<size_t> out;
-    if (!state_) return out;
-    const Decision& d = state_->decision();
-    const auto& acts = state_->actions();
     for (size_t i = 0; i < acts.size(); ++i) {
         const Action& a = acts[i];
         if (a.kind == CANCEL && inside_ >= 0) {
             out.push_back(i);  // backs out of the command to the unchanged menu
         } else if ((d.type == MSG_SELECT_CARD || d.type == MSG_SELECT_UNSELECT_CARD) && a.kind == CANCEL &&
-                   selection_cancels_ >= MAX_SELECTION_CANCELS) {
+                   selection_cancels_ >= limits_.selection_cancels) {
             out.push_back(i);  // target/material cancellation without game progress (rule 6)
         } else if (toggle_ && d.type == MSG_SELECT_UNSELECT_CARD && a.has_card &&
                    ((a.kind == SELECT && toggle_->kind == UNSELECT) || (a.kind == UNSELECT && toggle_->kind == SELECT)) &&
                    same_card(a.card, toggle_->code, toggle_->loc)) {
             out.push_back(i);  // reverses the previous select / unselect
-        } else if (d.type == MSG_SELECT_UNSELECT_CARD && a.kind == UNSELECT && selection_steps_ >= MAX_SELECTION_STEPS) {
+        } else if (d.type == MSG_SELECT_UNSELECT_CARD && a.kind == UNSELECT &&
+                   selection_steps_ >= limits_.selection_steps) {
             out.push_back(i);  // a long selection only moves forward from here (rule 5)
         } else if (is_menu(d.type) && a.kind == SHUFFLE) {
             out.push_back(i);  // reorders the hand, changes nothing else
-        } else if (is_menu(d.type) && a.kind == ACTIVATE && activations_turn_ == turn_) {
+        } else if (is_menu(d.type) && a.kind == ACTIVATE && activations_turn_ == turn) {
             auto it = activations_.find(act_key(d.player, a));
-            if (it != activations_.end() && it->second >= MAX_MENU_ACTIVATIONS)
-                out.push_back(i);  // the same effect again: repeated activation limit
+            if (it != activations_.end() && it->second >= limits_.menu_activations)
+                out.push_back(i);  // the same effect again: repeated activation limit (rule 3)
         }
     }
     if (out.size() >= acts.size()) out.clear();
     return out;
+}
+
+void UndoRules::on_action(const Decision& d, const Action& a, uint32_t turn) {
+    if (is_menu(d.type)) {
+        inside_ = d.player;
+        if (a.kind == ACTIVATE) {
+            if (activations_turn_ != turn) {
+                activations_.clear();
+                activations_turn_ = turn;
+            }
+            ++activations_[act_key(d.player, a)];
+        }
+    }
+    toggle_.reset();
+    if (d.type == MSG_SELECT_UNSELECT_CARD && (a.kind == SELECT || a.kind == UNSELECT) && a.has_card) {
+        toggle_ = Toggle{d.player, a.kind, a.card.code, a.card.loc};
+    }
+    if (d.type == MSG_SELECT_UNSELECT_CARD) ++selection_steps_;
+    if ((d.type == MSG_SELECT_CARD || d.type == MSG_SELECT_UNSELECT_CARD) && a.kind == CANCEL) ++selection_cancels_;
+}
+
+std::vector<size_t> Tracker::undo() const {
+    if (!state_) return {};
+    return undo_rules_.undo(state_->decision(), state_->actions(), turn_);
 }
 
 const std::vector<Action>* Tracker::actions() {
@@ -1013,26 +1061,7 @@ const std::string* Tracker::act(size_t index) {
     const Action a = index < acts->size() ? (*acts)[index] : Action{};
     state_->step(index);  // throws out_of_range before any bookkeeping
     ++decisions_;
-    if (is_menu(d.type)) {
-        inside_ = d.player;
-        if (a.kind == ACTIVATE) {
-            if (activations_turn_ != turn_) {
-                activations_.clear();
-                activations_turn_ = turn_;
-            }
-            ++activations_[act_key(d.player, a)];
-        }
-    }
-    toggle_.reset();
-    if (d.type == MSG_SELECT_UNSELECT_CARD && (a.kind == SELECT || a.kind == UNSELECT) && a.has_card) {
-        toggle_ = Toggle{d.player, a.kind, a.card.code, a.card.loc};
-    }
-    if (d.type == MSG_SELECT_UNSELECT_CARD) {
-        ++selection_steps_;
-    }
-    if ((d.type == MSG_SELECT_CARD || d.type == MSG_SELECT_UNSELECT_CARD) && a.kind == CANCEL) {
-        ++selection_cancels_;
-    }
+    undo_rules_.on_action(d, a, turn_);
     if (state_->done()) {
         responses_.push_back(state_->response());
         state_.reset();
@@ -1138,7 +1167,7 @@ void HostDuel::act(size_t index) {
 }
 
 void HostDuel::set_cancel_budget(uint32_t budget) {
-    if (budget != 0 && budget != 1 && budget != 4 && budget != MAX_SELECTION_CANCELS)
+    if (budget != 0 && budget != 1 && budget != 4 && budget != CANCEL_BUDGET_OFF)
         throw std::invalid_argument("cancel_budget must be 0, 1, 4 or 32");
     cancel_budget_ = budget;
 }
@@ -1149,7 +1178,7 @@ void HostDuel::observe(Observation& out) {
     // Intersect the fully encoded mask, including its native all-undo fallback.
     // Budget32 is exactly the existing behavior. Preserve a sole encoded exit.
     const auto* decision = tracker_->decision();
-    if (cancel_budget_ != MAX_SELECTION_CANCELS && decision &&
+    if (cancel_budget_ != CANCEL_BUDGET_OFF && decision &&
         (decision->type == MSG_SELECT_CARD || decision->type == MSG_SELECT_UNSELECT_CARD) &&
         tracker_->selection_cancels() >= cancel_budget_) {
         auto restricted = out.action_mask;

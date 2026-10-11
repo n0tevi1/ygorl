@@ -156,7 +156,7 @@ def test_recorded_chaos_angel_abort_reentry_native_reference_parity(budget):
                 assert np.all(n["action_mask"] <= native["action_mask"]) and np.any(n["action_mask"])
                 if p.index in (233, 240, 247, 254, 261):
                     roots.append((p.index, info["blocked"]))
-                    assert session.tracker._selection_cancels == 0
+                    assert session.tracker.undo_rules.selection_cancels == 0
                 if p.index == 233 + budget * 7:
                     assert info["blocked"] == [1]
                     assert p.actions[1].card.code == 22850702

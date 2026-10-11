@@ -160,16 +160,19 @@ def agent_factory(spec: str) -> AgentSpec:
     return AgentSpec(spec)
 
 
+def _choosable_only(name: str, arg: str | None) -> bool:
+    """``name`` or ``name:choosable`` (skip the masked no-op undos, docs/encoding.md 「撤销类空操作」)."""
+    if arg not in (None, "choosable"):
+        raise ValueError(f"{name} takes no argument but 'choosable' (use the seed option): {name}[:choosable]")
+    return arg == "choosable"
+
+
 def _random(arg: str | None, seed: int) -> Agent:
-    if arg is not None:
-        raise ValueError("random takes no argument (use the seed option)")
-    return RandomAgent(seed)
+    return RandomAgent(seed, choosable_only=_choosable_only("random", arg))
 
 
 def _greedy(arg: str | None, seed: int) -> Agent:
-    if arg is not None:
-        raise ValueError("greedy takes no argument (use the seed option)")
-    return GreedyAgent(seed)
+    return GreedyAgent(seed, choosable_only=_choosable_only("greedy", arg))
 
 
 def _policy_arg(arg: str | None) -> tuple[str, bool, float]:
@@ -224,8 +227,8 @@ def _policy_greedy(arg: str | None, seed: int) -> Agent:
     return _policy(arg, seed, greedy=True)
 
 
-register_agent("random", _random, "uniformly random legal actions (seeded)")
-register_agent("greedy", _greedy, "one-ply heuristic baseline (docs/evaluation.md)")
+register_agent("random", _random, "uniformly random legal actions (seeded); random:choosable skips no-op undos")
+register_agent("greedy", _greedy, "one-ply heuristic baseline (docs/evaluation.md); greedy:choosable skips no-op undos")
 register_agent(
     "policy",
     _policy,
