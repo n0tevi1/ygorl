@@ -102,7 +102,7 @@ coverage remains insufficient regardless of whether this fit improves.
 No critic is promoted to production PPO. Rare-state retention and eventual
 learner-policy-shift / matched RL continuation remain explicit gates.
 
-The next running study, `critic-lowdeck-coverage-data-2026-10-10`, collects 512
+The next study, `critic-lowdeck-coverage-data-2026-10-10`, completed 512
 new full Runick games: 256 training and 256 validation, balanced across both
 roles, opponents, anchors and seats. The 128 openings are disjoint from 1,728
 prior openings and across splits. All outcomes are retained, without selecting
@@ -111,6 +111,11 @@ checks and an independent watchdog remain enabled. This Runick-enriched corpus
 is not an estimate of the broad matchup distribution. After collection,
 quantify actual low-deck coverage before registering fitting weights and
 selection gates. Previous confirmation data remains excluded from fitting.
+
+Update: [coverage audit and fixed-mixture fit](critic-lowdeck-mixture-2026-10-10.md)
+verified 81 new low-deck training games and 73 validation games. Both registered
+mixtures pass validation retention gates; fresh broad/Runick confirmation is
+running. This does not yet resolve the independent-confirmation failures above.
 
 Evidence: `critic-opponent-coverage-confirmation-2026-10-10/{analyze.py,
 analysis.json,completion-verification.json}`, the input audit, and the
