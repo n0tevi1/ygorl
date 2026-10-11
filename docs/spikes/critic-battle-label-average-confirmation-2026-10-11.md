@@ -34,9 +34,11 @@ Names come from the frozen experiment's local card database; actions and public 
 
 Root53 is a concrete example of objective mismatch: averaged error over every action can improve while the best-action ordering worsens. The models' identical retained non-Q parameters and exact old16 training replication make an accidental actor update an unlikely explanation for this comparison. But finite labels, state coverage, action representation and fixed continuation-policy behavior remain possible contributors. More target samples alone did not resolve the observed problem.
 
-## Next: fixed independent choice replication
+## Follow-up: fixed independent choice replication
 
-`critic-battle-choice-replication-2026-10-11` is running **780 games**: both frozen chosen actions at all 12 disagreement roots ×32 new suffix streams (901–932), plus 12 original controls. Selection uses every disagreement in sealed predictions, not only losing roots. No models are fitted or selected. The original other 52 roots have identical chosen actions and contribute structural zero differences, so replaying them is unnecessary for this comparison.
+**Completed:** the 780-game independent comparison repeats the aggregate adverse difference: −1.367 pp, 95% interval [−2.295, −.488 pp]. Root53's individual adverse example does not repeat. See [replication and continuation audit](critic-battle-choice-replication-2026-10-11.md) for corrections, concentration of losses and the next mechanistic check. The following records the original registration.
+
+`critic-battle-choice-replication-2026-10-11` registered **780 games**: both frozen chosen actions at all 12 disagreement roots ×32 new suffix streams (901–932), plus 12 original controls. Selection uses every disagreement in sealed predictions, not only losing roots. No models are fitted or selected. The original other 52 roots have identical chosen actions and contribute structural zero differences, so replaying them is unnecessary for this comparison.
 
 Primary: pooled32-minus-old16 conditional-win difference over the **original 64 roots**, using only fresh outcomes, 50,000 shared suffix-block bootstrap draws and seed2026101107. The 12-root results must not be reported as the full-panel mean without the 12/64 factor. Complete the fixed budget once; do not stop early or keep resampling for significance. Per-root changes are secondary diagnostics, not tactical ground-truth labels.
 
