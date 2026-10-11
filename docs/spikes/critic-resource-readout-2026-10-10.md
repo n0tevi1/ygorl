@@ -102,7 +102,7 @@ Six focused tests cover weighted intercept fitting, bounds, normalization
 immutability, duplicated-state weight invariance and invalid regularization.
 Together with resource, role and group-objective tests, 19 tests pass.
 
-`critic-residual-confirmation-2026-10-10` is running 512 fresh games / 128
+`critic-residual-confirmation-2026-10-10` completed 512 fresh games / 128
 openings, disjoint from 960 prior openings. It evaluates all four selected
 views, the frozen ordinary-MSE critic and the fixed tau-0.25 reference. The
 primary comparison is resources against frozen MSE and intercept; report paired
@@ -110,6 +110,10 @@ opening intervals, both roles, targets and low-deck/LP-leading slices. A separat
 watchdog checks liveness and verified completion. Engine failures or truncations
 stop the study while retaining evidence. No automatic promotion is authorized
 by these metrics alone.
+
+The [independent confirmation and resource-group ablations](critic-residual-confirmation-2026-10-10.md)
+report an 8.1% overall Q/V MSE reduction, improvements in both roles, one
+zero-idle game, remaining matchup regressions, and the next fresh confirmation.
 
 ## Evidence and limits
 
