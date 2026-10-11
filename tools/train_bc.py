@@ -3,6 +3,7 @@
 Usage: uv run --extra train python tools/train_bc.py --train out/demos/bc_train.jsonl [--train ...]
            [--heldout out/demos/bc_heldout.jsonl] [--out out/bc] [--epochs 12] [--batch-size 64] [--lr 3e-4]
            [--history transformer|lstm|none] [--d-model 128] [--layers 2] [--event-length 128] [--threads 2]
+           [--text-dir DIR --card-facts --no-text --id-dropout P --no-id-embedding --selection-history]
            [--seed 0] [--baselines]
            [--checkpoint PATH --no-train] [--init-from CKPT] [--report PATH] [--openings all|heldout|none] [--sample-openings]
            [--extra GREEDY.npz --extra-subset all|battle --extra-max N [--extra-heldout GREEDY.npz]]
@@ -64,24 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--label-smoothing", type=float, default=0.0)
-    parser.add_argument("--history", default="transformer", choices=("transformer", "lstm", "none"))
-    parser.add_argument("--d-model", type=int, default=128)
-    parser.add_argument("--layers", type=int, default=2, help="board and history Transformer layers (default 2)")
-    parser.add_argument("--selection-history", action="store_true", help="record actor-private selection history")
-    parser.add_argument("--event-length", type=int, default=128, help="event tokens per observation (default 128)")
     parser.add_argument("--threads", type=int, default=2, help="torch threads (default 2)")
     parser.add_argument("--device", default="cpu", help="CPU or CUDA/ROCm device: cpu, cuda, cuda:0 (default cpu)")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument(
-        "--text-dir",
-        type=Path,
-        default=None,
-        help="card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)",
-    )
-    parser.add_argument("--card-facts", action="store_true", help="use card_facts.npz in --text-dir (experimental)")
-    parser.add_argument("--no-text", action="store_true", help="ignore the text tables in --text-dir")
-    parser.add_argument("--id-dropout", type=float, default=0.0, help="training: drop each card's ID embedding")
-    parser.add_argument("--no-id-embedding", action="store_true", help="drop the per-card ID embedding")
     parser.add_argument("--baselines", action="store_true", help="also report RandomAgent and GreedyAgent openings")
     parser.add_argument(
         "--checkpoint",
@@ -120,17 +106,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--extra-subset", default="all", help="subset of the --extra samples (all, battle)")
     parser.add_argument("--extra-max", type=int, default=None, help="at most this many --extra samples")
     parser.add_argument("--extra-heldout", type=Path, default=None, help="held-out heuristic samples (.npz)")
+    from ygorl.train.bc import add_network_arguments
+
+    add_network_arguments(parser)  # the PPO trainer's network switches (ygorl.train.cli), with BC's defaults
     return parser
-
-
-def net_config(args: argparse.Namespace, vocab, text):
-    """The network for ``args`` (the same card-view switches as tools/train_ppo.py, so PPO can --init-from it)."""
-    from ygorl.nets import NetConfig
-
-    return NetConfig(vocab_size=len(vocab), d_model=args.d_model, history=args.history, board_layers=args.layers,
-                     history_layers=args.layers, id_embedding=not args.no_id_embedding, card_facts=args.card_facts,
-                     card_text=not args.no_text, effect_text=not args.no_text,
-                     id_dropout=args.id_dropout, selection_history=args.selection_history).with_text(text)  # fmt: skip
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -143,7 +122,15 @@ def main(argv: list[str] | None = None) -> int:
     from ygorl.engine.duel import default_cards
     from ygorl.nets import PolicyNet
     from ygorl.nets.agent import NetPolicy, save_checkpoint
-    from ygorl.train.bc import BCConfig, build_dataset, hand_overlap, opening_report, step_accuracy, train_bc
+    from ygorl.train.bc import (
+        BCConfig,
+        build_dataset,
+        hand_overlap,
+        network_from_args,
+        opening_report,
+        step_accuracy,
+        train_bc,
+    )
 
     torch.set_num_threads(args.threads)
     try:
@@ -282,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
             net = init.net.requires_grad_(True)
             cfg = net.cfg
         else:
-            cfg = net_config(args, vocab, text)
+            cfg = network_from_args(args).actor_config(len(vocab), text)
             net = PolicyNet(cfg, text)
         net.to(device)
         bc = BCConfig(epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay,

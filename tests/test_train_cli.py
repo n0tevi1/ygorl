@@ -148,3 +148,21 @@ def test_learner_precision_rejects_invalid_choice():
         TrainConfig(learner_precision="fp16")
     with pytest.raises(SystemExit):
         parse(["--learner-precision", "fp16"])
+
+
+def test_bc_takes_the_actor_flags_with_its_own_defaults():
+    """tools/train_bc.py adds only the actor's rows (cli.ACTOR_FLAGS) with BC's defaults: the network it built before
+    the flags were shared, and the switches PPO reads the same way."""
+    from ygorl.nets import NetConfig
+    from ygorl.train.bc import add_network_arguments, network_from_args
+
+    p = argparse.ArgumentParser()
+    add_network_arguments(p)
+    assert {a.option_strings[0] for a in p._actions if a.option_strings} - {"-h"} == set(cli.ACTOR_FLAGS)
+    bc = network_from_args(p.parse_args([]))
+    assert bc.event_length == 128 and bc.text_dir is None
+    assert bc.actor_config(10, None) == NetConfig(vocab_size=10, d_model=128, board_layers=2, history_layers=2)
+    switches = ["--d-model", "32", "--layers", "1", "--history", "lstm", "--id-dropout", "0.2", "--no-id-embedding"]
+    bc = network_from_args(p.parse_args(switches))
+    ppo = parse(switches)
+    assert bc.actor_config(10, None) == ppo.actor_config(10, None)

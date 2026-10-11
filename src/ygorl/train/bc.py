@@ -252,6 +252,34 @@ def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=Non
     return BCData(obs, np.asarray(actions, dtype=np.int64), meta, skipped)
 
 
+# ------------------------------------------------------------------ the network
+
+# BC's network defaults (larger than PPO's SMALL_NET; NetConfig's otherwise); its event window is DEFAULT_EVENT_LENGTH
+BC_NET = {"d_model": 128, "board_layers": 2, "history_layers": 2}
+
+
+def network_base():
+    """The base ``TrainConfig`` of BC's network flags (``ygorl.train.cli.ACTOR_FLAGS``: the PPO trainer's switches)."""
+    from ygorl.train.trainer import TrainConfig
+
+    return TrainConfig(net=dict(BC_NET), event_length=DEFAULT_EVENT_LENGTH)
+
+
+def add_network_arguments(parser) -> None:
+    """BC's network flags: the PPO trainer's rows (``ygorl.train.cli``) with BC's defaults."""
+    from ygorl.train import cli
+
+    cli.add_arguments(parser, network_base(), only=cli.ACTOR_FLAGS)
+
+
+def network_from_args(args):
+    """The ``TrainConfig`` of parsed BC ``args``' network flags: ``.actor_config(vocab_size, text)`` is the network,
+    ``.text_dir`` / ``.event_length`` what it reads. A PPO run given the same switches builds the same network."""
+    from ygorl.train import cli
+
+    return cli.from_args(args, (), network_base(), only=cli.ACTOR_FLAGS)
+
+
 # ------------------------------------------------------------------ training
 
 
@@ -529,7 +557,8 @@ def hand_overlap(train: Iterable[Demonstration], heldout: Iterable[Demonstration
     return sum((d.deck["name"], tuple(sorted(d.hand))) in seen for d in heldout if d.variant == "plain")
 
 
-__all__ = ["BCConfig", "BCData", "DEMO_PLAYER", "MAX_OPENING_STEPS", "OpeningResult", "bc_loss", "build_dataset",
+__all__ = ["BC_NET", "BCConfig", "BCData", "DEMO_PLAYER", "MAX_OPENING_STEPS", "OpeningResult", "bc_loss", "build_dataset",
            "DemoStep", "action_key", "demo_player_actions", "demo_player_keys", "hand_overlap", "line_steps",
-           "opening_report", "passive_action", "play_opening",
+           "add_network_arguments", "network_base", "network_from_args", "opening_report", "passive_action",
+           "play_opening",
            "start_replay", "step_accuracy", "train_bc", "trim_padding", "undone_steps"]  # fmt: skip

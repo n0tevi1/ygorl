@@ -1,6 +1,7 @@
 """PPO self-play on real duels (T4b.4): rollout layout on EncodedVecEnv, trainer checkpoints and resume,
 and the ``policy:<checkpoint>`` agent (lockstep C++ host) on the arena / duel path."""
 
+import argparse
 import importlib.util
 import json
 from dataclasses import replace
@@ -725,21 +726,21 @@ def _facts_dir(tmp_path, vocab):
 
 
 def test_a_bc_checkpoint_with_card_views_warm_starts_ppo(tmp_path, vocab):
-    """tools/train_bc.py --text-dir --card-facts --id-dropout builds (from its own flags) the network PPO builds for
-    the same switches, so init_from with the same text_dir picks up every weight; loading the checkpoint without the
-    features is an error, not silently different weights."""
+    """BC's --text-dir --card-facts --id-dropout (the trainer's own flag rows, ygorl.train.bc.add_network_arguments)
+    build the network PPO builds for the same switches, so init_from with the same text_dir picks up every weight;
+    loading the checkpoint without the features is an error, not silently different weights."""
     from ygorl.nets import PolicyNet
     from ygorl.nets.agent import load_checkpoint, save_checkpoint
     from ygorl.nets.text import TextFeatures
+    from ygorl.train.bc import add_network_arguments, network_from_args
 
-    spec = importlib.util.spec_from_file_location("train_bc", Path(__file__).parents[1] / "tools" / "train_bc.py")
-    tool = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(tool)
     feat = _facts_dir(tmp_path, vocab)
     text = TextFeatures.load(feat, vocab)
-    args = tool.build_parser().parse_args(["--train", "x.jsonl", "--d-model", "16", "--layers", "1", "--text-dir",
-                                           str(feat), "--card-facts", "--id-dropout", "0.3"])  # fmt: skip
-    cfg = tool.net_config(args, vocab, text)
+    parser = argparse.ArgumentParser()
+    add_network_arguments(parser)
+    args = parser.parse_args(["--d-model", "16", "--layers", "1", "--text-dir", str(feat), "--card-facts",
+                              "--id-dropout", "0.3"])  # fmt: skip
+    cfg = network_from_args(args).actor_config(len(vocab), text)
     net = PolicyNet(cfg, text)
     with torch.no_grad():
         for p in net.parameters():
