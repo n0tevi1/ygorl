@@ -122,7 +122,11 @@ of 511 in the earlier confirmation did not represent missing data: all 512 game
 IDs and outputs were verified. The new runner derives final collection progress
 from the completed report.
 
-Development was synchronized to main `758a638`, including PRs #291 and #296.
+Development was synchronized to main `a79a6b2`, including PRs #291, #296 and #300.
+After building a matching native extension from pinned, pristine core/Lua sources
+in the development worktree, all 32 combined driver/probe tests pass. Full
+`src/tests/tools` Ruff lint and format checks pass. This is local validation;
+no GitHub Actions run was present for the PR when checked.
 The sealed experiment runtime remains at `ae09594`; changing it mid-study would
 invalidate the controlled comparison. Further actor-training experiments must
 separately test retention, calibration under policy shift and playing strength.
