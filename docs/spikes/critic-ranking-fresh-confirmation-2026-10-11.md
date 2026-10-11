@@ -1,5 +1,7 @@
 # Fresh validation does not establish a benefit from context-only Q fitting
 
+Follow-up: the [32-to-128-root coverage comparison](critic-ranking-coverage-results-2026-10-11.md) has completed. Its primary interval also crosses zero, and both fitted heads have worse new-validation point estimates than initialization. No model is promoted; independent suffix-label replication investigates the training/generalization gap.
+
 The proposed context-only update does **not** pass the prospective improvement test. All6,976 registered tasks completed normally and passed verification, but its primary MSE difference has a confidence interval crossing zero. Its conditional choice win rate is also indistinguishable from the full Q head. Do not promote the model or treat the earlier repaired Runick example as a general solution.
 
 This closes the validation registered in [the interference report](critic-ranking-interference-2026-10-11.md). Execution stayed at frozen commit `ae09594ec0126b5365e3c8311e9ac5c67d23f270`; reporting is based on main `e3ea9c7` (PR #331). Issues #61/#83/#36/#105 remain active; #319 is not resolved by this experiment.
