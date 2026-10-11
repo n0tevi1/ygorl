@@ -36,12 +36,18 @@ The expanded head also reduces mean squared centered predictions on validation f
 
 ## Next fixed-model label replication
 
-`critic-ranking-coverage-label-replication-2026-10-11` freezes the unchanged, original32 and expanded128 model predictions at all 128 roots before collecting independent suffix streams 1401–1416. It contains another 7,408 tasks including 128 original controls, with two workers, a six-hour cap and an independent monitor.
+`critic-ranking-coverage-label-replication-restart-2026-10-11` freezes the unchanged, original32 and expanded128 model predictions at all 128 roots before collecting independent suffix streams 1401–1416. It contains another 7,408 tasks including 128 original controls, with two workers, a six-hour cap and an independent monitor.
 
 The primary diagnostic asks whether the expanded model's apparent training-MSE gain over initialization reproduces on independent labels at the same 96 training states. Estimate the new-minus-old change in this gain with independent old/new shared-suffix bootstrap draws (50,000, seed 2026101120). Report the original-only model and the 32 previously inspected validation roots separately. These are new random continuations, **not new roots or fresh population confirmation**. No fitting or checkpoint selection occurs in this study; do not automatically average the labels into another training run.
 
 Collection: `critic-ranking-coverage-branches-2026-10-11/verification.json`, completion event `c579d0b510b7de20ca3f77ad0c8d65580ae2ef9b285e3bf52ff68721ab06ad15` acknowledged after verification.
 
-Fit: `critic-ranking-coverage-fit-2026-10-11/`, identity `9d72a0072d420013cf2afdfda01b331991fac3782b79071c29f3076ef9083535`; `verification.json`, `validation.json`, `fit-diagnostic.json` and executable verification/diagnostic scripts. Completion event `8889e36501b84dab614760dfddd9d2f01b7216b31bda62cb8472edd696774170` acknowledged after independent metric checks. Replication identity: `048fe5a29a5ba8c4e13602ef1a28e022e5821e4b20f6c6462aa14b5dba574a8a`.
+Fit: `critic-ranking-coverage-fit-2026-10-11/`, identity `9d72a0072d420013cf2afdfda01b331991fac3782b79071c29f3076ef9083535`; `verification.json`, `validation.json`, `fit-diagnostic.json` and executable verification/diagnostic scripts. Completion event `8889e36501b84dab614760dfddd9d2f01b7216b31bda62cb8472edd696774170` acknowledged after independent metric checks. Active replication identity: `aaa163b26dfbc2bbcff3cdf24109f17aab1e0860d0ae5ab8c38d601c045f9298`.
 
 The matched experiment retains frozen runtime `ae09594`; development/reporting is synchronized with main `56c29d6`. Preserve earlier STOP evidence. Issues #61/#83/#36 remain active, and declaration coverage #319 remains unresolved.
+
+## Launch failure and recovery
+
+The first replication launch (`critic-ranking-coverage-label-replication-2026-10-11`, identity `048fe5a29a5ba8c4e13602ef1a28e022e5821e4b20f6c6462aa14b5dba574a8a`) stopped with `FileExistsError`: a manual preflight had written `games/0`, and the non-resuming worker correctly refused to overwrite it. This was an orchestration mistake, not an engine or model failure. Preserve its STOP, preflight result and acknowledged event `0f9120efd22e601c619e9178ff2ebc688c3e8872a819d321bf1a1788cd6b6331`.
+
+The restart uses a new empty output directory, byte-identical task grid and sealed predictions, unchanged model checkpoints and suffix seeds. The prior successful control is retained as preflight evidence instead of writing another result into the formal directory. Service `ygorl-critic-ranking-coverage-label-replication-restart-20261011.service`, invocation `cfdee84e710743d7bcaf48cb2e819ba7`, and its independent monitor were verified running with progress through 108/7,408 tasks and no monitor alerts. This is launch verification, not completed scientific validation. Keep preflight outputs separate from formal non-resuming study outputs in future launches.
