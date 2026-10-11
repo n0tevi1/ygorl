@@ -105,3 +105,7 @@ Artifacts: `critic-head-refresh-confirmation-2026-10-10/analysis.json`,
 worker preflight and monitored run. The completion event was acknowledged only
 after the independent confirmation audit. This documentation changes no
 production actor, reward or PPO implementation.
+
+
+The learner-policy-shift study has completed; see the [verified transfer results
+and all-decision coverage audit](critic-learner-shift-2026-10-10.md).
