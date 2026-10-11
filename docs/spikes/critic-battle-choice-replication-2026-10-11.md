@@ -47,10 +47,33 @@ The next decision is whether the main failures trace to context-dependent action
 
 Frozen execution remains at `codex-runick-coverage-audit` commit `ae09594ec0126b5365e3c8311e9ac5c67d23f270`. Reporting starts from main `f839d1d` (PR #327). No production code/default changes; issue #319 remains unresolved.
 
-## Next: phase-boundary RNG coupling diagnostic
+## Completed: phase-boundary RNG coupling diagnostic
 
-`critic-phase-rng-boundary-2026-10-11` runs **257 games** on root45: 64 new trials1001–1064 × both phase choices × two continuation RNG couplings, plus one original control. Sequential coupling is the current evaluator. Boundary coupling reseeds both agents immediately before the learner's first prompt on a later turn, using independent SHA256-derived trial/seat seeds. Both arms record that boundary's inputs, probabilities and state. Policies and action distributions are unchanged; the intended random-seed ensemble marginals are preserved, while finite sampled paths can change.
+All **257 games** passed immutable-input, full task-grid, per-game result/replay hash, cold replay and original-control verification. All ended with a winner. There is no missing boundary in either mode. The earlier phase-ending disadvantage does not persist in this fresh sequential sample; resetting the suffix streams at the aligned boundary removes every observed continuation difference.
+
+| Coupling, 64 trials each | Main2 wins | End Phase wins | End-minus-Main2 | Different winners | Identical semantic suffixes |
+|---|---:|---:|---:|---:|---:|
+| Sequential draws | 52 | 54 | +3.125 pp | 20/64 | 0/64 |
+| Boundary reseed | 54 | 54 | 0 pp | 0/64 | 64/64 |
+
+Both modes have **64/64 identical actor-observation pairs at the boundary**. Semantic suffix comparison removes only the decision index, which differs because Main2 inserts an extra prompt; players, turns, options and chosen actions must still match. The boundary arm then reproduces the same entire continuation, not merely the same final winner. These are new trials1001–1064, separate from previous samples.
+
+**Interpretation correction:** the earlier negative phase-choice estimates must not be taught as a stable tactical preference for Main2. On these sampled paths, an extra decision shifts RNG consumption, and finite sequential suffix panels can produce substantially different estimated returns for continuations that coincide under aligned randomness. This is Monte Carlo target/measurement noise, not an engine correctness failure. Boundary reseeding changes coupling rather than the policies' intended sampling distributions. It does not establish equivalence for every possible Main2 continuation: the earlier trial930 actually set a spell and changed state. Nor does this single selected-root diagnostic invalidate the recorded 64-root estimates or establish general model improvement.
+
+The implication for future supervision is to measure target uncertainty and distinguish materially changed continuations from RNG-offset differences before treating small action-value gaps as reliable ranking targets. Do not force all Main2/End actions equal or apply a blanket phase mask.
+
+`critic-phase-rng-boundary-2026-10-11` registered **257 games** on root45: 64 new trials1001–1064 × both phase choices × two continuation RNG couplings, plus one original control. Sequential coupling is the current evaluator. Boundary coupling reseeds both agents immediately before the learner's first prompt on a later turn, using independent SHA256-derived trial/seat seeds. Both arms record that boundary's inputs, probabilities and state. Policies and action distributions are unchanged; the intended random-seed ensemble marginals are preserved, while finite sampled paths can change.
 
 All trials remain in the denominator, including differing boundary states or failure to reach a boundary. Compare outcome divergence and semantic suffix equality, especially when actor observations coincide. This is a post-hoc single-root mechanism experiment, not another model-promotion test. Do not interpret it as a general tactical label or train on the held-out root. No optional stopping or additional significance retries.
 
 Identity: `b91c33d5be0158f187b8795f0affcb5e86155b3cf15db18fba7711c52f8cf3e5`; service `ygorl-critic-phase-rng-boundary-20261011.service`, invocation `c2896d9e49954c7fafb2eb1b61e3866d`. Two workers, two-hour cap, cold replay, original control and independent watchdog. The diagnostic completion event `3a13da7d7d2876034c87d10405f6b6751132380ab5c0004355b4c9ffb823f1bd` was acknowledged after full verification. Supplemental results are in the completed diagnostic's `analysis.json` and `mechanism-summary.json`.
+
+The phase-boundary completion event `ae383d118f2b75bcd75258c5c967fa233c1988365171c6c2e88f5a8797b1ca65` was acknowledged after verification. Its own `analysis.json` records all257 games and paired suffix comparisons. The audit did not independently rerun games beyond their recorded cold replay checks.
+
+## Next: isolate Runick continuation differences
+
+`critic-runick-rng-boundary-2026-10-11` runs **257 games** on root60: 64 new trials1101–1164 × activation/attack × sequential/boundary coupling, plus one original control. The tested choices are Flashing Fire activation (action0) and Geri attack (action1). Report **activate-minus-attack** wins separately for each coupling, input agreement and suffix divergence. The worker is byte-identical to the completed phase study; it reseeds both agents before the first learner prompt on a later turn. Models remain frozen.
+
+The purpose is to check whether adverse Runick outcomes remain after controlling RNG alignment. Reseeding does not equalize different states, and a remaining gap would not by itself isolate battle restrictions from resource changes or subsequent policy behavior. Do not pool previous trials, tune on the outcomes, stop early or infer population-level strength from this post-hoc root. No fitting, action masking or promotion.
+
+Identity `537c6f0efc30a55931ea71ee87fc205a1a5f70d93b3513e082721e94b4e6daa0`; service `ygorl-critic-runick-rng-boundary-20261011.service`, invocation `52df931f7b0e4a458e8f739536fc1787`. Two workers, two-hour cap, original canary, per-game cold replay and independent watchdog. Sealed `analyze.py`, with the supplementary `HANDOFF.md`, defines completion handling. Reporting base is main `f72a465` (PR #329); frozen runtime and previous STOP evidence are unchanged.
