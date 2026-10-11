@@ -58,6 +58,9 @@ from ygorl.train.selfplay import DeckPool, EvolvedDecks, SelfPlaySchedule, Snaps
 SMALL_NET = {"d_model": 64, "n_heads": 4, "board_layers": 1, "history_layers": 1}
 
 
+PPO_EVENT_LENGTH = 64  # a fresh PPO run's event window (the encoders default to env.events.DEFAULT_EVENT_LENGTH = 128)
+
+
 @dataclass(frozen=True)
 class TrainConfig:
     decks: tuple[str, ...] = ()  # .ydk files of the deck pool
@@ -76,7 +79,9 @@ class TrainConfig:
     complete_games: bool = False  # experimental: one whole game per env per update, steps unused
     steps: int = 128  # rows per environment slot per rollout (T)
     min_batch: int | None = None  # ready decisions per forward pass (default num_envs // 2)
-    event_length: int = 64  # event tokens per observation (window mode)
+    # event tokens per observation (window mode); None: the --init-from checkpoint's, else PPO_EVENT_LENGTH. A
+    # Trainer always stores the number it used (checkpoints, resume)
+    event_length: int | None = None
     skip_forced: bool = True  # decisions with one choosable row are played in C++ and produce no rows
     cancel_budget: int = 32  # experimental environment mask, both learner and pool-opponent seats
     net: dict = field(default_factory=lambda: dict(SMALL_NET))  # NetConfig overrides (vocab_size is set)
@@ -203,6 +208,7 @@ class Trainer:
         self.cards = default_cards()
         self.device = torch_device(cfg.device)
         init = load_actor(cfg.init_from, cfg.text_dir) if cfg.init_from and state is None else None
+        cfg = self.cfg = self._event_length(cfg, init)
         if state is not None:
             self.vocab = vocab_from_text(state["vocab"])
         else:  # a warm start brings its own vocab: its ID embeddings are indexed by it
@@ -230,7 +236,9 @@ class Trainer:
         for path in cfg.pin_opponents:
             pinned = load_actor(path, cfg.text_dir)
             if why := signature.mismatches(pinned.signature):
-                raise ValueError(f"{path}: the run and the pinned opponent differ: {'; '.join(why)}")
+                raise ValueError(f"{path}: the run and the pinned opponent differ: {'; '.join(why)}"
+                                 + (" (the run's event length came from --init-from; set --event-length)"
+                                    if self._adopted_event_length else ""))  # fmt: skip
             self.pool.pin(pinned.net.to(self.device), tag=f"pinned:{Path(path).name}")
         self.evolved = None
         if cfg.deck_pool is not None:
@@ -263,6 +271,23 @@ class Trainer:
         if state is not None:
             self._restore(state)
         (self.run_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
+
+    def _event_length(self, cfg: TrainConfig, init) -> TrainConfig:
+        """``cfg`` with its event window settled: a warm start keeps the window its network was trained with (like
+        its vocab) unless ``event_length`` is set; a set one that differs is used, with a warning."""
+        self._adopted_event_length = cfg.event_length is None and init is not None
+        if cfg.event_length is None:
+            n = init.event_length if init is not None else PPO_EVENT_LENGTH
+            if init is not None:
+                pins = (
+                    " (pinned opponents must read the same; set --event-length to choose)" if cfg.pin_opponents else ""
+                )
+                self.log(f"event length {n}, as {cfg.init_from} was trained with{pins}")
+            return replace(cfg, event_length=n)
+        if init is not None and init.event_length != cfg.event_length:
+            self.log(f"warning: {cfg.init_from} was trained with {init.event_length} event tokens per observation; "
+                     f"this run reads {cfg.event_length}")  # fmt: skip
+        return cfg
 
     def _new_model(self) -> ActorCritic:
         return use_split_k(build_actor_critic(self.net_config, self._text, self.cfg.critic)).to(self.device)

@@ -111,8 +111,9 @@ OMP_NUM_THREADS=1 uv run ygorl arena tests/decks --agent-a policy:out/bc12/polic
 ```
 
 卡片视角（[nets.md](nets.md)「卡片事实」）与 PPO 用同一组开关：`--text-dir DIR`（冻结文本表和 / 或 `card_facts.npz`）、`--card-facts`、`--no-text`、
-`--id-dropout P`、`--no-id-embedding`。检查点里存着这些网络宽度；PPO `--init-from` 它时要给同一个 `--text-dir`（及同样的开关）。`ygorl arena` 的 `policy:` 不带特征目录加载，
-不能直接评估这样的 BC 检查点（PPO 的检查点在配置里记着 `text_dir`，可以）。
+`--id-dropout P`、`--no-id-embedding`。检查点里存着这些网络宽度，还记着特征目录（`text_dir`，绝对路径；PPO 的检查点在配置里同样记着），
+所以 `ygorl arena` 的 `policy:`、agent 矩阵与 PPO 的 `--init-from` / `--bc-prior` / `--pin` 不给 `--text-dir` 也能重建它
+（`train.checkpoint.load_actor`；给了 `--text-dir` 则用给的目录）。2026-10-10 之前写出的 BC 检查点没有这一项，仍要显式给目录。
 
 求解器的搜索按墙钟预算、未固定 `--solver-seed`，重跑得到的线可能不同（数量与下表同一量级）。
 

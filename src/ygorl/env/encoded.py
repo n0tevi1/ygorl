@@ -70,7 +70,7 @@ class EncodedVecEnv:
         self.cancel_budget = cancel_budget
         self.cards = cards if cards is not None else default_cards()
         self.vocab = vocab if vocab is not None else CardVocab.from_db(self.cards)
-        passwords = [self.vocab.password(i) for i in range(CardVocab.FIRST_INDEX, len(self.vocab))]
+        passwords = self.vocab.passwords()
         threads = num_threads or max(1, min(num_envs, os.cpu_count() or 1))
         if selection_history and event_length <= 0:
             raise ValueError("selection history requires a nonempty event window")

@@ -44,7 +44,7 @@ def main() -> int:
     args = parser.parse_args()
     db = CardDB.load()
     vocab = CardVocab.from_db(db)
-    passwords = [vocab.password(i) for i in range(vocab.FIRST_INDEX, len(vocab))]
+    passwords = vocab.passwords()
     encoder = ObservationEncoder(db, vocab, privileged=True)
     decks = {p.stem: load_ydk(p) for p in sorted(DECK_DIR.glob("*.ydk"))}
     names = sorted(decks)

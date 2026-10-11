@@ -3,8 +3,9 @@
 A checkpoint (``torch.save`` of plain data) holds everything needed to rebuild the network and feed it:
 the :class:`NetConfig`, the ``state_dict``, the card vocabulary (passwords in index order), the event
 window length and the environment stamp of the data it was trained on. Frozen text tables are not
-stored (non-persistent buffers, docs/nets.md); a checkpoint built with them needs the same
-``TextFeatures`` at load time.
+stored (non-persistent buffers, docs/nets.md); a checkpoint built with them records the feature directory
+(``text_dir``) they came from, where ``ygorl.train.checkpoint.load_actor`` finds them again, and
+:func:`load_checkpoint` needs the same ``TextFeatures`` passed in.
 
 :class:`NetPolicy` turns a network into a ``PolicyAgent`` policy on the Python ``DecisionPoint`` path
 (``Duel.run``, the arena): it encodes each point with :class:`~ygorl.env.observer.PointObserver` from
@@ -18,7 +19,6 @@ or, by name, ``make_agent("policy:out/bc/policy.pt")`` (``ygorl arena --agent-a 
 
 from __future__ import annotations
 
-import functools
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,12 +48,15 @@ class PolicyCheckpoint:
 
 
 def vocab_passwords(vocab: CardVocab) -> list[int]:
-    return [vocab.password(i) for i in range(CardVocab.FIRST_INDEX, len(vocab))]
+    return vocab.passwords()
 
 
 def save_checkpoint(path: str | Path, net: PolicyNet, vocab: CardVocab, *, event_length: int,
-                    environment: dict | None = None, meta: dict | None = None) -> Path:  # fmt: skip
-    """Write a checkpoint that :func:`load_checkpoint` (and ``PolicyAgent`` via :class:`NetPolicy`) can read."""
+                    environment: dict | None = None, meta: dict | None = None,
+                    text_dir: str | Path | None = None) -> Path:  # fmt: skip
+    """Write a checkpoint that :func:`load_checkpoint` (and ``PolicyAgent`` via :class:`NetPolicy`) can read.
+    ``text_dir``: the card feature directory the network's frozen tables came from, recorded (as an absolute path) so
+    loaders find the tables without being told (``ygorl.train.checkpoint.load_actor``), like a PPO run's config."""
     if len(vocab) != net.cfg.vocab_size:
         raise ValueError(f"vocab has {len(vocab)} entries, the network {net.cfg.vocab_size}")
     path = Path(path)
@@ -61,7 +64,8 @@ def save_checkpoint(path: str | Path, net: PolicyNet, vocab: CardVocab, *, event
     state = {k: v.detach().cpu() for k, v in net.state_dict().items()}
     data = {"format": CHECKPOINT_FORMAT, "format_version": CHECKPOINT_VERSION, "config": net.cfg.to_dict(),
             "state_dict": state, "vocab": vocab_passwords(vocab), "event_length": int(event_length),
-            "environment": environment, "meta": meta or {}}  # fmt: skip
+            "environment": environment, "meta": meta or {},
+            "text_dir": None if text_dir is None else str(Path(text_dir).resolve())}  # fmt: skip
     tmp = path.with_suffix(path.suffix + ".tmp")
     torch.save(data, tmp)
     os.replace(tmp, path)
@@ -84,17 +88,6 @@ def load_checkpoint(path: str | Path, text: TextFeatures | None = None) -> Polic
     net.load_state_dict(data["state_dict"])
     net.eval()
     return PolicyCheckpoint(net, vocab, data["event_length"], data.get("environment"), data.get("meta", {}))
-
-
-@functools.lru_cache(maxsize=4)
-def _cached_checkpoint(path: str, mtime_ns: int) -> PolicyCheckpoint:
-    return load_checkpoint(path)
-
-
-def cached_checkpoint(path: str | Path) -> PolicyCheckpoint:
-    """:func:`load_checkpoint` once per process and file version (arena games build one agent per game)."""
-    p = Path(path).resolve()
-    return _cached_checkpoint(str(p), p.stat().st_mtime_ns)
 
 
 class NetPolicy:
@@ -126,8 +119,10 @@ class NetPolicy:
     @property
     def net(self) -> PolicyNet:
         if self._net is None:
-            ckpt = cached_checkpoint(self._checkpoint)
-            self._net, self._vocab, self._event_length = ckpt.net, ckpt.vocab, ckpt.event_length
+            from ygorl.train.checkpoint import cached_actor  # the one loader (frozen tables included) and its cache
+
+            loaded = cached_actor(self._checkpoint)
+            self._net, self._vocab, self._event_length = loaded.net, loaded.vocab, loaded.event_length
         return self._net
 
     def on_duel_start(self, duel) -> None:
@@ -164,5 +159,5 @@ class NetPolicy:
         return logits[:k].tolist() + [MASKED_LOGIT] * (n - k)
 
 
-__all__ = ["CHECKPOINT_FORMAT", "NetPolicy", "PolicyCheckpoint", "cached_checkpoint", "load_checkpoint",
-           "save_checkpoint", "vocab_passwords"]  # fmt: skip
+__all__ = ["CHECKPOINT_FORMAT", "NetPolicy", "PolicyCheckpoint", "load_checkpoint", "save_checkpoint",
+           "vocab_passwords"]  # fmt: skip
