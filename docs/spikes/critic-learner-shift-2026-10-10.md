@@ -76,7 +76,7 @@ interval, but it does not establish an overall improvement.
 
 The existing evidence samples idle decisions only. It cannot establish calibration
 for chain responses, target/material selection or all unchosen candidate actions.
-Before integrating the research critic into PPO, `critic-all-decision-audit-2026-10-10`
+Before integrating the research critic into PPO, `critic-all-decision-audit-restart-2026-10-10`
 is running an exploratory replay audit on 144 source games selected by draw zero
 and a deterministic balanced-seat rule, without looking at outcomes. Both actors,
 both roles, old/mirror opponents and broad/Runick panels remain separate.
@@ -88,10 +88,10 @@ ridge correction, clips only after adding the raw outputs, and keeps illegal or
 padded Q entries exactly zero. Unknown opponents are rejected. It is not a
 production checkpoint adapter and does not migrate weights to a changed encoder.
 
-Twenty relevant helper/resource/opponent/residual tests pass, including every
+Twenty-one relevant helper/resource/opponent/residual tests pass, including every
 legal candidate versus the chosen-action path, clipping order, padded rows and
-gradient isolation. A real-replay preflight covers two seats/behaviors and 197
-learner decisions: maximum chosen-Q/V discrepancy is 1.79e-7. Earlier idle-cache
+gradient isolation. A real-replay preflight covers three replays including both seats/behaviors and 478
+learner decisions: maximum chosen-Q/V discrepancy is 2.38e-7. Earlier idle-cache
 predictions also agree within the registered floating-point tolerance. The 144-game
 run checks every learner decision, all-action finiteness/masking and chosen-action
 parity; it will report equal-game errors and biases by decision type. Unchosen Q
@@ -112,5 +112,30 @@ two fixed behavior actors with one frozen reference encoder, rather than one
 behavior actor. The underlying within-behavior calculations and denominators
 are unchanged. Completion was acknowledged after verification.
 
-`critic-all-decision-audit-2026-10-10` contains the registered source IDs, sealed
+`critic-all-decision-audit-restart-2026-10-10` contains the registered source IDs, sealed
 implementation/dependencies, preflight, replay audit and independent watchdog.
+
+
+## Declaration capacity gap found while extending coverage
+
+The original audit stopped at game 584 because it compared a 128-entry native
+mask to a 9,226-entry trace mask. The trace correctly pads unsupported engine
+choices with False; the audit now follows that convention and records engine
+candidate count, encoded width, represented choices and capacity overflow
+separately. The failing game passes the new canary, including both declarations.
+Original STOP/failure files remain intact; recovery uses a new study directory.
+
+The larger issue is real policy coverage, tracked in [#319](https://github.com/n0tevi1/ygorl/issues/319).
+The Black Goat Laughs (49299410), at decisions 453 and 502, allows 9,226 card names.
+Both Python and native encoders expose only the first 128 sorted legal passwords.
+All 31 declarable cards in this game's opposing main/extra deck fall outside that
+prefix. The actor instead declares Kojikocy and Drytron Mu Beta Fafnir. Hidden
+deck contents were used only for this posthoc diagnostic, not as policy input.
+This single example does not establish a population frequency.
+
+Consequently, this helper verifies all **encoded supported** candidates, not all
+engine-legal candidates. The trace-mask repair does not fix declaration coverage.
+A production fix must preserve response mapping while exposing more candidates,
+keep native/Python and train/eval interfaces consistent, and avoid a hidden-deck
+shortlist. The restarted audit measures the scope of this gap while the separate
+issue tracks the required action-interface fix.

@@ -4,7 +4,7 @@ import pytest
 torch = pytest.importorskip("torch")
 from torch import nn
 
-from critic_action_probe import all_action_values
+from critic_action_probe import all_action_values, trace_action_mask
 from critic_opponent_probe import opponent_features
 from critic_residual_probe import predict_residual
 from critic_resource_probe import ResourceCritic
@@ -68,3 +68,12 @@ def test_missing_or_unknown_opponent_and_non_boolean_mask_rejected():
         all_action_values(net, b, ridge={}, opponents=["unseen"] * 3)
     with pytest.raises(ValueError, match="boolean"):
         all_action_values(net, {**b, "action_mask": b["action_mask"].float()})
+
+
+def test_trace_mask_preserves_prefix_and_reports_unsupported_tail_as_false():
+    native = torch.tensor([True, False, True])
+    assert trace_action_mask(native, 2) == [True, False]
+    assert trace_action_mask(native, 5) == [True, False, True, False, False]
+    assert trace_action_mask(native, 0) == []
+    with pytest.raises(ValueError, match="negative"):
+        trace_action_mask(native, -1)

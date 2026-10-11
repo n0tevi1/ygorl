@@ -11,6 +11,17 @@ import torch
 from critic_opponent_probe import opponent_features
 
 
+def trace_action_mask(native_mask, engine_action_count):
+    """Match the trace convention without pretending encoder capacity is legality.
+
+    Engine choices beyond the fixed observation width are unsupported by this
+    model and recorded as False. Callers must report that coverage gap separately.
+    """
+    if engine_action_count < 0:
+        raise ValueError("engine action count cannot be negative")
+    return [bool(native_mask[i]) if i < len(native_mask) else False for i in range(engine_action_count)]
+
+
 def all_action_values(net, batch, *, ridge=None, opponents=None):
     """Return Q[B,A], V[B]; preserve zero Q on illegal/padded action rows.
 
