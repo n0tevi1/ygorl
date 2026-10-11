@@ -157,3 +157,7 @@ The head-pilot completion event was acknowledged after verification. The
 confirmation results are pending; no gameplay improvement, shorter-game effect,
 or PPO promotion is established. Full artifacts and the independent verifier
 are in `critic-head-refresh-pilot-2026-10-10`.
+
+
+The head confirmation has since completed; see the [independent results and
+learner-policy-shift follow-up](critic-head-confirmation-2026-10-10.md).
