@@ -105,3 +105,71 @@ def test_length_summary_counts_long_tail_and_empty_sample():
     assert length_stats([]) == {"n": 0}
     result = length_stats([2, 3, 4, 9, 30])
     assert result["median"] == 4 and result["gt20"] == 1 and result["le4"] == 3
+
+
+def material_cycle(repetitions=3, player=0):
+    rows = []
+    for i in range(4 * repetitions):
+        r = row(i, [{"type": "Hint"}, {"type": "SelectUnselectCard"}], player=player)
+        action = {"kind": "select" if i % 2 == 0 else "unselect", "card": None, "value": i % 4}
+        r.update(decision_type="SelectUnselectCard", options=[action], chosen=action)
+        rows.append(r)
+    return rows
+
+
+def test_short_material_cycle_alerts_below_single_choice_threshold():
+    from ygorl.eval.behavior import BEHAVIOR_ANALYSIS_VERSION, has_repeat_signal
+
+    result = summarize_trace(material_cycle(5), 0)
+    assert result["analysis_version"] == BEHAVIOR_ANALYSIS_VERSION
+    assert result["counts"]["max_same_choice_without_event"] == 5
+    cycles = [f for f in result["findings"] if f["kind"] == "selection_cycle"]
+    assert len(cycles) == result["counts"]["selection_cycle_signals"] == 1
+    assert cycles[0] == dict(
+        kind="selection_cycle", start=0, decision=11, player=0, candidate=True, period=4, repetitions=3
+    )
+    assert has_repeat_signal(result)
+    assert not has_repeat_signal(summarize_trace(material_cycle(2), 0))
+    other = summarize_trace(material_cycle(player=1), 0)
+    assert has_repeat_signal(other) and not other["findings"][0]["candidate"]
+
+
+def test_material_cycle_resets_on_progress_unknown_events_and_other_prompts():
+    from ygorl.eval.behavior import selection_cycle_findings
+
+    for event in ["Move", "FutureUnknownMessage"]:
+        rows = material_cycle()
+        rows[8]["events"].insert(0, {"type": event})
+        assert not selection_cycle_findings(rows, 0)
+    for field, value in [("decision_type", "SelectChain"), ("chosen", None), ("player", 1)]:
+        rows = material_cycle()
+        rows[8][field] = value
+        assert not selection_cycle_findings(rows, 0)
+
+
+def test_material_cycle_does_not_ignore_prompt_state_or_mask_changes():
+    from ygorl.eval.behavior import selection_cycle_findings
+
+    for field in ["board", "mask", "undo", "lp", "options"]:
+        rows = material_cycle()
+        for r in rows[8:]:
+            r[field] = {
+                "board": [[{"code": 123}], []],
+                "mask": [False],
+                "undo": [0],
+                "lp": [7900, 8000],
+                "options": [{"kind": "select", "card": None}],
+            }[field]
+        assert not selection_cycle_findings(rows, 0)
+    rows = material_cycle()
+    for r in rows:
+        r["chosen"]["kind"] = "select"
+    assert not selection_cycle_findings(rows, 0)
+
+
+def test_material_cycle_accepts_terminal_rows_without_prompt_fields():
+    from ygorl.eval.behavior import selection_cycle_findings
+
+    assert len(selection_cycle_findings(material_cycle() + [{"chosen": None, "events": []}], 0)) == 1
+    rows = material_cycle(2) + [{"chosen": None, "events": []}] + material_cycle(2)
+    assert not selection_cycle_findings(rows, 0)

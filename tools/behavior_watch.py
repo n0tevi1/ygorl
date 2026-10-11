@@ -17,7 +17,7 @@ from behavior_replay import replay_game, sha
 from colab_checkpoint import run_lock
 from ygorl import _core
 from ygorl.data import load_environment
-from ygorl.eval.behavior import length_stats, select_replay_games
+from ygorl.eval.behavior import BEHAVIOR_ANALYSIS_VERSION, has_repeat_signal, length_stats, select_replay_games
 from ygorl.train.registration import atomic_json
 
 HEALTH = ("error", "retries", "unknown_messages", "undecodable_messages", "script_errors")
@@ -196,7 +196,9 @@ def main():
                     report = path / "report.json"
                     if report.exists():
                         rec = json.loads(report.read_text())
-                        assert rec.get("analysis_version") == 2, "re-analyze legacy reports in a new observer root"
+                        assert rec.get("analysis_version") == BEHAVIOR_ANALYSIS_VERSION, (
+                            "re-analyze legacy reports in a new observer root"
+                        )
                         assert all(sha(path / k) == v for k, v in rec["files"].items())
                         reports[key] = rec
                         continue
@@ -215,9 +217,10 @@ def main():
                         "candidate_repeats": sum(
                             f["kind"] == "no_event_repeat" and f.get("candidate", False) for f in r["findings"]
                         ),
+                        "selection_cycles": [f for f in r["findings"] if f["kind"] == "selection_cycle"],
                     }
                     for (cell, game), r in sorted(reports.items())
-                    if r["counts"].get("max_same_choice_without_event", 0) >= 8
+                    if has_repeat_signal(r)
                 ]
                 status["replays"] = {
                     "completed": len(reports),

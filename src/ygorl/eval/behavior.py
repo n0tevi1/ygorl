@@ -9,6 +9,62 @@ from ygorl.engine import messages as M
 from ygorl.engine.tracker import _NOT_EVENTS
 from ygorl.eval.action_outcomes import action_intervals
 
+BEHAVIOR_ANALYSIS_VERSION = 3
+
+
+def selection_cycle_findings(rows, candidate):
+    """Flag three consecutive repeats of a 2–8 step material-selection cycle.
+
+    Public prompt equality is an investigation signal, not engine-state equality.
+    Keep a bounded window and emit once per uninterrupted selection segment.
+    """
+    window, findings = [], []
+    scope, reported = None, False
+    for row in rows:
+        action = row["chosen"]
+        if action is None:  # Terminal/event-only rows need not contain prompt fields.
+            window, scope, reported = [], None, False
+            continue
+        current_scope = (row["turn"], row["phase"], row["player"])
+        if has_game_event(row["events"]) or current_scope != scope:
+            window, reported = [], False
+        scope = current_scope
+        if row.get("decision_type") != "SelectUnselectCard" or action["kind"] not in ("select", "unselect"):
+            window, reported = [], False
+            continue
+        if reported:
+            continue
+        key = json.dumps([row["lp"], row["board"], row["options"], row["mask"], row["undo"], action], sort_keys=True)
+        window.append((key, row["index"], action["kind"]))
+        window = window[-24:]
+        for period in range(2, min(8, len(window) // 3) + 1):
+            tail = window[-3 * period :]
+            keys = [item[0] for item in tail]
+            if {item[2] for item in tail} == {"select", "unselect"} and keys[:period] == keys[
+                period : 2 * period
+            ] == keys[2 * period :]:
+                findings.append(
+                    dict(
+                        kind="selection_cycle",
+                        decision=row["index"],
+                        start=tail[0][1],
+                        player=row["player"],
+                        candidate=row["player"] == candidate,
+                        period=period,
+                        repetitions=3,
+                    )
+                )
+                reported = True
+                break
+    return findings
+
+
+def has_repeat_signal(report):
+    """Keep short material cycles visible even below the single-choice threshold."""
+    return report["counts"].get("max_same_choice_without_event", 0) >= 8 or any(
+        finding["kind"] == "selection_cycle" for finding in report["findings"]
+    )
+
 
 def has_game_event(events):
     """Trace rows include Hint/Decision messages; match the tracker's progress rule."""
@@ -127,6 +183,9 @@ def summarize_trace(rows, candidate):
             a["kind"] in ("summon", "spsummon", "activate") for a in legal
         ):
             counts["leave_main_with_proactive_option"] += 1
+    cycles = selection_cycle_findings(rows, candidate)
+    counts["selection_cycle_signals"] = len(cycles)
+    findings.extend(cycles)
     intervals, coverage = action_intervals(rows)
     for interval in intervals:
         if interval["initiator"] != candidate:
@@ -139,7 +198,7 @@ def summarize_trace(rows, candidate):
                 {"kind": interval["kind"] + "_self_damage", "decision": interval["start"], "interval": interval}
             )
     return {
-        "analysis_version": 2,
+        "analysis_version": BEHAVIOR_ANALYSIS_VERSION,
         "candidate_player": candidate,
         "counts": dict(counts),
         "findings": findings,
