@@ -340,6 +340,9 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
   **默认** `pool_sampling="pfsp"`（设计 I1；`--pool-sampling uniform` 为旧的均匀抽样）按 `(1 − p) ** pfsp_power`（默认 2，AlphaStar 的 hard 权重）抽快照，学习方打不过的对手更常出现；
   `snapshot_min_win_rate`（`--snapshot-min-win-rate 0.55`，ygo-agent 的 OSFP；默认关闭，消融里没有帮助）让到期的快照只在「上次入池以来学习方在池局里的得分 > 门槛、且至少
   `snapshot_min_games` 局」时入池，否则跳过并计入 `snapshots_skipped`；池空时总是入池。入池以来的窗口（`league`）随 checkpoint 保存。
+- **联赛模块**（`ygorl.train.league.League`）：上面这些账（池局结果、入池窗口与门槛、keep-best、进化牌组得分）都在这一个模块里，
+  接口是「结束的对局进（`record`），决定出（`admit` 入池、`offer_best` keep-best）」；它不下棋也不训练，`tests/test_league.py`
+  用手写的对局记录测它。`Trainer` 只调用它并计数；checkpoint 里仍是 `pool` / `best` / `league` / `evolved` 这几个键。
 - **进化牌组池**（`EvolvedDecks`，#108，spec #105）：`--deck-pool MANIFEST`（`TrainConfig.deck_pool`）指向进化进程维护的牌组池清单：
 
   ```json
