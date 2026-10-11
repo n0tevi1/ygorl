@@ -42,7 +42,7 @@ The local card database says Droplet can halve opposing effect monsters' ATK and
 
 This root's Q values are inside the clamp range, so clipping cannot explain its ranking error. Equal LP also rules out an LP-difference shortcut as a direct explanation of this example; it does not show the critic has learned LP's value generally. Broader representation, coverage and training-target explanations remain hypotheses. Prior calibration improvements alone did not resolve relative-action value learning.
 
-## Next experiment is running: separate action-conditional data
+## Separate action-conditional data (now complete)
 
 `out/research/critic-battle-branch-data-2026-10-11` collects **2,312 games**: 40 original controls plus 142 root actions × 16 new paired suffix streams (501–516). Two workers, four-hour cap, fail-closed engine health checks, exact original controls before interventions, cold replay and independent watchdog.
 
@@ -55,3 +55,5 @@ Identity: `05dbda23192973d22663d71415071c28df2684cb71379890bddffe228641b076`. Se
 Collection alone is not a trained improvement. Before examining validation outcomes, register the fit protocol comparing selected-action terminal supervision against all-action branch-return / paired relative-action supervision, with the actor frozen and original-corpus anchoring. Fit only on the 32 training roots. Calibration retention, action-ranking uncertainty, and later fresh full-game evaluation are required before promotion. No card-specific hard mask or private information enters the actor.
 
 The production declaration-candidate limit in issue #319 remains unresolved and is outside these supported battle menus. Original runtime, native library, checkpoints and earlier STOP records are preserved.
+
+Update: collection and two fitting comparisons completed; see [supervision results](critic-battle-supervision-2026-10-11.md). Retention recovered under Q-head-only relative supervision, but stronger decisions remain unproven.
