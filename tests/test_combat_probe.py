@@ -1,6 +1,7 @@
 """Diagnostic regressions: forced-action context, dynamic stats and hidden cards."""
 
 from types import SimpleNamespace
+from dataclasses import replace
 
 import pytest
 
@@ -96,3 +97,112 @@ def test_empty_mask_fails_before_mutating_chooser_context():
     with pytest.raises(ValueError, match="no policy-supported"):
         masked_action(agent, q, [False] * len(q.actions))
     assert agent._attacker is attacker
+
+
+def lethal_target_case(position=C.POS_FACEUP_ATTACK, lp=500):
+    board = [[{"code": ATTACKER, "position": 1, "attack": 3000}],
+             [{"code": TARGET, "position": 1, "attack": 2800, "defense": 100},
+              {"code": TARGET, "position": position, "attack": 2000, "defense": 100}]]  # fmt: skip
+    targets = tuple(
+        M.CardInfo(TARGET, M.Location(1, C.LOCATION_MZONE, i, card["position"])) for i, card in enumerate(board[1])
+    )
+    q = replace(point(M.SelectCard(0, True, 1, 1, targets), (M.Hint(C.HINT_SELECTMSG, 0, 549),)), lp=(8000, lp))
+    return board, q
+
+
+def test_lethal_priority_chooses_damage_instead_of_strongest_beatable_target():
+    board, q = lethal_target_case()
+    old = CombatProbe(0, cards=default_cards(), board=lambda: board)
+    new = CombatProbe(0, cards=default_cards(), board=lambda: board, lethal_first=True)
+    for agent in (old, new):
+        agent.prime(battle(), 0)
+    assert old.act(q) == 0  # 200 damage, misses the nominal finish
+    assert new.act(q) == 1  # 1000 damage; still needs effect/response validation
+
+
+@pytest.mark.parametrize(
+    "position,lp", [(C.POS_FACEUP_DEFENSE, 500), (C.POS_FACEDOWN_DEFENSE, 500), (C.POS_FACEUP_ATTACK, 1500)]
+)
+def test_lethal_priority_does_not_invent_piercing_or_read_hidden_stats(position, lp):
+    board, q = lethal_target_case(position, lp)
+    agent = CombatProbe(0, cards=default_cards(), board=lambda: board, lethal_first=True)
+    agent.prime(battle(), 0)
+    assert agent.act(q) == 0
+
+
+def test_lethal_priority_respects_mask_and_requires_current_attacker():
+    board, q = lethal_target_case()
+    for missing in (False, True):
+        agent = CombatProbe(0, cards=default_cards(), board=lambda: board, lethal_first=True)
+        agent.prime(battle(), 0)
+        if missing:
+            board[0][0]["code"] = 0  # stale/missing provider must not use printed ATK for lethal
+        mask = [True, missing, False]
+        assert masked_action(agent, q, mask) == 0
+    with pytest.raises(ValueError, match="public current stats"):
+        CombatProbe(0, cards=default_cards(), lethal_first=True)
+
+
+def test_lethal_priority_uses_opponent_lp_from_either_seat():
+    board, q = lethal_target_case()
+    # Mirror the complete prompt, including the attacker's physical controller.
+    board.reverse()
+    p = point(
+        M.SelectBattleCmd(1, (), (M.AttackOption(ATTACKER, M.Location(1, C.LOCATION_MZONE, 0), False),), True, True)
+    )
+    p = replace(p, player=1, turn_player=1)
+    cards = tuple(M.CardInfo(TARGET, M.Location(0, C.LOCATION_MZONE, i, C.POS_FACEUP_ATTACK)) for i in (0, 1))
+    q = replace(point(M.SelectCard(1, True, 1, 1, cards), q.events), player=1, turn_player=1, lp=(500, 8000))
+    agent = CombatProbe(0, cards=default_cards(), board=lambda: board, lethal_first=True)
+    agent.prime(p, 0)
+    assert q.actions[agent.act(q)].card.loc.sequence == 1
+
+
+def test_engine_confirms_lethal_target_priority_in_normal_monster_battle():
+    from ygorl.cards.ydk import Deck
+    from ygorl.data.environment import PlayerRules
+    from ygorl.engine.duel import Duel, DuelConfig
+    from ygorl.engine.query import CARD_QUERY_FLAGS, parse_query_location
+
+    dragon, blade, fang = 43096270, 11321183, 90357090  # 2000 / 1800 / 1200 ATK, all normal monsters
+
+    class Setup:
+        def __init__(self, learner=False, lethal_first=False):
+            self.learner = learner
+            self.core = None
+            self.probe = CombatProbe(0, cards=default_cards(), board=self.board, lethal_first=lethal_first)
+
+        def board(self):
+            rows = [
+                parse_query_location(self.core.query_location(CARD_QUERY_FLAGS, seat, C.LOCATION_MZONE))
+                for seat in range(2)
+            ]
+            return [[c if c and c["position"] & C.POS_FACEUP else None for c in row] for row in rows]
+
+        def observe(self, point, core):
+            self.core = core
+
+        def act(self, p):
+            if self.learner and p.turn >= 4:
+                if isinstance(p.decision, M.SelectIdleCmd):
+                    return next(
+                        i for k in ("battle_phase", "end_phase") for i, a in enumerate(p.actions) if a.kind == k
+                    )
+                return self.probe.act(p)
+            wanted = dragon if self.learner else blade if p.turn == 1 else fang
+            idx = next((i for i, a in enumerate(p.actions) if a.kind == "summon" and a.card.code == wanted), None)
+            if idx is not None:
+                return idx
+            return next(
+                (i for k in ("end_phase", "pass", "no", "finish") for i, a in enumerate(p.actions) if a.kind == k), 0
+            )
+
+    config = DuelConfig(max_turns=4, max_decisions=200, shuffle_decks=False, player=PlayerRules(starting_lp=500))
+    defender = Deck(main=(blade, fang) * 20)
+    attacker = Deck(main=(dragon,) * 40)
+    outcomes = [
+        Duel(3, None, defender, attacker, config=config).run(Setup(), Setup(True, enabled)) for enabled in (False, True)
+    ]
+    assert outcomes[0].reason == "turn_limit"  # strongest-target heuristic deals only 200
+    assert outcomes[1].reason == "win" and outcomes[1].winner == 1 and outcomes[1].turns == 4
+    assert all(not r.error and not r.script_errors and not r.retries for r in outcomes)

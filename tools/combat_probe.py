@@ -11,9 +11,12 @@ from ygorl.engine import constants as C
 
 
 class CombatProbe(GreedyAgent):
-    def __init__(self, seed, *, cards, board=None):
+    def __init__(self, seed, *, cards, board=None, lethal_first=False):
         super().__init__(seed, cards=cards)
+        if lethal_first and board is None:
+            raise ValueError("lethal_first requires public current stats")
         self.board = board
+        self.lethal_first = lethal_first
 
     def prime(self, point, index):
         """Initialize a fresh chooser after the driver forces the first action."""
@@ -71,6 +74,26 @@ class CombatProbe(GreedyAgent):
                 else self._defense(action.card.code)  # fmt: skip
 
         targets = [a for a in point.actions if a.kind == "select"]
+        if self.lethal_first:
+            # Search priority only: damage prevention, triggers and opponent
+            # responses still require engine continuations. In particular,
+            # never interpret DEF subtraction as damage without piercing.
+            source = self._visible(attacker)
+            lp = point.lp[1 - point.player]
+            lethal = []
+            if source is not None and lp > 0:
+                for action in targets:
+                    card = self._visible(action)
+                    if (
+                        action.card is not None
+                        and action.card.loc.controller == 1 - point.player
+                        and card is not None
+                        and card["position"] & C.POS_ATTACK
+                        and source["attack"] - card["attack"] >= lp
+                    ):
+                        lethal.append(action)
+            if lethal:
+                return point.actions.index(min(lethal, key=lambda a: self._visible(a)["attack"]))
         beaten = [a for a in targets if power > stat(a)]
         if beaten:
             return point.actions.index(max(beaten, key=stat))
