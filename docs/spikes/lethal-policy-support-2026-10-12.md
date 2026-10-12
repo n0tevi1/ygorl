@@ -1883,6 +1883,36 @@ teacher-label or public-information promotion follows merely from one tree.
 Identity: `afabee770c56723bfe02e02ca9fdf0f869bccf0e4db8e43d6621f6e44c9b3743`;
 report: `da18e4c58c6cb6fd405d4807ff490768c25e757383c61b78f3503cd5ea99306e`.
 
+## Shortest trim survives the supported response tree
+
+`lethal-trim-response-tree` exhaustively closes both preregistered trees within
+the bounds. The trim692 control exactly reproduces its single T8 winning leaf.
+Trim602 visits **15 replay nodes and 11 terminal leaves; every leaf wins T8**
+and is engine-healthy and strict-clean. One leaf exactly reproduces the recorded
+trace. Opponent choices are Lacrima the Crimson Tears' chain/pass windows and
+five placement options: first activation gives five wins at641 total decisions;
+passing then activating gives five at643; passing twice gives one at631.
+
+The previous singleton-support gate rejects this shorter continuation even
+though none of its supported responses refutes it. This establishes an overly
+conservative sufficient condition for this known state and fixed candidate RNG,
+not a general safety guarantee. Eleven tree leaves are not eleven independent
+games; unsupported legal responses and alternative hidden worlds remain outside
+scope. Candidate actions also adapt to each branch through the unchanged policy,
+so this result cannot be substituted for one cached linear action sequence.
+
+Next isolate the dependence on resetting candidate battle RNG: repeat both cuts
+with the old reset as exact controls and with the candidate's carried RNG state
+(no battle reseeding). Keep opponent suffix RNG unchanged and enumerate all its
+supported branches again. Four trees, at most16 native replays/tree and200 suffix
+decisions; no new deals, random seeds, training or larger search. Require exact
+old controls; report losses, turn exits and incomplete trees explicitly. A carry
+failure blocks treating the earlier fixed-suffix result as an ordinary-policy
+handoff. Success still does not certify hidden-information safety or strength.
+
+Identity: `183d17d47dddeec44579a26534f6255d00c8ab3feb6253e7ecb0f7d71831bbe2`;
+report: `b561ef58c773ee7c9533b469df2a35c0e59d46f9ac1d0ab7f92dae600f7d281b`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
