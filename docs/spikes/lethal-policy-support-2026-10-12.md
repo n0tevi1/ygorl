@@ -1435,6 +1435,34 @@ by this selected-root result.
 | `lethal-phase-exit-restart` | `3336dc99a6ae7a03f13a075a3b25a39878e4012b9abef38763ff0778a2f0ea95` | `cbd47a59ab8c1169a8d8b94ad3bbc2a7fc796ac791f1d27ed2fb3b4c4f9d6329` |
 | `lethal-main2-sequence` | `4b650d35750ffc9851b5ed5e782f331aa451bcf999ba57155eb40fe2721da7ee` | `8925b765f9919258818db37fed1e363b5c3735b8f096e1472ffc071378d2acef` |
 
+## Generic search recovers the finish without a card-specific override
+
+`lethal-main2-search-restart` replays the same exact policy prefixes to decisions
+556 (battle exit) and 558 (Main Phase 2 after the phase-only intervention).
+Both pass the existing conservative actor-input entry guard. Existing generic
+search, with the unchanged maximum of 12 rollouts and deterministic root RNG,
+finds a winning line on its **first rollout at both roots**. Native replay
+verifies the same-turn win and the existing forced-response gate accepts both;
+all six/five opposing prompts respectively have exactly one engine-legal action.
+The routes have 23/21 decisions and still include unnecessary setup. This is
+proposal-generation evidence, not a claim that the search minimizes line length.
+Both policy generators and the root are restored after search. The initial
+preflight omitted `snapshots=True`; it failed before recording a search result.
+Its original source/STOP is retained separately.
+
+Identity: `f107a58e4cce21daf6b59057d7b72596f6e1bf482d3a6af238db933f6c4f8749`;
+report: `77e57e93d0b8bec35538560d7b1475f5264b9225157fd7e0686fdc757978349c`.
+
+The next bounded regression reuses all eight fresh-panel games, including the
+seven not improved by the prior helper. Trigger search only when the sampled
+policy is about to enter battle or end the turn, including Main Phase 2. Peek
+and restore policy RNG; retain the concealed-zone guard, first-proposal stop,
+12 rollouts/search, two searches/turn and eight/game, and forced-response gate.
+Run paired discard/execute arms with identical root RNG and compare with all
+prior baseline traces and guarded results. This tests search allocation and
+retention on a reused panel, not independent generalization. No replacement
+seeds, larger budgets, card-specific rules, production changes or promotion.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
