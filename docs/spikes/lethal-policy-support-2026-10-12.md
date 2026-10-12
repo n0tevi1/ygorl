@@ -2088,6 +2088,32 @@ no new deals/seeds, training expansion or production promotion.
 Identity: `061c23449974fd7eff40e53eacd0a1413288264362036d08f2ff7bcec064bf3b`;
 report: `3be082f49458ea092768c45bb67f5bcbdbd41247c8b88ebe555215e0e01e747c`.
 
+## Early rejection reduces work without changing play
+
+`lethal-early-reject` completes all16 paired executions. Every one of the eight
+paired traces and results is identical, with the same accepted cutoffs and
+complete winning leaves. Twenty shared search roots match. Total verifier
+simulation work falls **4301→845 decisions** (80.4% reduction); game5 accounts for
+4261→805. Its measured check time is3.042→0.572s and whole execution6.495→3.883s;
+these timings are descriptive and include preflight records, not a throughput
+benchmark. Node- and decision-cap failure controls also reject and restore the
+original suffix exactly. This is an efficiency improvement, not a strength gain.
+
+All optimization so far reused known deals. Next freeze the algorithm for a
+same-size held-out-deal test: seed**2026101510**, two deal blocks with all four
+assignments, eight games per arm. Compare ordinary policy, live search without
+truncation, and live search with early-reject truncation (24 total executions).
+Audit opening-prefix nonoverlap against available earlier lethal-study panels;
+overlap or engine errors stop the study rather than selecting replacement seeds.
+Require unchanged policy prefixes before search intervention and control/auto
+proposal-RNG parity. Retain health, certified-execution and search-budget checks.
+Report all registered outcomes and zero-coverage cases, wins/turns/decisions and
+verification cost. No adaptive thresholds, new training, larger sample plan,
+production promotion or hidden-information safety claim follows from this pilot.
+
+Identity: `4d64d1f8de91632eaba4ca1b9585bf94812412b43c0f057dd9c669553762cdc2`;
+report: `7c34fffd19eeb95a38e0f6fb083f8fdf4c619e02d1d6f80db1db816ada733079`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
