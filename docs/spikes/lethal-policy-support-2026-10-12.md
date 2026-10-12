@@ -1656,6 +1656,42 @@ independent evidence of improved strength or grounds to scale training.
 | `lethal-preparation-trim` | `3e22826a9ad172717add940d15547d473ea99604b26fb9bc5a1dc01def0ef3b6` | `de115bd3c4db0325748d67cf005419a27429af2566d736888d2fb418ca456a20` |
 | `lethal-battle-first` | `4a911e0cb6440aa668993d09d500b5558fe675c5ab18cf0c7df384746f84c5d2` | `7c719912922a4e72524747b0246f8b7920fe96a3a63f7139c74bbd5bf7a41038` |
 
+## Battle-first full-panel regression
+
+`lethal-battle-first-regression` completed 16 healthy records on all eight
+existing exit-fresh games, with discard/execute pairing. All eight discard
+traces/results exactly reproduce ordinary policy, all paired proposals and
+prefix RNG match, and nine shared search roots pass parity checks.
+
+| Metric, eight games | Ordinary policy | Previous search | Battle-first search |
+| --- | --- | --- | --- |
+| Wins | 5/8 | 5/8 | 5/8 |
+| Mean turns | 8.875 | 8.375 | 8.375 |
+| Mean decisions | 485.625 | 462.750 | 458.375 |
+| Rollouts | 78 (discarded) | 78 | 76 |
+| Applied overrides | 0 | 131 | 102 |
+
+All three approved roots remain approved. The preparation-dependent T6 finish
+in game 2 reproduces its previous complete trace. Game 3 drops 481→467 decisions
+but remains four decisions longer than ordinary policy because the search
+still chains Maxx “C”. Game 5 drops 308→287 and exactly matches ordinary policy.
+The other five games never pass the concealed-zone entry guard and remain
+unchanged. There are no new losses, desynchronizations, or plan abandonments.
+This supports reduced unnecessary actions in the tested implementation, not
+higher win rate or further reduction in turns. The panel has no rejected
+proposal, so it does not cover new first-proposal rejection preempting a later
+useful route.
+
+Next reuse **all eight games of lethal-exit-trigger**, which include the Main2
+finish and a rejected proposal, for the same 16-record paired regression. Keep
+12 rollouts/search, two searches/turn, eight/game; compare original trace/RNG
+controls and outcome/approval retention. No new deals, training, larger budgets,
+or production promotion. Hidden-information certification remains a separate
+unresolved requirement even if this regression passes.
+
+Identity: `cb0fbabcd64bd570b36e01a44f59440f76c8c0c1146720457280e4e40c551ff0`;
+report: `312aecd2d88f3090b9a41a4edc524a9eb2376c96ae6adca5ffca04c7e46c2033`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
