@@ -1557,6 +1557,49 @@ No new seeds, fullgame scale-up, training, or default changes.
 | `lethal-exit-fresh` | `bdc1b8b57ba86692ae242e25010eb6ddeb8911f2ba48b993fb99bf3f54503993` | `f34d79e1b60e52341e13c4c36e94f5add90090cd67ee565432ce2b9fc1ed7165` |
 | `lethal-first-action` | `1820d37dfd6c4fcfa43e5bd557a3915d68b7cd68757fc0fab3172832e0268afe` | `65c23527557b6ad119684fceae4435c3caeb79edf451ab15ca72f94d28440e6a` |
 
+## Matched cache convention changes the first-action conclusion
+
+`lethal-semantic-handoff` completed all 12 healthy continuations on the same
+three approved roots. Every guided prefix uses cached choices without consuming
+candidate sampling RNG; intended handoff is distinct from unexpected plan
+abandonment. All three complete-plan controls exactly reproduce their originals.
+
+| Game | First action, consuming policy draw (prior study) | Cached first action | Initial transaction completed | Battle-entry handoff | Full cached plan |
+| --- | --- | --- | --- | --- | --- |
+| 2 | Loss T8 | Win T8 | Win T8 | Win T6 | Win T6 |
+| 3 | Win T11 | Win T11 | Win T11 | Win T11 | Win T11 |
+| 5 | Win T6 | Win T6 | Win T6 | Win T6 | Win T6 |
+
+The prior loss is sensitive to candidate RNG consumption: cached-first-action
+game 2 chooses a different fusion route and wins T8. It is therefore **not**
+sufficient evidence that Branded Fusion's first action is itself harmful.
+Neither first-action convention recovers the T6 finish. After the initial
+transaction, policy at decision 342 gives battle entry 99.989% and almost never
+normal summons Incredible Ecclesia (55273560), which the successful preparation
+uses. These are concrete policy divergences, not a proven training-credit or
+representation diagnosis.
+
+At battle entry the original policy reproduces the **entire full-plan trace**
+on all three roots, including attack order and targets. Override counts drop
+67→52, 30→15 and 34→28, with no changed outcomes or abandonment. On these exact
+prepared boards, combat execution works; early handoff fails to finish the
+preparation. Different handoff states still imply different RNG positions and
+are not interchangeable causal states. This is a three-root diagnostic, not a
+population claim or readiness to train from every cached action.
+
+Identity: `f6a5e4469d6fb7a3c4f01c3e588d37ef713afa4b5aa7cbacf73d6591c6bef93e`;
+report: `d22904a2acc59c7603d530cd7334ea4b34a9f6dc404f9905fd71f3ef9b5a4e0f`.
+
+Next audit all recorded own idle-command boundaries in the three successful
+Main Phase prefixes, forcing battle entry there and letting ordinary policy
+finish. Use one fixed candidate battle suffix RNG per game and one fixed
+opponent suffix RNG, unchanged across boundaries; retain exact full-plan
+controls. This exhausts existing preparation boundaries rather than adding
+seeds or examples, and tests whether late setup actions are unnecessary and
+where the first demonstrated finishing board appears. Do not interpret a
+failed rollout as proof that no winning continuation exists, or promote
+card-specific rules/teacher labels before checking the resulting branches.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
