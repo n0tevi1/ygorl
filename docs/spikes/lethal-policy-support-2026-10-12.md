@@ -931,6 +931,53 @@ Identity: `26853e53cef9df2f0e584d54d4761356d9bf5e759bf7929c6382f82197ca4ea6`.
 Report SHA-256: `75857d5e5f6bb0c0cc7dcf18a2b3f2ee1b7009c693d8d5bd2f357bd814dcdc50`.
 Artifacts: `out/research/lethal-prebattle-fresh-2026-10-12/`.
 
+## Fresh proposal execution exposes response-dependent losses
+
+`lethal-prebattle-value-2026-10-12` completed all 24 healthy continuations
+(four collected roots × plan/fallback × three opponent suffix streams).
+All original-stream fallback transcripts/results reproduce exactly; each pair
+has an identical reconstructed proposal and pre-root policy RNG/transcript.
+
+Across the 12 selected-root pairs, fallback wins 12/12 and plan wins 8/12:
+four harmful win-to-loss flips and no added eventual wins. Plan finishes on
+the proposal turn in 5/12, versus 3/12 for fallback. Among eight pairs where
+both win, seven finish earlier with plan and one finishes two turns later.
+These repeated suffixes share four roots/two deal blocks, so these fractions
+are descriptive and not independent population strength estimates.
+
+| Fresh game/root | Plan result, streams 0/1/2 | Fallback result, streams 0/1/2 |
+| --- | --- | --- |
+| 0, T5 | loss T6 / win T6 / win T5 | win T7 / win T7 / win T7 |
+| 5, T8 | loss T9 / loss T9 / loss T9 | win T8 / win T8 / win T8 |
+| 6, T2 | win T2 / win T8 / win T10 | win T10 / win T12 / win T8 |
+| 7, T7 | win T7 / win T7 / win T7 | win T11 / win T11 / win T11 |
+
+All seven abandonments are exact-signature opponent action mismatches, not
+mask/signature implementation failures. Game 5 has the same destruction-target
+mismatch in all three streams (actual selects 81196066; search predicts
+47705572). Game 0 mismatches on pass versus chain or monster position; game 6
+mismatches on pass versus chain. Thus merely searching against an active Greedy
+opponent does not make a candidate safe against the checkpoint opponent.
+Abandonment correctly stops the obsolete line but cannot undo its prior actions.
+Do not promote plan execution or interpret shorter losing games as improvement.
+
+Next isolate causality on **all seven** interrupted continuations, including
+ones that still win: exact plan replay control versus replacing only the first
+recorded opponent mismatch with the search-predicted action (14 records).
+Require the complete control trace/result and pre-intervention prefix to match,
+require the current signature and encoded support to permit the replacement,
+and still call the real opponent policy once so its RNG consumption is unchanged.
+After that single response, return to the actual policy and retain strict line
+invalidation on any later mismatch. Record whether the first substitution
+rescues same-turn/eventual wins or merely moves the next interruption. This is
+an intentionally artificial causal diagnostic, not an executable strategy or
+an opponent model evaluation. No new deals/suffixes, search-budget increase,
+training or default changes; two workers, 15-minute cap.
+
+Identity: `525d6ea137c48d5f62fca42142278b2e2e68f627293ed3a540cf945695d93382`.
+Report SHA-256: `ca9ae4db5eaa5683452bd471fcd93b14dacbf9b257e1a9dffa8e7888a8eee324`.
+Artifacts: `out/research/lethal-prebattle-value-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
