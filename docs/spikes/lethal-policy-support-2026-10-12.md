@@ -1988,6 +1988,32 @@ seeds, training or production promotion; hidden-world safety remains unresolved.
 Identity: `bb121fc7a47d36681b93e1e6d99710a7807aacf58bc5174ce8e458df9deb333c`;
 report: `3f65087be6b54ce8ef6cd8e563e2462f95410755bcf670777bd8f8f0bd872ac4`.
 
+## Automatic truncation succeeds in actual execution
+
+`lethal-autotrim` exactly reproduces the full735-decision T8 win, and the fixed692
+handoff wins T8 in705 decisions. The automatic arm checks six chronological
+boundaries and selects602 without a hardcoded choice. It wins T8 in**641 total
+decisions**, reducing cached-plan overrides **129→33**; its actual suffix exactly
+matches a certified leaf with both real policy RNG streams unchanged.
+
+Checks at558/565/571/582 are incomplete under the node bound and correctly retain
+the original plan. Check590 completes but does not certify every response as a
+same-turn win. Check602 closes all11 winning leaves. Thus selection excludes
+both unresolved and demonstrated non-universal continuations; it does not
+claim602 is globally earliest or optimal. This remains a known-state result on
+one selected deal, and no production default changes.
+
+Next run the complete existing eight-deal retention panel as paired full/auto
+execution, using the previously collected accepted plan where one exists and
+exact ordinary-policy fallback otherwise. This is16 executions, no fresh deals
+or search rediscovery. Preserve the same20 boundary/16 node/200 decision bounds,
+require exact full controls and pre-handoff prefixes, and retain the earlier
+Main2 finish. Report full-panel wins/turns/decisions, affected games and verification
+work; do not infer broader strength from reducing decisions in one game.
+
+Identity: `d3845b7185859886b0ef7a2ec9355ac3f0952147a7c1ad80a18abe66100b55ed`;
+report: `b0c3ca2783537da0b50ab5399825b23b07be652c7bee54da2bd619fa97932462`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
