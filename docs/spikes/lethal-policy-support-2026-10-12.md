@@ -1733,6 +1733,41 @@ known engine state; hidden-information certification is still unresolved.
 Identity: `4411f8c98d4fbaaf46c580b9d70d664ad3d73b5a4b1ed7bf5430a0ecfe335cf6`;
 report: `6e513de68f6fa5f27b8ac62f0555c61efb4b60ca2d18dae9dcc68029605cb522`.
 
+## Rejected-proposal continuation finds a previously skipped route
+
+`lethal-rejection-continuation` completed ten healthy fixed-root searches.
+All five controls reproduce the previous proposal hash, rollout count and gate
+outcome. Retry reproduces each first candidate exactly. All four previously
+approved routes retain their exact hashes and rollout counts.
+
+At the rejected root (game 5, decision 558), rollout 2 produces the original
+123-prompt rejected route; rollout 3 produces another rejected 155-prompt
+route; **rollout 4 produces an accepted 177-prompt same-turn winning route**.
+No additional rollout seed or relaxed gate is used. The original stop therefore
+skips an available candidate that satisfies the existing known-state response
+gate. This proves a coverage problem for that gate, not a public-information
+win guarantee or demonstrated stronger wholegame policy.
+
+The retry performs three inner route replays, totaling 455 decisions and about
+0.35 seconds in this diagnostic, plus the final verification replay. This is
+extra work despite the unchanged maximum twelve rollouts. The new route is
+longer than the rejected candidates and is not automatically a good teaching
+trajectory. Draw/event filtering, action support and native health checks stay
+unchanged; concealed deck/extra information remains unresolved.
+
+Next run all eight existing battle-first-retention games as sixteen paired
+discard/execute fullgames. Integrate the same rejection check into rollouts;
+stop at the first accepted proposal, continue within the twelve-rollout cap
+after rejection, and if a root exhausts its budget without acceptance, allow
+later existing triggers within the unchanged two/turn and eight/game caps.
+Record every gate replay separately. Require exact ordinary-policy fallback,
+paired proposal/prefix RNG parity, preservation of the Main2 finish, and actual
+completion of the newly accepted route without abandonment. No new deals,
+training, larger search budgets, or production promotion.
+
+Identity: `33d8404552737c62470b6a60865cedfb76f15eefe73e5d57561fa6297484f859`;
+report: `b1633e398d35c852be8f1fea9d1d4b2e8c4e262b171296d6313ae1cc2dce7caa`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
