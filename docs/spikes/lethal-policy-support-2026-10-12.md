@@ -2060,6 +2060,34 @@ production promotion or hidden-world safety claim.
 Identity: `e79be930dbb7d6571bbfe2bc22287fcc1b39abb9086e8f8d063696da22895ba2`;
 report: `120185984ddcf0adac4ae6b1cea56bae0e1d5a1831e910f304b33c197850ae9b`.
 
+## Live search matches offline truncation but adds verification cost
+
+`lethal-live-autotrim` completes all16 paired executions with exact offline
+execution parity,20 shared search-root checks, and zero abandoned lines or
+shadow desynchronizations. Search/proposal/RNG controls remain unchanged.
+The6/8 wins and8.875 mean turns are retained, with mean decisions547→535.25.
+This closes the first-panel live-discovery integration gap, not hidden-world safety.
+
+Game5 adds **2.992 seconds** of verifier work in this run: whole execution is
+3.697s control versus6.133s trim (descriptive, not a controlled throughput benchmark).
+Its rejected checks simulate1020/892/851/396/916 decisions before the accepted
+check's186. Each earlier check already contains a nonwinning leaf. The first
+four also hit the node limit: previous reporting emphasized incompleteness,
+but they already had concrete refutations of the fixed heuristic's universal
+same-turn-win claim. Continuing their other branches cannot change rejection.
+
+Next add optional early rejection after a nonwinning/uncertifiable leaf or an
+exhausted budget. Keep skipped-prefix and failure evidence; never treat skipped
+branches as winning. Approved certificates must still be complete. Compare
+exhaustive versus early rejection on all eight existing live-search deals
+(16 executions), requiring exact acceptance/cutoff, approved-leaf, proposal/RNG,
+and actual-play parity. Report simulated work as the primary cost metric and
+wall-clock time descriptively. Search limits and truncation bounds stay unchanged;
+no new deals/seeds, training expansion or production promotion.
+
+Identity: `061c23449974fd7eff40e53eacd0a1413288264362036d08f2ff7bcec064bf3b`;
+report: `3be082f49458ea092768c45bb67f5bcbdbd41247c8b88ebe555215e0e01e747c`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
