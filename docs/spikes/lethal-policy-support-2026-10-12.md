@@ -1187,6 +1187,89 @@ Identity: `804dae7945871199740c2f69be9f157ca694d186fd2b548584575b064395c432`.
 Report SHA-256: `a1a58c6af501d5aba189b86ba7e7df0014089d4d4387e80032e2113b18fd9ffd`.
 Artifacts: `out/research/lethal-information-audit-2026-10-12/`.
 
+## Hidden-hand counterfactual is inconclusive; public reveal survives in actor history
+
+`lethal-hidden-counterfactual-2026-10-12` completed all 10 native replays.
+The original control reproduces the accepted route and native win. Six of nine
+replacements cannot reproduce the recorded prefix actions. The other three
+(initial index 4) preserve the checked prefix and gate, but change a card still
+in the deck: the root hand remains 19434243. There are **zero compatible
+hand-changing counterfactuals**. This does not measure hand-dependent gate
+behavior. The raw `hand_changed` flag is not meaningful for incompatible rows;
+derived `analysis.json` sets it to null, preserving original records.
+
+A subsequent exact-prefix provenance audit corrects the interpretation of this
+root. Power Vice Dragon (19434243) was explicitly shown to the candidate by
+`ConfirmCards` at decision 338/T7, when it was the opponent's only hand card.
+There are no opposing draws or hand moves between that reveal and root 363/T8.
+Its identity is therefore available from public history, despite UNKNOWN in
+the current card table. Native `ShuffleHand.codes` are privileged and are not
+used to establish this knowledge; public reveal, public hand count and absence
+of subsequent hand changes establish it.
+
+The actual warm512 checkpoint uses Transformer history with a 64-token window.
+At root 363 the reveal remains at zero-based event row 35 (card vocabulary
+index 2927). All 195 candidate decision observations in the prefix have exact
+native/Python event-token and mask parity. Thus this root demonstrates neither
+missing reveal input nor loss through window eviction. Input availability also
+does not prove the model uses that information correctly.
+
+The earlier four-tensor actor audit covered cards/globals/actions/action mask,
+not the entire history-bearing model input. Keep its narrower parity result,
+but do not infer an information set from current UNKNOWN rows. The failed
+replacement experiment cannot establish hidden-hand leakage. Hidden deck/extra
+state and general search information boundaries remain unresolved, so no gate
+promotion, model change or scale-up follows from these results.
+
+Next extend exact native/Python event-history parity and reveal-window auditing
+to all five existing proposal roots, including rejected ones. Reuse their
+original action transcripts and checkpoint; no new games, deals, policy draws,
+training or replacement search. Record public hand reveals, hand counts,
+subsequent moves and whether reveal tokens remain in the actual 64-token input.
+This is an input/knowledge audit, not a learned-memory performance test or a
+public-information certificate for the search. Five bounded CPU replays.
+
+Identity: `73657c35e224bbf8b4818646b2debb713a9f7d7d01a025b23821687ca13ab9ac`.
+Report SHA-256: `82fabc58671b8e3c1d4d9f5f61633934c5f2a9d026e9a1b86c6271e4d2a87557`.
+Derived history audit SHA-256:
+`eec0f90482e55e4f4d8cab23e7e9099b885dbf9dcb8b50de5370172582fff319`.
+Artifacts: `out/research/lethal-hidden-counterfactual-2026-10-12/`, including
+`derived-audit-manifest.json` which binds the separate post-completion scripts
+and evidence without altering the frozen study identity.
+
+## Full history check covers all five existing proposal roots
+
+`lethal-history-coverage-restart-2026-10-12` completed five bounded CPU prefix
+replays. All **581 candidate decisions** match native/Python event histories
+and masks exactly; public hand-count tracking also matches engine counts at
+every replayed decision. This audit uses no policy sampling or new deals.
+
+At the accepted game-0 root the opposing hand is empty. At accepted game 2,
+the sole-card reveal remains in the actual input as described above. Rejected
+game 1 has two hand cards and intervening hand changes after its last reveal,
+so a past reveal alone cannot certify the current hand. Rejected games 6/7
+have empty hands; this does not resolve their concealed field cards. No model
+memory fix is justified by these checks. They test encoding and availability,
+not whether the policy reasons correctly from the tokens.
+
+The first audit invocation failed before producing any record because the
+script queried `Duel.core` instead of `DuelSession.core`. Its source, identity
+and STOP remain in `lethal-history-coverage-2026-10-12`; the corrected replay
+uses a separate directory and identity. These short synchronous audits were
+supervised directly, with a 120-second timeout per record and persisted
+per-record output, rather than a background training service.
+
+No new win-rate or average-turn estimate was produced. The last small paired
+panel remains 6/8 wins in both arms, mean turns 9.0→8.5, driven by one game.
+Open work is a public-history-consistent treatment of concealed field/deck
+state before any deployment gate; repeating arbitrary hand substitutions at
+the now-proven revealed-card root would not answer that question. Keep the
+known-state search experimental and its defaults unchanged.
+
+Identity: `4bcd7a55f2e8ab2ad48a63ebd82d9a87a6b29ac6c89ce8c29cb0e170fba6a48e`.
+Report SHA-256: `f45eb6b55ea1a7ab4d54c4bebc6835192ea9cc9849a935b1fa7a213ce44d57ff`.
+Artifacts: `out/research/lethal-history-coverage-restart-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
