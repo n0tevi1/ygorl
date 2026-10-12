@@ -1846,6 +1846,43 @@ acceptance is not promoted as a reliable teacher or production override.
 Identity: `8c79c18c5ad853405149568dc17fbd98148d106d446d4763f89ea798c1595f4f`;
 report: `c983b15ca525a1b63175f06d95f0102d32225d5010e043cb04d9a50b1fff67a6`.
 
+## Shorter winning traces do not all retain the response gate
+
+`lethal-trim-response-audit-restart` replays all thirteen winning trims plus
+the original control exactly. All fourteen records are healthy and strict-clean.
+The initial audit stopped in preflight on a research-script `__name__in` typo;
+its STOP and identity remain frozen dependencies of the corrected restart.
+
+Eight trims (602 through 683 among the tested winning boundaries) fail the
+singleton-opponent-support gate. The shortest observed win, 641 decisions from
+602, exposes a two-choice chain window and a five-choice placement window.
+Failure of this sufficient gate does **not** establish a successful opponent
+refutation. Five later trims pass, beginning at **692**, which finishes T8 in
+**705 total decisions**, versus 735 for the full plan. These are still results
+in the known engine state, not a public-information certificate.
+
+Native boards and Move events explain a concrete change near the non-monotonic
+boundaries: at 616 Crimson Blade Dragon is face-up attack (2400 ATK); at 618 it
+moves to the GY with release/cost reason, and at 620 The Bystial Lubellion arrives
+in face-up defense. It is not available as an attacker at the next battle entry.
+The later Synchro Summon produces an attack-position Bystial Dis Pater (3500 ATK).
+This shows temporarily lost attacking resources during the sampled setup;
+it does not establish that summoning Lubellion is generally wrong or that this
+resource change alone explains every outcome difference.
+
+Next enumerate supported opponent-response branches for exactly two existing
+handoffs: shortest observed trim602 and earliest singleton-approved trim692.
+Replay the same cached prefix and fixed candidate/opponent RNG; candidate policy
+remains unchanged. At each opponent prompt with multiple supported choices,
+branch over all of them. Cap each tree at16 native replays and200 suffix decisions;
+report unresolved branches as incomplete, never as wins. Require an exact
+recorded-trace leaf/control and count all alternative outcomes. This is a small
+known-state refutation test without fresh deals or seed selection; no default,
+teacher-label or public-information promotion follows merely from one tree.
+
+Identity: `afabee770c56723bfe02e02ca9fdf0f869bccf0e4db8e43d6621f6e44c9b3743`;
+report: `da18e4c58c6cb6fd405d4807ff490768c25e757383c61b78f3503cd5ea99306e`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
