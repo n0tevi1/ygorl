@@ -1353,6 +1353,88 @@ Artifacts below are under `out/research/`, all suffix `-2026-10-12`.
 | `lethal-hidden-search` | `8dc03564fda57bf8212b80d5e9083c788c41d1b9758368f0306e26dee4c87bd4` | `43e757314db1f9eb5392ce7418c7615338264f583e01da9b1d91a04d35d41370` |
 | `lethal-concealed-guard` | `7a4d3f8e891f267bd80f0f3555cc156fb6a84236a48dfa715419b3c8f8be4634` | `37bcc438c2f8cfb6b4c033b206d2908da279ae72f782511dae5bd5eecc85a0a2` |
 
+## Fresh guarded confirmation and a missed Main Phase 2 finish
+
+`lethal-concealed-fresh` completed all 18 healthy records: eight paired games
+from two new deal blocks (seed 2026101370) and two plain controls. Four opening
+prefixes are new relative to the registered prior panels. Both arms win 6/8;
+mean turns change 9.375→9.125. Only game 6 changes, winning T12 instead of T14;
+the other seven full traces and results are identical. There are two proposals,
+one approval, 12 searches/122 rollouts per arm, 197 rejected entry checks,
+12 shared-root RNG parity checks, and no new losses or line abandonment. This
+is a small timing benefit on two deal blocks, not a win-rate improvement or
+proof of general playing strength.
+
+The derived `route-information.json` replays both proposals with native zone
+checks. Game 5's rejected route has 141 prompts and public graveyard response
+choices; game 6's approved route has 39 prompts and 13 opponent prompts, each
+with one legal/supported action. Neither route draws cards or encounters a new
+concealed opposing hand/field response window. This does not certify all hidden
+deck/extra effects. Derived files have their own manifest, preserving the
+original study identity and results.
+
+In game 6, both arms attack identically. At decision 556/T12 the opponent has
+600 LP and the candidate has 6800. The sampled policy ends the turn; the plan
+enters Main Phase 2, eventually sends Fiendsmith's Lacrima (46640168) to the
+graveyard as Link material, then inflicts 1200 effect damage. The plan includes
+Sequence's equip effect and Requiem's summon effect, but they should not be
+assumed necessary merely because search included them.
+
+`lethal-phase-exit-restart` isolates phase entry on this selected root with the
+original opponent RNG and two fixed opponent suffix seeds. All nine runs have
+the same six root input hashes, candidate RNG, and root probabilities. Original
+fallback and full-plan streams exactly reproduce the fresh controls. Results:
+
+| Treatment | Original suffix | Suffix 1 | Suffix 2 |
+| --- | --- | --- | --- |
+| Original policy | Win T14 | Win T13 | Win T14 |
+| Force Main Phase 2 only | Win T14 | Win T13 | Win T14 |
+| Remaining cached plan | Win T12 | Win T12 | Win T12 |
+
+Main Phase 2 already has probability **88.369%** at the battle exit, versus
+11.631% for end phase. The observed exit is a sampled minority action, not a
+preference for ending there. However, all three phase-only continuations enter
+Main Phase 2 and immediately end at decision 558. The cached-plan treatment
+also changes candidate RNG consumption; this comparison alone cannot attribute
+success to every action in its route. These suffixes share one root and are not
+independent games. The first preflight's `__name__in` typo failed before writing
+a record; its original source/STOP is preserved separately.
+
+## Initiating the combination is sufficient on the selected root
+
+`lethal-main2-sequence` uses four original-suffix continuations, with all forced
+choices consuming the ordinary policy sample for that prompt. It records
+probabilities without extra RNG draws and exactly reproduces phase-only's full
+trace. At decision 558 the policy probabilities are:
+
+| Action | Probability |
+| --- | --- |
+| End phase | 99.660921% |
+| Link Summon Requiem (2463794) | 0.018839% |
+| Activate Sequence (49867899) | 0.002370% |
+
+After forcing phase entry and **only initiating Requiem**, ordinary policy
+selects Lacrima as material, accepts its graveyard damage effect (yes probability
+96.861%), returns Sequence, and wins T12. Additionally forcing the material,
+or the material plus burn acceptance/return target, produces the exact same
+full transcript. Phase-only still wins T14. All four records are healthy.
+
+This localizes a concrete policy failure to starting a winning combination;
+it does not establish whether training credit, representation, or coverage
+caused the low probability. It also shows the longer searched route contains
+unnecessary actions. Do not globally forbid end phase or add a card-specific
+production rule based on this case. The next bounded diagnostic will test
+whether the existing generic search can recover the finish at battle exit and
+Main Phase 2, with the same 12-rollout budget and conservative entry guard.
+No new deals, seed selection, model training, or default promotion is justified
+by this selected-root result.
+
+| Study (suffix `-2026-10-12`) | Identity SHA-256 | Report SHA-256 |
+| --- | --- | --- |
+| `lethal-concealed-fresh` | `dcf531e6f5b5f11f3e050f023898f8d462f57945c161442b53e3d67a3b7e1039` | `d0a07846ee55b3d227463d8944afd5259fb484f49d410c13ece9626f33762443` |
+| `lethal-phase-exit-restart` | `3336dc99a6ae7a03f13a075a3b25a39878e4012b9abef38763ff0778a2f0ea95` | `cbd47a59ab8c1169a8d8b94ad3bbc2a7fc796ac791f1d27ed2fb3b4c4f9d6329` |
+| `lethal-main2-sequence` | `4b650d35750ffc9851b5ed5e782f331aa451bcf999ba57155eb40fe2721da7ee` | `8925b765f9919258818db37fed1e363b5c3735b8f096e1472ffc071378d2acef` |
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
