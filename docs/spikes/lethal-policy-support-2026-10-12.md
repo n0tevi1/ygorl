@@ -1600,6 +1600,62 @@ where the first demonstrated finishing board appears. Do not interpret a
 failed rollout as proof that no winning continuation exists, or promote
 card-specific rules/teacher labels before checking the resulting branches.
 
+## Preparation trimming and battle-first search allocation
+
+`lethal-preparation-trim` completed all 17 healthy records: every recorded own
+idle-command boundary on the three approved routes (14 boundaries), plus three
+exact complete-plan controls. A fixed candidate battle RNG and fixed opponent
+suffix RNG are reused across boundaries within each game. At each boundary,
+force battle entry, then return combat execution to ordinary policy.
+
+| Game | Earliest tested boundary that finishes this turn | Full-plan decisions | Trimmed total decisions |
+| --- | --- | --- | --- |
+| 2 | 372, after two preparation transactions | 405 | 401 |
+| 3 | 433, original search root | 481 | 463 |
+| 5 | 258, original search root | 308 | 287 |
+
+Game 2 does not finish this turn from boundaries 313 or 342 under the fixed
+suffix; both eventually win T10. Boundary 372 finishes T6, omitting the final
+set. Games 3 and 5 can already win directly from the original root. All records
+win eventually, without unexpected abandonment. These selected continuations
+show removable preparation, not minimality or proof that failed prefixes have
+no winning line. The earlier semantic-handoff result and this audit together
+argue against treating every action of a successful search as a useful label.
+
+`lethal-battle-first` changes only the first rollout chooser: prefer a legal
+battle-phase action, otherwise delegate to the original Greedy chooser. The
+remaining rollouts, per-root RNG, 12-rollout budget, health/event filters and
+opponent-response gate remain unchanged. Six fixed-root searches cover all
+three approvals and their exact original search controls; all are healthy.
+
+| Game | Original → battle-first route prompts | Original → battle-first rollouts | Native winning route passes gate |
+| --- | --- | --- | --- |
+| 2 | 92 → 92 | 2 → 2 | Both; identical route hash |
+| 3 | 48 → 34 | 1 → 1 | Both |
+| 5 | 50 → 29 | 3 → 1 | Both |
+
+Thus the modified chooser avoids the two unnecessary Main Phase expansions
+while preserving the preparation-dependent route on this diagnostic. The
+shorter game 3 route still chains Maxx “C”; shorter is not necessarily minimal
+or strategically justified at every action. The first proposal still stops
+search even if its response gate rejects it, so a new early proposal could
+preempt an older useful one elsewhere. Hidden deck/extra information remains
+unresolved; no production default, policy, critic, or teacher labels change.
+
+Next run paired discard/execute regression on **all eight existing games** of
+`lethal-exit-fresh`, not only the three approvals. Replace only the first
+rollout per search; keep the concealed-zone guard, root streams and maximum
+12 rollouts/search, two searches/turn, eight/game. Require exact ordinary-play
+traces for discard/rejected routes and matched proposals/prefix RNG between
+paired arms. Compare wins, turns, decisions, gate acceptance and abandonment
+against the existing panel. This is bounded implementation regression, not
+independent evidence of improved strength or grounds to scale training.
+
+| Study (suffix `-2026-10-12`) | Identity SHA-256 | Report SHA-256 |
+| --- | --- | --- |
+| `lethal-preparation-trim` | `3e22826a9ad172717add940d15547d473ea99604b26fb9bc5a1dc01def0ef3b6` | `de115bd3c4db0325748d67cf005419a27429af2566d736888d2fb418ca456a20` |
+| `lethal-battle-first` | `4a911e0cb6440aa668993d09d500b5558fe675c5ab18cf0c7df384746f84c5d2` | `7c719912922a4e72524747b0246f8b7920fe96a3a63f7139c74bbd5bf7a41038` |
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
