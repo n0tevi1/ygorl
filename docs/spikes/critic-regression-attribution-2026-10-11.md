@@ -60,7 +60,39 @@ Compared with canonical128, 20 choices change: four have higher sampled returns,
 
 The intervention reduces some observed regressions, but mostly preserves earlier behavior. It provides no demonstrated gain beyond initialization. **Do not deploy it, tune it repeatedly on these 64 roots, enlarge the sample until an interval excludes zero, or start a larger RL run.** Conditional critic choices under frozen continuations are not actual actor full-game wins, shorter games or unseen-card transfer.
 
-The remaining mechanism question is how to learn useful action preferences without exporting them to unrelated states through the shared candidate projection. Repeated target directions are insufficient protection. A next representation or update-isolation proposal must distinguish learning from merely freezing the initial ranking, retain counterexamples where the fit genuinely helped, and state an independent evaluation and resource budget before running. Issues #61/#83/#36 remain open; the broader critic and long-game problems are unresolved.
+The remaining mechanism question is how to learn useful action preferences without exporting them to unrelated states through the shared candidate projection. Repeated target directions are insufficient protection. A next representation or update-isolation proposal must distinguish learning from merely freezing the initial ranking, retain counterexamples where the fit genuinely helped, and state an independent evaluation and resource budget before running. The follow-up below supplies an important competing explanation: a simple output-movement-matched shrinkage control has at least as favorable diagnostic point estimates as the proposed margin repair. Issues #61/#83/#36 remain open; the broader critic and long-game problems are unresolved.
+
+## Follow-up: context dependence and a matched shrinkage control
+
+`critic-context-path-audit-2026-10-11` is a forward-only audit of the same initialization, canonical128-step32 and margin-preserving128-step32. No optimizer steps or new games are performed. All64 reused roots, every legal action pair and all128 training-state queries are included.
+
+The Q head scores an action with `dot(query(state), candidate(action)) / sqrt(hidden) + bias(action)`, followed by tanh. Candidate embeddings for card actions already contain contextual board-transformer features. Phase actions have no card token and depend on the separate query path for changing state information. Across this panel each phase kind has two bitwise-distinct candidate vectors, but their maximum coordinate differences are only7.15e-7 for main2 and3.58e-7 for end-phase. The implementation has no board-dependent term for these identical no-card action rows; the small floating differences should not be interpreted as useful phase-state encoding.
+
+Holding each root's candidate vectors fixed and replacing only its query with the mean of the128 training queries changes3/64 initial choices,11/64 canonical128 choices and3/64 repaired choices. Replacing it with each of the128 individual training queries leaves the original choice unchanged for every replacement at39/64 roots initially,0/64 after canonical fitting and1/64 after repair. Thus the fitted head is not simply ignoring its query. Candidate vectors still contain the original board context, and mismatched query/candidate combinations may be off the data manifold: this does not measure tactical sensitivity under legal game-state changes.
+
+An exact symmetric decomposition of the **pre-tanh** score change separates query updates, candidate updates against the training-mean query, candidate updates against each root's query deviation, and candidate-bias updates. For two roots, main2-minus-attack shifts are:
+
+| Root | Total raw margin shift | Query update | Candidate × common query | Candidate × query deviation | Candidate bias |
+|---|---:|---:|---:|---:|---:|
+| 64: fitted choice has higher sampled return | +.37270 | +.09054 | +.21022 | −.00206 | +.07400 |
+| 116: fitted choice has lower sampled return | +.36341 | +.08712 | +.19683 | +.01221 | +.06724 |
+
+The common-query pathway contributes strongly to both examples. Similar contributions appear in roots69/114, but simply suppressing this pathway can also remove useful adaptation. These raw-score shifts are not the bounded return-margin units in the earlier attribution table. The mean-query component is not wholly state-independent because card-action candidate vectors are themselves contextual. Independent matrix multiplication verifies all scores, swapped choices and pair decompositions; sums agree within1e-12.
+
+To check whether the prior repair merely moves less from initialization, a separate fixed comparator uses `Q_control = Q_initial + alpha * (Q_canonical - Q_initial)`. Choose alpha **only on the128 training roots**, matching the repaired model's equal-root RMS change in centered Q scores. The resulting **alpha=.5909121643** is sealed before opening the reused diagnostic predictions/outcomes. There is no alpha sweep or selection by win rate. This matches output movement magnitude, not its direction, parameter norm, optimizer history or retention. It is a functional diagnostic comparator, not a deployable model or a recommendation to change the learning rate by this factor.
+
+| Model on reused64 roots | Centered action MSE | Conditional choice wins |
+|---|---:|---:|
+| Initialization | .015814 | 66.357% |
+| Canonical128, update32 | .015970 | 65.723% |
+| Margin-preserving128, update32 | .015649 | 66.455% |
+| Movement-matched shrinkage | .015201 | 66.602% |
+
+Repair and shrinkage differ on eight choices: repair has one higher, two lower and five equal sampled returns. The point estimates therefore do not distinguish a special benefit of handling ambiguous labels from ordinary reduced adaptation. They do not establish superiority of shrinkage either: the roots are reused, the contrast is post-hoc and only32 continuations per action are available. Independent verification recomputes training movement by explicit action pairs, the sealed alpha, individual game-result labels, all four models' choices and metrics.
+
+The first shrinkage verifier had an advanced-indexing mistake: two column vectors were subtracted instead of forming an outer difference, producing zero pair energy. It stopped **before alpha was sealed or diagnostic outcomes were opened**. The original script, design and failure record remain; a corrected explicit outer-difference calculation and a separate scalar-loop verifier pass at the unchanged tolerance. No training run or model checkpoint was affected.
+
+**Updated decision:** do not treat the margin-preservation pilot as a validated mechanism-specific repair, and do not change architecture or scale data on this evidence. Any next proposed repair needs a movement-matched reduced-adaptation control, retained examples of beneficial updates and independent validation. No additional training, collection or hyperparameter sweep is queued by this audit.
 
 ## Evidence
 
@@ -69,5 +101,6 @@ All paths below are under `out/research/` and retained locally:
 - `critic-regression-attribution-2026-10-11`: original identity `7533d0575a210a1fe208ed3b4e486fbbbaf89e3e5234b3fb26318d803413e2bd`, STOP and `numerical-diagnostic/diagnosis.json`.
 - `critic-regression-attribution-restart-2026-10-11`: identity `2ba2a78ca35fa5910285037aed1e4a26c180955292b8a07f41b30e83d2358e06`; exact-replay report, `attribution.json`, `analysis.json`, `verification.json`, `parameter_audit.py` and `parameter-audit.json`.
 - `critic-pair-margin-anchor-pilot-2026-10-11`: identity `aa6296c072161598b0e064589837a8f18670e54777c57a69b712132ce1aa0277`; registration, `pair-targets.json`, eight checkpoints, `fit-complete.json`, `report.json`, `analysis.json`, `analysis-verification.json` and `choice-audit.json`. Analysis SHA256 `504249b98b204839c700f15f0f9a0df8755ec2159e527bfc601200f5af4a532e`.
+- `critic-context-path-audit-2026-10-11`: identity `009d6c3bb88fa1656e344400e9e8948340325a1652f2bd896e49c60bc5e01593`; `report.json`, `arrays.npz` and independent `verification.json`. Supplemental `shrink-control-corrected-design.json`, `shrink-alpha.json`, `shrink-control.json`, `verify_shrink.py` and `shrink-verification.json` pin the comparator separately. Original verifier failure is retained in `shrink-control-check-failure.json` with its original script/design. Completion event `9610d85089880c06bc49eb59fccc81f0d67d5f6dcda219b23f78065a6ad4f269` is acknowledged. Reporting follows main9c95958; matched runtime remains ae09594.
 
 Attribution completion event `048b83ca283d33b3f532f87f0405afb6122f39ec910b59eb9d8ebe34cb2ac011` and pilot completion event `a109248eb6dcc9553e0fba42a47d788d073f9f9ff2f6d3d3720d8b5650312faa` are acknowledged with verification scope recorded. The runtime remains frozen at ae09594 for comparability; the reporting branch follows main, fetched at 88062b3 before publication. No original STOP is cleared.
