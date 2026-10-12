@@ -2014,6 +2014,28 @@ work; do not infer broader strength from reducing decisions in one game.
 Identity: `d3845b7185859886b0ef7a2ec9355ac3f0952147a7c1ad80a18abe66100b55ed`;
 report: `b0c3ca2783537da0b50ab5399825b23b07be652c7bee54da2bd619fa97932462`.
 
+## Eight-deal retention preserves outcomes
+
+`lethal-autotrim-retention` completes all16 paired executions with healthy native
+results and exact full-plan controls. Both arms win **6/8** with **8.875 mean
+turns**. Mean decisions fall **547→535.25**, entirely from game5's735→641 reduction.
+Six games have exactly identical full traces. Game6 still wins T12 in579 decisions
+and enters Main2 at556; its handoff at538 reduces cached overrides27→1. Two
+placement choices differ, with the later chain locating the card accordingly;
+the actual continuation remains a certified leaf.
+
+This is a reduction in excess decisions on a selected panel, not fewer turns
+or improved win rate. Reusing prior accepted plans also does not validate fresh
+proposal discovery. Next freeze the same verifier and truncation logic on the
+other complete existing eight-deal `lethal-battle-first-regression` panel, paired
+full/auto (16 executions). Include its preparation-dependent win and both
+previously overlong finishes, without picking only favorable roots. Require
+exact full controls and prefixes, certify actual suffixes, and preserve the same
+bounds. No new deals/seeds, training expansion or production promotion.
+
+Identity: `2cd76fd55ab8364ed7d95982abbc59a49e71f5ebb17afc47ed217856e9704cd6`;
+report: `8ba08e174c4f7618cec71cf39f35034acbe789b0532960fd6d79aaff6bd67e25`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
