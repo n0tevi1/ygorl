@@ -653,6 +653,39 @@ Identity: `e4079d008c20c78366691ad26c6c66a3c67033ab47b6ad1b65cbea93c3744538`.
 Report SHA-256: `73350ef53760a2424b036b74b7cedc6cfcadd9ea65c0c4126cebf4fb4bda146b`.
 Artifacts: `out/research/lethal-balanced-gate-2026-10-12/`.
 
+## Search allocation audit: Main1 consumes most attempts
+
+`lethal-search-allocation-audit-2026-10-12` replayed all 16 existing collection
+games with exact transcript, outcome, proposal and search-statistics parity.
+All bound inputs and trace hashes pass. Of 103 searches, 93 occur in Main1 and
+10 at battle-command prompts (engine phase `PHASE_BATTLE_START`). Of 49 own
+turns with two searches, 39 spend both in Main1. Before proposal stopping,
+140 eligible prompts are skipped by the turn cap and 61 by the game cap;
+80 are battle-command prompts (60 turn cap, 20 game cap), across 15/16 games.
+Seven games produce proposals; seven no-proposal games exhaust all eight
+attempts. These observations identify allocation bias, not missed-lethal labels.
+
+Next use these same 16 games for one frozen scheduling diagnostic: at most one
+Main1 search and one reserved battle-command search per own turn, still at most
+eight searches/game, 12 rollouts/search and 200 steps/rollout. Unused phase quota
+is not transferred; Main2 is excluded. The first found proposal is captured and
+immediately discarded as before; real play remains the original policy, with
+no extra RNG consumption. This deliberately compares equal maximum budgets,
+not guaranteed equal realized rollout counts, which must be reported.
+
+Run 16 scheduled collection replays plus two exact legacy-schedule controls.
+All 18 must match the source's complete actual game transcript and outcome;
+legacy controls additionally match proposal/search statistics. Compare coverage,
+first-proposal turn/index, lost versus newly found candidates, actual searches
+and rollouts. A found line against the supported Greedy proxy is not a validated
+win against the checkpoint opponent. No production/training change or budget
+increase follows from coverage alone. Two CPU workers and the existing
+15-minute service limit remain in force.
+
+Identity: `a3a46d6716910b45e9cca9b3978f4022234f91f354924a257cbf834c01a6e864`.
+Report SHA-256: `9b83f9315cb3379da038626d428f3fd15dfebe26d2e382f1981103c86bde40f5`.
+Artifacts: `out/research/lethal-search-allocation-audit-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
