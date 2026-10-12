@@ -900,6 +900,37 @@ Identity: `075eab88818de8538a1b635cf5bc1dba07dae8ff905c07b21f7d15b3fa01ce79`.
 Report SHA-256: `4b349cd63b603be3b15f704e2e232525bc342493092b4a68a04e818bc1f66e7b`.
 Artifacts: `out/research/lethal-prebattle-trigger-2026-10-12/`.
 
+## Independent pre-battle panel retains all four proposals
+
+`lethal-prebattle-fresh-2026-10-12` completed 18 healthy records on two new deal
+blocks/all four assignments. All eight paired actual-policy transcripts and
+outcomes, two plain-policy controls, and 34 common-root search comparisons pass.
+There is no dealt opening-prefix overlap with the registered prior panels.
+
+Both schedules find four proposals at exactly the same roots (games 0, 5, 6, 7)
+and neither finds a proposal in the other four games. No candidate is lost,
+delayed or added. Searches fall 50→47 and rollouts 557→521 (6.5% fewer).
+The 66 additional policy peeks take 0.189 seconds in total as measured here;
+this is component timing, not a controlled end-to-end speed comparison. Two
+independent deal blocks are insufficient for a broad generalization claim,
+and equal real play is expected because all proposals were discarded.
+
+Next assess actual proposal value on **all four** freshly collected roots,
+without outcome filtering: plan execution versus policy fallback under the
+original stream and two fixed new opponent suffix streams (2026101351/1352).
+There are 24 records (4 roots × 2 arms × 3 streams), no new deals. Reconstruct
+the frozen pre-battle trigger and root-keyed search, require exact candidate
+and pre-root policy RNG/transcript, retain full original-stream fallback
+controls, and disable later search in both arms. Record eventual gains/harms,
+same-turn finishes, turn changes and abandonment. Disjoint opponent suffixes
+do not turn four selected roots into a full-game strength evaluation. Keep
+strict line/support checks, two workers and 15-minute cap; no training/default
+changes, extra search budget, replacement roots or adaptive suffix sampling.
+
+Identity: `26853e53cef9df2f0e584d54d4761356d9bf5e759bf7929c6382f82197ca4ea6`.
+Report SHA-256: `75857d5e5f6bb0c0cc7dcf18a2b3f2ee1b7009c693d8d5bd2f357bd814dcdc50`.
+Artifacts: `out/research/lethal-prebattle-fresh-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
