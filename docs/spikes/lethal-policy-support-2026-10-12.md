@@ -978,6 +978,49 @@ Identity: `525d6ea137c48d5f62fca42142278b2e2e68f627293ed3a540cf945695d93382`.
 Report SHA-256: `ca9ae4db5eaa5683452bd471fcd93b14dacbf9b257e1a9dffa8e7888a8eee324`.
 Artifacts: `out/research/lethal-prebattle-value-2026-10-12/`.
 
+## A single opponent response explains the fresh execution losses
+
+`lethal-prebattle-response-2026-10-12` completed 14 healthy records. All seven
+unmodified controls reproduce complete traces/results. Every intervention has
+an identical pre-response prefix and exact cached signature; replacement
+indices pass encoded-support checks. The real opponent still makes its ordinary
+policy draw before its one action is replaced.
+
+All seven substituted continuations win on the proposal turn, compared with
+zero same-turn wins and three eventual wins among their controls. All four
+original losses become wins. Four substitutions avoid all further abandonment.
+The three game-5 target substitutions still abandon later at decision 426
+(pass versus chain), yet policy fallback wins during T8. This establishes a
+causal role for the first response under these fixed continuations, and again
+shows that abandonment itself is not a failure label. It does not establish
+that the real opponent will cooperate, nor validate overriding its choices.
+
+The useful next implementation experiment is a bounded **proposal challenge**,
+not another suffix sweep or a tweak to one card's Greedy rule. Reconstruct all
+four fresh proposals from their original roots, then replay the entire cached
+line in the shadow and require an exact supported same-turn win as a control.
+At the first four opponent prompts having supported alternatives, retain up
+to three alternatives in stable original action order (at most 12 challenges
+per proposal); report untested alternatives explicitly. For each challenge,
+restore the native snapshot at that prompt, substitute one supported response,
+then continue both sides with fixed supported Greedy policies for at most 200
+decisions/the remaining turn. Seeds derive from root, prompt, action and role,
+not prior rollout consumption. Record same-turn wins, non-wins, strict-event
+health and incomplete coverage. A failed Greedy continuation is evidence about
+that continuation, **not proof that no winning reply exists**.
+
+All proposals stay discarded in the real games; their complete policy traces,
+results and RNG state must remain equal to the fresh collection. Four records,
+no new roots/deals/suffix search, no actor/critic change, no production gate or
+increase in discovery budget; at most 48 additional bounded shadow challenges,
+two workers and 15-minute limit. This tests whether a generic branch check can
+expose fragility without looking up the observed mismatch. Do not treat a pass
+on this partial known-state model as a public-information safety guarantee.
+
+Identity: `c71ff3490bfaef28dba034c5f7283ea902738060465fa22cd1c655748a955473`.
+Report SHA-256: `aa5d073b37a385dfb1cd13cf9274d1c4e5473ead599c0722cc4c54f8e29324e6`.
+Artifacts: `out/research/lethal-prebattle-response-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
