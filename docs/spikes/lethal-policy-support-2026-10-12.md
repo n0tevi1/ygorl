@@ -1692,6 +1692,47 @@ unresolved requirement even if this regression passes.
 Identity: `cb0fbabcd64bd570b36e01a44f59440f76c8c0c1146720457280e4e40c551ff0`;
 report: `312aecd2d88f3090b9a41a4edc524a9eb2376c96ae6adca5ffca04c7e46c2033`.
 
+## Battle-first retention: Main2 survives, rejection still stops search
+
+`lethal-battle-first-retention` completed 16 healthy records on all eight
+existing exit-trigger games. Discard traces exactly reproduce their original
+policy controls and ten shared-root checks pass. There are no new losses,
+desynchronizations or unexpected plan abandonments.
+
+| Metric, eight games | Previous search | Battle-first |
+| --- | --- | --- |
+| Wins | 6/8 | 6/8 |
+| Mean turns | 9.125 | 9.125 |
+| Mean decisions | 543.375 | 543.375 |
+| Searches / rollouts | 11 / 110 | 10 / 99 |
+| Applied overrides | 17 | 27 |
+
+The same Main2 effect-damage finish occurs T12 at 579 decisions. Search now
+approves at decision 538 instead of 556, preserving the finish with an earlier
+cached prefix. Wholegame traces differ only in two placement choices, but ten
+more actions are overridden. Seven other complete traces are unchanged. Fewer
+rollouts therefore do not imply fewer overrides or stronger play.
+
+Game 5's candidate at decision 558 is still rejected: its replay wins in the
+sampled continuation but includes multiple supported opponent responses. With
+battle-first it appears on rollout 2 instead of 1. The research wrapper stops
+at this first proposal, leaving ten of its twelve rollouts unused. This is a
+confirmed search-coverage gap, **not evidence yet that a safe lethal was missed**.
+The conservative response gate is not relaxed.
+
+Next test rejection-aware search on exactly five existing roots: this rejected
+root, the retained Main2 route root, and the three approvals from the preceding
+panel. Ten root searches compare exact battle-first controls with continuing
+after rejected proposals, retaining the same root streams and max12 rollouts.
+Gate checks add replay work, which must be counted separately; they do not buy
+extra rollout seeds. Require accepted-control route parity and exact rejected
+first-candidate reproduction before interpreting later proposals. No new deals,
+actor/critic training, or production promotion. This remains a diagnostic in the
+known engine state; hidden-information certification is still unresolved.
+
+Identity: `4411f8c98d4fbaaf46c580b9d70d664ad3d73b5a4b1ed7bf5430a0ecfe335cf6`;
+report: `6e513de68f6fa5f27b8ac62f0555c61efb4b60ca2d18dae9dcc68029605cb522`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
