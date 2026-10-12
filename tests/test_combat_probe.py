@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 
-from combat_probe import CombatProbe, masked_action
+from combat_probe import CombatProbe, combat_only_action, masked_action
 from ygorl.agents.greedy import GreedyAgent
 from ygorl.engine import constants as C
 from ygorl.engine import messages as M
@@ -75,6 +75,36 @@ def test_equal_card_codes_do_not_mix_current_stats_between_instances():
     agent = CombatProbe(0, cards=default_cards(), board=lambda: board)
     actions = [SimpleNamespace(card=M.CardInfo(ATTACKER, M.Location(0, C.LOCATION_MZONE, i))) for i in (0, 1)]
     assert [agent._power(a) for a in actions] == [1000, 4000]
+
+
+def test_combat_only_guidance_leaves_effects_and_other_selections_to_policy():
+    chooser = CombatProbe(0, cards=default_cards())
+    p = battle()
+    chooser.prime(p, 0)
+    rng = chooser.rng.getstate()
+    attacker = chooser._attacker
+    effect = point(M.SelectYesNo(0, 1))
+    ordinary_selection = replace(target(), events=())
+    for q in (effect, ordinary_selection, replace(p, player=1), replace(p, turn=p.turn + 1)):
+        assert combat_only_action(chooser, q, [True] * len(q.actions)) is None
+    assert chooser.rng.getstate() == rng and chooser._attacker == attacker
+    q = target()
+    idx = combat_only_action(chooser, q, [True] * len(q.actions))
+    assert q.actions[idx].kind == "select"
+    assert chooser._attacker is None
+
+
+def test_combat_only_guidance_respects_attack_masks_and_cancelled_attackers():
+    chooser = CombatProbe(0, cards=default_cards())
+    p = battle(91152256)
+    chooser.prime(p, 0)
+    assert combat_only_action(chooser, p, [False, True, True]) is None
+    idx = combat_only_action(chooser, p, [True])
+    assert p.actions[idx].kind == "attack"
+    q = target()
+    idx = combat_only_action(chooser, q, [True] * len(q.actions))
+    assert q.actions[idx].kind == "cancel"
+    assert combat_only_action(chooser, p, [True] * len(p.actions)) is None
 
 
 def test_mask_blocks_cancel_and_preserves_original_engine_indices():
