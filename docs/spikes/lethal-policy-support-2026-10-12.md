@@ -724,6 +724,39 @@ Identity: `e18e68b3a1bfca46711c07711efca25c2a7e9efa53898095c391758af70192e2`.
 Report SHA-256: `18b9283d182598352596ae1bcd2868a997967e0504e0b57b910a8a202147b992`.
 Artifacts: `out/research/lethal-phase-quota-pilot-2026-10-12/`.
 
+## Quota continuation: extra coverage is neutral; investigate RNG coupling
+
+`lethal-quota-continuation-2026-10-12` completed 18 healthy records with exact
+original fallback controls, proposal/pre-root RNG equality and trace hashes.
+The new balanced-game-4 T9 proposal and replacement prospective-game-7 T9
+proposal each match fallback: both arms win T9 on all three streams. The old
+prospective-game-7 T7 proposal wins T7 on all three streams, while fallback
+wins T9. No plan is abandoned. Thus the extra discovered root adds no observed
+benefit and the old early route has demonstrated value on these suffixes.
+This is selected-root evidence, not a scheduler-wide strength estimate.
+
+Crucially, both schedules **do search decision 198 on T7**, the same first
+Main1 prompt and actual policy state. Legacy finds the line in its first
+rollout after 72 preceding rollouts; quota fails all 12 after 60 preceding
+rollouts. The lost discovery is therefore not an omitted root. Earlier
+allocation changes both the rolling chooser RNG and the simulated opponent's
+seed, which is based on cumulative rollout count. Quota later finds T9 at
+index 248. A schedule-only causal interpretation would be unsupported.
+
+Next run four read-only replays at this single exposed root: cross the chooser
+RNG state after 60/72 prior seed draws with the opponent rollout-seed offset
+60/72. Preserve the quota schedule before the root, original real-policy RNG
+and full actual transcript; stop all search after the root. Keep 12 rollouts
+maximum at the root. The 60/60 control must reproduce the quota root failure;
+72/72 must reproduce the exact legacy winning proposal. The two crossed cells
+isolate which RNG path explains the discovery change. Four records, two CPU
+workers, no new deals or budget increase; no default or training changes.
+This mechanism test cannot establish robust proposal performance across seeds.
+
+Identity: `c46b782e2dedae6911b3ced46cb59e1d0561b5ad7745ac830166b33afcdd41a6`.
+Report SHA-256: `933361decf73313c5e0f3fd12a9ef08996f3e991c12b4c36e0a8558a5218384f`.
+Artifacts: `out/research/lethal-quota-continuation-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
