@@ -466,6 +466,44 @@ Collection identity: `e0191a98caf8a21fde394f40714c25500c5e9c40d73689d98af56d7e2c
 Report SHA-256: `89221aa336e8f5fb54a9a6902dd65ec8bc42a951b2a48ca50021d2f059ff277c`.
 Artifacts: `out/research/lethal-fresh-proposals-2026-10-12/`.
 
+## Fresh-root paired continuation results
+
+All 18 continuations in `lethal-fresh-continuation-2026-10-12` are healthy.
+Three original-stream fallback controls match complete collection transcripts,
+and all paired proposals, pre-root RNG states and prefixes agree. There are
+3,011 applied mask comparisons and 1,362 internal rollouts.
+
+| Root game | Execute: end turns across streams 0/1/2 | Fallback: end turns | Outcome |
+| --- | --- | --- | --- |
+| 2, proposal T8 | 8 / 8 / 10 | 8 / 8 / 8 | all win; one two-turn delay |
+| 3, proposal T7 | 7 / 7 / 7 | 7 / 7 / 7 | all win; neutral |
+| 7, proposal T7 | 7 / 7 / 7 | 9 / 11 / 9 | all win; finishes 2–4 turns earlier |
+
+Both arms win all nine suffix continuations. These three roots share two deal
+blocks and do not support a population win-rate claim. Root 2 abandons its line
+on an opponent zone choice in stream 1 (decision 288), yet still wins T8. In
+stream 2 it abandons on an opponent monster selection (decision 285): the plan
+expects Lunalight Kaleido Chick (35618217), while the opponent chooses Lunalight
+Gold Leo (8379983), and the game ends T10. These are observed divergences; this
+comparison alone does not isolate a card-specific causal effect.
+
+Next test a bounded recovery proposal instead of weakening cached signatures:
+after the first line abandonment, allow at most one more search within the
+original turn and eight-search game cap. Compare no further search, ordinary
+main/battle-trigger replanning, and replanning at the next own decision prompt.
+The two new root-2 interrupted suffixes and one previously harmful Dominus
+suffix form nine records (three exact controls and six treatments). Each had
+seven searches at the original proposal, so the one extra attempt stays within
+the already registered total budget. Keep the per-turn search cap, mask checks,
+strict own-draw/random-event filter, opponent proxy and all RNG conventions.
+Require prefixes through the recorded interruption to match; report failed
+replans, renewed interruptions and terminal harm. This is a diagnostic fix
+candidate, not production adoption or proof of robustness to hidden responses.
+
+Identity: `5bfb7f73650d2723e3d04aa02854f1e438653bc1f662e2b90166148e9403890d`.
+Report SHA-256: `851273da093d9569bfc08aa8b2c6587efabf302b885096c43bc5a6a13ef6edc2`.
+Artifacts: `out/research/lethal-fresh-continuation-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
