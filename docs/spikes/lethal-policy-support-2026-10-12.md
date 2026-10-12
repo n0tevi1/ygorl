@@ -622,6 +622,37 @@ Identity: `fbc89067bc917864b6515e629bd236097005a102abfc505062920b289a7da1d0`.
 Report SHA-256: `319f167697a9b99003ca5511c8b9d15df7924e1116b61e6e8a4d811d4b0b5ceb`.
 Artifacts: `out/research/lethal-prospective-gate-2026-10-12/`.
 
+## Block-balanced confirmation: stop gate replication
+
+`lethal-balanced-gate-2026-10-12` completed 21 healthy records. Only block 0
+produced proposals (games 0 and 1); the preregistered selection takes game 0,
+T5, and does not replace the empty block. All three probe pairs have both plan
+and fallback winning on T5, so the byte-identical gate rejects this neutral
+candidate. In both independent evaluation pairs, plan, fallback and gate win
+on T5. Exact controls, dependency seals, freeze-before-evaluation timing and
+health checks pass (2,866 mask checks; 1,333 internal rollouts).
+
+Across the two prospective runs: three selected roots, zero acceptances, six
+evaluation pairs. Gate and fallback win 6/6; always-plan wins 5/6. These are
+selected-root continuations, not a full-game win-rate estimate. The defensive
+benefit against one bad proposal has replicated on a fresh state, but **there
+is no demonstrated gain over the unmodified policy** or fresh-state evidence
+for the gate's acceptance branch. Stop additional seed replication of this gate;
+keep production, actor/critic training and defaults unchanged.
+
+Next audit search allocation on all 16 existing collection games, with no new
+deals, changed actions or added search budget. Log attempted and skipped own-turn
+main/battle prompts, phase, per-turn/game budget and proposal stopping. Every
+replay must match its source's full transcript, outcome, proposal and search
+statistics. This can establish whether the two-per-turn/eight-per-game budget
+is spent early; a skipped prompt is not evidence of a missed lethal. Only then
+consider a bounded scheduling ablation. The audit retains two CPU workers,
+per-record persistence and the 15-minute service limit.
+
+Identity: `e4079d008c20c78366691ad26c6c66a3c67033ab47b6ad1b65cbea93c3744538`.
+Report SHA-256: `73350ef53760a2424b036b74b7cedc6cfcadd9ea65c0c4126cebf4fb4bda146b`.
+Artifacts: `out/research/lethal-balanced-gate-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
