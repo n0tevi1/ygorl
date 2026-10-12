@@ -869,6 +869,37 @@ Identity: `13317eacebbaec7c3c8837e262fea0a664683ce4aba4481647e825f39cfdba1b`.
 Report SHA-256: `3411df8ea996cf63d1e530bd539c960faca93262270517c6432cb540b96719b7`.
 Artifacts: `out/research/lethal-root-streams-continuation-2026-10-12/`.
 
+## Pre-battle trigger retains exposed proposals with fewer rollouts
+
+`lethal-prebattle-trigger-2026-10-12` completed 18 healthy records. Actual-policy
+transcripts/outcomes and rooted legacy controls match exactly. All 161 shared
+root comparisons to legacy/quota references agree (this count includes both
+references, not 161 unique roots). All 105 policy peeks preserve generator
+state and agree with actual emitted choices.
+
+On the 16 exposed games, the trigger retains all seven legacy proposals at the
+same root/index/turn and adds balanced-game-4's T9 proposal. Eight games have no
+proposal in either arm. Searches fall 103→95; rollouts 1,162→1,061 (8.7% fewer).
+The extra 105 policy forwards mean this is not evidence of a wall-time speedup.
+The extra root already has neutral continuation evidence; neither candidate
+coverage nor unchanged actual-policy play demonstrates a playing-strength gain.
+
+This is enough to justify a small independent discovery check, not production
+adoption. Freeze the trigger, root-keyed seed scheme and caps before collecting
+two new deal blocks with all four seat/deck assignments (eight games). Run both
+legacy and pre-battle schedules, with two plain-policy full-trace controls:
+18 records. Use panel seed 2026101340; retain empty/failed-discovery games with
+no replacement or additional seed search. Verify no dealt opening-prefix overlap
+with the earlier collection panels (not an unseen-card claim). Preserve exact
+actual-play equality between schedules and shared-root search parity, record
+lost/delayed/new candidates, actual rollouts, peek counts and peek time. Report
+this one panel regardless of outcome; no adaptive tuning or training/default
+changes. Two workers, unchanged search caps and 15-minute service limit.
+
+Identity: `075eab88818de8538a1b635cf5bc1dba07dae8ff905c07b21f7d15b3fa01ce79`.
+Report SHA-256: `4b349cd63b603be3b15f704e2e232525bc342493092b4a68a04e818bc1f66e7b`.
+Artifacts: `out/research/lethal-prebattle-trigger-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
