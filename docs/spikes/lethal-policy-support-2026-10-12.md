@@ -300,13 +300,103 @@ relaxing cached-line signatures would conceal a real state difference.
 Identity: `6e428f5bbbc5beab54e926e9d0f99094aa257031ae265390b7aceb022f6700e4`.
 Artifacts: `out/research/lethal-selection-causality-2026-10-12/`.
 
-The next same-budget eight-record prototype audit applies the standard encoded
-support to **the simulated opponent's** Greedy choices before choosing and maps
-back to engine indices. Four unfiltered active controls must reproduce exactly.
-This fixes an asymmetry in the research prototype (the production option only
-promises support for our own choices), not the weakness of a single Greedy
-opponent. No public-information claim, default change, or promotion follows from
-this mechanical correction alone.
+## Opponent-support correction
+
+The eight-record opponent-support audit now filters simulated Greedy choices
+before sampling and maps supported rows back to the original engine indices.
+All four unfiltered active controls reproduce exactly. The treatment performs
+3,990 opponent-support checks; all 1,941 applied native/Python mask comparisons
+and 588 internal rollouts are healthy.
+
+All four selected games retain the same winner and final turn: win T8, loss T12,
+win T14, win T3. Three complete transcripts match their unfiltered controls;
+the losing case changes its intermediate path but still loses on turn 12. At its
+first mismatch the simulated opponent now selects supported card 40366667 instead
+of the earlier masked duplicate, while the real opponent selects 6325660.
+
+This resolves a research-prototype sampling asymmetry, **not** the route's
+strategic fragility. Stop tuning isolated Greedy rules. Next enumerate all
+policy-supported first responses at the two observed selection states, retaining
+actual choices as exact controls. Preserve pre-intervention prefixes and policy
+draws, use the same subsequent policy/search algorithms and streams, and cap the
+panel at 16 continuations. This measures sensitivity to one response; it is not
+exhaustive game-tree search, a full minimax value, or a population-strength test.
+
+Identity: `1ee8a2ee5760229e0004e8570d2a9236334763592510c5233532fb37b0162f39`.
+Report SHA-256: `7fde0b42181d7e1f429fe93a9b21514f9bab16f5179d080b2fb6fb3e0ec588ee`.
+Artifacts: `out/research/lethal-opponent-support-pilot-2026-10-12/`.
+No production code, actor checkpoint, default, or training scale changes.
+
+## Supported response branches and proposal reliability
+
+The eight-record response-branch audit covers all supported first selections at
+both observed mismatch states. The two actual-choice controls reproduce exactly,
+and each intervention preserves the prior transcript and original opponent draw.
+All 1,970 applied mask checks and 608 internal rollouts are healthy.
+
+| Exposed state | Supported first responses | Candidate outcome under the fixed suffix |
+| --- | --- | --- |
+| Replication game 6, S:P target, decision 599 | rows 0–4 | all five win T8 |
+| Replication game 12, Dominus search, decision 266 | rows 0, 1, 4 | rows 0/4 win T7; row 1 loses T12 |
+
+An additional exact native-prefix audit reproduces all 375 and 139 prior
+opponent policy draws, respectively. At the S:P state, the Greedy-planned row 3
+has probability 3.17%, versus 85.91% for the actual row 1. At the Dominus state,
+the losing Spark row 1 has probability **33.01%**; winning rows 0 and 4 have
+47.40% and 19.60%. Thus the exposed harmful response is not exceptionally rare.
+The probability audit is a derived follow-up, not part of the original frozen
+branch registration. Scripts and input trace hashes accompany its JSON artifact.
+
+These are selected states and one fixed suffix per response. They do not
+estimate population win rate, enumerate the later S:P selection, or prove a
+minimax value. In particular, a cached-line interruption need not change the
+ultimate outcome. The implementation accepts the first successful simulated
+trajectory; this evidence motivates checking a proposal's continuation
+reliability rather than further tuning a single Greedy opponent proxy.
+
+`lethal-proposal-continuation-2026-10-12` froze the first proposal at two
+exposed roots: the failing replication game 12 (decision 247) and the retained
+fresh-game-12 benefit (decision 169). Each compares executing that proposal with
+clearing it and using the inner policy. Both arms disable all later search.
+The completed panel has 16 continuations: two roots × two arms × four opponent suffixes
+(the original stream and three independent reset seeds). Candidate RNG state,
+pre-root transcripts and proposal hashes must match. The two original-stream
+plan controls must reproduce their complete source transcripts and outcomes.
+This is a bounded diagnostic, not a training scale-up or promotion gate.
+
+Branch identity: `1cad7cd0500d7b630a3ee3549d9569ceca110bbb1dd692cabdb0d4564875c79c`.
+Branch report SHA-256: `c9c44c58a701b6cdc0c012506836f61a87bd6078ab44123dfbe27fd772d8d309`.
+Artifacts: `out/research/lethal-response-branches-2026-10-12/`, including
+`opponent-probabilities.json` and its standalone audit script.
+
+The 16 continuations are complete and healthy (2,811 applied mask comparisons,
+904 internal search rollouts). Both full-transcript controls pass, and each
+paired treatment has the same proposal and pre-root learner/opponent RNG states.
+
+| Exposed proposal | Execute plan: wins / 4 | Fallback: wins / 4 | Paired outcome changes |
+| --- | --- | --- | --- |
+| Replication game 12, T7 | 2, both T7 | 4, all T7 | 2 harms, 0 gains |
+| Fresh game 12, T3 | 4, all T3 | 2, at T5/T7 | 0 harms, 2 gains |
+
+The risk-case line is abandoned in all four suffixes, including its two wins;
+interruption alone is therefore not a useful binary failure label. The benefit
+case has no abandonments. These results support measuring the value of a fixed
+proposal relative to policy fallback; they do not validate a response gate or
+establish policy strength. Different trajectory lengths consume RNG streams
+differently after the intervention; this uses the existing wrapper fallback
+convention, not a claim that subsequent draws correspond decision by decision.
+
+Before using these outcomes to design a gate, the next bounded confirmation is
+preregistered for the same two frozen proposals and three new opponent suffix
+seeds: 12 new continuations plus two exact original-stream controls. Predictions
+are that the exposed risk proposal can harm relative to fallback and the benefit
+proposal retains same-turn finishes. No search, checkpoint or heuristic changes
+are permitted between these arms. New suffixes test continuation reliability on
+these states only; new states remain necessary before any promotion.
+
+Continuation identity: `31aeb8b24329dd0f387eff40a3f45752cb862f5d01bed5c4925bac21300c5239`.
+Report SHA-256: `65084115335516192dbd862f76c6ef8d8eb5d9eb42ea42fb7f27f6d5dc524817`.
+Artifacts: `out/research/lethal-proposal-continuation-2026-10-12/`.
 
 ## Artifacts and reproducibility
 
