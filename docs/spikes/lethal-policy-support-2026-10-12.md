@@ -398,6 +398,39 @@ Continuation identity: `31aeb8b24329dd0f387eff40a3f45752cb862f5d01bed5c4925bac21
 Report SHA-256: `65084115335516192dbd862f76c6ef8d8eb5d9eb42ea42fb7f27f6d5dc524817`.
 Artifacts: `out/research/lethal-proposal-continuation-2026-10-12/`.
 
+## Independent opponent-suffix confirmation
+
+`lethal-proposal-confirmation-2026-10-12` completed all 14 records: two repeated
+original-stream controls and 12 new continuations from three preregistered seeds.
+Controls reproduce exactly; paired proposal hashes, pre-root RNG states and
+prefixes agree. The panel has 2,474 applied mask checks and 791 healthy internal
+rollouts. Repeated controls are excluded from the following counts:
+
+| Exposed proposal | Execute: wins / 3 new streams | Fallback: wins / 3 new streams | Paired changes |
+| --- | --- | --- | --- |
+| Replication game 12, T7 | 2, both T7 | 3, all T7 | 1 harm, 0 gains |
+| Fresh game 12, T3 | 3, all T3 | 1, at T9 | 0 harms, 2 gains |
+
+The risk-case loss again ends T12; its line is abandoned even in winning
+suffixes. Both failed benefit-case fallbacks end T8. This reproduces a difference
+between the two proposals, not a reliable effect size or a validated acceptance
+gate. These remain the same exposed roots against one checkpoint opponent.
+
+The next collection fixes two fresh deal blocks and all four seat/deck
+assignments (eight games). Record only the first accepted proposal per game,
+then disable search and continue with the unmodified inner policy. Never execute
+the proposal during collection, and retain games without a proposal. Two plain
+policy controls check complete transcript equality for the first two games.
+Use the existing 12-rollout/200-step/8-search limits and two CPU workers. This
+provides outcome-unselected roots for a subsequent paired continuation audit;
+no training, default changes, or gate promotion follows from collection alone.
+If roots are available, test at most the first four by game ID, independent of
+terminal outcomes; do not adapt the collection seed or budget to its results.
+
+Identity: `dfb2be24c7edfe4f680d6ef403be52a6cff33e1712d517fb4b756f163a53b4e3`.
+Report SHA-256: `17c44dcf7be50b0eceb15cf12bcf600106d8f7c44464767153d0e8c4eaeafe83`.
+Artifacts: `out/research/lethal-proposal-confirmation-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
