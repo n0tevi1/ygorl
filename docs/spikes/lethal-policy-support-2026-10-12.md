@@ -2160,6 +2160,35 @@ labels. No new deals, rollout-budget increase, guard relaxation or training.
 Identity: `8ddcfb2c46a11bd20d7c59313644bee0c5dae2e762972733b0dad862075ef890`;
 report: `b55ae5b69c247d4cbc44d09e95bde1047da729cab3b6e2c134b2530ff054bf8c`.
 
+## Blocked-root diagnosis finds one potentially useful timing repair
+
+`lethal-blocked-battle` completes all25 registered root checks across eight
+exact original-game replays, with857 simulated decisions. Two complete known-state
+certificates pass. The other23 each have a concrete nonwinning branch; none
+exhausts a decision/node budget. Early rejection leaves six trees intentionally
+unexpanded after refutation, so these are not exhaustive impossibility proofs.
+
+Game3 at decision342 already wins T9/355 under policy and heuristic. Game0 at
+decision758 instead has a certified T15/782 win, versus actual policy loss T16/880.
+The policy already enters battle: the difference is candidate chain760, where
+the heuristic activates24299458 and completes its cost/target choices before
+attacking. The policy passes, attacks, then activates the card in Main2 at814.
+This identifies a candidate timing/selection mechanism, not its isolated causal
+effect. The opponent still has one concealed hand card; do not remove the guard
+or promote a known-state certificate as public-information safety.
+
+Next run six fixed continuations: game0 original control, only force activation
+at760 then return to policy, replay the certified preparation through769 then
+return to policy, and the complete certified suffix; game3 original and complete
+certified suffix as a neutral execution control. Preserve original policy RNG
+streams, require exact pre-intervention prefixes and controls, use the live
+checkpoint opponent, check every intervention against encoded support, and
+require complete-suffix runs to match their certified leaf. No new deals/seeds,
+training, online helper promotion or expansion of search.
+
+Identity: `991d4d356cbab0cd4f3ad1a90112f4c23bb4a25c388fa02935f1c00ec0b4c85c`;
+report: `77cafeeec819d4a1f6e4ba7b75aa6cad3ca5846f56b6324b4dda96683f672344`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
