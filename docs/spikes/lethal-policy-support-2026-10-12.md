@@ -1964,6 +1964,30 @@ information-boundary checks justify integration.
 Identity: `93cd2a306f1fbac7a514dc475795f8088fed6c9ecc00e1fa5ad82a31aa230a88`;
 report: `1cfc5f26a4a744a5a19de688afb5380b21ecc161ca5d6e90e3cb0f3b10cbb119`.
 
+## Snapshot verifier preserves tree outcomes and caller state
+
+`lethal-snapshot-tree` passes all four checks. The692 control reproduces its
+single leaf using11 simulated suffix decisions. The602 verifier reproduces
+all11 leaves with exact actions and outcomes in15 nodes /185 simulated decisions.
+Both node-cap and decision-cap controls remain incomplete and reject
+certification. After all four audits, replaying the original suffix exactly
+reproduces the original outcome, checking native-state restoration beyond the
+pending decision signature. This is a research component, not a production gate.
+
+Next test actual automatic handoff on the same existing accepted plan: full-plan
+control, fixed692 control, and an automatic scan in chronological plan order.
+At most20 existing own idle boundaries with legal supported battle entry are
+checked; each gets at most16 nodes and200 suffix decisions. Temporarily force
+battle, verify the supported greedy response tree, restore state, and stop at
+the first complete all-winning certificate. Execute that handoff against the
+ordinary opponent with both real policy RNG streams unchanged. Require exact
+full/prefix controls and an actual suffix matching a certified leaf. Incomplete
+or losing checks retain the original plan. Three execution arms, no new deals,
+seeds, training or production promotion; hidden-world safety remains unresolved.
+
+Identity: `bb121fc7a47d36681b93e1e6d99710a7807aacf58bc5174ce8e458df9deb333c`;
+report: `3f65087be6b54ce8ef6cd8e563e2462f95410755bcf670777bd8f8f0bd872ac4`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
