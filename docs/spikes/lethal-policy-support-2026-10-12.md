@@ -544,6 +544,44 @@ Replan identity: `91e85fc6cfaf9d8d5dd96664f57839c9dcef7f5e22a4d5b884bb334b7e0a13
 Report SHA-256: `6c50c9ef5f10cf415682b31713b5aced4babc72e2ac164b16b07355c2c9b023c`.
 Artifacts: `out/research/lethal-interruption-replan-2026-10-12/`.
 
+## Frozen offline gate: known-root suffix results
+
+`lethal-paired-gate-2026-10-12` completed 25 healthy records, including five
+exact original-stream controls. All frozen acceptance decisions and paired
+proposal/prefix/RNG checks pass; 4,391 mask comparisons and 1,700 internal
+rollouts are healthy. Four malformed/incomplete-probe checks fail closed.
+
+On ten evaluation pairs (excluding repeated controls), the frozen gate-selected
+arm wins 10/10, always-plan 9/10 and always-fallback 8/10. Compared with
+always-plan, the gate avoids one loss and two four-turn delays. Compared with
+always-fallback, it retains two additional wins at the earlier benefit root
+and two faster wins at fresh root 7. There are no paired winner harms in these
+ten evaluations. This is deterministic selection of a precommitted arm from
+paired continuations, not a separate full-game autonomous gate deployment.
+
+The rule accepts the two benefit roots, rejects both unstable roots and rejects
+the neutral root. The states informed rule design; only opponent suffix seeds
+were held out. These figures therefore do not validate fresh-state generalization
+or production strength, and three successful probes are not a safety guarantee.
+
+Next freeze the identical rule before collecting two new deal blocks and all
+four seat/deck assignments (eight policy games plus two plain-policy controls).
+Take at most the first two available first-proposal roots by game ID, ignoring
+terminal outcomes and without replacement sampling. For each root, run one
+exact original-stream fallback control, three new paired probe streams and two
+disjoint paired evaluation streams. Gate decisions must be persisted and bound
+to probe hashes before evaluation starts. The prospective pilot therefore has
+at most 32 records (10 collection + 2 roots × 11 continuations), two CPU workers
+and the existing 15-minute service limit. A single monitored pipeline advances
+collection → probes → frozen decisions → evaluation; missing roots reduce the
+panel rather than extend collection. No threshold tuning or training expansion.
+This tests the rule on prospectively collected states while retaining the known
+checkpoint opponent, actual hidden state and expensive offline probe limitations.
+
+Identity: `4386a09a546750bd3923cb333d9fc8d6beaa65ba6f89aa00e93b0799b515cd9d`.
+Report SHA-256: `108dbd3e60b147f89c2425ed61d437549d8e485bb74da1b7c494aea79ad2d83f`.
+Artifacts: `out/research/lethal-paired-gate-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
