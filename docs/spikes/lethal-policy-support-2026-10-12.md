@@ -757,6 +757,46 @@ Identity: `c46b782e2dedae6911b3ced46cb59e1d0561b5ad7745ac830166b33afcdd41a6`.
 Report SHA-256: `933361decf73313c5e0f3fd12a9ef08996f3e991c12b4c36e0a8558a5218384f`.
 Artifacts: `out/research/lethal-quota-continuation-2026-10-12/`.
 
+## RNG crossover: chooser stream explains this missed discovery
+
+`lethal-search-rng-crossover-2026-10-12` completed four healthy records with
+complete actual-policy transcript/outcome parity. The quota RNG state rebuilt
+from 60 chooser-seed draws exactly matches the live search state.
+
+| Chooser stream | Opponent offset 60 | Opponent offset 72 |
+| --- | --- | --- |
+| after 60 prior draws | no proposal in 12 | no proposal in 12 |
+| after 72 prior draws | same proposal on rollout 1 | same proposal on rollout 1 |
+
+Both positive cells reproduce the legacy proposal hash
+`c7a69449e23df7a76773cc6e7fed717d8fa682656e029472c1f945468a1b7730`.
+At this root, changing the chooser stream alone recovers the known T7 finish;
+changing the tested opponent offset alone does not. This does not show that
+opponent randomness is irrelevant elsewhere, or that the selected successful
+chooser seed should be deployed. The previous quota comparison conflated
+scheduling with stream shifts caused by earlier search count.
+
+Next correct the research comparison with root-keyed random streams. Derive
+independent chooser/opponent seeds with SHA-256 from fixed study seed, game
+identity, root decision index/turn/player, and role; opponent rollout seeds also
+include the within-root rollout ordinal. Neither seed depends on previous
+search count, and no seed is chosen for its result. At shared roots, both
+schedules must have identical seed keys and proposal/rollout results. This is
+an experimental control change; production remains unchanged.
+
+Run both schedules on each of the existing 16 games (32 paired collection
+records), plus two exact original-RNG legacy controls: 34 records total, no new
+deals. Real policy actions and full source outcomes must remain identical;
+proposals are captured/discarded, with no searches after the first proposal.
+Retain 12 rollouts/search, 200 steps/rollout, two searches/turn and eight/game,
+two workers and 15-minute cap. Report candidate coverage, timing, lost/new
+roots and actual compute. The paired rerun is needed to isolate allocation;
+it is not a larger strength evaluation or promotion gate.
+
+Identity: `6cfa9b6f1acf7fcd181c8ccad472314602d280663ab100810b07a7dba959ae6f`.
+Report SHA-256: `cb6f771268d9f89f7799f72c5f538c252559c5567e029f083b8b9878cd368ff8`.
+Artifacts: `out/research/lethal-search-rng-crossover-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
