@@ -6,8 +6,9 @@ is an optional sensitivity probe, not a complete combat/effect solver.
 
 from dataclasses import replace
 
-from ygorl.agents.greedy import HIDDEN_STAT, GreedyAgent, _key
+from ygorl.agents.greedy import HIDDEN_STAT, GreedyAgent, _is_attack_target, _key
 from ygorl.engine import constants as C
+from ygorl.engine import messages as M
 
 
 class CombatProbe(GreedyAgent):
@@ -115,3 +116,28 @@ def masked_action(chooser, point, mask):
         raise ValueError("combat probe has no policy-supported action")
     filtered = replace(point, actions=[point.actions[i] for i in indices])
     return indices[chooser.act(filtered)]
+
+
+def combat_only_action(chooser, point, mask):
+    """Optional diagnostic guidance after ``prime``: attacks and their targets.
+
+    Return None to leave the decision to the policy without advancing the
+    chooser. Apply any returned action before calling again. This is a
+    continuation intervention, not a lethal detector or a policy wrapper.
+    """
+    if point.turn != chooser._turn or point.player != point.turn_player:
+        return None
+    if isinstance(point.decision, M.SelectBattleCmd):
+        attack_mask = [
+            bool(mask[i]) and a.kind == "attack" and _key(a) not in chooser._blocked
+            for i, a in enumerate(point.actions[: len(mask)])
+        ]
+        return masked_action(chooser, point, attack_mask) if any(attack_mask) else None
+    if (
+        isinstance(point.decision, M.SelectCard)
+        and chooser._attacker is not None
+        and chooser._attacker.card.loc.controller == point.player
+        and _is_attack_target(point)
+    ):
+        return masked_action(chooser, point, mask)
+    return None
