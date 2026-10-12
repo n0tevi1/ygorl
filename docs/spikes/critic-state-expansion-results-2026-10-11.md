@@ -34,6 +34,8 @@ Actual branch collection consumed **3h12m45s wall time,12h46m53.526s CPU and4.1 
 
 The correct follow-up is to retain this result and investigate the choice regressions using existing evidence. Any new sampling proposal should state the mechanism, minimum worthwhile effect, root-versus-suffix budget and stopping rule before launch. A confidence interval crossing zero is not an instruction to collect until it excludes zero. There is no automatic enlargement or RL/model promotion from this study.
 
+That follow-up is now complete: [full regression attribution and a bounded margin-preservation pilot](critic-regression-attribution-2026-10-11.md). Shared Q-head updates transmit both repeatable and ambiguous training preferences to other states. Preserving initial margins for ambiguous pairs restores some inspected attack choices but does not establish improvement over initialization on the reused diagnostic panel. No rollout expansion or model promotion follows.
+
 ## Evidence and tracking
 
 - `critic-ranking-state-expansion-branches-2026-10-11`: identity `b075296af6ddc48c4899471c9da4da9c3d828ceb7c27a941451df71aaa66dbb5`, `verification.json`, `selection-verification.json`, `canary-verification.json` and original source traces.
