@@ -2114,6 +2114,52 @@ production promotion or hidden-information safety claim follows from this pilot.
 Identity: `4d64d1f8de91632eaba4ca1b9585bf94812412b43c0f057dd9c669553762cdc2`;
 report: `7c34fffd19eeb95a38e0f6fb083f8fdf4c619e02d1d6f80db1db816ada733079`.
 
+## Fresh three-arm evaluation shows no strength or length gain
+
+`lethal-autotrim-fresh` completes all24 executions on the frozen eight-game,
+two-deal-block panel. Plain policy, live search, and live search with truncation
+all win4/8, average8.75 turns and371.25 decisions. **Every full actual trace is
+identical across the three arms**, not merely its aggregate metrics. Ten shared
+search roots match. Search finds three already-successful routes; truncation
+certifies those three handoffs with82 simulated decisions and reduces cached
+plan overrides46→3 without changing play. This is integration/retention evidence,
+not evidence of improved strength, faster finishing or unseen-card generalization.
+Do not expand replication or training on this result.
+
+Identity: `2a14ed85a849e691afb5c87c7d2b30506cc785a1236686b4c4c924bf7a59bb90`;
+report: `ef9119fdb9d846958cf807910dfafef483cae89a522e77740f8fc6c7953f6b1d`.
+
+## Visibility guard explains missing coverage, not missed wins
+
+`lethal-entry-coverage-restart` replays all eight control games with exact complete
+trace/result/proposal/search-statistics parity. Research logging now preserves
+`concealed_hand_or_field` instead of incorrectly collapsing it into `trigger_gate`.
+Public observation counts are collected without exposing concealed card identities
+or changing actions, RNG, search budgets or the guard.
+
+Of58 actual battle/end-phase choices at own search-trigger prompts,48 fail the
+visibility prerequisite:21 hidden-hand-only,10 hidden-field-only,17 both. All30
+such choices in the four losing games fail it; these games never search. Of the
+48 blocked choices,25 still have a battle-entry action. None of these counts
+establishes a missed lethal or licenses removing the guard: earlier matched
+hidden-world tests already demonstrated information-dependent approval.
+
+The first diagnostic preflight stopped before any game because it copied a
+runtime identity containing the old registration. Rebinding identity to the new
+registration fixes the bookkeeping mismatch; original source/STOP are retained.
+
+Next run a bounded, read-only known-state diagnostic at exactly those25 existing
+blocked battle-entry roots, replaying all eight games. Force supported battle
+entry only in a restored shadow and apply the unchanged fixed-heuristic verifier
+with16 nodes/200 decisions and early rejection. Require exact actual trajectories,
+proposal/RNG/search statistics and snapshot restoration. Report complete wins,
+nonwins and budget/strict-health rejection separately. This can locate candidate
+coverage opportunities, not certify public-information safety or produce teacher
+labels. No new deals, rollout-budget increase, guard relaxation or training.
+
+Identity: `8ddcfb2c46a11bd20d7c59313644bee0c5dae2e762972733b0dad862075ef890`;
+report: `b55ae5b69c247d4cbc44d09e95bde1047da729cab3b6e2c134b2530ff054bf8c`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
