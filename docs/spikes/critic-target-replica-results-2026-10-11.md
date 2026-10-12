@@ -1,5 +1,7 @@
 # More precise training labels improve MSE, not established choice strength
 
+Follow-up: [Completed state-coverage comparison and budget audit](critic-state-expansion-results-2026-10-11.md). The registered expansion does not establish better choices; no model is promoted.
+
 `critic-target-replica-fit-2026-10-11` completed all three registered arms. Independent verification reproduces all12 checkpoint predictions, retention gates and the primary bootstrap; the old16 arm exactly reproduces existing expanded128 parameters at0/8/16/32. Actor and all non-Q parameters stay unchanged. No model is promoted. Completion event `8183879b4835fdac1253f71652ee95b29f5cdd5c6b33a907c87020d03ac1e783` is acknowledged after verification.
 
 The intervention changes only the target sample on96 training states: first16, independent second16, or pooled32 continuations. The original32 training states retain their existing pooled32 labels. Architecture, initialization, centered-MSE loss, source anchor, optimizer and32-update budget are fixed. The second16 labels now train two arms; their96-state metrics are explicitly reused training diagnostics, not independent holdout results.
