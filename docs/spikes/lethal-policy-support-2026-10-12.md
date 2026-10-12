@@ -797,6 +797,47 @@ Identity: `6cfa9b6f1acf7fcd181c8ccad472314602d280663ab100810b07a7dba959ae6f`.
 Report SHA-256: `cb6f771268d9f89f7799f72c5f538c252559c5567e029f083b8b9878cd368ff8`.
 Artifacts: `out/research/lethal-search-rng-crossover-2026-10-12/`.
 
+## Root-keyed scheduling: verified comparison, remaining quota tradeoff
+
+`lethal-root-streams-scheduling-2026-10-12` completed 34 healthy records.
+All actual-policy transcripts/outcomes and both original-RNG controls pass.
+Across **63 common searched roots**, seed keys, chooser/opponent seeds,
+rollout counts, rejected/found flags and proposal hashes match exactly.
+
+| Metric (16 paired collection games) | Legacy schedule | Phase quota |
+| --- | ---: | ---: |
+| Proposal games | 7 | 8 |
+| Searches | 103 | 96 |
+| Rollouts | 1,162 | 1,073 |
+
+Six first-proposal roots match; eight games have none under either schedule.
+Balanced game 4 still gains a T9 proposal. The prior prospective-game-7 T7
+mismatch disappears: both schedules now find the identical T7 proposal. This
+confirms that the earlier mismatch was not a skipped-root allocation effect.
+
+A different, genuine quota exclusion appears in prospective game 6: both
+schedules search Main1 decision 194 on T6 and fail. The real policy summons,
+then reaches decision 200. Legacy searches this second Main1 point and finds
+a proposal beginning with activation of card 1984618; quota skips it because
+its Main1 allowance is spent. Policy instead enters battle at decision 200;
+quota searches battle decision 203 without finding a line, and its next first
+proposal is T8 decision 263. This establishes exclusion of a discovered route,
+not yet exclusion of a reliable win against the checkpoint opponent.
+
+Next evaluate the three changed/new roots under these exact root-keyed streams:
+new balanced-game-4 T9, legacy prospective-game-6 T6, and quota replacement T8.
+For each, execute the captured plan or fallback under the original opponent
+stream and two fixed new suffixes (2026101321/2026101322): 18 records. Match
+original fallback full traces, pre-root policy RNG and exact proposal; disable
+later search. The new T9 plan hash differs from the earlier non-rooted plan,
+so its continuation result must not be assumed from that prior study. No new
+deals, adaptive seeds, budget increase or production adoption. Two workers,
+15-minute cap. Report within-root gains/harms; do not infer overall strength.
+
+Identity: `a2e717966e390a37bdc37bbb331628dd4f1abb975fefc045a685a7be4a247548`.
+Report SHA-256: `d460d6fa6b46cf6779d6cc8aa833a90d64570ef21743e3d9cc4853e328103f43`.
+Artifacts: `out/research/lethal-root-streams-scheduling-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
