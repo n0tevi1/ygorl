@@ -1,5 +1,7 @@
 # Better critic MSE still does not establish better action choices
 
+Follow-up: [target-sample intervention results and new-state coverage plan](critic-target-replica-results-2026-10-11.md).
+
 The 48-root confirmation does not establish a playing-strength improvement. Its MSE point estimate improves, but both uncertainty intervals cross zero and conditional choice wins do not increase. Follow-up controls demonstrate that shrinking score differences can improve MSE without changing any action. Neither a pairwise loss nor more optimization establishes better choices on the reused diagnostic panels. No model is promoted.
 
 ## Previously unused-root confirmation
