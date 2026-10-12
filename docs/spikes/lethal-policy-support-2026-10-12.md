@@ -431,6 +431,41 @@ Identity: `dfb2be24c7edfe4f680d6ef403be52a6cff33e1712d517fb4b756f163a53b4e3`.
 Report SHA-256: `17c44dcf7be50b0eceb15cf12bcf600106d8f7c44464767153d0e8c4eaeafe83`.
 Artifacts: `out/research/lethal-proposal-confirmation-2026-10-12/`.
 
+## Fresh-deal proposal collection
+
+`lethal-fresh-proposals-2026-10-12` completed the fixed eight policy games plus
+two plain-policy controls. Three games contain a first accepted proposal:
+
+| Game ID | Proposal decision / turn | Planned decisions | Original policy outcome |
+| --- | --- | --- | --- |
+| 2 | 222 / T8 | 125 | win T8 |
+| 3 | 173 / T7 | 61 | win T7 |
+| 7 | 240 / T7 | 86 | win T9 |
+
+Games 0, 1, 4, 5 and 6 have no proposal within the fixed search budget; this does
+not prove there was no lethal. All eight games have zero executed search
+overrides, abandonments and shadow desyncs. Both plain-policy controls match
+complete transcripts and outcomes. Health passes across 1,991 applied mask
+comparisons and 707 internal rollouts.
+
+The roots were selected by game ID, not outcome, and all three available roots
+are retained without resampling to fill the four-root cap. They share only two
+fresh deal blocks; card/archetype novelty and independent root sampling are not
+claimed. Although their original policy continuations all win, two already win
+on the proposal turn, so merely executing a simulated lethal may add no value.
+
+The next bounded panel fixes these three proposals and tests execution versus
+policy fallback under the original opponent stream plus two fresh suffix seeds:
+18 continuations total. All future search is disabled after the proposal;
+pre-root transcripts, proposal hashes and learner/opponent pre-reset RNG must
+match collection. Original-stream fallback controls must reproduce all three
+complete collection transcripts. Report wins, harms, same-turn finishes and
+abandonments separately by root; no default or training promotion.
+
+Collection identity: `e0191a98caf8a21fde394f40714c25500c5e9c40d73689d98af56d7e2cc0bf18`.
+Report SHA-256: `89221aa336e8f5fb54a9a6902dd65ec8bc42a951b2a48ca50021d2f059ff277c`.
+Artifacts: `out/research/lethal-fresh-proposals-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
