@@ -1,0 +1,209 @@
+# Policy-supported lethal search — 2026-10-12
+
+Related: #62, #83, #105. This follows the negative
+[broad combat-guidance experiment](combat-only-guidance-2026-10-12.md).
+
+## Scope and implementation
+
+`LethalAgent(..., policy_mask=True)` optionally restricts its own search choices
+to the standard encoded policy support, including duplicate canonicalization,
+undo suppression, and the encoding's action limit. Filtering happens before the
+Greedy/random chooser runs; selected indices are mapped back to original engine
+indices. Saved lines retain complete original prompt signatures. Cached responses
+also recheck support before they are returned. Empty support rejects the rollout.
+
+The default is `False`. No registry default, actor checkpoint, reward, or training
+configuration changes. Greedy's yes/no handler accepts a filtered subset without
+a `yes` row; its behavior on the ordinary complete prompt is unchanged.
+
+The shadow still has actual hidden engine state, and the planning opponent is
+passive. The existing strict event filter is not a public-information guarantee.
+This option fixes compatibility with policy support; it is not a safety proof for
+the line, a robust adversarial search, or permission to export teacher labels.
+
+## Root cause and diagnostic controls
+
+The first audit fixes ten exposed roots: six earlier missed-finish windows in five
+games plus four decision points associated with the previous harmful-guidance
+cases. Each root has its exact original-policy continuation and one search-guided
+continuation: 20 records, 12 rollouts per search, four Greedy then random, at most
+200 decisions per rollout. Only one search occurs at the selected root.
+
+The diagnostic consumes the original policy draw even when replacing an action
+and requires the applied choice to be supported by the policy. It uses existing
+cached-line signatures and abandons the line on a mismatch. This is deliberately
+different from the production wrapper's fallback-only policy draws. **The stock
+engine-legal wrapper does not enforce this policy-mask gate by default.** The
+observed partial-line failure belongs to this constrained diagnostic integration,
+not an engine-illegal action or a demonstrated default-wrapper crash.
+
+Default search found four lines; two completed as same-turn wins. Two stopped at
+the execution mask gate. Direct prefix replay with matching native/Python masks
+identified the exact reasons:
+
+- cold256/greedy68, decision 575: selecting card 60764609 from deck sequence 2 is
+  masked as a duplicate; its representative is the same code at sequence 16.
+- cold256/historical52, decision 491: `cancel` is an undo-suppressed row. The
+  diagnostic already supplied an attack at decision 490; fallback after rejection
+  loses on turn 12, whereas its original-policy control wins on turn 10.
+
+All ten original controls reproduce their full choice suffixes and final results.
+All 76 internal rollouts are health-checked before snapshot restoration; all 20
+outer continuations are healthy, with no cutoffs and 51 passing mask comparisons.
+
+## Search-time constraint result
+
+A second 20-record audit uses the same roots, seeds, and budgets. Its ten legacy
+controls exactly reproduce the first audit's planned lines, applied transcripts,
+abandonment records, and outcomes. The treatment filters during planning instead
+of accepting a line and first discovering unsupported actions while executing it.
+
+| Exposed window | Legacy found / actual same-turn win | Mask-constrained found / actual same-turn win |
+| --- | --- | --- |
+| warm512 historical72 / 466 | No / No | Yes / Yes |
+| cold256 greedy65 / 402 | Yes / Yes | Yes / Yes |
+| cold256 greedy65 / 499 | No / No | Yes / Yes |
+| cold256 greedy68 / 534 | Yes / No | Yes / Yes |
+| cold256 historical52 / 490 | Yes / No | Yes / Yes |
+| cold256 historical76 / 325 | Yes / Yes | Yes / Yes |
+
+Neither variant finds a line at the four negative-control decision points. The
+masked variant has no abandoned line or eventual loss in these exposed cases.
+All 138 internal rollouts and 20 outer records are healthy; 196 applied native/
+Python mask checks pass. Removing candidate rows also changes rollout sampling
+and subsequent trajectories, so this does not prove a universally monotonic
+improvement in search coverage. The six windows are not six independent games.
+
+The committed implementation (`1767d09`) then replays both variants at all ten
+roots. All 20 full transcripts, planned lines, abandonment records, and outcomes
+match the research prototype exactly. This checks implementation parity, not
+generalization.
+
+## Fresh-deal wrapper pilot
+
+Four new deal blocks, four seat/deck assignments per block, baseline and guided
+arms: 32 games plus two unwrapped baseline verification games. The candidate is
+seed-0 warm512 and the opponent is historical warm128. Panel seed `2026101215`
+reshuffles deck slots; ordered first-five-card openings are checked against both
+earlier coverage panels. The actual wrapper is used, including its fallback-only
+inner-policy RNG convention. This is not the controlled suffix-driver convention.
+
+The wrapper has a fixed limit of eight searches per game and two per turn, 12
+rollouts per search, and 200 steps per rollout. No tuning occurs after results.
+
+| Metric | Original policy | Optional search |
+| --- | ---: | ---: |
+| Wins /16 | 10 | 11 |
+| Mean final turn | 9.5 | 8.1875 |
+| Cutoffs / engine errors | 0 / 0 | 0 / 0 |
+| Summed job wall time, seconds | 32.28 | 55.03 |
+
+One paired loss becomes a win; no win becomes a loss. Two games account for the
+entire 21-turn reduction: game 10 remains a win but ends on turn 4 instead of 14;
+game 12 changes from a turn-14 loss to a turn-3 win. Other final turn counts match.
+The guided arm makes 109 searches and 1,211 internal rollouts, finds 11 lines,
+supplies 421 cached responses, and abandons four lines. There is no shadow desync;
+all 7,644 applied native/Python mask checks pass. Wall time includes setup, shared
+CPU contention, and two extra baseline verification games, so it is not a clean
+inference-throughput benchmark.
+
+Only four independent deal blocks are represented. This is a small positive
+privileged-search signal, not a reliable win-rate estimate or a public-information
+agent improvement. No actor or critic is promoted and no larger RL run is launched.
+
+### Abandoned-line audit
+
+All four games with abandonment are replayed with instrumentation only. Their
+complete transcripts, results, and statistics reproduce exactly. Every mismatch
+has the same prompt signature but a different actual opponent response:
+
+| Game / decision | Planned opponent response | Actual opponent response |
+| --- | --- | --- |
+| 3 / 80 | pass | chain card 85888377 |
+| 6 / 298 | no | yes, card 8264361 |
+| 7 / 344 | pass | chain card 20938824 |
+| 10 / 167 | pass | chain card 55623480 |
+
+Thus these four abandonments are active-response deviations, not mask failures
+or shadow desynchronization. The wrapper correctly drops the cached line; all
+four games eventually win, but that does not prove their already-applied prefixes
+are harmless against other responses. It confirms that passive planning remains
+a material unresolved limitation after mask compatibility is fixed.
+
+The first instrumentation preflight stopped because live integer `by_turn` keys
+were compared to JSON-loaded string keys. Its complete action trace already
+matched. The restart canonicalizes the statistics before comparison; no strategy,
+seed, or outcome criteria change. The original STOP is retained under
+`lethal-line-abandonment-audit-2026-10-12/`; the completed restart is
+`lethal-line-abandonment-restart-2026-10-12/`, identity
+`1b16af155655e3a89901134ca7653df0f35f2a2aa5ee22d8ae223112ee07e243`.
+
+## Independent same-budget replication
+
+Panel seed `2026101216` supplies four new deal blocks (32 games plus two unwrapped
+checks), with the same frozen checkpoint pair, wrapper settings, and search
+budgets. Eight new ordered opening hands have no overlap with the 88 distinct
+openings checked in the earlier panels. Instrumentation records abandonment
+reasons without changing choices.
+
+| Metric | Original policy | Optional search |
+| --- | ---: | ---: |
+| Wins /16 | 10 | 10 |
+| Mean final turn | 9.25 | 9.625 |
+| Cutoffs / engine errors | 0 / 0 | 0 / 0 |
+
+There are **zero paired gains and zero paired losses**. Games 6 and 12 each take
+four additional turns (8→12 and 7→11); game 13 takes two fewer (8→6). All other
+final turns match. The earlier positive signal does not replicate. Pooled across
+eight deal blocks, wins are 20/32 versus 21/32 and mean turns 9.375 versus 8.90625;
+this pooled descriptive result must not hide the negative replication.
+
+There are 111 searches, 1,273 internal rollouts, seven found lines, 392 cached
+responses, two abandonments, and zero desynchronizations. All 7,388 applied mask
+checks pass. Both abandonments again have matching prompts but active opponent
+responses: game 6 decision 527 chooses `yes` for card 93854893 instead of `no`;
+game 12 decision 262 chains card 58053438 instead of passing. Those are the two
+longer games, but this association alone does not isolate response effects from
+the preceding search actions or changed fallback-policy RNG consumption.
+
+The replication identity is
+`62596445243b955ae5a3e5fe99a34ae2cd49fa67966ab0782d3b8b4d3582915c`;
+report SHA-256 is
+`653c278d1596561970cfa2e86110356d53d83dd388422ac1b33b37165e71732f`.
+Artifacts: `out/research/lethal-policy-support-replication-2026-10-12/`.
+Do not enable the option by default or enlarge training on this evidence.
+
+## Validation and next bounded decision
+
+On implementation commit `1767d09`: **1,931 passed, 23 skipped, 0 failed** in
+314.23 seconds. All 399 source/test/tool files pass formatting and lint. The
+39 targeted lethal/combat tests include a real-engine win with the option enabled,
+filtering before Greedy/random selection, original-index mapping, empty/truncated
+support, and cached-response rejection. The complete test log and hash are saved
+with the parity study. Documentation-only additions do not change the tested code.
+
+The next bounded diagnostic isolates the two newly lengthened games: reproduce
+the guided control, reject the first found line before applying its prefix, and
+separately replace only the recorded interrupting opponent response with the
+planned passive response. Preserve ordinary policy draws and verify identical
+prefixes up to each intervention. This is six exposed-game continuations, not a
+new strength benchmark. It can distinguish an interrupting response from a bad
+prefix plus fallback interaction; it cannot prove safety against all responses.
+
+## Artifacts and reproducibility
+
+All studies have two CPU workers, a 15-minute service cap, per-record persistence,
+health-stop evidence, frozen source/model/engine/data hashes, and an independent
+watcher bound to their service invocation. Artifacts are under `out/research/`:
+
+| Study (all suffix `-2026-10-12`) | Identity SHA-256 |
+| --- | --- |
+| `lethal-line-response-audit` | `c2bb72b0a55419f7db1609872de147b0a19459095bbfbf8faf1e4ea9a6450d36` |
+| `lethal-search-mask-audit` | `75ac699af5df52f8a79e0d6f9d379e4902fa7f3786c929385e2bacc7ff3ee812` |
+| `lethal-policy-support-parity` | `b8495a095628721e0764214071bf06e18682e92cc46d1a3b7ce6297478712eb5` |
+| `lethal-policy-support-fresh` | `424a2be645298656b812acb0a25c320a082c5ae919248989087a8501199ca1d0` |
+
+The first two studies use main `589254e`; implementation parity and the fresh
+pilot use `1767d09`. Each analysis records its report hash. `mask-cause.json` in
+the first study records the two native-mask cause checks. Original studies and
+their immutable records are preserved.
