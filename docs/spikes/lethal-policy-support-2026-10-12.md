@@ -1463,6 +1463,42 @@ prior baseline traces and guarded results. This tests search allocation and
 retention on a reused panel, not independent generalization. No replacement
 seeds, larger budgets, card-specific rules, production changes or promotion.
 
+## Exit-trigger whole-panel and retention regressions
+
+Both unchanged-budget regression studies completed 16 healthy records each,
+with all eight paired games retained and every fallback trace exactly matching
+its original. The exit schedule peeks/restores the ordinary policy RNG and
+searches only before `battle_phase` or `end_phase`, including Main Phase 2.
+It preserves the entry guard, first-proposal stop, route gate and all caps.
+
+| Reused panel | Baseline wins / turns | Previous guarded wins / turns | Exit-trigger wins / turns | Rollouts per arm, previous→exit |
+| --- | --- | --- | --- | --- |
+| Fresh-panel regression | 6/8 / 9.375 | 6/8 / 9.125 | 6/8 / 9.125 | 122→110 |
+| Earlier-panel retention | 6/8 / 9.000 | 6/8 / 8.500 | 6/8 / 8.500 | 40→28 |
+
+The fresh-panel regression retains both proposals and the one approval. Game 6
+now proposes at decision 556 and still wins T12; the other seven execute traces
+are identical to the previous schedule. There are 17 shared-root checks and
+11 searches per arm instead of 12. On the earlier panel, game 0's T9→T5 gain is
+retained, every execute trace is identical to the previous schedule, and there
+are five shared-root checks and three searches instead of four. Neither panel
+has new losses or line abandonments. These are reduced rollout counts, not
+measured end-to-end latency or additional win-rate/playing-strength gains.
+
+| Study (suffix `-2026-10-12`) | Identity SHA-256 | Report SHA-256 |
+| --- | --- | --- |
+| `lethal-exit-trigger` | `9a5202d59c3743991fd6bef25b92a69d6c9d4546612203b0a59e5ef6e5da0379` | `54f853a285ce4c404bc7b032aed74e9f3bc6e9137a86e56336d8280053112223` |
+| `lethal-exit-retention` | `db054e0b21b9ed9bbdf1b0a531340deffc3ff7d2439633c11ddc94d21c7dae61` | `502017f372484bb418e1ecd834482abad24587abc25455daaa2f6e62a8bf612d` |
+
+Two-panel retention supports one same-size independent confirmation, not a larger
+training run: seed 2026101390, two new deal blocks/all four assignments, eight
+paired games plus two plain controls, unchanged source/model/search caps, two
+CPU workers and a 15-minute cap. Check opening-prefix nonoverlap against all
+prior panels including seed 2026101370; keep all outcomes, with no replacement
+seeds or tuning. Report wins/turns, proposal and approval coverage, new losses,
+line abandonment, health and compute. Hidden deck/extra and future information
+limitations still prevent a production safety claim; no default promotion.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
