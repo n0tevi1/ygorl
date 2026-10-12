@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import os
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ygorl.agents.greedy import GreedyAgent
 from ygorl.engine import constants as C
@@ -58,15 +58,23 @@ class LethalStats:
 
 class LethalAgent:
     """``agent`` plus a lethal search; ``rollouts`` per search (``greedy_rollouts`` of them Greedy, the rest random),
-    at most ``max_searches`` searches per turn, rollouts cut after ``max_steps`` decisions."""
+    at most ``max_searches`` searches per turn, rollouts cut after ``max_steps`` decisions.
+
+    ``policy_mask`` optionally constrains our search choices and cached responses to the standard encoded
+    policy support (including duplicate/undo masks). It does not change the passive-opponent assumption or
+    remove hidden-state dependencies. Default engine-legal search remains unchanged.
+    """
 
     def __init__(self, agent, seed: int | None = None, *, rollouts: int = 12, greedy_rollouts: int = 4,
-                 max_searches: int = 4, max_steps: int = 200, strict: bool = True) -> None:  # fmt: skip
+                 max_searches: int = 4, max_steps: int = 200, strict: bool = True,
+                 policy_mask: bool = False) -> None:  # fmt: skip
         self.agent = agent
         self.name = f"lethal:{getattr(agent, 'name', type(agent).__name__)}"
         self.rng = random.Random(seed)
         self.rollouts, self.greedy_rollouts = rollouts, greedy_rollouts
         self.max_searches, self.max_steps, self.strict = max_searches, max_steps, strict
+        self.policy_mask = policy_mask
+        self._encoder = None
         self.stats = LethalStats()
         self.shadow: DuelSession | None = None
         self.line: list[tuple] = []  # expected (signature, index) of every decision after the search point
@@ -86,6 +94,7 @@ class LethalAgent:
         shadow = Duel(duel.seed, duel.env, *duel.decks, cards=duel.cards, scripts=duel.scripts, config=duel.config,
                       first=duel.first, snapshots=True, core_seed=duel.core_seed)  # fmt: skip
         self.shadow = DuelSession(shadow)
+        self._encoder = None
         self.line, self._searched, self.stats = [], {}, LethalStats()
 
     def on_decision(self, point: DecisionPoint, index: int) -> None:
@@ -128,10 +137,24 @@ class LethalAgent:
     def _from_line(self, point: DecisionPoint) -> int | None:
         if self.line:
             if self.line[0][0] == _signature(point):
-                return self.line[0][1]
+                index = self.line[0][1]
+                if not self.policy_mask or (self.shadow is not None and index in self._supported_indices(point)):
+                    return index
             self.stats.abandoned += 1
             self.line = []
         return None
+
+    def _supported_indices(self, point: DecisionPoint) -> list[int]:
+        if not self.policy_mask:
+            return list(range(len(point.actions)))
+        if self._encoder is None:
+            from ygorl.cards.cdb import CardVocab
+            from ygorl.env.encoding import ObservationEncoder
+
+            cards = self.shadow.duel.cards
+            self._encoder = ObservationEncoder(cards, CardVocab.from_db(cards))
+        mask = self._encoder.encode(point, self.shadow.core)["action_mask"]
+        return [i for i in range(min(len(mask), len(point.actions))) if mask[i]]
 
     def _should_search(self, point: DecisionPoint) -> bool:
         if self.shadow is None or point.decision.TYPE not in TRIGGERS or point.turn_player != point.player:
@@ -173,7 +196,14 @@ class LethalAgent:
                 break
             clean = clean and self._clean(p.events, me)
             if p.player == me:
-                idx = chooser.act(p) if isinstance(chooser, GreedyAgent) else chooser.randrange(len(p.actions))
+                indices = self._supported_indices(p)
+                if not indices:
+                    return None, clean
+                filtered = replace(p, actions=[p.actions[i] for i in indices]) if self.policy_mask else p
+                selected = (
+                    chooser.act(filtered) if isinstance(chooser, GreedyAgent) else chooser.randrange(len(indices))
+                )
+                idx = indices[selected]
             else:
                 idx = passive_action(p)
             line.append((_signature(p), idx))

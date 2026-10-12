@@ -3,6 +3,7 @@
 from pathlib import Path
 from dataclasses import replace
 from types import SimpleNamespace
+import random
 
 import pytest
 
@@ -39,19 +40,66 @@ def duel(db, lp=1000):
     return Duel(3, None, Deck(main=(CELTIC,) * 40), Deck(main=(CELTIC,) * 40), cards=db, config=cfg)
 
 
-def test_the_search_finds_the_lethal_the_wrapped_agent_would_not_play(db):
+@pytest.mark.parametrize("policy_mask", [False, True])
+def test_the_search_finds_the_lethal_the_wrapped_agent_would_not_play(db, policy_mask):
     """1000 LP and an empty board on the other side: summoning Celtic Guardian and attacking wins on turn 2."""
     plain = duel(db).run(Passive(), Passive())
     assert plain.reason == "turn_limit"
-    agent = LethalAgent(Passive(), seed=0)
+    agent = LethalAgent(Passive(), seed=0, policy_mask=policy_mask)
     result = duel(db).run(Passive(), agent)  # deck b moves second: its first turn is turn 2
     assert result.reason == "win" and result.winner == 1 and result.turns == 2
     s = agent.stats
     assert s.found >= 1 and s.overrides >= 3 and s.desync == 0  # summon, battle phase, attack, ...
     # with the lethal out of reach (8000 LP), it searches but finds nothing and changes nothing
-    agent = LethalAgent(Passive(), seed=0)
+    agent = LethalAgent(Passive(), seed=0, policy_mask=policy_mask)
     assert duel(db, lp=8000).run(Passive(), agent).reason == "turn_limit"
     assert agent.stats.searches > 0 and agent.stats.found == 0 and agent.stats.overrides == 0
+
+
+@pytest.mark.parametrize("greedy", [False, True])
+@pytest.mark.parametrize("mask", [(0, 1), (0, 0), (1,)])
+def test_rollout_filters_before_choosing_and_preserves_engine_indices(db, greedy, mask):
+    decision = M.SelectYesNo(0, 1)
+    state = make_decision(decision, db)
+    point = DecisionPoint(0, 0, 1, C.PHASE_MAIN1, (8000, 1000), decision, state.actions(), state, ())
+    shadow = SimpleNamespace(point=point, done=False, core=None,
+                             tracker=SimpleNamespace(events=(), turn=1, engine_winner=0,
+                                                     result=SimpleNamespace(reason="win")))  # fmt: skip
+    applied = []
+
+    def advance(index):
+        applied.append(index)
+        shadow.done, shadow.point = True, None
+
+    shadow.act = advance
+    agent = LethalAgent(Passive(), policy_mask=True)
+    agent.shadow = shadow
+    agent._encoder = SimpleNamespace(encode=lambda p, core: {"action_mask": mask})
+    chooser = GreedyAgent(0, cards=db) if greedy else random.Random(0)
+    rng = chooser.rng if greedy else chooser
+    before = rng.getstate()
+    line, clean = agent._rollout(0, 1, chooser)
+    assert clean
+    if any(mask):
+        index = mask.index(1)
+        assert applied == [index]
+        assert line == [(_signature(point), index)]
+    else:
+        assert line is None and not applied and rng.getstate() == before
+
+
+def test_saved_line_rechecks_policy_support_before_applying_a_response(db):
+    decision = M.SelectYesNo(0, 1)
+    state = make_decision(decision, db)
+    point = DecisionPoint(0, 0, 1, C.PHASE_MAIN1, (8000, 1000), decision, state.actions(), state, ())
+    agent = LethalAgent(Passive(), policy_mask=True)
+    agent.shadow = SimpleNamespace(core=None)
+    agent._encoder = SimpleNamespace(encode=lambda p, core: {"action_mask": (0, 1)})
+    agent.line = [(_signature(point), 0)]
+    assert agent._from_line(point) is None
+    assert not agent.line and agent.stats.abandoned == 1
+    agent.line = [(_signature(point), 1)]
+    assert agent._from_line(point) == 1
 
 
 def test_strict_mode_rejects_lines_that_use_hidden_information():
