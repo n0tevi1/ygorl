@@ -1021,6 +1021,47 @@ Identity: `c71ff3490bfaef28dba034c5f7283ea902738060465fa22cd1c655748a955473`.
 Report SHA-256: `aa5d073b37a385dfb1cd13cf9274d1c4e5473ead599c0722cc4c54f8e29324e6`.
 Artifacts: `out/research/lethal-prebattle-response-2026-10-12/`.
 
+## Bounded response challenges expose a continuation-policy mismatch
+
+`lethal-response-challenge-2026-10-12` completed four healthy records and 13
+alternate-response shadow continuations. All four exact cached-line controls
+win; real full fallback traces/results and policy RNG states remain unchanged.
+There are no 200-decision budget exhaustions.
+
+| Fresh game | Tested alternatives | Same-turn Greedy wins | Untested alternatives |
+| --- | --- | --- | --- |
+| 0 | 5 | 0 | 0 |
+| 5 | 6 | 6 | 4 |
+| 6 | 2 | 0 | 0 |
+| 7 | 0 | n/a | 0 |
+
+Game 7's cached line has no opponent prompts with a supported alternative;
+this says nothing about other hidden states. Game 5's failed real target choice
+is explicitly among the tested branches and wins under the Greedy continuation,
+while the real checkpoint continuation loses in all three observed suffixes.
+Thus even a branch check can be misleading when it evaluates a continuation
+policy that will not actually execute. Other failures may reflect Greedy's
+limitations, not an absence of a winning reply. Reject using this modeled
+success/failure as an execution gate; do not fill omitted choices by seed hunting.
+
+Next test the concrete handoff mismatch: original plan execution versus the
+same plan with supported Greedy takeover **only after line abandonment and
+only through the proposal turn**. Reuse all four roots/three existing suffixes
+(12 paired continuations, 24 records), including the five uninterrupted winning
+lines. Require exact full original-plan controls and identical pre-abandonment
+traces, candidate proposals and opponent draws. For repair, derive Greedy seeds
+from the frozen root plus first mismatching response index/action, consume no
+inner-policy draws for heuristic-controlled decisions, and resume the policy
+next turn. Preserve legal support and engine-health checks, log every takeover
+action, and permit no further search. Compare against both original plan and
+the already-recorded no-plan fallback; a rescued plan is not automatically better
+than fallback. This is an exposed-root heuristic pilot, not production policy
+or a strength claim. Two workers, 15-minute cap, no new deals or suffix tuning.
+
+Identity: `7eddb92897a26c2c7aada3459bca0379fce84832f5ca68e2615e35012f0959e0`.
+Report SHA-256: `9b666e216e426f3fa1b8b24970f1225d709d0b0f57a3fb6592bc73891aab9eef`.
+Artifacts: `out/research/lethal-response-challenge-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
