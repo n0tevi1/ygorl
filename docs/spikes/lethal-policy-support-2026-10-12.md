@@ -1768,6 +1768,50 @@ training, larger search budgets, or production promotion.
 Identity: `33d8404552737c62470b6a60865cedfb76f15eefe73e5d57561fa6297484f859`;
 report: `b1633e398d35c852be8f1fea9d1d4b2e8c4e262b171296d6313ae1cc2dce7caa`.
 
+## Rejection-aware fullgame execution: earlier win, longer action sequence
+
+`lethal-rejection-fullgame` completed all sixteen healthy records. Every discard
+trace/result reproduces ordinary policy exactly; ten paired roots match. The
+new 177-prompt candidate executes without abandonment and wins game 5 on T8
+instead of T10. All seven other executed fullgame traces remain unchanged,
+including the prior Main2 finish. No new losses or desynchronizations occur.
+
+| Metric, eight reused games | Previous battle-first | Rejection-aware |
+| --- | --- | --- |
+| Wins | 6/8 | 6/8 |
+| Mean turns | 9.125 | 8.875 |
+| Mean decisions | 543.375 | 547.000 |
+| Rollouts | 99 | 101 |
+| Applied overrides | 27 | 156 |
+
+Thus the coverage fix recovers an earlier finish in actual execution, but does
+not improve win count and adds 29 decisions in the changed game (706→735).
+Inner gate checks replay 496 decisions across the execute arm, in addition to
+final verification. Maximum search limits are unchanged; actual work increases.
+These reused games are implementation evidence, not an independent strength
+estimate or hidden-information certification.
+
+The new suffix contains 177 prompts: 95 passes, 26 selections, 16 placements,
+11 position choices, 11 activations, five special summons, one normal summon,
+two sets, and a single final attack (plus chain/yes/option/battle-entry choices).
+There are no cancel actions. This does not prove absence of every possible
+loop, but the added length cannot be explained as cancel repetition. The actor
+visits twenty idle-command boundaries before battle; whether these preparations
+are necessary is still untested.
+
+Next exhaust those **twenty existing boundaries**, plus one exact full-plan
+control, using the established preparation-trim protocol. At each boundary,
+force legal battle entry and return to ordinary policy with a fixed candidate
+battle RNG and fixed opponent suffix RNG, matched across boundaries. Preserve
+cached prefix semantics. This is 21 bounded continuations from one existing
+route, not new deal sampling or training scale-up. Compare same-turn finish,
+terminal outcome, total decisions, legality and health; a failed sampled suffix
+does not prove no winning continuation exists. Do not convert the long route
+into labels or promote defaults before this diagnosis and information audit.
+
+Identity: `e5c28d70da4e4552fd2fa39fb3fbb5de791470842f7be57a46b913d3f8c35e40`;
+report: `046746b0bd1d739e6771c2353745f78d07c5220929a0560195a20f7deb450392`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
