@@ -1145,6 +1145,48 @@ Identity: `4aba969c81b960f049031c005412c6096e75d5165750036e791eb7d750428b39`.
 Report SHA-256: `53ee3f5b807b8e676aeb05197737c0f06e54354c9fde8b4758ea78c159ecb103`.
 Artifacts: `out/research/lethal-forced-response-gate-2026-10-12/`.
 
+## Actor inputs hide private cards; planner information remains unresolved
+
+`lethal-information-audit-2026-10-12` completed five healthy exact replays.
+Native and Python actor observations agree at every audited root; all represented
+concealed opponent cards use the unknown token. Proposals, gate decisions,
+complete real traces/results and policy RNG states reproduce exactly. No actor
+encoding leak was found by these checks.
+
+The beneficial game-0/T5 root has an empty opposing hand and no concealed field
+cards. All 31 opponent windows on its accepted route also have empty hands.
+The neutral accepted game-2/T8 root has one concealed hand card at the root and
+all 18 opponent windows. Rejected game 1 has two concealed hand cards; rejected
+games 6 and 7 each have two concealed spell/trap-zone cards. All five states
+retain concealed main/extra decks. Event-type counts alone neither assign
+reveals to their owner nor prove independence from hidden deck contents.
+
+Thus the four-turn benefit is not evidence of reading an unknown hand in that
+particular state, but the route gate can still consult opponent capabilities
+computed from private state elsewhere. Separate actor-input correctness from
+planner information correctness; do not call either accepted route a general
+public-information certificate.
+
+Next perform a bounded compatibility test at the accepted game-2 root, using
+its one concealed hand card (19434243, present at initial opponent-main indices
+4, 25 and 38). Rebuild the duel with one of those initial occurrences replaced
+by Effect Veiler (97268402), Ghost Ogre (59438930), or Droll (94145021): one
+original control plus nine predefined replacements, no replacement search.
+Only retain counterfactuals if every recorded prefix action remains legal,
+actor-visible/private-own card-table history and public counts/LP/turn/phase
+match at every decision, and the complete root actor tensors are identical.
+Record incompatible histories instead of silently substituting different seeds.
+For compatible roots, replay the **fixed original route** where legal and record
+whether a previously forced opponent prompt acquires alternative supported
+responses. This tests fixed-route approval, not the full planner's new search
+output or counterfactual win rate. State-compatibility checks do not establish
+an alternative world's likelihood. No actual policy/model/default changes;
+10 bounded native replays, two workers, 15-minute cap.
+
+Identity: `804dae7945871199740c2f69be9f157ca694d186fd2b548584575b064395c432`.
+Report SHA-256: `a1a58c6af501d5aba189b86ba7e7df0014089d4d4387e80032e2113b18fd9ffd`.
+Artifacts: `out/research/lethal-information-audit-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
