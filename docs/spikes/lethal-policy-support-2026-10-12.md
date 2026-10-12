@@ -182,13 +182,74 @@ filtering before Greedy/random selection, original-index mapping, empty/truncate
 support, and cached-response rejection. The complete test log and hash are saved
 with the parity study. Documentation-only additions do not change the tested code.
 
-The next bounded diagnostic isolates the two newly lengthened games: reproduce
-the guided control, reject the first found line before applying its prefix, and
-separately replace only the recorded interrupting opponent response with the
-planned passive response. Preserve ordinary policy draws and verify identical
-prefixes up to each intervention. This is six exposed-game continuations, not a
-new strength benchmark. It can distinguish an interrupting response from a bad
-prefix plus fallback interaction; it cannot prove safety against all responses.
+## Interrupting-response causality
+
+Six continuations of the two newly lengthened games reproduce the complete guided
+controls and preserve each intervention prefix exactly. Original opponent policy
+calls still occur before replacing a response. All records are healthy: 1,615
+mask comparisons and 433 internal rollouts pass.
+
+| Game | Baseline | Guided control | Reject first found line | Replace only recorded interrupting response |
+| --- | ---: | ---: | ---: | ---: |
+| 6 | win T8 | win T12 | win T8 | win T6 |
+| 12 | win T7 | win T11 | win T13 | win T7 |
+
+In game 6, card 93854893 is Dingirsu: its scripted `SelectEffectYesNo(...,96)`
+chooses whether to detach material to replace destruction. The planner assumes
+`no`; the actual opponent chooses `yes`. In game 12, card 58053438 is Songs of
+the Dominators, which negates an activated monster effect on the field. This
+identification uses the experiment's local card database and Lua scripts.
+
+Removing just the recorded response restores a same-turn win in both cases. In
+game 12, however, the opponent later activates that trap at decision 289, the
+first line is abandoned, and a new search at decision 303 finishes the game.
+Thus the result establishes the importance of response timing plus continuation,
+not that the original line survives all other responses unchanged.
+
+Rejecting only the first line is inadequate: game 12 searches again at decision
+253 after rejection at 247, then encounters the same trap response at 262 and
+wins only on turn 13. Game 6 also searches again on turn 8. This rejects a simple
+"discard one bad proposal" fix. Cached choices skip wrapped-policy calls under
+the existing fallback-only convention, so changed continuation sampling remains
+a possible contributor to delays after abandonment.
+
+Identity: `33118554bbe85554ea1dc7d3953c18394d2081d04b284609668f58f7d45d58d4`.
+Report SHA-256: `2e07dd5f3e959023f39f5183338784d2860879b9de8fb8a7395f3968720574d7`.
+Artifacts: `out/research/lethal-interruption-causality-2026-10-12/`.
+These two outcome-selected games are causal diagnostics, not a population test.
+
+## Fallback and re-search isolation
+
+Eight continuations on main `d3b33e0` separate three possible workarounds. Both
+control transcripts/results/counters reproduce exactly. Each treatment preserves
+the prefix before its first intervention; suppressing all later searches also
+reproduces each original baseline's **complete transcript and result**.
+
+| Game | Guided control | Reject line + suppress search this turn | Reject line + suppress all later search | Consume policy calls for cached choices |
+| --- | ---: | ---: | ---: | ---: |
+| 6 | win T12 | win T8 | win T8 | win T12 |
+| 12 | win T11 | win T7 | win T7 | **loss T12** |
+
+The policy-call treatment consumes 64 and 11 wrapped-policy calls respectively;
+it changes sampling/state progression without changing the initial accepted line.
+It is not a successful fix. Suppressing same-turn re-search avoids the second
+bad proposal in game 12. These interventions are selected using exposed failure
+cases; this is not a general rule to disable search when a line looks risky.
+All eight records are healthy; 2,016 applied mask checks and 590 internal rollouts
+pass. No policy or runtime default changes.
+
+Identity: `e0ae28708eb79cef260f219f22e46a92dd8b4c7702a13a74c591613ddb0ecfc1`.
+Artifacts: `out/research/lethal-fallback-isolation-2026-10-12/`.
+
+The next bounded diagnostic checks a conservative pre-execution gate on four
+exposed cases: these two delayed games and the earlier two improved games. Replay
+a proposed line in the shadow and identify opponent optional response windows
+where the planned `pass`/`no` has an engine-legal alternative. A diagnostic arm
+rejects such a line and suppresses further search for that turn. This tests the
+cost of rejecting conditional lines, including missed legitimate gains. Legal
+response availability may depend on actual hidden cards: **this is privileged
+instrumentation, not a deployable public-information gate or adversarial proof**.
+Use the result to guide response-aware validation rather than promote this rule.
 
 ## Artifacts and reproducibility
 
