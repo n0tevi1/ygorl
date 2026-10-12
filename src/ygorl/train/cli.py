@@ -31,7 +31,7 @@ class Flag:
     keys: tuple[str, ...]  # fields it sets, all to the same value: "num_envs", "ppo.lam", "net.board_layers"
     help: str | None = None
     negate: bool = False  # a switch that sets its bool field(s) to False ("--no-privileged")
-    choices: tuple[str, ...] | None = None
+    choices: tuple[str | int, ...] | None = None
     metavar: str | None = None
     zero_none: bool = False  # 0 on the command line means None ("off")
     listing: str | None = None  # tuple fields: "csv" (one comma-separated value) or "append" (repeatable flag)
@@ -72,6 +72,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            unset="an --init-from checkpoint's own, else trainer.PPO_EVENT_LENGTH = 64"),
         _f("--keep-forced", "skip_forced",
            "also make rows of decisions with a single legal action (default: played in C++, no rows)", negate=True),
+        _f("--cancel-budget", "cancel_budget", "experimental consecutive-cancel limit for both seats",
+           choices=(0, 1, 4, 32)),
         _f("--max-turns", "max_turns", "turn limit of a duel (default: the environment's)"),
         _f("--max-decisions", "max_decisions", "decision limit of a duel (default: the environment's)"),
         _f("--stall-timeout", "stall_timeout", "seconds without any environment event before the run stops with a "
