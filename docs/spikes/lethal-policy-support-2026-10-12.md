@@ -504,6 +504,46 @@ Identity: `5bfb7f73650d2723e3d04aa02854f1e438653bc1f662e2b90166148e9403890d`.
 Report SHA-256: `851273da093d9569bfc08aa8b2c6587efabf302b885096c43bc5a6a13ef6edc2`.
 Artifacts: `out/research/lethal-fresh-continuation-2026-10-12/`.
 
+## Bounded interruption replanning: no rescue
+
+`lethal-interruption-replan-2026-10-12` completed all nine records healthily.
+All three controls reproduce full transcripts, outcomes and search statistics;
+treatment prefixes match through the observed interruption. The panel has
+2,040 applied mask checks and 734 internal rollouts.
+
+| Exposed suffix | Control | Phase replan | Next-own-prompt replan |
+| --- | --- | --- | --- |
+| Fresh root 2, stream 1 | win T8 | win T8; found at decision 297 | win T8; found at decision 290 |
+| Fresh root 2, stream 2 | win T10 | win T10; no line found | win T10; no line found |
+| Earlier Dominus case, confirmation stream 2 | loss T12 | loss T12; no line found | loss T12; no line found |
+
+The two successful replans use four and one rollouts, respectively. Each failed
+attempt exhausts its 12-rollout allowance. Neither trigger rescues a delayed or
+losing continuation, so this diagnostic does not justify adopting replanning.
+No-line-found within this budget is not proof that the state was irrecoverable.
+
+Next implement an offline acceptance prototype before committing to a proposal.
+Freeze this conservative rule using three already available paired probe streams:
+accept only if the planned continuation wins on the proposal turn in all three
+and fallback fails to do so in at least one. Reject incomplete/unhealthy probes
+and require matching proposal and pre-root states. This distinguishes execution
+benefit from merely finding a simulated lethal; three successes are not a safety
+or minimax guarantee.
+
+Use all five previously studied roots (two earlier and three fresh), with their
+probe decisions frozen before evaluating two new opponent suffix seeds. The
+bounded panel is 20 new continuations plus five exact original-stream controls.
+Compare the gate-selected arm against always-plan and always-fallback. The
+candidate rule is informed by these states, so only suffix sampling is held out;
+this is a development diagnostic, not fresh-state validation or production
+adoption. Full-game probes, actual hidden state and a known checkpoint opponent
+also make this an offline prototype, not an inference-cost or public-information
+solution. No actor/critic/default/training changes.
+
+Replan identity: `91e85fc6cfaf9d8d5dd96664f57839c9dcef7f5e22a4d5b884bb334b7e0a131c`.
+Report SHA-256: `6c50c9ef5f10cf415682b31713b5aced4babc72e2ac164b16b07355c2c9b023c`.
+Artifacts: `out/research/lethal-interruption-replan-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
