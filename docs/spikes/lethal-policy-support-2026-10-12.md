@@ -1913,6 +1913,32 @@ handoff. Success still does not certify hidden-information safety or strength.
 Identity: `183d17d47dddeec44579a26534f6255d00c8ab3feb6253e7ecb0f7d71831bbe2`;
 report: `b561ef58c773ee7c9533b469df2a35c0e59d46f9ac1d0ab7f92dae600f7d281b`.
 
+## Carried policy RNG preserves the shorter response tree
+
+`lethal-trim-rng-carry` completes all four preregistered trees. At602 both
+reset and carried candidate RNG yield11/11 T8 winning leaves; at692 both yield
+1/1. The RNG state hashes differ, but every corresponding replay trace is
+identical. All32 replay nodes are healthy and all terminal leaves strict-clean.
+Thus this observed handoff does not require the artificial candidate battle
+reseed. This is a comparison of two RNG states on one selected deal, not a
+seed-robustness estimate or a public-information certificate. Opponent RNG was
+held fixed, with every supported opponent response enumerated.
+
+Next compare the carried learned-policy suffix against the existing GreedyAgent
+suffix at both handoffs. Greedy gets exactly the encoded supported actions and
+uses its normal base-stat heuristic; its known limitations (base rather than
+current ATK/DEF, proactive chaining) remain part of the test, not assumptions of
+correctness. Initialize it with the already recorded candidate seed and switch
+at the first own battle prompt; keep the setup prefix and opponent handling
+unchanged. Four trees, at most16 replays/tree and200 suffix decisions. Require
+exact learned-policy controls and report every failed or incomplete branch.
+This tests whether a simpler executable continuation suffices before building
+more complex contingent-plan machinery. No fresh deals, seed selection, training,
+production/default change or blanket combat mask.
+
+Identity: `3fbacc8181673aaaa83df94997cf48467be55439f7064c3b8b5911b1cabcbe79`;
+report: `0d3543e10fc18534d53eea8f84600fc0bdcbe5617bd36e496193da65bf7a8590`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
