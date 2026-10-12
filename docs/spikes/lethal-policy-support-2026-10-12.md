@@ -1939,6 +1939,31 @@ production/default change or blanket combat mask.
 Identity: `3fbacc8181673aaaa83df94997cf48467be55439f7064c3b8b5911b1cabcbe79`;
 report: `0d3543e10fc18534d53eea8f84600fc0bdcbe5617bd36e496193da65bf7a8590`.
 
+## Existing heuristic also completes every supported response
+
+`lethal-trim-heuristic-suffix` completes all four trees with healthy native
+execution. The carried-policy controls exactly match the preceding study.
+The supported GreedyAgent suffix wins all11 leaves at602 and the single leaf
+at692, with the same T8 outcomes and decision counts as the learned policy.
+At602 its first attacker is Bystial Druiswurm rather than Crimson Blade Dragon,
+so this is not merely replaying the same choices. There is no demonstrated
+win-rate improvement or general superiority of the base-stat heuristic.
+
+This supports testing a reusable bounded verifier before changing the live
+handoff. Next implement DFS on native snapshots, copying the heuristic's small
+mutable state at each opponent fork. Compare both existing roots against every
+recorded greedy leaf, including exact actions and outcomes. Add two602 controls
+with node budget1 and suffix-decision budget1: either must be incomplete and
+reject certification. After each check replay the original suffix to verify
+that simulation restored the caller's native state. Four jobs, no new games or
+seeds; normal limits remain16 nodes and200 suffix decisions. An accepted result
+is still conditional on the known state and encoded support, not a claim about
+hidden worlds. This verifier remains research-only until broader execution and
+information-boundary checks justify integration.
+
+Identity: `93cd2a306f1fbac7a514dc475795f8088fed6c9ecc00e1fa5ad82a31aa230a88`;
+report: `1cfc5f26a4a744a5a19de688afb5380b21ecc161ca5d6e90e3cb0f3b10cbb119`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
