@@ -1062,6 +1062,48 @@ Identity: `7eddb92897a26c2c7aada3459bca0379fce84832f5ca68e2615e35012f0959e0`.
 Report SHA-256: `9b666e216e426f3fa1b8b24970f1225d709d0b0f57a3fb6592bc73891aab9eef`.
 Artifacts: `out/research/lethal-response-challenge-2026-10-12/`.
 
+## Current-turn Greedy repair introduces new harms
+
+`lethal-turn-repair-2026-10-12` completed 24 healthy records with no cutoffs.
+All 12 original-plan controls reproduce exactly. Five uninterrupted lines also
+remain byte-for-byte identical under the repair treatment. All seven takeovers
+preserve the pre-abandonment prefix; takeover actions stay in encoded support,
+consume no inner-policy draws, and end with the proposal turn.
+
+Repair wins 9/12 versus original plan 8/12 and no-plan fallback 12/12. It rescues
+all three game-5 losses, but turns game-0/stream-1 and game-6/stream-2 wins into
+losses; game-0/stream-0 still loses. Same-turn wins rise 5→8, which does not
+justify the new harms. Game-6/stream-1 remains a win but is delayed T8→T10.
+Reject unconditional Greedy takeover; stop tuning it on these exposed roots.
+These are correlated suffixes over four roots, not population win-rate estimates.
+
+Next test a narrower, structural execution condition: the cached route may
+execute only if **every opponent prompt on the route has exactly one action
+in the same encoded support used by the checkpoint opponent**, and it is the
+planned action. Replay the full route in the native shadow, validate all chosen
+indices, require a same-turn win, then restore the root and both actual policy
+RNG states. This avoids assuming the opponent will choose one favorable branch;
+it is not a public-information proof because the shadow contains real hidden
+state, and it is relative to encoded support rather than all engine-legal play.
+Keep normal strict line invalidation and the existing event/search constraints.
+
+Freeze this rule on a new panel with seed 2026101360: two new deal blocks × four
+seat/deck assignments (eight paired full games), gate versus discard-all fallback,
+plus two plain-policy exact controls (18 records). Both arms use the same
+pre-battle trigger/root-keyed search, stop searching after the first proposal,
+and have unchanged discovery caps (12 rollouts/search, two searches/turn,
+eight/game). Audit opening-prefix non-overlap with previous collection panels;
+no replacements if no proposal passes, no seed/threshold tuning. Require paired
+proposal/pre-root transcript/RNG equality; rejected/no-proposal games must have
+identical complete actual traces. Record accepted coverage, same-turn wins,
+eventual wins/harms, paired turns, cutoffs and actual compute. No training or
+production default changes; two workers and a 15-minute cap. Sparse acceptance
+is a valid outcome, not a reason to enlarge the experiment adaptively.
+
+Identity: `1f94b9c501e889ed5fbd313b2b18db431aabcb0db2b4d9546a65b1e69091a1d9`.
+Report SHA-256: `bcb295cc6caf9c574d87a4565f380102d33a40fc33b9327d66439cdb3a483740`.
+Artifacts: `out/research/lethal-turn-repair-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
