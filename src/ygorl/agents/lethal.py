@@ -8,9 +8,10 @@ rollouts of the rest of the turn: its own seat with Greedy or random choices, th
 lethal line; the agent then follows that line's actions, and gives control back to the wrapped agent as soon as the
 real game departs from the line (e.g. the opponent chains a hand trap).
 
-Strict mode (default) keeps the search to what a player could know: a rollout only counts if it did not draw from
+Strict mode (default) rejects some hidden-information dependencies: a rollout only counts if it did not draw from
 the agent's own deck (the shadow knows the real deck order), toss a coin or die (it knows the RNG), or see the
-opponent chain anything (the passive-opponent assumption broke, and the result may depend on hidden cards).
+opponent chain anything. This event filter is not a public-information proof: the shadow still has the actual
+hidden state, and the passive opponent does not test all legal responses. Treat found lines as diagnostic proposals.
 """
 
 from __future__ import annotations
@@ -36,7 +37,11 @@ def passive_action(point: DecisionPoint) -> int:
 
 
 def _signature(point: DecisionPoint) -> tuple:
-    return point.player, point.decision.TYPE, tuple(a.kind for a in point.actions)
+    # An action index is meaningful only for this exact prompt and candidate
+    # ordering. Equal action kinds can name different cards, instances or effects.
+    # Do not retain mutable DecisionState objects while the shadow advances.
+    return (point.index, point.player, point.turn, point.turn_player, point.phase,
+            point.lp, point.decision, tuple(point.actions), point.undo)  # fmt: skip
 
 
 @dataclass
@@ -121,12 +126,17 @@ class LethalAgent:
         return idx
 
     def _from_line(self, point: DecisionPoint) -> int | None:
-        if self.line and self.line[0][0] == _signature(point):
-            return self.line[0][1]
+        if self.line:
+            if self.line[0][0] == _signature(point):
+                return self.line[0][1]
+            self.stats.abandoned += 1
+            self.line = []
         return None
 
     def _should_search(self, point: DecisionPoint) -> bool:
         if self.shadow is None or point.decision.TYPE not in TRIGGERS or point.turn_player != point.player:
+            return False
+        if self.shadow.point is None or _signature(self.shadow.point) != _signature(point):
             return False
         return self._searched.get(point.turn, 0) < self.max_searches
 
@@ -169,7 +179,8 @@ class LethalAgent:
             line.append((_signature(p), idx))
             shadow.act(idx)
         clean = clean and self._clean(shadow.tracker.events, me)
-        won = shadow.done and shadow.tracker.result.reason == WIN and shadow.tracker.engine_winner == me
+        won = (shadow.done and shadow.tracker.turn == turn
+               and shadow.tracker.result.reason == WIN and shadow.tracker.engine_winner == me)  # fmt: skip
         return (line if won else None), clean
 
     @staticmethod
