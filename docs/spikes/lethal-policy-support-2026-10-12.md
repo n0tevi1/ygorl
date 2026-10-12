@@ -241,15 +241,72 @@ pass. No policy or runtime default changes.
 Identity: `e0ae28708eb79cef260f219f22e46a92dd8b4c7702a13a74c591613ddb0ecfc1`.
 Artifacts: `out/research/lethal-fallback-isolation-2026-10-12/`.
 
-The next bounded diagnostic checks a conservative pre-execution gate on four
-exposed cases: these two delayed games and the earlier two improved games. Replay
-a proposed line in the shadow and identify opponent optional response windows
-where the planned `pass`/`no` has an engine-legal alternative. A diagnostic arm
-rejects such a line and suppresses further search for that turn. This tests the
-cost of rejecting conditional lines, including missed legitimate gains. Legal
-response availability may depend on actual hidden cards: **this is privileged
-instrumentation, not a deployable public-information gate or adversarial proof**.
-Use the result to guide response-aware validation rather than promote this rule.
+## Conservative gate and active planning opponent
+
+The eight-record conservative-gate diagnostic replays proposed lines in the
+shadow and rejects a line if an opponent planned `pass`/`no` has an engine-legal
+active alternative, then suppresses search for that turn. Four exact controls
+and treatment prefixes pass; 1,767 applied mask checks and 476 internal search
+rollouts pass, in addition to saved-line verification replays.
+
+A second eight-record pilot keeps the four cases and search budgets but replaces
+the passive planning opponent with Greedy. It permits that simulated opponent's
+chain events while continuing to reject own draws and coin/dice events. The real
+match opponent remains the historical checkpoint. Four controls reproduce
+exactly; all 1,912 mask checks and 519 internal rollouts are healthy.
+
+| Source / game | Passive planner | Conservative gate | Active Greedy planner |
+| --- | ---: | ---: | ---: |
+| Replication / 6 | win T12 | win T8 | win T8 |
+| Replication / 12 | win T11 | win T7 | **loss T12** |
+| Fresh pilot / 10 | win T4 | win T14 | win T14 |
+| Fresh pilot / 12 | win T3 | win T3 | win T3 |
+
+**Neither proposal is accepted.** The gate loses a legitimate finish-speed gain;
+the active planner additionally turns a selected win into a loss. These are
+outcome-selected cases, not win-rate estimates. Both still inspect actual hidden
+state, and one Greedy response policy is not an adversarial guarantee.
+
+The active planner's two abandonments occur after activation, at opponent
+selection choices. In replication game 6, decision 599 expects a selection of
+card 48835607 but the real opponent selects 22850702. In game 12, decision 266
+expects card 97045737 but the real opponent selects 6325660. All prompt signatures
+match. This exposes reliance on an exact opponent continuation even after moving
+beyond the passive assumption; it is not a mask or shadow-desync failure.
+
+Gate identity: `68a914082e0fdabe9bcc2c773f96234ebde3766592e2e5fe9da89ce8195f3af0`.
+Active-opponent identity: `25afec9635ab7f860b4ab9bbb73c9607066cba0033a6e4199d5c65080f163f27`.
+Artifacts are `lethal-response-gate-diagnostic-2026-10-12/` and
+`lethal-active-opponent-pilot-2026-10-12/` under `out/research/`.
+## Opponent selection counterfactuals
+
+Four continuations reproduce both active controls exactly and replace only the
+first recorded opponent selection, preserving the real opponent draw and all
+prior actions. Replication game 12 changes from loss T12 to win T7 when forced
+to select the planned Dominus Purge instead of Dominus Spark. However, the forced
+engine-legal row is **outside the actual opponent's policy support** (a duplicate
+selection row); it must not be presented as a supported policy continuation. The
+same card has a supported representative at row 0 (deck sequence 25), verified
+by exact prefix replay in `opponent-mask-audit.json`; masked row 7 names deck
+sequence 3. The card itself is available.
+
+In replication game 6, replacing the first S:P target keeps win T8 but exposes a
+second target mismatch at decision 600. The Greedy plan selects two monsters
+controlled by that opponent (48835607 and 21441617), while the real opponent
+selects the candidate's Chaos Angel (22850702). This is more than a permutation
+of the same target set. It exposes a strategically weak opponent proxy; silently
+relaxing cached-line signatures would conceal a real state difference.
+
+Identity: `6e428f5bbbc5beab54e926e9d0f99094aa257031ae265390b7aceb022f6700e4`.
+Artifacts: `out/research/lethal-selection-causality-2026-10-12/`.
+
+The next same-budget eight-record prototype audit applies the standard encoded
+support to **the simulated opponent's** Greedy choices before choosing and maps
+back to engine indices. Four unfiltered active controls must reproduce exactly.
+This fixes an asymmetry in the research prototype (the production option only
+promises support for our own choices), not the weakness of a single Greedy
+opponent. No public-information claim, default change, or promotion follows from
+this mechanical correction alone.
 
 ## Artifacts and reproducibility
 
