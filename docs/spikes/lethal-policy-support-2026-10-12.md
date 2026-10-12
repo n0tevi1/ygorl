@@ -1270,6 +1270,89 @@ Identity: `4bcd7a55f2e8ab2ad48a63ebd82d9a87a6b29ac6c89ce8c29cb0e170fba6a48e`.
 Report SHA-256: `f45eb6b55ea1a7ab4d54c4bebc6835192ea9cc9849a935b1fa7a213ce44d57ff`.
 Artifacts: `out/research/lethal-history-coverage-restart-2026-10-12/`.
 
+## Matched hidden worlds establish a concealed-card dependency
+
+Four bounded follow-ups use existing roots and fixed random streams; they add
+no training or model changes. Unlike the earlier four-tensor check, they match
+the candidate's complete encoded event history at every prefix boundary,
+public counts/current card table, and all six actor input tensors at candidate
+decisions. Native/Python input parity is checked during replay. Opponent private
+card codes in chosen actions may vary; legal action structure and subsequent
+candidate observations must still match. This is encoded-history consistency,
+not an exhaustive proof of equivalence for every possible human observation.
+
+1. `lethal-public-worlds-restart` has five controls and 20 deterministic swaps
+   of previously unexposed card codes in the initial opposing deck. Deck
+   multisets remain fixed. All 20 preserve the checked history/inputs, but only
+   change root deck order. All original routes and approval decisions remain
+   unchanged. This does not test changed hand/field state or fresh search.
+2. `lethal-private-zones` targets every initial occurrence of the hidden hand
+   or backrow cards at roots 1/6/7, swapping with the two lowest-password
+   alternatives in the same broad monster versus spell/trap category. Of 20
+   variants, 12 are incompatible, four change only deck order, and four change
+   concealed backrow with identical checked inputs/history. Swapping Lunalight
+   Fusion leaves the original route unchanged. Swapping Dominus Impulse makes
+   the planned opponent chain unavailable at decisions 134/144. That alone is
+   an unavailable route, **not** a demonstrated approval flip.
+3. `lethal-hidden-search` reruns the original bounded search in all four valid
+   changed-backrow worlds plus their two controls. Both controls reproduce the
+   original line hash, rollout/rejection counts and approval. With exactly the
+   same original root chooser/opponent RNG, both Dominus swaps change approval
+   **false→true** and produce different later routes. The other two swaps leave
+   search/approval unchanged. The first proposed candidate action stays the same
+   in all comparisons. These are two root cases from the existing panel, not
+   independent population trials or evidence of higher/lower win rate.
+
+This establishes that the experimental approval decision depends on concealed
+card identity beyond the actor's inputs. Do not conflate the finding with the
+publicly revealed Power Vice Dragon case. Matching the actor's information
+while changing hidden state is necessary when auditing a proposed helper.
+The failed first `lethal-public-worlds` preflight queried a nonexistent parsed
+`sequence` field; using the documented list-slot index fixes it. The original
+source/STOP is preserved and the corrected run has a separate identity.
+
+## Conservative entry guard retains the old-panel timing benefit
+
+The research-only `concealed_zone_guard.py` reads actor tensors before search
+or policy peeking. It rejects opposing concealed hand/monster/spell-trap rows,
+fails closed when the card table is full or its opposing hand count disagrees
+with the public global count, and otherwise leaves the existing search and
+route check unchanged. Thus the demonstrated hidden-backrow identity cannot
+choose between entry and fallback. Known-from-history but currently concealed
+hand cards are also conservatively rejected; this does not claim they are
+unknown to the player. The implementation and its hash are in the frozen study
+identity; production `LethalAgent`, models, training and defaults are unchanged.
+
+`lethal-concealed-guard` completed 18 healthy records on the **reused** eight-game
+panel (two deal blocks), including two plain controls. Both arms still win 6/8,
+with mean turns 9.0→8.5 from game 0 winning T5 rather than T9. Other seven games
+retain the same outcomes/turns; no new losses, cutoffs or line abandonments.
+All fallback full traces match their prior originals, and paired proposal,
+prefix, RNG and rejected/no-proposal trace checks pass. Only game 0 now produces
+and approves a proposal. Per arm, searches fall 50→4 and rollouts 548→40 versus
+the previous unguarded route-gate panel; 186 entry checks reject concealed
+response zones. These are compute counts, not end-to-end speed measurements.
+
+This fixes the demonstrated entry-decision dependency in the research variant,
+not information-set planning generally. Hidden deck/extra effects and hidden
+cards acquired after the root remain unresolved. No production promotion.
+The next bounded check freezes this guard and runs the same-size independent
+panel: seed 2026101370, two deal blocks/all four assignments, eight paired games
+plus two plain controls, two CPU workers and a 15-minute cap. Check opening-prefix
+nonoverlap; report the whole panel with no replacement deals or tuning. Old-panel
+regression success justifies this confirmation, not larger training or a search
+budget increase. Score coverage, wins/turns, new losses, line abandonments,
+health and compute; no-proposal coverage is itself an informative result.
+
+Artifacts below are under `out/research/`, all suffix `-2026-10-12`.
+
+| Study | Identity SHA-256 | Report SHA-256 |
+| --- | --- | --- |
+| `lethal-public-worlds-restart` | `eb9ebca20142555cf4f77bc0572bb887403e7b05dfdd76863697dc4a4c466a3e` | `5845b7e05ff91496d0454d08f5bd7ed5dcaaa064c242418a17c5bc99cf9d2eb5` |
+| `lethal-private-zones` | `584a83acf88664a80485bcadd573e5915349c9fc9916cdabea8801d8082f151d` | `e93c8d53c99232dbb5ed6e47a1dc011c5d24bddbfb9a1d3fac31024ead22feca` |
+| `lethal-hidden-search` | `8dc03564fda57bf8212b80d5e9083c788c41d1b9758368f0306e26dee4c87bd4` | `43e757314db1f9eb5392ce7418c7615338264f583e01da9b1d91a04d35d41370` |
+| `lethal-concealed-guard` | `7a4d3f8e891f267bd80f0f3555cc156fb6a84236a48dfa715419b3c8f8be4634` | `37bcc438c2f8cfb6b4c033b206d2908da279ae72f782511dae5bd5eecc85a0a2` |
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
