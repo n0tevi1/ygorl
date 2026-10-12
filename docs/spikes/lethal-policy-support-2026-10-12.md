@@ -2036,6 +2036,30 @@ bounds. No new deals/seeds, training expansion or production promotion.
 Identity: `2cd76fd55ab8364ed7d95982abbc59a49e71f5ebb17afc47ed217856e9704cd6`;
 report: `8ba08e174c4f7618cec71cf39f35034acbe789b0532960fd6d79aaff6bd67e25`.
 
+## Second panel preserves preparation-dependent wins
+
+`lethal-autotrim-second-panel` completes16 healthy paired executions. Both arms
+win **5/8**, with **8.375 mean turns**. Mean decisions change only
+**458.375→457.875**. Seven full traces are identical. In preparation-dependent
+game2, complete checks at313 and342 reject the handoff;372 certifies the finish,
+reducing405→401 decisions while retaining the T6 win. Games3/5 hand off at433/258
+with exactly unchanged execution. The algorithm therefore retains the necessary
+setup in this tested case; no broad win-rate or turn-length improvement is shown.
+
+The remaining integration gap is fresh proposal discovery: both paired panels
+used saved accepted plans. Next attach the same bounded verifier to the live
+research search wrapper. After an accepted line is freshly found, test its own
+battle-entry boundaries and switch to the certified heuristic; do not alter
+search RNG or its12-rollout/2-per-turn/8-per-game limits. Replay all eight first-panel
+deals paired control/auto (16 executions). Require exact original search/proposal
+controls, untouched policy RNG around verification, offline/online execution
+parity, actual certified suffixes, and no shadow desynchronization. The20/16/200
+truncation bounds remain unchanged. Still no new deals/seeds, training expansion,
+production promotion or hidden-world safety claim.
+
+Identity: `e79be930dbb7d6571bbfe2bc22287fcc1b39abb9086e8f8d063696da22895ba2`;
+report: `120185984ddcf0adac4ae6b1cea56bae0e1d5a1831e910f304b33c197850ae9b`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
