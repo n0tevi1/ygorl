@@ -838,6 +838,37 @@ Identity: `a2e717966e390a37bdc37bbb331628dd4f1abb975fefc045a685a7be4a247548`.
 Report SHA-256: `d460d6fa6b46cf6779d6cc8aa833a90d64570ef21743e3d9cc4853e328103f43`.
 Artifacts: `out/research/lethal-root-streams-scheduling-2026-10-12/`.
 
+## Matched continuation rejects hard phase quotas
+
+`lethal-root-streams-continuation-2026-10-12` completed 18 healthy records with
+exact original controls, fixed proposal/pre-root RNG and source hash checks.
+Legacy prospective-game-6's T6 route wins T6 on all three streams; fallback
+wins T8 in each. Its quota T8 replacement and balanced-game-4's new T9 route
+both match fallback timing on all streams. No plans are abandoned. The hard
+one-Main1/one-battle quota excludes an empirically useful route without an
+observed benefit from the newly found root. Reject promotion of this schedule.
+
+Next test a decision-aware trigger at unchanged caps: search the first Main1
+prompt; allow the second search immediately before the policy's chosen
+`battle_phase` action in Main1, otherwise use the first battle-command prompt.
+Do not search Main2 or transfer more than the two-per-turn/eight-per-game caps.
+To inspect the pending policy choice without changing actual play, save/restore
+its generator and `last_probs`; assert RNG equality after the peek and equality
+between the peek and the eventual emitted policy action. This is specific to
+the inspected CheckpointAgent implementation, not a generic agent contract.
+
+Use the existing 16 games and root-keyed chooser/opponent streams, plus two
+exact rooted legacy-schedule controls (18 records). Capture/discard proposals,
+require all complete actual traces/outcomes unchanged, compare shared roots to
+the prior rooted records, and report candidate timing, coverage and actual
+compute including policy-peek calls. This trigger was motivated by exposed
+states and requires later independent validation if useful. No new deals,
+training, production changes or budget increase; two workers, 15-minute cap.
+
+Identity: `13317eacebbaec7c3c8837e262fea0a664683ce4aba4481647e825f39cfdba1b`.
+Report SHA-256: `3411df8ea996cf63d1e530bd539c960faca93262270517c6432cb540b96719b7`.
+Artifacts: `out/research/lethal-root-streams-continuation-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
