@@ -582,6 +582,46 @@ Identity: `4386a09a546750bd3923cb333d9fc8d6beaa65ba6f89aa00e93b0799b515cd9d`.
 Report SHA-256: `108dbd3e60b147f89c2425ed61d437549d8e485bb74da1b7c494aea79ad2d83f`.
 Artifacts: `out/research/lethal-paired-gate-2026-10-12/`.
 
+## Prospective gate pilot: defensive evidence, no added wins
+
+`lethal-prospective-gate-2026-10-12` completed 32 healthy records. Five of eight
+collection games have proposals (IDs 1, 2, 3, 6, 7); the preregistered first-two
+rule selects IDs 1 and 2. Both are from deal block 0, so evaluation did not cover
+both collected blocks. Collection/gate dependency seals, all exact controls,
+and decision-freeze-before-evaluation timing pass. There are 6,250 mask checks
+and 1,504 internal rollouts.
+
+The unchanged gate rejects both roots. At game 1's T8 root, plan and fallback
+both finish that turn in all three probes: no sampled incremental gain. At game
+2's T2 root, neither arm finishes that turn in any probe: the proposed plan is
+not reliably completed against the checkpoint opponent.
+
+| Selected root | New evaluation stream | Plan | Fallback / rejected gate |
+| --- | --- | --- | --- |
+| game 1, T8 | 4 / 5 | win T8 / win T8 | win T8 / win T8 |
+| game 2, T2 | 4 | loss T11 | win T4 |
+| game 2, T2 | 5 | win T2 | win T4 |
+
+Thus gate and fallback each win 4/4; always-plan wins 3/4. The gate avoids one
+loss while foregoing a two-turn speed gain in another suffix. **There is no
+observed improvement over fallback**, and with zero accepted roots this does
+not validate the acceptance branch on new states. Probe failures followed by
+one successful evaluation finish also illustrate suffix variability, not a
+reason to relax the frozen threshold.
+
+One additional fixed-budget prospective run will retain byte-identical gate,
+search limits, checkpoints, three probes and two disjoint evaluations, but take
+at most the first proposal from each of two new deal blocks rather than the
+first two globally. This selection correction is declared before the new deals
+and uses no terminal outcomes. Keep the same 32-record ceiling and no replacement
+sampling for blocks without proposals. After this run, summarize both pilots;
+do not continue choosing seeds merely to obtain accepted candidates. Production,
+training and defaults remain unchanged.
+
+Identity: `fbc89067bc917864b6515e629bd236097005a102abfc505062920b289a7da1d0`.
+Report SHA-256: `319f167697a9b99003ca5511c8b9d15df7924e1116b61e6e8a4d811d4b0b5ceb`.
+Artifacts: `out/research/lethal-prospective-gate-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
