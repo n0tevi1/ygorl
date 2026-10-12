@@ -1104,6 +1104,47 @@ Identity: `1f94b9c501e889ed5fbd313b2b18db431aabcb0db2b4d9546a65b1e69091a1d9`.
 Report SHA-256: `bcb295cc6caf9c574d87a4565f380102d33a40fc33b9327d66439cdb3a483740`.
 Artifacts: `out/research/lethal-turn-repair-2026-10-12/`.
 
+## Structural route condition has a small independent timing benefit
+
+`lethal-forced-response-gate-2026-10-12` completed 18 healthy records: eight
+paired games and two plain-policy controls, with no opening-prefix overlap
+against prior registered panels. Both plain controls, all paired proposal/root
+RNG/prefix checks, and all 50 shared search-root comparisons pass. Rejected and
+no-proposal games retain complete transcripts/results exactly; no cutoffs,
+line abandonments or added losses occur.
+
+Five of eight games produce a proposal. Two pass the structural condition:
+game 0 wins T5 instead of T9, and game 2 wins T8 in both arms. Both arms win
+6/8 overall; mean completed-game turns fall 9.0→8.5, entirely from the one
+four-turn improvement. These are two independent deal blocks, not eight
+independent trials or evidence of a population win-rate improvement. Both
+accepted routes also have only one **engine-legal** action at each opponent
+prompt, so these two passes are not caused by the encoded mask removing a
+second legal choice. This observation does not remove the hidden-state issue.
+
+Each arm uses 50 searches/548 discovery rollouts. Checking the five proposals
+replays 495 decisions and takes approximately 0.30 seconds per arm as a measured
+component; this is not an end-to-end speed comparison. No scale-up or default
+promotion is justified yet.
+
+Next audit information exposure on **all five** found roots, including rejected
+ones, by exact discard-all replay (five records, no new deals or suffixes).
+At each proposal compare candidate native/Python observation tensors and hash
+them, count opponent concealed hand/field/banished/extra/deck state, and verify
+that concealed represented rows use the unknown-card token. During the cached
+route replay, log private-zone occupancy at opponent decision windows and
+card-revelation/draw/move event categories. Keep the gate decision, candidate
+proposal, real full policy transcript/result and actual RNG states unchanged.
+This audits what the known-state simulator can access beyond actor inputs;
+occupancy alone does not prove a causal decision change under an alternative
+hidden state. No public-information safety claim or new execution heuristic.
+Two workers, 15-minute cap. Resolve this information boundary before treating
+the small timing benefit as deployable playing strength.
+
+Identity: `4aba969c81b960f049031c005412c6096e75d5165750036e791eb7d750428b39`.
+Report SHA-256: `53ee3f5b807b8e676aeb05197737c0f06e54354c9fde8b4758ea78c159ecb103`.
+Artifacts: `out/research/lethal-forced-response-gate-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
