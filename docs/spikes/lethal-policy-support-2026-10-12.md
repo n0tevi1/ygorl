@@ -1499,6 +1499,64 @@ seeds or tuning. Report wins/turns, proposal and approval coverage, new losses,
 line abandonment, health and compute. Hidden deck/extra and future information
 limitations still prevent a production safety claim; no default promotion.
 
+## Independent exit-trigger confirmation and first-action failure
+
+`lethal-exit-fresh` (fixed seed 2026101390) completed all 18 healthy records,
+with four new opening prefixes and zero registered prior-panel overlap. Both
+arms win **5/8**; mean turns change **8.875→8.375**, and mean decisions
+485.625→462.750. Game 2 wins T6 instead of T10. Games 3/5 remain wins on T11/T6
+but use 18/21 more decisions than baseline. The other five full traces are
+identical. There are three proposals/approvals, nine searches and 78 rollouts
+per arm, nine shared-root checks, and no new losses or abandonment. Compare
+arms within this panel; its different baseline win count is not a regression
+relative to the preceding deals. This supports one faster existing win, not
+an added win or a population playing-strength claim.
+
+A native replay of all three accepted routes verifies same-turn wins and no
+opposing choices with more than one engine-legal action. Games 2/3 have no
+concealed opposing hand/field windows; game 5 has 24 such windows after a
+public face-up monster (60764609) returns to its owner's hand at decision 284.
+The recorded Move establishes its known provenance; concealed current encoding
+alone does not establish unknown identity. No route draws cards. Full public
+information certification, including hidden deck/extra effects, remains open.
+Derived route/Move audits and analysis have a separate manifest.
+
+The two same-turn but longer wins show that successful search routes are not
+necessarily efficient training demonstrations. `lethal-first-action` therefore
+covers **all three approvals**, comparing exact original baseline, exact cached
+plan, and only the first planned action followed by ordinary policy. All nine
+continuations are healthy and all six baseline/full-plan controls reproduce
+original traces/results exactly.
+
+| Selected game | Original policy | Complete plan | First planned action only |
+| --- | --- | --- | --- |
+| 2 | Win T10, 627 decisions | Win T6, 405 | **Loss T8, 511** |
+| 3 | Win T11, 463 | Win T11, 481 | Win T11, 461 |
+| 5 | Win T6, 287 | Win T6, 308 | Win T6, 295 |
+
+In game 2, the first intervention activates Branded Fusion (44362883), whose
+original probability is 0.760% versus battle entry 94.696%. Ordinary policy then
+passes Ecclesia's chain, summons Albion the Branded Dragon (87746184), and
+rejects Albion's further fusion effect with probability **99.524%**. These
+observations localize divergent choices; they do not independently prove which
+one causes the loss. In particular, first-action-only consumes the original
+policy draw, whereas cached plan actions consume none. Do not attribute all
+outcome difference to commitment length without checking this RNG distinction.
+No first-action teacher labels or card-specific production rules are promoted.
+
+Next, on these same three roots only, compare cached first-action handoff,
+handoff after the initial effect transaction (next own SelectIdleCmd), and
+handoff at battle entry (first own SelectBattleCmd), plus exact full-plan
+controls. All cached choices use the same no-sampling convention. This tests
+whether policy can complete a plan from a meaningful intermediate boundary
+and whether the first-action failure persists under matched RNG semantics.
+No new seeds, fullgame scale-up, training, or default changes.
+
+| Study (suffix `-2026-10-12`) | Identity SHA-256 | Report SHA-256 |
+| --- | --- | --- |
+| `lethal-exit-fresh` | `bdc1b8b57ba86692ae242e25010eb6ddeb8911f2ba48b993fb99bf3f54503993` | `f34d79e1b60e52341e13c4c36e94f5add90090cd67ee565432ce2b9fc1ed7165` |
+| `lethal-first-action` | `1820d37dfd6c4fcfa43e5bd557a3915d68b7cd68757fc0fab3172832e0268afe` | `65c23527557b6ad119684fceae4435c3caeb79edf451ab15ca72f94d28440e6a` |
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
