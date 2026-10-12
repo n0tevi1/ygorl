@@ -686,6 +686,44 @@ Identity: `a3a46d6716910b45e9cca9b3978f4022234f91f354924a257cbf834c01a6e864`.
 Report SHA-256: `9b83f9315cb3379da038626d428f3fd15dfebe26d2e382f1981103c86bde40f5`.
 Artifacts: `out/research/lethal-search-allocation-audit-2026-10-12/`.
 
+## Phase quota pilot: lower compute, mixed discovery timing
+
+`lethal-phase-quota-pilot-2026-10-12` completed 18 healthy records: 16 scheduled
+replays plus two legacy controls. Every actual transcript/outcome matches its
+source; legacy proposal/statistics, quota limits and all bound hashes pass.
+
+| Discovery metric (16 collection games) | Legacy | Phase quota |
+| --- | ---: | ---: |
+| Games with first proposal | 7 | 8 |
+| Searches | 103 | 96 |
+| Internal rollouts | 1,165 | 1,081 |
+| Main1 / battle-command searches | 93 / 10 | 59 / 37 |
+
+Five games retain the same first-proposal index; eight produce none under either
+schedule. Balanced game 0 moves three decisions earlier within T5. Balanced
+game 4 gains a first proposal on T9 (decision 444), but prospective game 7 moves
+from T7 (decision 198) to T9 (decision 248). Thus more candidate coverage does
+not imply better early finishing. Search ordering also changes exposure to the
+search RNG. Real policy outcomes are unchanged by construction, not evidence
+that following the new plans is harmless. Do not promote the schedule.
+
+Next run 18 paired continuation records on exactly the changed-turn/new roots:
+balanced game 4's new T9 proposal and prospective game 7's old T7/new T9 proposals.
+The same-turn index-only change is outside this follow-up. For each of three
+roots, compare cached-plan execution with policy fallback under the original
+opponent stream and two fixed new suffix streams (2026101301, 2026101302).
+Reconstruct the root with its original schedule/search RNG, require identical
+proposal and pre-root policy RNG/transcript, stop subsequent searches, and
+retain exact full original-stream fallback controls. Evaluate eventual wins,
+harms, same-turn finishing and abandonment. Different root boundaries mean
+suffix comparisons are paired within each root, not a direct scheduler win-rate
+comparison. No new deals, adaptive sampling, budget increase or production
+change; two workers and 15-minute cap.
+
+Identity: `e18e68b3a1bfca46711c07711efca25c2a7e9efa53898095c391758af70192e2`.
+Report SHA-256: `18b9283d182598352596ae1bcd2868a997967e0504e0b57b910a8a202147b992`.
+Artifacts: `out/research/lethal-phase-quota-pilot-2026-10-12/`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
