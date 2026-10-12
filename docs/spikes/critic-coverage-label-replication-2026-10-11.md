@@ -1,5 +1,7 @@
 # Critic training gain survives independent labels; transfer remains unresolved
 
+Follow-up: [unused-root confirmation, shrinkage controls and objective/budget diagnostics](critic-unused-root-and-ranking-objectives-2026-10-11.md).
+
 The expanded critic's training-state MSE improvement survives independent continuation labels. This rules against the narrow claim that the entire training gain was merely fitting the first set of sampled outcomes. It does not establish stronger play or generalization to new states. No checkpoint is promoted.
 
 ## Verified replication
