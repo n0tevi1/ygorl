@@ -195,7 +195,8 @@ class GreedyAgent:
         return self._take(point, a) if a is not None else self._fallback(point)
 
     def _yes(self, point: DecisionPoint) -> int:
-        return next(i for i, a in enumerate(point.actions) if a.kind == "yes")
+        # Search drivers may pass only the policy-supported subset.
+        return next((i for i, a in enumerate(point.actions) if a.kind == "yes"), 0)
 
     def _position(self, point: DecisionPoint) -> int:
         d: M.SelectPosition = point.decision
