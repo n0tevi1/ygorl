@@ -1812,6 +1812,40 @@ into labels or promote defaults before this diagnosis and information audit.
 Identity: `e5c28d70da4e4552fd2fa39fb3fbb5de791470842f7be57a46b913d3f8c35e40`;
 report: `046746b0bd1d739e6771c2353745f78d07c5220929a0560195a20f7deb450392`.
 
+## Recovered-route trimming is effective but non-monotonic
+
+`lethal-recovered-trim` completed all 21 healthy continuations: twenty existing
+idle boundaries and one exact full-plan control. All trimmed continuations use
+the same candidate battle RNG state and fixed opponent suffix seed; none
+abandons the intended prefix. All eventually win, while thirteen trims finish
+on the original T8.
+
+The earliest observed T8 finish is at decision **602**: total decisions fall
+**735→641**, and overrides **129→33**. This is already shorter than the earlier
+ordinary-policy T10 win at 706 decisions, but the suffix RNG differs from that
+original baseline; do not present this as a new independent paired win-rate
+result. Boundaries 558–590 do not finish T8 under the fixed suffix.
+
+Finishing ability is non-monotonic along this route: 602, 608 and 616 finish T8;
+624 and 631 instead win T10 and T9; all tested boundaries from 644 onward finish
+T8 again. At 616 the recorded next setup action special summons The Bystial
+Lubellion. The sampled battle options at 624 no longer include Crimson Blade
+Dragon (3294539), which was available at 616. This localizes a resource change,
+but exact tribute/position semantics and causality still require native board
+and event inspection; it is not a general rule against that summon.
+
+These thirteen shorter sampled-policy wins have **not yet** passed the same
+singleton-opponent-support route gate as the original long plan. Next replay
+all thirteen T8 trims plus the original accepted control, applying the unchanged
+gate and strict event filter. Record branching opponent windows, current public
+board at handoff and battle decisions, and prefix events around the non-monotonic
+boundaries. This is fourteen replays of already collected winning traces, with
+no new continuation seeds or search budget. A shorter line that loses gate
+acceptance is not promoted as a reliable teacher or production override.
+
+Identity: `8c79c18c5ad853405149568dc17fbd98148d106d446d4763f89ea798c1595f4f`;
+report: `c983b15ca525a1b63175f06d95f0102d32225d5010e043cb04d9a50b1fff67a6`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
