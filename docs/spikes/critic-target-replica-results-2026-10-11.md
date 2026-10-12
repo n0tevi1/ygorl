@@ -26,3 +26,25 @@ After source verification, branch labels use16 suffixes per supported action on 
 Primary is now **conditional choice-win difference** on64 fresh validation states, expanded256-step32 versus existing128-step32, with a stratified root-plus-suffix bootstrap (50,000 draws, seed2026101126); fixed-root suffix sensitivity uses seed2026101127. Also report the unchanged initialization, MSE and retention. Do not claim improvement if the candidate is worse than unchanged or select an earlier checkpoint after inspection. The same decks/cards and frozen actors mean this is not unseen-card generalization. A positive critic result would still need actual actor-RL/full-game validation.
 
 Evidence: each study's registration, identity, reports and verification scripts under `out/research/`. [Previous confirmation and objective diagnostics](critic-unused-root-and-ranking-objectives-2026-10-11.md). Issues #61/#83/#36 remain active; old STOP evidence is preserved. Development follows main, matched runtime stays ae09594.
+
+## Source collection verified; branch collection launched
+
+All **320/320** source games ended normally. Source verification checks the complete task grid, artifact identities/hashes, engine health and recorded cold-replay equality; it does not independently rerun all320 games. Deals/openings remain unique and disjoint from3,136 prior deals. Completion event `64a0947410c1e721bf949526560fb1ecf55acc8d9e92c70a6f1805daf82a74ca` is acknowledged. Behavior analysis version3 was rerun from main; legacy counts, findings and coverage match, with selection-cycle detection added.
+
+| Frozen source panel | Games | Mean turns | Median | P90 | Maximum |
+|---|---:|---:|---:|---:|---:|
+| Broad | 160 | 11.069 | 9 | 16 | 47 |
+| Runick | 160 | 24.688 | 23 | 46 | 65 |
+| Combined | 320 | 17.878 | 12 | 39 | 65 |
+
+Only5/320 end by turn4;93/320 exceed20 turns. The previous256-source mean was17.543, with broad12.180 and Runick22.906. These are different deals under frozen policies, **not evidence of actor improvement or regression**. Candidate self-Ash is0/117 opportunities. Other investigation signals include70 attack intervals with self-damage,32 chain intervals with self-damage, and133 exits from battle with an attack available; these are not automatic tactical error labels or proven missed lethals.
+
+Five games have repeated-selection signals. Games26 (opponent) and75 (candidate) each repeat selection/cancellation32 times. Games95/195/259 have candidate material selection/unselection cycles of period4. All five full policy replays independently reproduce the original choices and final results. Native observation hashes repeat exactly at each cycle period, and every involved policy has `selection_history=False`. Cancel probability is.998698 and.997731 in the two cancellation loops; the32-cancel guard finally masks cancellation at decisions184/214. The material cycles exit by sampling an alternative material at decisions653/388/431. This directly establishes repeated model inputs, not merely similar public boards. It does not establish that enabling history alone will teach the right choices.
+
+This reproduces the known frozen-actor selection-control limitation. Retain the [selection/cancel intervention evidence](policy-sampling-confirmation-2026-10-10.md) and [earlier material-cycle investigation](card-pool-training-results-2026-10-10.md). A future actor intervention must separately validate history training and cancellation controls; changing those during this critic comparison would confound state-coverage effects. Cancellation-only restrictions cannot fix the three select/unselect cycles. These finite decision loops also cannot alone explain the much longer Runick turn distribution.
+
+All eight strata have enough eligible battle states (32–40 per40 games). The registered hash ordering selects exactly128 new training and64 new validation roots, with distinct source games. An independent selection verifier reconstructs the ordering and exact action/suffix grid without reading outcomes. No behavior finding filters a root.
+
+`critic-ranking-state-expansion-branches-2026-10-11` is now running under identity `b075296af6ddc48c4899471c9da4da9c3d828ceb7c27a941451df71aaa66dbb5`: **14,688 tasks =192 original controls +7,136 training continuations +7,360 validation continuations**. The192 original controls run first, then collection proceeds with four workers and an eight-hour cap. Service invocation `840a8b5517804f1aba3ebfc3f70de1aa` has an independent monitor. Validation labels remain unaggregated until the two fixed fits freeze. No critic or actor has been promoted.
+
+Audit evidence: source `verification.json`, `behavior-v3-audit/verification.json`, `encoding_audit.py`, five `encoding-*.json` replay records and `encoding-verification.json`; branch `selection-verification.json`, identity, registration, service launch and monitor. Development main is `fb0ab3f`; frozen matched runtime remains `ae09594`.
