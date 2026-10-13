@@ -2242,6 +2242,37 @@ This tests whether the suppression was already present before continuation.
 Identity: `c42b0b6785eed6bb56fac5c0b58a70f1ba13999594c2b570e36387779fa22278`;
 report: `0f9b7b0d039e19027db732207d9123dc967e5f59e0ffc52cf13a19d7f619b771`.
 
+## Checkpoint comparison: suppression predates continuation
+
+`lethal-activation-checkpoints` completes149 fixed-observation comparisons over
+eight exact u512 trajectory replays. Vocab/config/history compatibility, observation
+hashes and u512 probability controls pass. At known missed-win decision760,
+activation probability is0.07721% at u128,0.02337% at u256 and0.01556% at u512.
+All three strongly favor passing; continuation does not create this blind spot,
+but the probability falls further on this particular observation.
+
+On the138 optional-chain observations, median total chain probability is
+67.55%/24.06%/18.10%, mean56.66%/36.10%/34.48%, and chain probability exceeds0.5
+at81/48/46 prompts respectively. These are correlated states visited by u512,
+without correctness labels for most choices. Do not conclude overall regression,
+forgetting of a demonstrated skill, or differences in full-game checkpoint strength.
+
+Next use the saved observations for a bounded offline input-sensitivity audit.
+Evaluate u512 at all138 optional-chain states in an eight-cell factorial: retain
+or replace chain action kind with activate; retain or replace decision code with
+SelectIdleCmd; retain or replace phase with Main1. Other action fields, masks,
+card tables and event histories stay byte-identical. Check all149 original
+predictions as controls. Report activation/pass margins, probability changes and
+per-game distributions, with the known760 case highlighted.
+
+These artificial input combinations can be inconsistent with the engine protocol
+and history. They diagnose numerical dependence only, not legal counterfactual
+wins or a safe encoding fix. No mutated input is applied in live play or used as
+a training target. No engine rollouts, new deals, model updates or guard changes.
+
+Identity: `ff2e493abbf1f58a3a70bc4000ad209d7aba14a781df749286c4d275d46fc958`;
+report: `3809d30def392f9c43d48f114fb141f4dd652404945cdb6dde21efae06cc8350`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
