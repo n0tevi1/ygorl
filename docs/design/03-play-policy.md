@@ -522,3 +522,13 @@ warm start may add the new event rows with zero initialization; ordinary resume
 must reject schema changes. Python and native paths, snapshots and resets must
 agree. A matched retraining pilot must assess learned benefit and retention;
 input distinguishability alone is not evidence of stronger play.
+
+### Rollout ready-batch ordering
+
+Before assigning policy RNG draws or refilling finished slots, fixed-length
+collectors with `min_batch >= num_envs` process each received ready batch in
+ascending `env_id` order, as the complete-game path already does. Partial-batch
+fixed-length collection retains its existing scheduling and sampling behavior. Worker completion order must not permute random draws across slots when
+the batch membership is identical. This makes full-batch comparisons reproducible
+under the same runtime; it does not promise reproducibility across different
+partial asynchronous batch membership, numerical backends, or live-game restarts.

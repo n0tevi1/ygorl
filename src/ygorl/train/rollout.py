@@ -198,6 +198,10 @@ class RolloutCollector:
         self._held.clear()
         while True:
             learner, others = [], defaultdict(list)
+            # Full batches provide stable membership; worker order must not reassign RNG draws or deals.
+            # Partial asynchronous collection retains its existing scheduling/sampling behavior.
+            if self.min_batch >= B:
+                ready.sort(key=lambda ev: ev.env_id)
             for ev in ready:
                 slot = self._slots[ev.env_id]
                 if ev.result is not None:
