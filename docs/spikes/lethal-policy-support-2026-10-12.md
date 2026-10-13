@@ -2997,3 +2997,57 @@ The first two studies use main `589254e`; implementation parity and the fresh
 pilot use `1767d09`. Each analysis records its report hash. `mask-cause.json` in
 the first study records the two native-mask cause checks. Original studies and
 their immutable records are preserved.
+
+## Attack-context repair: canary and paired retention result
+
+PR #414 (`15f3902`) fixes the reproduced missing-attacker observation collision with
+opt-in `attack_history`. It does not enable the feature for old checkpoints or fix
+the single-attacker Snow/Havnis case by itself. Full presubmit validation passed:
+1,940 tests, 23 skips. The first full-suite invocation accidentally selected a
+pytest executable without `ribs`; the whole suite was rerun in the validated
+runtime. Logs are retained in the canary's `validation/` directory.
+
+`attack-history-training-canary-2026-10-12` completed two matched four-update arms
+from the warm u128 actor and critic. Each consumed 4,096 rows with fresh matched
+optimizer/reference/pool state. Control/context completed 23/28 games, with zero
+errors or truncations. The context arm recorded 45 immediate attack-to-target
+rows. These establish working input and training paths, not stronger play.
+
+The preregistered `attack-history-heldout-2026-10-12` evaluation then completed all
+128 games, with cold replay equality for every game and unwrapped-policy parity
+for the first game of each arm. Eight fresh deal clusters, each with four deck/seat
+assignments, covered nine decks against fixed Greedy. Four arms separate the
+immediate schema effect from training change. Identity:
+`e9ce204b0f18c8610f83c1808e61fcb558e4d141010129e88f03ff3dd1b5d84b`.
+
+| Input | Updates | Wins / games | Mean turns | Mean decisions | Candidate cancels |
+|---|---:|---:|---:|---:|---:|
+| Legacy | 0 | 20 / 32 | 9.250 | 460.47 | 1 |
+| Legacy | 4 | 18 / 32 | 10.719 | 537.28 | 0 |
+| Attack history | 0 | 20 / 32 | 9.188 | 456.53 | 1 |
+| Attack history | 4 | 20 / 32 | 9.563 | 437.41 | 1 |
+
+Do not promote either trained checkpoint or scale training from this result.
+Attack-history training did not improve wins in this panel, and mean turns rose
+by 0.375. The difference between arms is exploratory: eight clusters, one training
+seed, one opponent, and four updates are insufficient evidence of superiority.
+Fresh deals are not unseen-card generalization. Fewer decisions or cancels do not
+establish fewer mistakes, missed lethals, or loops.
+
+The complete paired-trajectory review is stored in
+`attack-history-heldout-review-2026-10-12`. Before training, enabling the input
+left 30/32 entire action traces identical; both divergences first occurred in
+SelectCard after an own attack. After training, 30/32 traces changed in each arm;
+25 control and 26 context first divergences occurred before any own attack.
+Consequently, the full-game changes cannot be described as an isolated correction
+of attack targeting. This locates divergence, not the cause of later wins/losses.
+The adjacent attack-to-target window counts were 69/84/68/73 in table order;
+windows with more than one selectable card were 26/29/25/16. These are coverage
+counts, not optimal-action labels.
+
+Next, audit the training data and credit assigned to generic attack-target
+windows, including single-attacker cases. Keep the input fix independently of its
+as-yet unproven learning benefit. Any subsequent retraining experiment needs a
+specific diagnosed defect, a matched control, and reserved behavioral evaluation;
+do not resume the failed isolated-head correction or increase training scale
+merely because this health canary passed.
