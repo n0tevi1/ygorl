@@ -2599,6 +2599,39 @@ promotion; all outcomes retained under the existing15-minute monitoring bound.
 
 Replication identity: `606085d311393bced6a8bb5a338ab423c251243a191cf20b471ceddf763816b2`.
 
+## Droplet activation helps two suffixes but does not fix target selection
+
+`lethal-droplet-credit-confirmation` verifies all six healthy continuations.
+The three pass controls lose on turn16 (831/840/845 decisions). Activating
+Droplet at760 wins on turn15 in seeds2026101301 and2026101302 (781 decisions)
+but loses on turn16 in seed2026101303 (847 decisions). This is evidence about
+one exposed state under three policy suffixes, not a population win rate or a
+proof that activation guarantees a win.
+
+Trace inspection gives a specific remaining hypothesis. Both winning suffixes
+select Havnis37961969 for Droplet at766 and attack Havnis at770. The losing
+suffix selects Snow55623480 for Droplet, then still attacks Havnis. The first
+transcript difference is spell placement at761; cost choices also vary, so the
+observational comparison alone does not identify the causal decision. The
+stored base card ATK values (Havnis1600, Snow1850, Raye1500) are not substituted
+for current board stats or treated as a complete battle simulator.
+
+Next run the same three suffix seeds with three arms each: unmodified
+activation continuation, force Havnis at766 only, or force Snow at766 only.
+All arms retain the existing forced activation at760 and the same RNG reset;
+only the selected Droplet monster changes. Consume ordinary samples even when
+overriding. Require exact original prefix through760 and exact per-seed
+activation prefix before766, supported semantic target matches, and complete
+control transcript/result equality. Capture legal actions, probabilities and
+public current board stats at766 and770, including which monster is attacked.
+Nine bounded continuations, no new seeds/worlds, search, training, or generic
+card-specific rule. Report all outcomes and investigate selection/attack
+coordination only if the intervention supports it. This remains a known-state
+mechanism test, not deployable target advice or training-label certification.
+
+Identity: `8d619e2f867dab89523221bbeabedd586b8524ba8cac0fbd29e4a1c5990f84bb`;
+report: `67364c07a7589b385557e538af0e83064fbf8516a13d6c0c2480fe21c1844eeb`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
