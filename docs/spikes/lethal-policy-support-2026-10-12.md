@@ -3051,3 +3051,37 @@ as-yet unproven learning benefit. Any subsequent retraining experiment needs a
 specific diagnosed defect, a matched control, and reserved behavioral evaluation;
 do not resume the failed isolated-head correction or increase training scale
 merely because this health canary passed.
+
+### Follow-up: full-batch rollout reproducibility
+
+A zero-update credit-capture attempt could not reproduce the canary's first
+rollout from its initial checkpoint. The failed assertion and STOP remain under
+`attack-target-credit-audit-2026-10-12`. Two resumed captures also differed, so
+neither is a replay of the historical training data. The restart's report phrase
+“deterministic rollout” is incorrect; use its `reproducibility.json` and this
+qualification. The separate 128-game held-out evaluation remains paired and
+cold-replay verified.
+
+The fixed-length collector consumed each ready batch in worker completion order,
+which assigned its shared sampler draws and subsequent deals to different slots.
+`attack-rollout-order-audit-2026-10-12` changed only processing order to ascending
+`env_id`: two real 1,024-row captures then matched exactly across observations,
+actions, probabilities, Q/V, rewards and done flags. No optimizer ran. The same
+check passed against the implementation under `attack-rollout-order-fixed-2026-10-12`.
+
+The fix is restricted to fixed-length full batches (`min_batch >= num_envs`), where
+membership is stable. Complete-game collection already sorts. Partial asynchronous
+batches retain their previous behavior and are not promised to reproduce exactly.
+A regression test reverses every ready batch and checks both consecutive segments,
+mixed self-play/pool opponents, new deals and bootstrap tensors; the old fixed-length
+path fails this test. Sorting partial batches too altered a finite-budget Nim
+convergence test, so that unrelated sampling change was excluded rather than
+relaxing its convergence assertion.
+
+The fresh, unfitted credit-capture sample had 13 target windows; nine lacked a
+terminal outcome within the segment. The four terminal distances were 22, 12, 7
+and 0 learner rows, with measured terminal-reward contributions to their Q targets
+approximately `-2.38e-7`, `+0.000244`, `-0.007813` and `+1`. This is a small
+descriptive check consistent with the existing lambda-return, not a correctness
+label for those actions, nor evidence to change lambda or scale training. Capture
+future rollout tensors directly when exact credit attribution is required.
