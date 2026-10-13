@@ -2455,6 +2455,50 @@ by this diagnostic's protocol; any follow-up needs its own bounded evidence gate
 Identity: `70b511547203547e4b769d41962bfd73037d9e50738c1eff3964e57e15d687a9`;
 report: `c04f9d77eaba989a03a2e38cdafe55cc92e9e7b32fc04faeae438f544eb88bc8`.
 
+## Saturated pass probability makes direct corrective credit weak
+
+`lethal-step-attribution` reconstructs both saved Adam displacements without a
+new optimizer update. Maximum parameter reconstruction error is 1.192e-7 in
+each arm (gate 1e-6); the summed component gradients and first-moment recurrence
+also match. The root policy gradient changes direction as expected. Its norm is
+3.93e-6 at lambda0.5 and 3.45e-5 at lambda0.95, versus 0.620/0.965 for all other
+policy rows. With initial pass probability 0.99984437, the sampled pass score
+has very small softmax sensitivity. Correcting its advantage therefore supplies
+little direct gradient in this batch; it does not directly train the unchosen
+activation as a successful demonstration.
+
+Conditional linear contributions to the activation-minus-pass logit margin:
+
+| Contribution | lambda0.5 | lambda0.95 |
+| --- | ---: | ---: |
+| Root policy | -0.00000443 | +0.00002365 |
+| Other578 policy rows | +0.07507672 | +0.03863139 |
+| Entropy | +0.01612914 | +0.00983420 |
+| Reference KL | -0.01688527 | -0.01030318 |
+| Q loss | +0.00781599 | +0.00476933 |
+| V loss | +0.01161025 | +0.00708309 |
+| Previous Adam momentum | -0.00195172 | -0.00200275 |
+| Sum | +0.09179068 | +0.04803572 |
+| Actual margin change | +0.09746742 | +0.04957771 |
+
+The nonlinear residual is +0.00567690/+0.00154158. Clipping coefficients are
+0.82761/0.50449: identical raw entropy/KL/Q/V gradients can contribute differently
+under each arm's full-gradient clipping and Adam denominator. Other policy rows
+are the largest positive term in both arms; these results do not support blaming
+critic gradients or Adam momentum as the main opposing term in this specific
+step. They also do not establish why earlier training produced the saturated
+policy, or that raising entropy globally is safe.
+
+Next split the existing other-row policy contribution by the eight original
+games, separating the root from its own trajectory. Reuse the same two saved
+steps and every reconstruction gate; require grouped contributions to recover
+the prior aggregate. This identifies whether the observed movement is mostly
+within-trajectory or cross-trajectory transfer before selecting any training
+change. No new trajectories, optimizer updates, hyperparameter search, or model
+promotion. Independent monitor and 15-minute bound remain in place.
+
+Identity: `dcc0cb74d1b87c76e7d827b3456c438168c106ff9ceda3faaee2f73560b45643`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
