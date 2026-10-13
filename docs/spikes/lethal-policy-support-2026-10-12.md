@@ -2350,6 +2350,43 @@ training data. No optimizer steps, new RNG seeds, new deals or model promotion.
 Identity: `f84d12520372860d430ef3d4f6b165693cf98fbe40330df590cec98e92016c9b`;
 report: `8678d37cfcc60734f6a0caec9472a9c92e7c51be0b47d4faef4c0a8ad76d607e`.
 
+## Return correction has the wrong sign in both known continuations
+
+`lethal-activation-credit` exactly reproduces the two existing game0 continuations.
+Using u512 estimates and learner-only nonforced decisions, unnormalized complete-
+suffix VRPO return advantages at lambda0.5 have the following root values:
+
+| Choice | Outcome | Learner rows including root | Q target | Advantage | Direct terminal contribution |
+| --- | --- | ---: | ---: | ---: | ---: |
+| pass | loss T16 | 34 | 0.476887 | +0.030147 | -1.164153e-10 |
+| activate | win T15 | 7 | 0.425187 | -0.021553 | +0.015625 |
+
+Root Vbar is0.446740 for both. Zeroing only terminal reward while holding Q fixed
+changes root targets by exactly the listed amounts: gamma1 does not prevent the
+lambda trace from attenuating distant terminal evidence. Q-based local estimates
+dominate these two suffixes; the sampled correction does not recover the desired
+direction here. Pure terminal-return advantages would be-1.446740/+0.553260,
+but carry greater outcome variance and are not automatically better estimators.
+
+This diagnoses a concrete credit-assignment failure in these continuations, not
+an implementation error in the documented estimator or proof about historical
+normalized128-row minibatches. The activation branch is forced at the root.
+Single realized outcomes are not expected action values; do not automatically
+label every loss-side positive advantage as an error.
+
+Next bound a return-coverage audit to all learner decisions with multiple supported
+actions in the same eight original u512 games. Preserve native trajectories and
+RNG. Score frozen u512 Q and probabilities, then compare complete-game suffix
+returns at lambda0.5/0.9/0.95/1 and pure terminal returns. Report per-game counts,
+distance-to-terminal, direct terminal sensitivity and descriptive sign differences;
+these are correlated observational data, not correctness rates. Save all rows,
+check the known game0/760 result against the prior suffix audit, and isolate
+terminal sensitivity analytically to avoid cancellation near machine precision.
+No new deals, seeds, actor updates, model selection or training-scale increase.
+
+Identity: `1dc7659c339c5a1cacc31f6e93a29e2c4f473925930be9907889d9798a8ab679`;
+report: `6d613dc6f750f2d78535431fff9db39ebf8d8fb12e2ee43fa37c6a6fe64c684c`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
