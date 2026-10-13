@@ -3085,3 +3085,117 @@ approximately `-2.38e-7`, `+0.000244`, `-0.007813` and `+1`. This is a small
 descriptive check consistent with the existing lambda-return, not a correctness
 label for those actions, nor evidence to change lambda or scale training. Capture
 future rollout tensors directly when exact credit attribution is required.
+
+### Ordered rerun: actual training data and paired retention
+
+PR #416 (`8e0495d`) merges the full-batch collection-order repair. The frozen
+`codex-rollout-order` runtime at `af4b5d9` then completed
+`attack-history-ordered-canary-2026-10-12`. Each arm again used four updates,
+4,096 learner rows, the same warm-u128 actor/critic, and fresh matched optimizer,
+reference and pool state. Both finished 22 games without engine errors or
+truncations. Eight actual pre-update rollout tensors and all intermediate
+checkpoints were saved; subsequent attribution uses these tensors, not newly
+sampled substitutes. Canary identity:
+`e52fb45baa56516db41102095ff7e18a04ec75b9e85a4a31dd94668ef141d35d`.
+
+`attack-history-ordered-heldout-2026-10-12` completed another 128 healthy games,
+with cold replay equality for every game and first-game unwrapped-policy parity
+for each arm. It deliberately reuses the previous eight-cluster evaluation panel:
+this is a post-fix comparison, **not a new untouched holdout**. Its report's generic
+“fresh deal seeds” limitation refers to the original panel construction, not
+freshness relative to the earlier evaluation. Identity:
+`f173f36a1a6159ae697404ac95454172074ab8aac0651e859db88642c2145a59`.
+
+| Input | Updates | Wins / games | Mean turns | Median turns | P90 turns | Mean decisions |
+|---|---:|---:|---:|---:|---:|---:|
+| Legacy | 0 | 20 / 32 | 9.250 | 10 | 14 | 460.47 |
+| Legacy | 4 | 23 / 32 | 8.781 | 9 | 13 | 429.75 |
+| Attack history | 0 | 20 / 32 | 9.188 | 10 | 14 | 456.53 |
+| Attack history | 4 | 21 / 32 | 9.813 | 8.5 | 19 | 469.31 |
+
+The difference between training changes is -6.25 percentage points in score and
++1.094 turns for attack history relative to legacy. This small, single-seed,
+single-opponent result does not establish either superiority or a reliable
+regression, and does not justify promoting a checkpoint or increasing training
+scale. The input-correctness repair remains valid independently of learning
+benefit. Nor does the difference from the previous unordered run prove that
+sorting ready batches improves playing strength.
+
+The zero-update `attack-history-saved-credit-2026-10-12` audit calls the actual
+learner target calculation on those saved tensors (`gamma=1`, `lambda=0.5`,
+`critic_target=lambda`). It checks the context window indices and recorded credit
+against the canary logs.
+
+| Actual training coverage | Legacy | Attack history |
+|---|---:|---:|
+| Attack-to-target windows / 4,096 rows | 46 | 53 |
+| Windows with only one available attacker | 41 | 32 |
+| Terminal outcome inside the rollout segment | 13 | 25 |
+| Of those, absolute direct terminal-reward contribution below 0.001 | 10 | 19 |
+| Windows unfinished at the segment boundary | 33 | 28 |
+
+All these windows have multiple selectable targets. Reward contribution is measured
+by removing observed rewards while holding critic terms and bootstraps fixed;
+it is not the entirety of learned signal. Across-segment outcomes follow changing
+policies, and unobserved tails are not losses. These counts identify sparse target
+coverage and reliance on bootstrapping; they do not show incorrect credit or justify
+changing lambda without a controlled test.
+
+`attack-history-credit-response-2026-10-12` checks each window against its actual
+pre/post-update checkpoint. Pre-update chosen-action log probabilities match the
+saved behavior probabilities. Every window was included in at least one applied
+full minibatch: these rows were not silently omitted by the KL stop. Chosen-action
+probability moved in the direction of its recorded policy weight for 25/46 legacy
+and 28/53 context windows. Shared parameters and the joint critic, KL and entropy
+objectives can oppose an individual row's policy term. This is not a measure of
+correct play or evidence that the remaining rows received a wrong gradient.
+
+The public-board replay audit `attack-history-longgame-review-2026-10-12`
+mechanically selects the longest context-final game (index 28, Orcust versus
+Kewl Tune). It reproduces all recorded responses and final outcomes: initial
+context loses on turn 16, final legacy wins on turn 13, final context wins on
+turn 25. The context learner never cancels in that game. Its three flagged
+battle-phase exits with legal attacks are not demonstrated missed lethals:
+
+- Turn 15: available attackers have 0/1,700/1,200 ATK into a face-up 2,400 DEF
+  monster.
+- Turn 19: the only remaining available attacker has 0 ATK into 1,800 DEF.
+- Turn 21: available attackers have 0/2,500 ATK into a face-up 2,500 ATK monster.
+
+Public combat numbers alone do not establish that attacking improves these states;
+card effects and subsequent decisions still matter. Do not convert these flags
+into hard attack masks, mistake labels or automatic penalties. This selected replay
+also cannot estimate the overall loop or missed-lethal rate.
+
+Next work is bounded to diagnosing generic target credit and the joint update on
+saved windows, with correct-action labels required before claiming a learning
+failure. Keep the single-attacker Snow/Havnis issue open. A new training change
+must identify its mechanism, preserve a matched control and reserve genuinely new
+evaluation deals. No larger training run or isolated card-specific head patch is
+justified by these results.
+
+
+The bounded `attack-history-loss-components-2026-10-12` follow-up computes
+first-update gradients on each arm's actual 1,024 rows (12 target windows each),
+without optimizer steps or new games. It partitions the implemented PPO loss into
+target-window policy, other-row policy, entropy, reference KL, Q and V components,
+and verifies that their summed gradient matches the complete loss gradient.
+Relative to the target-policy gradient's squared norm, the dot products are:
+
+| Component | Legacy | Attack history |
+|---|---:|---:|
+| Target policy | 1.000 | 1.000 |
+| Other-row policy | -0.237 | +0.394 |
+| Entropy | +0.055 | +0.074 |
+| Q loss | -0.041 | -0.012 |
+| V loss | -0.047 | -0.020 |
+| Total | +0.731 | +1.436 |
+
+Reference KL is numerically zero at this initial matched reference. Positive
+means that infinitesimal unpreconditioned gradient descent helps the aggregate
+recorded target surrogate. Critic gradients oppose it slightly, but the total is
+helpful in both arms; other policy rows help the context arm. This does not
+support blaming a generally destructive critic gradient for the observed lack of
+playing improvement. It does not reconstruct the finite Adam step, establish
+per-row alignment, or provide correct-action labels. No objective, lambda,
+critic-sharing setting or model checkpoint was changed by this diagnostic.
