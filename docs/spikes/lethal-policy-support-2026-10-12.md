@@ -2424,6 +2424,37 @@ Persist each capture/arm; two CPU workers,15-minute limit, independent monitor.
 Identity: `1f789dd1eab9a6774601bcefee7e3223a26da27ec0c89e8a056ab7f86575025d`;
 report: `f584fa88b2e2f69ddee30d4e950ddc9f6d8f9a96f61557fe35603566ea181c7a`.
 
+## Corrected root advantage does not outperform the matched one-step control
+
+`lethal-lambda-step-restart` completes exactly one579-row update per arm. Initial
+actor/critic/Adam/EMA hashes, data hashes, and Q/V targets match; no KL rejection
+or unhealthy replay occurs. Root normalized pass advantage changes from+0.14756
+at lambda0.5 to-1.29309 at lambda0.95. Nevertheless, activation probability moves
+from0.015563% to0.017156% in control versus0.016354% with the longer trace:
+relative increases10.24% versus5.08%. Both remain tiny. Mean training-state KL is
+0.000795/0.000433; maximum state KL0.02555/0.02188. These are overlapping training
+probes, not retention, strength or generalization results. Do not extend training.
+
+Preflight capture was healthy. Before optimizer execution, static review found
+an attempted assignment to frozen `PPOConfig`; a separate frozen restart uses
+`dataclasses.replace`, retaining the original sources and verified first capture.
+Both successful arms use identical final source and shuffle seed.
+
+Next decompose the already recorded steps at the initial parameters. For both
+arms, separate root policy loss, other578 policy rows, entropy, reference KL,
+Q loss and V loss. Record gradient norms and their alignment with the root
+activation-minus-pass logit margin. Decompose the Adam displacement using the
+saved second moment, step counters, old first moment and common per-arm clipping
+factor, keeping momentum separate. Require reconstructed displacement to match
+the saved actual step, then report linear root-margin contributions and the
+nonlinear residual against actual margin change. This is conditional attribution
+with fixed denominators, not six counterfactual optimizers or independent effects.
+No optimizer steps, new trajectories, parameter sweeps or deployment are authorized
+by this diagnostic's protocol; any follow-up needs its own bounded evidence gate.
+
+Identity: `70b511547203547e4b769d41962bfd73037d9e50738c1eff3964e57e15d687a9`;
+report: `c04f9d77eaba989a03a2e38cdafe55cc92e9e7b32fc04faeae438f544eb88bc8`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
