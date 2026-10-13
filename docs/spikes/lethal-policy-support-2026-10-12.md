@@ -2823,6 +2823,39 @@ separately; never replace the source checkpoint or production policy.
 Identity: `fe93ad3a2aa5f652dcb26ce9da769fe6d1c7f95630ce14f8779985980c33677b`;
 report: `8add0d7995135de57628e51b1ee22f82a83469631ed8adda6378ff04d172ddc8`.
 
+## Bounded head correction improves probability but fails the target gate
+
+`lethal-battle-head-pilot` completes exactly16 Adam updates with all non-head
+parameters unchanged. On the fitted Snow state correct probability rises from
+4.519% to21.601%; the two correlated suffix probes reach21.625% and21.596%.
+Correct Havnis remains99.999666% on all three suffixes. The six-probe target gate
+fails because Snow stays below50%; no continuation of this fit, native candidate
+promotion, or production replacement is authorized by the preregistered gate.
+
+The172 anchor rows have mean/max forward KL0.007339/0.143260 and seven argmax
+changes. The186 reserved rows have mean/max KL0.002348/0.052029 and seven argmax
+changes, satisfying the registered reserved drift threshold. Argmax changes
+are not independently labeled mistakes or improvements. The extra suffixes
+share the diagnosed root and are not generalization evidence. Optimization CE
+falls from1.54844 before step1 to0.80724 before step16; the final logged raw
+combined gradient norm is4.38367, with the norm1 cap applied. This demonstrates
+an effective corrective gradient, but not that additional steps would be safe,
+sufficient, or transferable.
+
+Next perform a read-only end-state gradient audit, with no optimizer steps.
+Rebuild the original frozen features, reproduce final probabilities, verify
+the saved head against the step16 artifact and Adam step counters, and separate
+half-weight Snow CE, half-weight Havnis CE and anchor KL gradients at the final
+head. Report norms, pairwise cosines, and each negative gradient's projection
+onto the correct-target logit margin. Compare the actual initial-to-final
+parameter displacement with margin gradients only as local diagnostics;
+nonlinear finite changes need not match this projection. Preserve the failed
+gate and both immutable candidate/optimizer artifacts. Do not infer historical
+training cause or authorize a larger fit from gradient alignment alone.
+
+Identity: `cfad0f719dfae9c0239b0047666789b86b9affc3c63304c523dc976c5200a892`;
+report: `a68ecda5a139664dccb8e749bbc4d02cf4421508b6cd25b7c4bc7e806f5d6e4d`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
