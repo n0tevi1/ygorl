@@ -2669,6 +2669,64 @@ selection mechanism rather than prescribe a Droplet card target.
 Identity: `6ed6b0566970f22748f95e24bfae09883924bb08461ca2db89d5fec6429601ca`;
 report: `ffd645745b7e891fa451d95d2c06fbd45a03b34fc847e89d389026b049135e5e`.
 
+## Current-stat attack repair recovers the three Snow losses
+
+`lethal-droplet-battle-repair` completes all 12 healthy continuations, crossing
+both fixed effect targets and all three existing suffixes with policy versus
+one attack-target override. The six policy controls reproduce complete prior
+transcripts and outcomes; intervention prefixes before770 match exactly.
+After selecting Snow, the public-current-stat helper selects weakened Snow at770
+and all three losses become turn15/781-decision wins (opponent LP -75).
+After selecting Havnis, the helper agrees with the policy; all three wins and
+complete outcomes remain unchanged. All original samples are consumed and
+helper evaluation leaves both actor RNG states unchanged.
+
+At770, actor-encoded ATK/DEF/position agree with the queried public current
+board. In the Snow branch these include Raye1500, Snow925 and Havnis1600 ATK.
+Thus stale or absent current attack stats do not explain this particular
+selection error. The intervention establishes a sufficient local repair; it
+does not establish how the network learned its preference, or make arithmetic
+a universally valid lethal certificate in the presence of effects/responses.
+
+The next fixed retention diagnostic uses the original eight complete games,
+with paired original policy and candidate-only nominal-lethal target guidance
+(16 games total). It forces no Droplet activation, effect target, battle entry,
+or attack declaration. A fresh existing helper is primed from each actual
+candidate attack, and may replace only a supported target with visible current
+ATK damage reaching positive opponent LP. All other choices remain the policy's.
+Exact original controls, paired prefixes before first override, native health,
+coverage, final outcomes and turn/decision counts are required. This tests both
+side effects and whether the diagnosed opportunity is reached autonomously;
+no new deals, seeds, training, production deployment, or strength claim.
+
+Repair identity: `46eb580091f2224ff0e0bbe8bd6232a2ee226da80fbbc319ea37b9182d1bb829`;
+report: `7173f3bf78d20874ae19a9af7af26fc163f4dcdc45057e8ed0f1d648fcb4d54a`.
+Retention identity: `2ea35f2cf42ca4fd7a739ebce8b9379fb5a35f1d51d4a3edbbaa4bda72faa8ed`.
+
+## Full-game retention finds no autonomous intervention coverage
+
+`lethal-battle-target-retention` completes all16 healthy games. Both arms exactly
+reproduce every original transcript:4/8 candidate wins, mean8.75 turns and
+371.25 decisions. Only game4 has a nominal-lethal target opportunity, where the
+policy already agrees with the helper. There are zero actual overrides.
+Consequently there is no demonstrated full-game gain or meaningful exercised
+side-effect coverage. The earlier three recovered losses were conditional on
+forcing the upstream Droplet activation/target; the autonomous policy does not
+reach them here. Do not promote the helper or expand its trigger from this result.
+
+Next isolate input sensitivity at the six existing attack-target contexts:
+both fixed Droplet targets crossed with the three existing suffix seeds.
+Replay unchanged controls and evaluate four frozen-network inputs at770:
+actual current stats; swap the two opposing ATKs; restore their base ATKs;
+and set both opposing ATKs to1000. Change only these encoded ATK entries,
+verify unchanged masks/actions/history/other features and baseline probability
+parity, consume no actor RNG, and preserve complete control continuations.
+These are artificial feature interventions, not legal counterfactual game
+states or training labels. The goal is to distinguish lack of stat sensitivity
+from a sensitive but insufficient decision rule, without training or new deals.
+
+Retention report: `151b840bc7fe1689e32af187cdbb6207b145a51ccf351789bce028aa977ba9fe`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
