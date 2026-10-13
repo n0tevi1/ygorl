@@ -2632,6 +2632,43 @@ mechanism test, not deployable target advice or training-label certification.
 Identity: `8d619e2f867dab89523221bbeabedd586b8524ba8cac0fbd29e4a1c5990f84bb`;
 report: `67364c07a7589b385557e538af0e83064fbf8516a13d6c0c2480fe21c1844eeb`.
 
+## Target choice changes outcomes because the attack policy does not adapt
+
+`lethal-droplet-target-choice` completes nine healthy exact-prefix continuations.
+For each of the three fixed suffixes, forcing Droplet to select Havnis at766
+wins on turn15/781 decisions; forcing Snow loses on turn16 (844/803/847
+decisions). The three original-activation controls exactly reproduce two wins
+and one loss. This isolates a target-choice effect conditional on the unchanged
+continuation policy, not an intrinsically losing Snow target.
+
+Current public stats reveal the distinction. Raye has1500 ATK and the opponent
+has500 LP. Havnis falls from1600 to800 when selected; Snow falls from1850 to925
+when selected. Either weakened attack-position monster presents enough nominal
+battle damage for lethal (700 or575), subject to engine effects/responses. Yet
+after weakening Snow the policy attacks the unweakened1600-ATK Havnis with
+95.47%-95.48% probability; after weakening Havnis it attacks Havnis with
+99.99998% probability. At the earlier Droplet choice the policy actually prefers
+Snow, with77.14%-78.87% probability. The evidence points to failure to coordinate
+effect and attack choices, rather than a hard-coded preference for the correct
+Droplet target or a proved global rule about either card.
+
+Next reuse the existing `CombatProbe` public-current-stat/lethal-first helper,
+primed with the policy's actual attack at769, to choose only the attack target
+at770. Cross both fixed Droplet targets with policy versus helper attack choice
+under all three existing suffix seeds (12 continuations). Require complete
+per-seed policy controls and identical prefixes before770. Verify supported
+helper choices, record current public stats and encoded actor-card ATK/DEF
+agreement, and consume the original attack-target sample before any override.
+The helper is only a candidate generator; native terminal outcomes validate
+this state. No effects are assumed absent, no DEF subtraction is treated as
+piercing, and no hidden identities or base-stat substitution enter the lethal
+check. No new seeds/worlds, training, search budget, or production policy change.
+If the Snow branches recover, the follow-up should address a general attack
+selection mechanism rather than prescribe a Droplet card target.
+
+Identity: `6ed6b0566970f22748f95e24bfae09883924bb08461ca2db89d5fec6429601ca`;
+report: `ffd645745b7e891fa451d95d2c06fbd45a03b34fc847e89d389026b049135e5e`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
