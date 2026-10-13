@@ -2727,6 +2727,65 @@ from a sensitive but insufficient decision rule, without training or new deals.
 
 Retention report: `151b840bc7fe1689e32af187cdbb6207b145a51ccf351789bce028aa977ba9fe`.
 
+## Attack policy uses current ATK but retains a large target preference
+
+`lethal-battle-stat-sensitivity` completes six healthy exact control continuations
+and24 frozen-network forwards. In the Snow-selected context, restoring both
+monsters' base ATK produces only0.00820%-0.00824% Snow attack probability;
+actual current stats (Snow925/Havnis1600) raise it to4.518%-4.526%.
+Swapping current ATKs reduces it to0.01168%-0.01176%. Current ATK therefore
+has a substantial effect in the appropriate direction; absence of stat use is
+not the explanation. It nevertheless fails to overturn Havnis preference.
+
+In the Havnis-selected context, even an artificial ATK swap toSnow800/Havnis1850
+leaves Snow probability at0.616%-0.620%. With both ATKs equal1000, Snow probability
+is0.763%-0.766% in the Snow-selected context versus0.01968%-0.01984% in the
+Havnis-selected context. Thus other context features contribute materially.
+These probability changes do not identify training history or establish a
+card-ID bias: disabled status, history and other context remain possible paths.
+All masks, action rows and non-ATK features are unchanged within each mutation;
+original-input probability parity and complete native controls pass.
+
+Next keep the same six states and cross actual/equal1000 ATK, actual/swapped
+opposing DISABLED bits, and actual/zeroed event history (eight inputs per state).
+Save original observations and require unchanged actor RNG and native control
+trajectories. This bounded48-forward diagnostic distinguishes feature paths;
+these artificial interventions are not legal states, labels or production rules.
+
+Identity: `832f2d01f1eecec3c99949e0e4a4855231cf7132ad34578f2ecef258afb569c0`;
+report: `bc22a8f78ea1bd1efca75ca562f27c4c5c16707f4d27bfde1d11718f345b0ac3`.
+Factorial identity: `c34bff24c2894aa67a13b5fa116891b7d124a43b81f9ef24742f9b21343b6189`.
+
+## Disabled status explains most of the matched-ATK context contrast
+
+`lethal-battle-context-factorial` completes six exact healthy control replays
+and48 forwards. The two effect-target observations within each suffix differ
+only in four card entries (two ATKs and two DISABLED bits) and two event entries;
+globals, actions, masks and all other card entries match. With ATKs equal1000,
+swapping disabled bits changes Snow probability from about0.7654% to0.01978%
+in the Snow-selected context, closely matching the Havnis-selected context's
+0.01982%. The reverse swap gives0.7660%, close to0.7654%. This identifies the
+large matched-stat context contrast mainly with disabled flags, not a large
+mysterious history difference. The actual target choice remains wrong in the
+Snow-selected state despite both lower ATK and the favorable disabled flag.
+
+Zeroing all history increases Snow probability there from4.519% to7.377%, still
+far below Havnis; at equal ATK and fixed disabled bits the two contexts become
+identical after removing history. History is a contributing pathway, but its
+removal does not repair this example. These controlled feature edits do not
+establish a card-ID-only bias, a safe history ablation, or historical training
+causality. Complete native outcomes remain the unchanged controls.
+
+Next compare the original six saved observations under the existing u128/u256/
+u512 actors, without modifying inputs, sampling new games or training. Require
+u512 output parity and frozen model/observation identities, and report all
+attack-target probabilities and margins. This will locate whether the observed
+preference already exists before continuation, without attributing differences
+between historical checkpoints to a single training mechanism.
+
+Identity: `c34bff24c2894aa67a13b5fa116891b7d124a43b81f9ef24742f9b21343b6189`;
+report: `90e35367b97a3e0ed3bc2cc20318e5ff0ddbd31de6f4c2b4f74203aeae87a634`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
