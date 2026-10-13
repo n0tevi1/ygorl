@@ -2574,6 +2574,31 @@ independent strength. No labels or deployment follow automatically. Two workers,
 Identity: `27b3a6fddd00c57a03dcd8dec1c9d7b269d058a3eae403c12da8fa060a9bad5e`;
 report: `f1f154b4622a281eec25731870ba7ac87661c16dc5e886e8414a68719d22972a`.
 
+## Paired suffix replication rejects the rare-action shortcut
+
+All30 fixed-root continuations finish healthy with exact original prefixes,
+root inputs and supported actions. At game0/250, the three new paired suffix
+seeds produce two control-win/intervention-loss pairs and one control-loss/
+intervention-win pair. The original loss-to-win example is not stable evidence
+for a positive action label. Game1 stays win/win in all three; games2 and5 stay
+loss/loss. The self-Ash game3 has one harmful flip, one helpful flip and one
+win/win. Across the15 pairs, activation has two helpful and three harmful flips;
+these exposed roots and correlated continuations do not justify a strength
+estimate. Stop this low-probability-threshold exploration route without tuning
+the threshold or adding more seeds. No automatic positive labels or training.
+
+The known Droplet760 case, which motivated the credit diagnosis, is distinct
+and still has only its original one-action outcome comparison. Next apply the
+same already-fixed three suffix seeds to that one root, original pass versus
+activation only (six continuations). Preserve exact prefix/input/support checks,
+root-sample consumption and both-generator reseeding conventions. This bounded
+check determines whether the motivating case itself survives suffix variation;
+it is not a replacement root to rescue the rejected five-root result. Keep the
+two result sets separate. No search, new native worlds, training or label
+promotion; all outcomes retained under the existing15-minute monitoring bound.
+
+Replication identity: `606085d311393bced6a8bb5a338ab423c251243a191cf20b471ceddf763816b2`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
