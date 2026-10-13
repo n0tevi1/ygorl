@@ -2273,6 +2273,40 @@ a training target. No engine rollouts, new deals, model updates or guard changes
 Identity: `ff2e493abbf1f58a3a70bc4000ad209d7aba14a781df749286c4d275d46fc958`;
 report: `3809d30def392f9c43d48f114fb141f4dd652404945cdb6dde21efae06cc8350`.
 
+## Input sensitivity does not recover the missed activation
+
+`lethal-activation-input` passes all149 original prediction controls and evaluates
+138 optional-chain observations in all eight preregistered cells. Frozen source,
+runtime identity, unchanged nonintervened tensors and healthy completion pass.
+At the known missed-win decision760, original activation probability is0.01556%;
+kind-only replacement gives0.07226%, prompt-only0.01348%, phase-only0.003125%,
+kind+prompt0.14929%, kind+phase0.01248%, prompt+phase0.009924%, and all three0.12193%.
+Every combination still ranks pass first. A simple input recoding is therefore
+insufficient on this example; these invalid-protocol combinations remain diagnostic.
+
+Across all138 observations, changing kind+prompt increases median chain mass
+from18.10% to90.81%, and all three to96.22%. Most prompts lack correctness labels;
+larger activation mass is not evidence of improved play and could promote bad
+chains. No intervention is deployed or added to training.
+
+Next replay the same eight original games and audit the three frozen actor-critic
+checkpoints on the same149 genuine states. Capture each supported action's Q,
+V, policy-weighted Q and activation/pass ranking, requiring actor probability,
+observation, random-generator and complete trajectory parity. Privileged tensors
+enter only the critic, never the actor or action selection. Save tensors for
+reproducibility. The checkpoint configs record nonzero Q/V losses (0.5 each),
+VRPO return mode, lambda targets and lambda0.5: Q is a trained head, but its
+ranking alone is not the policy advantage or proof of a causal training fault.
+
+Highlight decision760 against the existing single paired continuation (pass loses
+T16, activation wins T15). Its single trajectory outcome is not the expected
+return of either action, and u128/u256 continuations were not evaluated there.
+Other149-state comparisons are descriptive, not new correctness labels. This
+bounded diagnostic adds no deals, training, model selection or production changes.
+
+Identity: `54e54d24ef1e20b9b6c9a2cc0a71f1c97dddcd6362d8c53d0d23a69a32c51506`;
+report: `2aa6329d709d366120cf77ae5c221215a11f9ff573593e6bcb818229667be8e5`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
