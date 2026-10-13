@@ -2213,6 +2213,35 @@ weights, actions or random streams. No new deals or teacher labels.
 Identity: `59e1a217a02742e37760008b20780344c04f06619a8f23ab29043bf5b11b35f4`;
 report: `5c0be446836112f4130a73d0113d3e63beecd9902ff3fdbf421dcf34c6da22c7`.
 
+## Probability audit identifies strong suppression at the useful timing window
+
+`lethal-activation-probability` completes eight exact original-game replays with
+1,021 captured prompts. At game0 decision760, Forbidden Droplet activation has
+probability0.0001556338 (**0.01556%**), versus99.9844% pass. The known missed win
+therefore is not chiefly an unlucky sample. The card remains supported: at
+Main1 decision758 its activation probability is0.2220%, and at battle command761
+it is0.0001016%, where attack receives99.9996%. At later Main2 decision814 it is
+63.1920%. These states differ in board, history, phase and competing actions;
+the comparison does not isolate phase or action-kind causality.
+
+Across the fixed panel there are138 genuinely optional chain prompts (supported
+chain and pass), with48 chain choices and median total chain probability18.10%.
+Thus this is not evidence that the model refuses all chains. Droplet has36
+supported activation opportunities across just two games; repeated prompts are
+correlated and are not36 independent evaluations of card skill.
+
+Next compare frozen warm u128/u256/u512 predictions on the same149 observations:
+all optional-chain captures and all captured prompts offering Droplet. Replay
+all eight original u512 trajectories unchanged, save complete encoded observations,
+verify matching vocab/architecture/history settings, and require u512 probability
+parity. Report checkpoint probability/ranking differences, including760/814,
+without claiming causal attribution to RL or comparing full-game win rates.
+No new deals, seed selection, training, phase alteration or inference changes.
+This tests whether the suppression was already present before continuation.
+
+Identity: `c42b0b6785eed6bb56fac5c0b58a70f1ba13999594c2b570e36387779fa22278`;
+report: `0f9b7b0d039e19027db732207d9123dc967e5f59e0ffc52cf13a19d7f619b771`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
