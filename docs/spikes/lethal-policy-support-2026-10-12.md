@@ -2387,6 +2387,43 @@ No new deals, seeds, actor updates, model selection or training-scale increase.
 Identity: `1dc7659c339c5a1cacc31f6e93a29e2c4f473925930be9907889d9798a8ab679`;
 report: `6d613dc6f750f2d78535431fff9db39ebf8d8fb12e2ee43fa37c6a6fe64c684c`.
 
+## Eight-game return coverage and a bounded update diagnostic
+
+`lethal-return-coverage` completes579 learner decisions over the same eight games,
+with exact replay and known760 suffix parity. Median terminal distance is37
+learner decisions: lambda0.5 gives median direct terminal weight7.276e-12.
+At760, pass advantage changes from+0.030147 to-0.400089/-0.646098/-1.405346
+at lambda0.9/0.95/1 respectively. Across all rows, advantage sign opposes the
+realized outcome at269/214/159/0 rows for lambda0.5/0.9/0.95/1. These are not
+error counts: a losing game can contain good actions and a winning game bad ones.
+Lambda1 still includes Expected-SARSA control variates, not pure terminal MC.
+
+Earlier [terminal policy-credit replication](selection-terminal-policy-replication-2026-10-09.md)
+failed to establish a strength benefit (two-seed difference-3.91pp, interval
+[-12.89,+4.69]pp). Do not promote a new estimator from the sign statistic or
+repeat that terminal-credit training protocol based only on this example.
+
+Next perform a one-update mechanism diagnostic, reusing these eight trajectories
+and579 rows. Capture actor/privileged tensors with exact trace/Q/probability
+controls; clone u512 actor, critic, Adam and EMA states for two arms. Change only
+policy lambda0.5 versus0.95, fixing critic_lam0.5 in both, and assert identical
+Q/V targets. Use one epoch and one579-row minibatch, LR1e-4, normal PPO clipping,
+global advantage normalization, entropy/reference penalties and gradient/KL
+guards. Both arms use the same fixed optimizer shuffle seed2026101219. No forced
+activation sample is added; only original-policy trajectories enter the update.
+
+Record actual optimizer-step counts, normalized root advantage, before/after
+activation probability at760 and all149 existing probes, per-game policy KL,
+entropy and probability shifts, model hashes and finite-value checks. These
+probes overlap the training trajectories: neither retention nor generalization
+is established. The small diagnostic has no strength endpoint and cannot authorize
+scale-up or deployment. If the corrected advantage fails to improve the known
+probability, inspect gradient interference/Adam rather than adding training steps.
+Persist each capture/arm; two CPU workers,15-minute limit, independent monitor.
+
+Identity: `1f789dd1eab9a6774601bcefee7e3223a26da27ec0c89e8a056ab7f86575025d`;
+report: `f584fa88b2e2f69ddee30d4e950ddc9f6d8f9a96f61557fe35603566ea181c7a`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
