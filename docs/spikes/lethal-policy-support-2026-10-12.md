@@ -3199,3 +3199,10 @@ support blaming a generally destructive critic gradient for the observed lack of
 playing improvement. It does not reconstruct the finite Adam step, establish
 per-row alignment, or provide correct-action labels. No objective, lambda,
 critic-sharing setting or model checkpoint was changed by this diagnostic.
+
+The [2026-10-13 target-branch follow-up](attack-target-credit-2026-10-13.md)
+adds 80 cold-verified continuations over four outcome-blind roots and a same-size
+independent-seed replication. It locates one replicated adverse actor preference
+that predates the canary and worsens during updates 3–4, plus a separate case with
+opposite critic/actor ranking. These are conditional diagnostics, not automatic
+optimal-action labels or grounds to scale training.
