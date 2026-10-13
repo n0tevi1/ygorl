@@ -153,6 +153,11 @@ any subsequent model comparison.
 
 ## Evidence
 
+The [credit-source follow-up](attack-credit-source-2026-10-13.md) checks the
+actual saved estimator and separates the critic's indirect policy-gradient
+contribution from its direct regression losses. It also records additional
+target roots without selecting for losses.
+
 All directories below are under `out/research/` with suffix `-2026-10-13`:
 
 - `attack-target-branches`: selection registration, runtime binding, four baselines,
