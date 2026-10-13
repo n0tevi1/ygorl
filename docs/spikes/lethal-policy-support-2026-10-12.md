@@ -2856,6 +2856,46 @@ training cause or authorize a larger fit from gradient alignment alone.
 Identity: `cfad0f719dfae9c0239b0047666789b86b9affc3c63304c523dc976c5200a892`;
 report: `a68ecda5a139664dccb8e749bbc4d02cf4421508b6cd25b7c4bc7e806f5d6e4d`.
 
+## Final corrective gradient remains strong; KL is not the main local obstruction
+
+`lethal-battle-head-gradient-audit` reproduces all final probabilities, verifies
+candidate/step16 heads bitwise and all four Adam counters equal16, and performs
+zero optimizer updates. At the final head, gradient norms are4.36672 for
+half-weight Snow CE,0.00003048 for half-weight Havnis CE, and0.15745 for anchor
+KL. KL and Snow gradients have cosine-0.64187, but their negative-gradient
+projections onto the correct Snow logit margin are-1.12577 versus+48.64377:
+KL offsets about2.31% of that Euclidean local correction. The combined projection
+is+47.51776. The failed gate is therefore not explained by the corrective signal
+being mostly canceled by KL at this point. These are not Adam-preconditioned
+counterfactual steps, nor proof that additional updates would safely cross50%.
+
+The observed Snow margin moved-3.05063 to-1.28910; Havnis correct margin moved
+15.20372 to12.59996. All16 recorded steps hit the norm1 cap. Keep the fit closed
+rather than tune away its failure. Two nearly duplicate roots cannot establish
+a broadly useful learned combat correction even if they can be fitted harder.
+
+A metadata check of existing `critic-battle-branch-data`,
+`critic-ranking-coverage-branches` and `critic-ranking-state-expansion-branches`
+finds40/128/192 registered roots respectively, all `SelectBattleCmd`.
+These grids compare attack declarations/phase choices, not explicit alternative
+attack-target decisions. Their downstream policy may therefore retain the very
+target-selection error we need to teach; root-return labels are not direct
+validated target-choice labels.
+
+Next audit only existing source transcripts referenced by these three fixed
+registries. Count root types/splits, exclude any source referenced by a
+validation root in any of the three sets, then enumerate candidate-side attack
+target prompts in the remaining unique training sources. Require attack hint,
+policy mask, actual preceding attacker and face-up current public stats for
+nominal-damage candidates; never infer facedown identities or label damage
+arithmetic as a proved win. Report card/deck coverage, supported alternatives,
+repetition and nominal-lethal disagreements, with source hashes. No new duels,
+GPU work, fitting, validation-outcome mining or target labels. This determines
+whether reusable diverse target contexts exist before any new branch experiment.
+
+Identity: `a43371374594f8cdef574c9fdb11287ac97e85a9c74c3c181240271039acc50d`;
+report: `4350ea24a195d7b2f5872271c167512956d230046a6b3d8e98e8ddfd025a16cf`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
