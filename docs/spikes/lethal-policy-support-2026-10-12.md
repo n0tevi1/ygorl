@@ -2189,6 +2189,30 @@ training, online helper promotion or expansion of search.
 Identity: `991d4d356cbab0cd4f3ad1a90112f4c23bb4a25c388fa02935f1c00ec0b4c85c`;
 report: `77cafeeec819d4a1f6e4ba7b75aa6cad3ca5846f56b6324b4dda96683f672344`.
 
+## Single activation is sufficient in the exposed timing case
+
+`lethal-activation-timing` completes all six fixed continuations. Game0's exact
+control loses T16/880. Forcing only decision760 to activate Forbidden Droplet
+(24299458), then returning every subsequent choice to the original learned
+policy, wins T15/781. There is exactly one overridden choice. Replaying the
+certified preparation or full suffix both wins T15/782, with four overridden
+choices. Game3's neutral control/full suffix remain identical T9/355 wins.
+All prefixes, original controls, supported actions, identities and complete
+certificate executions pass against the live checkpoint opponent.
+
+Thus the activation-timing change alone is sufficient for this fixed state and
+RNG stream; the later cost/target policy can already complete the win. It does
+not establish an always-activate rule, general win-rate gain, or safety across
+hidden worlds. Next observe probabilities at every candidate optional-chain
+prompt in the same eight original games, retaining exact complete traces and
+recording public phase/LP, supported alternatives and chosen probabilities.
+Include the exposed760 and later Main2 activation814 explicitly. This separates
+low-probability sampling from policy preference without changing cards, states,
+weights, actions or random streams. No new deals or teacher labels.
+
+Identity: `59e1a217a02742e37760008b20780344c04f06619a8f23ab29043bf5b11b35f4`;
+report: `5c0be446836112f4130a73d0113d3e63beecd9902ff3fdbf421dcf34c6da22c7`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
