@@ -2786,6 +2786,43 @@ between historical checkpoints to a single training mechanism.
 Identity: `c34bff24c2894aa67a13b5fa116891b7d124a43b81f9ef24742f9b21343b6189`;
 report: `90e35367b97a3e0ed3bc2cc20318e5ff0ddbd31de6f4c2b4f74203aeae87a634`.
 
+## Checkpoint comparison locates a large local regression after u128
+
+`lethal-battle-checkpoint-audit` completes18 frozen forwards on the six original
+observations with unchanged inputs and u512 probability parity. In the
+Snow-selected state, correct Snow attack probability is49.89%-49.97% at u128,
+0.001014%-0.001018% at u256, and4.518%-4.526% at u512. The corresponding
+Snow-versus-Havnis margins move from roughly0 to-11.5 and then-3.05.
+In the Havnis-selected state, Snow remains the wrong target; its probability
+falls from4.57%-4.59% at u128 to about0.0000024% at u256 and0.000025% at u512.
+The later actor becomes very decisive when Havnis is correct, while losing the
+earlier near-even response when Snow is correct. u512 partially recovers from
+u256 but remains locally worse than u128. This is a fixed-state regression,
+not a win-rate comparison or identification of one historical training cause.
+
+Next run one bounded corrective head-only pilot on a copy of u512. Supervise
+the two native-verified target choices from suffix2026101301: Snow after Snow
+was weakened, Havnis after Havnis was weakened. Freeze the entire actor except
+its action-scoring head. Use16 fixed full-batch Adam steps (lr1e-4, no decay,
+gradient norm cap1), mean two-row cross entropy plus coefficient1 forward KL
+from the original policy on saved learner observations of games1-3. Cache
+frozen features; use only actor-visible arrays, never privileged tensors.
+Games4-7 are reserved for post-fit probability drift measurement, not the loss;
+the other four suffix observations are correlated diagnostics, not independent
+held-out states. No optimizer/hyperparameter/seed sweep or best-step selection.
+
+Report the final16-step candidate, original probabilities, train/correlated
+probe probabilities, per-game and decision-kind KL/argmax changes, and exact
+non-head parameter equality. A candidate proceeds only to native replay if
+both verified choices exceed50% on all six contexts, correct Havnis remains
+at least99%, and reserved-game mean/max forward KL are at most0.01/0.1.
+Otherwise report failure without extending this fit. These are diagnostic
+prerequisites, not a deployment or strength gate. Save the experimental head
+separately; never replace the source checkpoint or production policy.
+
+Identity: `fe93ad3a2aa5f652dcb26ce9da769fe6d1c7f95630ce14f8779985980c33677b`;
+report: `8add0d7995135de57628e51b1ee22f82a83469631ed8adda6378ff04d172ddc8`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
