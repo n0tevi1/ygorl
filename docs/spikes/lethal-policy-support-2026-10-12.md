@@ -2307,6 +2307,49 @@ bounded diagnostic adds no deals, training, model selection or production change
 Identity: `54e54d24ef1e20b9b6c9a2cc0a71f1c97dddcd6362d8c53d0d23a69a32c51506`;
 report: `2aa6329d709d366120cf77ae5c221215a11f9ff573593e6bcb818229667be8e5`.
 
+## Critic audit also favors pass at the known missed-win root
+
+`lethal-activation-critic-restart` completes eight exact native replays and149
+states across three checkpoints. Saved actor tensors, canonical actor probabilities,
+agent RNG states and full trajectories match the earlier audit. Privileged tensors
+are saved separately and enter only the critic. At decision760:
+
+| Checkpoint | Q(activate) | Q(pass) | V | Policy P(activate) |
+| --- | ---: | ---: | ---: | ---: |
+| u128 | -0.07495 | -0.04355 | -0.01433 | 0.07721% |
+| u256 | 0.02146 | 0.01618 | 0.06527 | 0.02337% |
+| u512 | 0.40681 | 0.44675 | 0.48462 | 0.01556% |
+
+The current critic also favors pass, despite the previously verified single
+u512 continuation winning after activation and losing after pass. u256 slightly
+favors activation while its actor strongly suppresses it, so actor preference
+cannot be explained solely by the contemporaneous Q ranking. Across138 optional
+chain states, Q prefers at least one chain over pass at58/81/59 states; these are
+descriptive, mostly unlabeled comparisons, not critic accuracy measurements.
+
+The first preflight stopped on a5.66e-7 probability difference. Isolating identical
+actor weights and observations shows the joint model scores trimmed action rows
+while the standalone actor pads features before scoring: maximum deltas across
+149 states are8.35e-7/8.35e-7/2.563e-6, with no argmax changes. The restart retains
+the original strict canonical probability controls and separately requires joint
+path absolute delta at most1e-5 and identical argmax. Original STOP and source stay
+intact. This is numerical path parity, not relaxed game-health validation.
+
+Next audit only the two existing game0 control/activation continuations. Replay
+each exactly; after760 record u512 Q, probabilities and V at every learner
+decision with more than one supported action, matching snapshot-opponent and
+skip-forced collection semantics. Use the actual terminal reward with the existing
+Expected-SARSA/VRPO estimator, gamma1 and lambda0.5, without advantage normalization.
+Report the root return, advantage, and terminal-reward contribution by recomputing
+with terminal reward zero while holding all Q estimates fixed. Also show the pure
+terminal-return comparison explicitly as a diagnostic, not a proposed replacement.
+This is a complete-suffix calculation, not a reconstruction of a historical128-row
+training segment; the forced-activation branch is counterfactual, not on-policy
+training data. No optimizer steps, new RNG seeds, new deals or model promotion.
+
+Identity: `f84d12520372860d430ef3d4f6b165693cf98fbe40330df590cec98e92016c9b`;
+report: `8678d37cfcc60734f6a0caec9472a9c92e7c51be0b47d4faef4c0a8ad76d607e`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
