@@ -123,7 +123,7 @@ def action_key(point, index: int) -> tuple:
 
 def line_steps(demo: Demonstration, line: int, vocab: CardVocab | None = None, *, cards=None, scripts=None,
                env: Environment | None = None, event_length: int = DEFAULT_EVENT_LENGTH,
-               player: int | None = DEMO_PLAYER, selection_history: bool = False) -> list[DemoStep]:  # fmt: skip
+               player: int | None = DEMO_PLAYER, selection_history: bool = False, attack_history: bool = False) -> list[DemoStep]:  # fmt: skip
     """Replay ``demo.lines[line]`` and describe every step (both players').
 
     With a ``vocab``, the non-forced decisions of ``player`` (at least two legal actions) carry their
@@ -134,7 +134,9 @@ def line_steps(demo: Demonstration, line: int, vocab: CardVocab | None = None, *
     kwargs = {k: v for k, v in (("cards", cards), ("scripts", scripts)) if v is not None}
     session = DuelSession(demo.replay(line).duel(env, **kwargs))
     observer = (
-        PointObserver(cards, vocab, event_length, selection_history=selection_history) if vocab is not None else None
+        PointObserver(cards, vocab, event_length, selection_history=selection_history, attack_history=attack_history)
+        if vocab is not None
+        else None
     )
     out: list[DemoStep] = []
     try:
@@ -178,7 +180,7 @@ def undone_steps(steps: Sequence[DemoStep]) -> set[int]:
 def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=None, scripts=None,
                   env: Environment | None = None, event_length: int = DEFAULT_EVENT_LENGTH,
                   player: int = DEMO_PLAYER, include_synthetic_closing: bool = False,
-                  selection_history: bool = False) -> BCData:  # fmt: skip
+                  selection_history: bool = False, attack_history: bool = False) -> BCData:  # fmt: skip
     """Every verified line of every solved record (plain and ``--fire``) as training samples.
 
     Kept: the decisions of ``player`` with at least two legal actions whose demonstrated row is encoded
@@ -200,7 +202,7 @@ def build_dataset(demos: Iterable[Demonstration], vocab: CardVocab, *, cards=Non
                 raise DemoError("solver_responses is outside the recorded response range")
             verify_line(demo, li, env=env, cards=cards, scripts=scripts)
             steps = line_steps(demo, li, vocab, cards=cards, scripts=scripts, env=env, event_length=event_length,
-                               player=player, selection_history=selection_history)  # fmt: skip
+                               player=player, selection_history=selection_history, attack_history=attack_history)  # fmt: skip
             undone = undone_steps(steps)
             for st in steps:
                 if st.player != player:

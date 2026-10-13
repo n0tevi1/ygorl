@@ -272,6 +272,7 @@ private:
 struct Observation {
     std::vector<int32_t> cards, globals, actions, action_mask;
     bool selection_history = false;
+    bool attack_history = false;
     bool has_events = false;  // event token stream (T2.4, event_encoder.h): [L, E_EVENT] + [L]
     std::vector<int32_t> events, event_mask;
 };
@@ -307,6 +308,7 @@ public:
     // Keep the last n event tokens per viewer from the next start() on (0 = no event stream).
     void set_event_length(size_t n) { event_length_ = n; }
     void set_selection_history(bool enabled) { selection_history_ = enabled; }
+    void set_attack_history(bool enabled) { attack_history_ = enabled; }
     void set_cancel_budget(uint32_t budget);
 
 private:
@@ -321,6 +323,7 @@ private:
     std::vector<Action> empty_;
     size_t event_length_ = 0;
     bool selection_history_ = false;
+    bool attack_history_ = false;
     uint32_t cancel_budget_ = CANCEL_BUDGET_OFF;
     std::shared_ptr<EventHistory> events_;
 };

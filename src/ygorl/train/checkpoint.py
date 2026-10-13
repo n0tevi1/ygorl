@@ -125,10 +125,13 @@ class Signature:
     passwords: tuple[int, ...]  # vocab passwords in index order (from CardVocab.FIRST_INDEX)
     event_length: int
     selection_history: bool = False
+    attack_history: bool = False
 
     @classmethod
-    def of(cls, vocab: CardVocab, event_length: int, selection_history: bool = False) -> Signature:
-        return cls(tuple(vocab.passwords()), int(event_length), selection_history)
+    def of(
+        cls, vocab: CardVocab, event_length: int, selection_history: bool = False, attack_history: bool = False
+    ) -> Signature:
+        return cls(tuple(vocab.passwords()), int(event_length), selection_history, attack_history)
 
     def mismatches(self, other: Signature, *, event_length: bool = True) -> list[str]:
         """Why ``other`` cannot read this signature's observations, one readable reason per difference (empty =
@@ -145,6 +148,8 @@ class Signature:
             out.append(f"{self.event_length} vs {other.event_length} event tokens per observation")
         if self.selection_history != other.selection_history:
             out.append("selection-history encoding differs")
+        if self.attack_history != other.attack_history:
+            out.append("attack-history encoding differs")
         return out
 
 
@@ -191,7 +196,9 @@ class LoadedPolicy:
 
     @property
     def signature(self) -> Signature:
-        return Signature.of(self.vocab, self.event_length, self.net_config.selection_history)
+        return Signature.of(
+            self.vocab, self.event_length, self.net_config.selection_history, self.net_config.attack_history
+        )
 
 
 @dataclass
@@ -207,7 +214,9 @@ class LoadedActorCritic:
 
     @property
     def signature(self) -> Signature:
-        return Signature.of(self.vocab, self.event_length, self.net_config.selection_history)
+        return Signature.of(
+            self.vocab, self.event_length, self.net_config.selection_history, self.net_config.attack_history
+        )
 
 
 def _tables(cfg: NetConfig, vocab: CardVocab, where: str | Path | None, path) -> TextFeatures | None:
@@ -291,27 +300,30 @@ def warm_start(actor: PolicyNet, source: LoadedPolicy) -> list[str]:
     are explicitly zeroed; selection history inserts a zero event-type row. Returns the config fields that differ (empty = an exact copy)."""
     old, new = source.net_config.to_dict(), actor.cfg.to_dict()
     differ = sorted(k for k in old.keys() | new.keys() if old.get(k) != new.get(k))
-    if set(differ) - CARD_VIEW_FIELDS - {"selection_history"} or (
-        old["selection_history"] and not new["selection_history"]
+    if set(differ) - CARD_VIEW_FIELDS - {"selection_history", "attack_history"} or any(
+        old[k] and not new[k] for k in ("selection_history", "attack_history")
     ):
         raise ValueError(f"{source.path}: its network {old} differs from the configured {new} "
                          "(set the same net options)")  # fmt: skip
     state = source.net.state_dict()
-    if "selection_history" in differ:
+    added_types = (2 if new["attack_history"] else int(new["selection_history"])) - (
+        2 if old["attack_history"] else int(old["selection_history"])
+    )
+    if added_types:
         from ygorl.env.events import EVENT_TYPES
 
         # CategoricalEmbedding concatenates columns: insert a type row and shift
         # every later column, rather than silently reinterpreting its old weights.
-        boundary = len(EVENT_TYPES) + 1
+        boundary = len(EVENT_TYPES) + 1 + (2 if old["attack_history"] else int(old["selection_history"]))
         target = actor.state_dict()
         for name, value in list(state.items()):
             if name.endswith("embed.categorical.table.weight"):
                 expanded = target[name].clone()
-                if expanded.shape[0] != value.shape[0] + 1:
+                if expanded.shape[0] != value.shape[0] + added_types:
                     raise ValueError("selection-history embedding layout mismatch")
                 expanded[:boundary] = value[:boundary]
-                expanded[boundary].zero_()
-                expanded[boundary + 1 :] = value[boundary:]
+                expanded[boundary : boundary + added_types].zero_()
+                expanded[boundary + added_types :] = value[boundary:]
                 state[name] = expanded
     missing, unexpected = actor.load_state_dict(state, strict=not differ)
     if unexpected or any(not any(m in k for m in CARD_VIEW_MODULES) for k in missing):

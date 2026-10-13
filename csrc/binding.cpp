@@ -144,6 +144,7 @@ py::dict observation_dict(const host::Observation& o) {
     d["actions"] = to_array(o.actions, {host::MAX_OPTIONS, host::A_ACTION});
     d["action_mask"] = to_array(o.action_mask, {host::MAX_OPTIONS});
     if (o.selection_history) d["selection_history"] = to_array({1}, {1});
+    if (o.attack_history) d["attack_history"] = to_array({1}, {1});
     if (o.has_events) {
         const auto n = static_cast<py::ssize_t>(o.event_mask.size());
         d["events"] = to_array(o.events, {n, host::E_EVENT});
@@ -418,14 +419,15 @@ PYBIND11_MODULE(_core, m) {
 
     py::class_<host::HostDuel>(m, "HostDuel", "A duel driven entirely in C++: tracker, actions and encoder.")
         .def(py::init([](std::shared_ptr<CardDatabase> cards, std::shared_ptr<ScriptDirectory> scripts,
-                         const std::vector<uint32_t>& vocab, size_t event_length, bool selection_history, uint32_t cancel_budget) {
+                         const std::vector<uint32_t>& vocab, size_t event_length, bool selection_history, uint32_t cancel_budget, bool attack_history) {
                  auto h = std::make_unique<host::HostDuel>(cards, scripts, std::make_shared<host::Vocab>(vocab));
                  h->set_event_length(event_length);
                  h->set_selection_history(selection_history);
+                 h->set_attack_history(attack_history);
                  h->set_cancel_budget(cancel_budget);
                  return h;
              }),
-             py::arg("cards"), py::arg("scripts"), py::arg("vocab"), py::arg("event_length") = 0, py::arg("selection_history") = false, py::arg("cancel_budget") = 32)
+             py::arg("cards"), py::arg("scripts"), py::arg("vocab"), py::arg("event_length") = 0, py::arg("selection_history") = false, py::arg("cancel_budget") = 32, py::arg("attack_history") = false)
         .def("start", [](host::HostDuel& h, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1, py::tuple t2,
                          DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
             auto p1 = to_player(t1), p2 = to_player(t2);
@@ -464,13 +466,13 @@ PYBIND11_MODULE(_core, m) {
         "Vectorized env with the step loop, action states and encoder in C++ (env i on thread i % threads).")
         .def(py::init([](size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
                          std::shared_ptr<ScriptDirectory> scripts, const std::vector<uint32_t>& vocab, bool privileged,
-                         size_t event_length, bool skip_forced, bool selection_history, uint32_t cancel_budget) {
+                         size_t event_length, bool skip_forced, bool selection_history, uint32_t cancel_budget, bool attack_history) {
                  return std::make_unique<host::HostPool>(num_envs, num_threads, cards, scripts,
                                                          std::make_shared<host::Vocab>(vocab), privileged,
-                                                         event_length, skip_forced, selection_history, cancel_budget);
+                                                         event_length, skip_forced, selection_history, cancel_budget, attack_history);
              }),
              py::arg("num_envs"), py::arg("num_threads"), py::arg("cards"), py::arg("scripts"), py::arg("vocab"),
-             py::arg("privileged") = false, py::arg("event_length") = 0, py::arg("skip_forced") = false, py::arg("selection_history") = false, py::arg("cancel_budget") = 32)
+             py::arg("privileged") = false, py::arg("event_length") = 0, py::arg("skip_forced") = false, py::arg("selection_history") = false, py::arg("cancel_budget") = 32, py::arg("attack_history") = false)
         .def("reset", [](host::HostPool& p, int env, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1,
                          py::tuple t2, DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
             host::PoolJob job;

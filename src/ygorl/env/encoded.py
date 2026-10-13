@@ -51,7 +51,7 @@ class EncodedVecEnv:
     def __init__(self, num_envs: int, num_threads: int | None = None, cards=None, scripts=None,
                  vocab: CardVocab | None = None, privileged: bool = False,
                  event_length: int = DEFAULT_EVENT_LENGTH, skip_forced: bool = False,
-                 record_actions: bool = False, selection_history: bool = False, cancel_budget: int = 32) -> None:  # fmt: skip
+                 record_actions: bool = False, selection_history: bool = False, cancel_budget: int = 32, attack_history: bool = False) -> None:  # fmt: skip
         """``privileged=True`` is training mode: events also carry ``privileged`` (opponent ground truth).
 
         The default (inference mode) never computes it. Evaluation and play must use the default.
@@ -72,15 +72,16 @@ class EncodedVecEnv:
         self.vocab = vocab if vocab is not None else CardVocab.from_db(self.cards)
         passwords = self.vocab.passwords()
         threads = num_threads or max(1, min(num_envs, os.cpu_count() or 1))
-        if selection_history and event_length <= 0:
+        if (selection_history or attack_history) and event_length <= 0:
             raise ValueError("selection history requires a nonempty event window")
         self._pool = _core.HostPool(num_envs, threads, self.cards.to_core(),
                                     scripts if scripts is not None else default_scripts(), passwords,
-                                    privileged, event_length, skip_forced, selection_history, cancel_budget)  # fmt: skip
+                                    privileged, event_length, skip_forced, selection_history, cancel_budget, attack_history)  # fmt: skip
         self.num_envs = num_envs
         self.num_threads = threads
         self.privileged = privileged
         self.selection_history = selection_history
+        self.attack_history = attack_history
         self.event_length = event_length
         self.skip_forced = skip_forced
         self._action_traces: dict[int, list[int]] | None = {} if record_actions else None

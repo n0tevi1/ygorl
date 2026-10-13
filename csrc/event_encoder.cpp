@@ -107,23 +107,25 @@ bool slot_of(const Loc& loc, int& zone) {
 }  // namespace
 
 EventHistory::EventHistory(const CardDatabase* cards, const Vocab* vocab, size_t length, int64_t starting_lp,
-                           bool selection_history)
-    : cards_(cards), vocab_(vocab), length_(length), selection_history_(selection_history),
+                           bool selection_history, bool attack_history)
+    : cards_(cards), vocab_(vocab), length_(length), selection_history_(selection_history), attack_history_(attack_history),
       lp_{starting_lp, starting_lp} {
-    if (selection_history && !length)
+    if ((selection_history || attack_history) && !length)
         throw std::invalid_argument("selection history requires a nonempty event window");
 }
 
 void EventHistory::on_action(int player, uint8_t decision_type, const Action& action) {
-    if (!selection_history_ || (action.kind != SELECT && action.kind != UNSELECT &&
-                                action.kind != CANCEL && action.kind != FINISH)) return;
+    const bool attack = attack_history_ && action.kind == ATTACK;
+    const bool selection = selection_history_ && (action.kind == SELECT || action.kind == UNSELECT ||
+                                                 action.kind == CANCEL || action.kind == FINISH);
+    if (!attack && !selection) return;
     auto& ordinal = selection_ordinals_.at(player);
-    ordinal = std::min<uint32_t>(65535, ordinal + 1);
+    if (selection) ordinal = std::min<uint32_t>(65535, ordinal + 1);
     Card card, owner;
     if (action.has_card) { card.present = true; card.code = action.card.code; }
     if (action.description >> 20) { owner.present = true; owner.code = action.description >> 20; }
-    emit(EV_SELECTION_CHOICE, player, card, owner, action.has_card ? &action.card.loc : nullptr,
-         nullptr, static_cast<int>(action.kind) + 1, decision_type, ordinal, player);
+    emit(attack ? EV_SELECTION_CHOICE + 1 : EV_SELECTION_CHOICE, player, card, owner, action.has_card ? &action.card.loc : nullptr,
+         nullptr, static_cast<int>(action.kind) + 1, decision_type, attack ? 0 : ordinal, player);
 }
 
 int EventHistory::field_count(int player) const {

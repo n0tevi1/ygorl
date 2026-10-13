@@ -364,3 +364,21 @@ EDOPro 脚本里 `aux.Stringid(code, n) = code << 20 | n`（`utility.lua`），�
 默认关闭，旧检查点保持旧编码；新训练通过 `--selection-history` 显式开启。
 `PointObserver` 调用方需在每次成功执行动作后、读取下个点前调用 `on_decision(point, index)`。
 详细设计、真实失败案例和验收见 [选择历史修复](spikes/selection-history-2026-10-09.md)。
+
+### Accepted attack choice (`attack_history`, opt-in)
+
+The independent `attack_history=True` schema adds `attack_choice` event type48
+and observation marker `attack_history:int32[1]=[1]`. Defaults remain false;
+selection type47 and `selection_history` semantics are unchanged. An accepted
+`attack` action is recorded only for its actor, before the next target prompt:
+card and FROM location identify the chosen attacker, VALUE1 is the attack kind,
+VALUE2 the decision message type, VALUE3 zero. This is not MSG_ATTACK or proof an
+attack resolved. Cancellation does not erase past choices; later choices append
+newer tokens. Opponent observations never receive these choice tokens.
+
+Native HostDuel/HostPool, Python PointObserver, checkpoint signatures, BC replay
+and inference carry the same flag. Invalid or duplicate action hooks must not
+append duplicate tokens. Reset clears history. New training may explicitly warm
+start with zero-added event-type rows; existing checkpoint resume and mixed-schema
+batches must reject mismatches. The default event window remains bounded, so this
+is an input fix for the immediate target window, not unlimited action memory.

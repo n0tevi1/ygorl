@@ -2896,6 +2896,90 @@ whether reusable diverse target contexts exist before any new branch experiment.
 Identity: `a43371374594f8cdef574c9fdb11287ac97e85a9c74c3c181240271039acc50d`;
 report: `4350ea24a195d7b2f5872271c167512956d230046a6b3d8e98e8ddfd025a16cf`.
 
+## Training-system repair takes priority over isolated head correction
+
+User direction: fix reproducible implementation/data/training problems, then
+retrain with matched controls. The failed 16-step head fit remains a diagnostic;
+it is not a production checkpoint and will not be extended. The target-coverage
+inventory above is pending and is now part of the training-system audit rather
+than preparation for another single-case head patch.
+
+A new native-prefix reproduction finds missing player-known attacker context.
+Use `critic-ranking-coverage-data-2026-10-11/games/1/job.json` and its recorded
+responses through decision50. At decision51 choose either attack row0
+(card32909498, own monster slot1) or row1 (card37961969, slot3). Both branches
+reach `SelectCard` at decision52. Every actor input tensor is byte-identical:
+cards, globals, actions, action_mask, events and event_mask. The same collision
+persists with `selection_history=True`. All four branches match Python reference
+and native HostDuel observations elementwise. No terminal outcome was used for
+label selection, and no optimizer or full-game evaluation was run.
+
+The engine emits Hint549 and requests a target before MSG_ATTACK. The latter
+only arrives after the target has been chosen. Both event encoders currently
+record accepted selection/unselection/cancel/finish actions under the opt-in
+history flag, but not attack declarations. The configured window-mode history
+therefore cannot recover which attacker was just chosen from these identical
+inputs. This is a verified representational gap; it does not establish the best
+target or cancellation choice in this example, and it does not explain the
+single-attacker Snow/Havnis error by itself.
+
+Repair requirements before retraining:
+
+- Introduce explicitly versioned player-known action context. Keep old checkpoint
+  behavior reproducible; do not silently change the existing selection schema.
+- Cover Python/native observation parity, accepted/rejected actions, cancellation,
+  replay, snapshot/restore, reset and player privacy. Audit other multistep
+  actions for the same input-aliasing mechanism.
+- Instrument actual attack-target samples separately from generic `select`
+  actions; audit return/advantage signs, truncation and actor/critic interference
+  before blaming a particular loss or increasing the training budget.
+- After regression tests pass, compare fixed-budget continuation from the same
+  audited checkpoint with and without each repair. Hold opponents, deck/deal
+  splits and evaluation protocol fixed. Check full-game strength and retention,
+  missed lethal opportunities, self-interference, loops and turn-count tails.
+  Require replication before scale-up. Training from scratch is a separate
+  decision if representation incompatibility or demonstrated inherited bias
+  makes a warm start unsuitable.
+
+Evidence: `out/research/training-attack-context-native-audit-2026-10-12/`
+(`run.py`, `report.json`, four observation NPZ files). This is a short synchronous
+input regression, not one of the monitored training studies below. Runtime fix
+and retraining are pending; no new training run has been launched.
+
+## Opt-in attacker history implementation and bounded training canary
+
+The repair now has an independent `attack_history` input flag, native/reference
+encoders and observation markers, trainer/BC/inference plumbing, checkpoint
+signatures and explicit warm-start embedding migration. Type48 records an
+accepted own attack choice before the target prompt. Legacy flags/defaults and
+selection type47 remain unchanged. The real prefix is a checked-in regression
+(`tests/data/attack_history_case.json`); both attacker branches are distinguishable
+only when the new flag is enabled, with native/reference parity, private-view
+isolation, cancellation, reset and session-snapshot coverage. Tests also cover
+bitwise old-input logits after weight migration, schema rejection, a PPO update
+and save/resume, and BC cache compatibility.
+
+After the full suite passes, run `attack-history-training-canary-2026-10-12`:
+control versus attack-history, four updates each, eight environments ×128 rows,
+20 existing decks, fixed seed2026101231, CPU FP32 and two worker threads. Both
+arms start with semantically identical actor AND critic weights from seed0 warm
+u128 (`b9ad9ec4e89ae5da1be780a420de292dc2cf34fa4d7903dc502b27b38c79dc61`).
+Only new event-type embedding rows are zero-added. Both arms use fresh Adam,
+reference and opponent pools, and retain the source PPO loss settings. This is
+explicit warm-start retraining, not restoration of the original optimizer/pool.
+No Snow/Havnis correction labels or selected-game rewards enter training.
+
+Each arm saves an initial checkpoint and every update; health is checked before
+optimizer execution. Runtime/source/native/checkpoint hashes are frozen, with
+15-second heartbeat, independent watcher and a15-minute service bound (maximum
+10 minutes per arm). A health/identity failure stops the study and preserves
+artifacts. Record actual attack-context coverage rather than treating a enabled
+flag as evidence the signal was encountered. Four updates are an integration
+canary, not a strength test or justification to scale. Initial input changes can
+change behavior before learning; subsequent strength evaluation must include
+both initial and trained variants, paired held-out deals and retention tests.
+Do not promote a model from this canary alone.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,

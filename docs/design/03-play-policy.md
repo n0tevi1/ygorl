@@ -504,3 +504,21 @@ v2使用新产物根与源码身份；原轨迹如已核对原结果/冷回放�
 不改变合法性、奖励或取消保护，不把选择序号当作错误标签。原生环境与 Python 回放同时实现；
 编码模式进入检查点输入签名，显式迁移旧权重，保留旧模式复现能力。后续采用独立配对训练
 验证取消循环、换目标成功率、引擎健康、完整对局胜率及回合尾部；编码修复本身不等于策略已学会。
+
+### Accepted attack context (opt-in input schema)
+
+`attack_history=True` adds an actor-private event for an accepted attack choice,
+including its card identity and field location, before the engine asks for the
+attack target. Engine `MSG_ATTACK` arrives after target selection and cannot
+supply this context in time. The token records a choice, not a completed attack;
+cancelled choices remain historical events and a subsequent accepted attack is
+newer. Rejected actions add no token. Opponents do not receive this private token.
+
+This is independent of the existing `selection_history` switch. Defaults and old
+checkpoints remain unchanged. Event type48 is reserved for attack choices;
+type47 retains its selection meaning. Observation schema, checkpoint signatures,
+batched environments, BC replay and inference must agree on both flags. Explicit
+warm start may add the new event rows with zero initialization; ordinary resume
+must reject schema changes. Python and native paths, snapshots and resets must
+agree. A matched retraining pilot must assess learned benefit and retention;
+input distinguishability alone is not evidence of stronger play.
