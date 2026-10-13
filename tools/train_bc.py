@@ -221,6 +221,13 @@ def main(argv: list[str] | None = None) -> int:
         if init is not None
         else args.selection_history
     )
+    attack_history = (
+        ckpt.net_config.attack_history
+        if args.no_train
+        else init.net_config.attack_history
+        if init is not None
+        else args.attack_history
+    )
     train_data = build_dataset(
         train_demos,
         vocab,
@@ -229,10 +236,11 @@ def main(argv: list[str] | None = None) -> int:
         event_length=event_length,
         include_synthetic_closing=args.include_synthetic_closing,
         selection_history=selection_history,
+        attack_history=attack_history,
     )
     heldout_data = build_dataset(heldout_demos, vocab, cards=cards, env=env, event_length=event_length,
                                  include_synthetic_closing=args.include_synthetic_closing,
-                                 selection_history=selection_history) if any(
+                                 selection_history=selection_history, attack_history=attack_history) if any(
         d.status == "solved" for d in heldout_demos) else None  # fmt: skip
     report["data"]["train"]["samples"] = len(train_data)
     report["data"]["train"]["skipped"] = dict(train_data.skipped)
@@ -242,7 +250,12 @@ def main(argv: list[str] | None = None) -> int:
 
         def extra_data(path):
             return load_compatible_data(
-                path, vocab=vocab, event_length=event_length, environment=stamp, selection_history=selection_history
+                path,
+                vocab=vocab,
+                event_length=event_length,
+                environment=stamp,
+                selection_history=selection_history,
+                attack_history=attack_history,
             )[0]
 
         if args.extra:

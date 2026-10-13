@@ -138,7 +138,11 @@ class NetPolicy:
 
                 self._cards = default_cards()
             self._observer = PointObserver(
-                self._cards, self._vocab, self._event_length, selection_history=self.net.cfg.selection_history
+                self._cards,
+                self._vocab,
+                self._event_length,
+                selection_history=self.net.cfg.selection_history,
+                attack_history=self.net.cfg.attack_history,
             )
         self._observer.observe(point)
         self._core = core

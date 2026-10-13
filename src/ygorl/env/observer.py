@@ -29,11 +29,12 @@ class PointObserver:
     """Observation dicts (``cards``, ``globals``, ``actions``, ``action_mask``, ``events``, ``event_mask``) of one duel."""
 
     def __init__(self, cards: Mapping, vocab: CardVocab, event_length: int = DEFAULT_EVENT_LENGTH,
-                 starting_lp: int | None = None, *, selection_history: bool = False) -> None:  # fmt: skip
+                 starting_lp: int | None = None, *, selection_history: bool = False, attack_history: bool = False) -> None:  # fmt: skip
         """``starting_lp``: the duel's starting LP (event tokens track LP); default: read from the first point."""
-        if selection_history and event_length <= 0:
+        if (selection_history or attack_history) and event_length <= 0:
             raise ValueError("selection history requires a nonempty event window")
         self.selection_history = selection_history
+        self.attack_history = attack_history
         self._last_action = -1
         self._last_action_index = None
         self.encoder = ObservationEncoder(cards, vocab)
@@ -50,7 +51,12 @@ class PointObserver:
         if self.history is None:
             lp = self.starting_lp if self.starting_lp is not None else point.lp[0]
             self.history = EventHistory(
-                self.cards, self.vocab, self.event_length, starting_lp=lp, selection_history=self.selection_history
+                self.cards,
+                self.vocab,
+                self.event_length,
+                starting_lp=lp,
+                selection_history=self.selection_history,
+                attack_history=self.attack_history,
             )
         self.history.feed(point.events)
         self._last = point.index
@@ -80,6 +86,8 @@ class PointObserver:
             obs.update(self.history.encode(point.player))
         if self.selection_history:
             obs["selection_history"] = np.ones(1, dtype=np.int32)
+        if self.attack_history:
+            obs["attack_history"] = np.ones(1, dtype=np.int32)
         return obs
 
 

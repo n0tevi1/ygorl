@@ -43,7 +43,7 @@ public:
     using Link = EventLink;
     using Window = EventWindow;
 
-    EventHistory(const CardDatabase* cards, const Vocab* vocab, size_t length, int64_t starting_lp, bool selection_history = false);
+    EventHistory(const CardDatabase* cards, const Vocab* vocab, size_t length, int64_t starting_lp, bool selection_history = false, bool attack_history = false);
     // Consume one engine message buffer ([u32 length][u8 type][payload]...).
     void feed(const std::string& buf);
     void on_action(int player, uint8_t decision_type, const Action& action);
@@ -70,6 +70,7 @@ private:
     const Vocab* vocab_;
     size_t length_;
     bool selection_history_ = false;
+    bool attack_history_ = false;
     std::array<uint32_t, 2> selection_ordinals_{};
     std::array<std::deque<Row>, 2> tokens_;
     uint32_t turn_ = 0;

@@ -71,6 +71,7 @@ class CheckpointAgent:
             self.policy.vocab.passwords(),
             event_length=self.policy.event_length,
             selection_history=self.policy.net_config.selection_history,
+            attack_history=self.policy.net_config.attack_history,
         )
         p = cfg.player
         player = (p.starting_lp, p.starting_hand, p.draw_per_turn)

@@ -41,9 +41,11 @@ EVENT_TYPES = [
     "toss_dice", "hand_res", "abstain",
 ]  # fmt: skip
 SELECTION_EVENT = len(EVENT_TYPES) + 1
+ATTACK_CHOICE_EVENT = SELECTION_EVENT + 1
 EV = {name: i + 1 for i, name in enumerate(EVENT_TYPES)}
 
 EV["selection_choice"] = SELECTION_EVENT
+EV["attack_choice"] = ATTACK_CHOICE_EVENT
 
 TRIGGERS = {"search": 1, "spsummon_deck": 2, "send_deck_grave": 4, "fifth_summon": 8, "attack": 16, "other": 32}
 
@@ -113,12 +115,13 @@ class EventHistory:
     """Per-viewer event token history of one duel (see the module docstring)."""
 
     def __init__(self, cards: Mapping, vocab: CardVocab, length: int = DEFAULT_EVENT_LENGTH,
-                 starting_lp: int = 8000, *, selection_history: bool = False) -> None:  # fmt: skip
+                 starting_lp: int = 8000, *, selection_history: bool = False, attack_history: bool = False) -> None:  # fmt: skip
         if length < 0:
             raise ValueError("length must be >= 0")
-        if selection_history and not length:
+        if (selection_history or attack_history) and not length:
             raise ValueError("selection history requires a nonempty event window")
         self.selection_history = selection_history
+        self.attack_history = attack_history
         self.selection_ordinals = [0, 0]
         self.cards = cards
         self.vocab = vocab
@@ -142,22 +145,25 @@ class EventHistory:
 
     def on_action(self, player: int, decision_type: int, action) -> None:
         """Remember an accepted, already redacted selection action only for its actor."""
-        if not self.selection_history or action.kind not in ("select", "unselect", "cancel", "finish"):
+        attack = self.attack_history and action.kind == "attack"
+        selection = self.selection_history and action.kind in ("select", "unselect", "cancel", "finish")
+        if not (attack or selection):
             return
         from ygorl.env.encoding import ACTION_KINDS
 
-        self.selection_ordinals[player] = min(CLAMP, self.selection_ordinals[player] + 1)
+        if selection:
+            self.selection_ordinals[player] = min(CLAMP, self.selection_ordinals[player] + 1)
         card = self._card(action.card.code) if action.card is not None else None
         owner = action.description >> 20
         self._emit(
-            "selection_choice",
+            "attack_choice" if attack else "selection_choice",
             player,
             card=card,
             card2=self._card(owner) if owner else None,
             frm=action.card.loc if action.card is not None else None,
             v1=ACTION_KINDS.index(action.kind) + 1,
             v2=decision_type,
-            v3=self.selection_ordinals[player],
+            v3=0 if attack else self.selection_ordinals[player],
             only=player,
         )
 

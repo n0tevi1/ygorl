@@ -292,6 +292,8 @@ def test_checkpoint_before_selection_flag_still_resumes(tmp_path):
     old.step()
     state = old.state_dict()
     state["net_config"].pop("selection_history")
+    state["net_config"].pop("attack_history")
+    state["config"]["net"].pop("attack_history", None)
     state["config"]["net"].pop("selection_history", None)
     path = save_checkpoint(state, tmp_path / "legacy.pt")
     resumed = Trainer.resume(path, tmp_path / "resumed", log=None)

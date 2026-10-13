@@ -1051,7 +1051,7 @@ void HostDuel::start(const std::array<uint64_t, 4>& seed, uint64_t flags, const 
                      const std::vector<std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>& decks,
                      uint32_t max_turns, uint32_t max_decisions) {
     tracker_.reset();  // started() stays false unless this start() completes
-    if (selection_history_ && !event_length_)
+    if ((selection_history_ || attack_history_) && !event_length_)
         throw std::invalid_argument("selection history requires a nonempty event window");
     events_.reset();
     core_ = std::make_unique<Duel>(seed, flags, team1, team2, cards_, scripts_);
@@ -1063,7 +1063,7 @@ void HostDuel::start(const std::array<uint64_t, 4>& seed, uint64_t flags, const 
     }
     core_->start();
     tracker_ = std::make_unique<Tracker>(TrackerConfig{team1.starting_lp, max_turns, max_decisions}, cards_.get());
-    events_ = event_length_ ? std::make_shared<EventHistory>(cards_.get(), vocab_.get(), event_length_, team1.starting_lp, selection_history_)
+    events_ = event_length_ ? std::make_shared<EventHistory>(cards_.get(), vocab_.get(), event_length_, team1.starting_lp, selection_history_, attack_history_)
                             : nullptr;
     advance();
 }
@@ -1144,6 +1144,7 @@ void HostDuel::observe(Observation& out) {
             out.action_mask = std::move(restricted);
     }
     out.selection_history = selection_history_;
+    out.attack_history = attack_history_;
     out.has_events = events_ != nullptr;
     if (events_) events_->encode(std::max(0, player()), out.events, out.event_mask);
 }

@@ -45,6 +45,7 @@ class NetConfig:
     id_dropout: float = 0.0
     # history over the event token stream (docs/encoding.md "事件 token 流")
     selection_history: bool = False  # actor-private selection-choice tokens; part of the input signature
+    attack_history: bool = False  # accepted attacker choice, before target selection; separate input schema
     history: HistoryKind = "transformer"
     history_layers: int = 2
     history_mem_len: int = 128  # Transformer: past tokens kept per layer in the streaming state
@@ -53,7 +54,7 @@ class NetConfig:
     belief_dim: int = 0
 
     def __post_init__(self) -> None:
-        if self.selection_history and self.history == "none":
+        if (self.selection_history or self.attack_history) and self.history == "none":
             raise ValueError("selection history requires an event history encoder")
         if self.d_model % self.n_heads:
             raise ValueError(f"d_model={self.d_model} is not divisible by n_heads={self.n_heads}")

@@ -83,6 +83,7 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--d-model", "net.d_model"),
         _f("--layers", ("net.board_layers", "net.history_layers"), "board and history Transformer layers"),
         _f("--history", "net.history", choices=("transformer", "lstm", "none")),
+        _f("--attack-history", "net.attack_history", "record actor-private attack choices before target selection"),
         _f("--selection-history", "net.selection_history", "record actor-private selection actions in history"),
         _f("--no-id-embedding", "net.id_embedding", "drop the per-card ID embedding", negate=True),
         _f("--text-dir", "text_dir", "card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)",
@@ -181,7 +182,7 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
 
 
 # the network an actor reads: its widths, history, card views and event window
-ACTOR_FLAGS = ("--d-model", "--layers", "--history", "--selection-history", "--no-id-embedding", "--text-dir",
+ACTOR_FLAGS = ("--d-model", "--layers", "--history", "--attack-history", "--selection-history", "--no-id-embedding", "--text-dir",
                "--card-facts", "--no-text", "--id-dropout", "--event-length")  # fmt: skip
 
 

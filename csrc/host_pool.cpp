@@ -6,10 +6,10 @@ namespace ygorl::host {
 
 HostPool::HostPool(size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
                    std::shared_ptr<ScriptSource> scripts, std::shared_ptr<const Vocab> vocab, bool privileged,
-                   size_t event_length, bool skip_forced, bool selection_history, uint32_t cancel_budget)
+                   size_t event_length, bool skip_forced, bool selection_history, uint32_t cancel_budget, bool attack_history)
     : cards_(std::move(cards)), scripts_(std::move(scripts)), vocab_(std::move(vocab)), privileged_(privileged),
       event_length_(event_length),
-      skip_forced_(skip_forced), selection_history_(selection_history), cancel_budget_(cancel_budget),
+      skip_forced_(skip_forced), selection_history_(selection_history), attack_history_(attack_history), cancel_budget_(cancel_budget),
       slots_(num_envs) {
     if (cancel_budget != 0 && cancel_budget != 1 && cancel_budget != 4 && cancel_budget != CANCEL_BUDGET_OFF)
         throw std::invalid_argument("cancel_budget must be 0, 1, 4 or 32");
@@ -45,6 +45,7 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
             host = std::make_unique<HostDuel>(cards_, scripts_, vocab_);
             host->set_event_length(event_length_);
             host->set_selection_history(selection_history_);
+            host->set_attack_history(attack_history_);
             host->set_cancel_budget(cancel_budget_);
             host->start(job.seed, job.flags, job.team1, job.team2, job.decks, job.max_turns, job.max_decisions);
         } else {
