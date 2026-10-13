@@ -149,6 +149,11 @@ integration failures, not engine failures or evidence of a production fix.
 
 ## Evidence and next gate
 
+The [finite-update follow-up](attack-update-factorial-2026-10-13.md) tests these
+mechanisms with matched Adam updates and exactly replays historical update 3.
+It distinguishes current gradients from accumulated first moments; resetting
+momentum alone does not remove the historical diagnostic regression.
+
 Each study directory contains the script, identity manifest and healthy report.
 The first contains row-level decompositions; the second contains component
 gradients; the third contains the 22 cold-verified games and replays. The runtime
