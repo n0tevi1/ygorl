@@ -2499,6 +2499,106 @@ promotion. Independent monitor and 15-minute bound remain in place.
 
 Identity: `dcc0cb74d1b87c76e7d827b3456c438168c106ff9ceda3faaee2f73560b45643`.
 
+## Same-game transfer dominates; test rare activations before changing exploration
+
+`lethal-step-game-attribution` recovers the previous aggregate within 1.2e-9;
+maximum reconstructed parameter error remains below 1.2e-7. At lambda0.5,
+other actions in game0 contribute +0.07164685 to the root margin, versus only
++0.00342987 net from games1-7. At lambda0.95 these terms are +0.04249311 and
+-0.00386172. Cross-game contributions have mixed signs; the observed root
+probability increase mainly reflects other actions in the same game, not a
+strong direct correction or evidence of successful generalization.
+
+This closes the conditional gradient decomposition. Rather than another
+attribution subdivision or more updates, next check whether rare activations
+are useful exploration candidates at all. Use the original eight u512 games.
+For each game select only the earliest captured optional SelectChain where
+supported non-pass probability totals at most0.01 and the original policy
+passed. Choose the highest-probability supported non-pass action (lowest index
+breaks ties). Selection uses observed action support/probabilities, not branch
+outcomes. Games0,1,2,3,5 qualify at decisions250,179,191,18,46 respectively;
+games4,6,7 have no eligible root and are not replaced. The known760 success is
+not added as a selected root or counted as fresh confirmation.
+
+Run five exact original controls and five single-action interventions. Consume
+the original policy sample at the overridden decision, then continue both
+players with their original policies/RNG conventions. Require exact prefixes,
+root observation/probability/action agreement, supported actions and healthy
+terminal outcomes. Record changed winners, turns, decisions and action/card
+identity. This is a five-root diagnostic on already-exposed games, with one
+sampled suffix each, not a strength estimate, proof that passing is wrong,
+or a public-information-certified demonstration. A bad intervention is retained;
+no threshold adjustment, seed search, replacement root or automatic training
+follows. Freeze provenance, use two CPU workers and a15-minute service cap,
+and maintain the independent invocation-bound watcher.
+
+Identity: `b8268b7b543572dff016ba32fe692b4a889803b036cacf813c7dc8d58e236653`.
+
+## Rare-chain pilot finds one opportunity and also self-negation windows
+
+`lethal-rare-chain` completes all ten healthy continuations. All five controls
+match original transcripts/results; intervention prefixes, root observations,
+probabilities and supported action identities match. Only one policy action
+is overridden per intervention. Candidate outcomes (not engine seat numbers):
+
+| Game / decision | Action code | Original | One activation | Turns before/after | Decisions before/after |
+| --- | --- | --- | --- | --- | --- |
+| 0 /250 |34433770|Loss|Win|16 /11|880 /620|
+| 1 /179 |24299458|Win|Win|5 /7|257 /267|
+| 2 /191 |14558127|Loss|Loss|8 /8|359 /396|
+| 3 /18 |14558127|Win|Win|9 /9|355 /655|
+| 5 /46 |97045737|Loss|Loss|6 /6|252 /232|
+
+The new game0 action is Sky Striker Special Maneuver - Lemnisgate!, with
+original probability0.14266%; this is distinct from the already-exposed Droplet
+root760. However, the two Ash roots chain to the candidate's own Kitkallos
+effects (game2 graveyard milling; game3 summon-trigger card access). Rare actions
+therefore include self-negation, and cannot all be promoted as good exploration
+or demonstrations. The preserved negative examples matter even though their
+sampled final winners did not change. The five selected pairs average8.8 to8.2
+turns but420.6 to434.0 decisions; neither is a population improvement estimate.
+
+Before assigning value to any selected action, replicate the same five roots
+with exactly three fixed suffix seeds2026101301/1302/1303, paired between pass
+and activation. Replay the original prefix and consume the original root sample,
+then reset both policy generators once at the root to deterministic seeds derived
+only from suffix seed, game and player. Preserve the native engine seed/world;
+only post-root policy sampling changes. Run30 continuations (five roots x three
+seeds x two arms), no new deals, threshold adjustments, replacement roots or
+training. Require exact original prefixes/root inputs/support and healthy ends;
+report per-root paired outcomes and duration, including all self-negation cases.
+This tests suffix sensitivity on exposed roots, not hidden-world robustness or
+independent strength. No labels or deployment follow automatically. Two workers,
+15-minute bound, immutable provenance and invocation-bound monitor.
+
+Identity: `27b3a6fddd00c57a03dcd8dec1c9d7b269d058a3eae403c12da8fa060a9bad5e`;
+report: `f1f154b4622a281eec25731870ba7ac87661c16dc5e886e8414a68719d22972a`.
+
+## Paired suffix replication rejects the rare-action shortcut
+
+All30 fixed-root continuations finish healthy with exact original prefixes,
+root inputs and supported actions. At game0/250, the three new paired suffix
+seeds produce two control-win/intervention-loss pairs and one control-loss/
+intervention-win pair. The original loss-to-win example is not stable evidence
+for a positive action label. Game1 stays win/win in all three; games2 and5 stay
+loss/loss. The self-Ash game3 has one harmful flip, one helpful flip and one
+win/win. Across the15 pairs, activation has two helpful and three harmful flips;
+these exposed roots and correlated continuations do not justify a strength
+estimate. Stop this low-probability-threshold exploration route without tuning
+the threshold or adding more seeds. No automatic positive labels or training.
+
+The known Droplet760 case, which motivated the credit diagnosis, is distinct
+and still has only its original one-action outcome comparison. Next apply the
+same already-fixed three suffix seeds to that one root, original pass versus
+activation only (six continuations). Preserve exact prefix/input/support checks,
+root-sample consumption and both-generator reseeding conventions. This bounded
+check determines whether the motivating case itself survives suffix variation;
+it is not a replacement root to rescue the rejected five-root result. Keep the
+two result sets separate. No search, new native worlds, training or label
+promotion; all outcomes retained under the existing15-minute monitoring bound.
+
+Replication identity: `606085d311393bced6a8bb5a338ab423c251243a191cf20b471ceddf763816b2`.
+
 ## Artifacts and reproducibility
 
 All studies have two CPU workers, a 15-minute service cap, per-record persistence,
