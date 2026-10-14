@@ -51,7 +51,7 @@ class EncodedVecEnv:
     def __init__(self, num_envs: int, num_threads: int | None = None, cards=None, scripts=None,
                  vocab: CardVocab | None = None, privileged: bool = False,
                  event_length: int = DEFAULT_EVENT_LENGTH, skip_forced: bool = False,
-                 record_actions: bool = False, selection_history: bool = False, cancel_budget: int = 32, attack_history: bool = False) -> None:  # fmt: skip
+                 record_actions: bool = False, selection_history: bool = False, cancel_budget: int = 32, attack_history: bool = False, record_games: bool = False) -> None:  # fmt: skip
         """``privileged=True`` is training mode: events also carry ``privileged`` (opponent ground truth).
 
         The default (inference mode) never computes it. Evaluation and play must use the default.
@@ -64,6 +64,8 @@ class EncodedVecEnv:
         only decisions with a real choice come back (the games are identical; ``step`` counts differ).
         ``record_actions=True`` retains explicit step indices across calls until each game ends. Limits/errors
         carry ``action_indices`` for replay with the same ``skip_forced`` setting; healthy wins discard the trace.
+        ``record_games=True`` enables recording for every outcome, plus per-action ``action_model_updates``.
+        The caller sets ``trace_model_update`` before collection; None means an unspecified model version.
         """
         if type(cancel_budget) is not int or cancel_budget not in (0, 1, 4, 32):
             raise ValueError("cancel_budget must be 0, 1, 4 or 32")
@@ -84,7 +86,10 @@ class EncodedVecEnv:
         self.attack_history = attack_history
         self.event_length = event_length
         self.skip_forced = skip_forced
-        self._action_traces: dict[int, list[int]] | None = {} if record_actions else None
+        self.record_games = record_games
+        self.trace_model_update: int | None = None
+        self._action_traces: dict[int, list[int]] | None = {} if record_actions or record_games else None
+        self._action_updates: dict[int, list[int | None]] = {}
 
     def reset(self, env_id: int, spec: GameSpec) -> None:
         if spec.config.curriculum != "full" or spec.config.augmented_start:
@@ -99,11 +104,15 @@ class EncodedVecEnv:
                          cfg.max_decisions)  # fmt: skip
         if self._action_traces is not None:
             self._action_traces[env_id] = []
+        if self.record_games:
+            self._action_updates[env_id] = []
 
     def step(self, env_id: int, action: int) -> None:
         self._pool.step(env_id, action)
         if self._action_traces is not None:
             self._action_traces[env_id].append(int(action))
+        if self.record_games:
+            self._action_updates[env_id].append(self.trace_model_update)
 
     def recv(self, min_events: int = 1, timeout: float | None = None) -> list[EncodedEvent]:
         timeout_ms = -1 if timeout is None else int(timeout * 1000)
@@ -111,11 +120,17 @@ class EncodedVecEnv:
         for e, done, player, obs, result, priv in self._pool.recv(min_events, timeout_ms):
             if done and self._action_traces is not None:
                 actions = self._action_traces.pop(e, [])
-                if result["reason"] in TRUNCATED or any(
-                    result.get(k)
-                    for k in ("error", "retries", "unknown_messages", "script_errors", "undecodable_messages")
+                if (
+                    self.record_games
+                    or result["reason"] in TRUNCATED
+                    or any(
+                        result.get(k)
+                        for k in ("error", "retries", "unknown_messages", "script_errors", "undecodable_messages")
+                    )
                 ):
                     result["action_indices"] = actions
+                if self.record_games:
+                    result["action_model_updates"] = self._action_updates.pop(e, [])
             events.append(EncodedEvent(e, player, obs, result, priv))
         return events
 

@@ -1,6 +1,7 @@
 """Exact native replay of training limits, including choices spanning multiple PPO updates."""
 
 import json
+import gzip
 from dataclasses import replace
 from pathlib import Path
 
@@ -107,3 +108,68 @@ def test_unhealthy_win_is_preserved_as_a_diagnostic(tmp_path):
     assert record["reason"] == "win" and not record["truncated"]
     assert record["script_errors"] == result["script_errors"] and record["action_indices"] == [3]
     assert record["spec"]["deck_a"]["main"] == list(spec.deck_a.main)
+
+
+@pytest.mark.parametrize("first", [0, 1])
+def test_success_trace_parity_versions_and_reused_slot(first):
+    spec = GameSpec(37, *(load_ydk(p) for p in DECKS), first=first)
+    env = EncodedVecEnv(1, 1, skip_forced=True, record_games=True, cancel_budget=1)
+    plain = EncodedVecEnv(1, 1, skip_forced=True, cancel_budget=1).play([spec], chooser)[0]
+    for _ in range(2):
+        env.reset(0, spec)
+        steps = 0
+        while True:
+            ev = env.recv()[0]
+            if ev.result is not None:
+                result = ev.result
+                break
+            # Simulate collection crossing model-version boundaries.
+            env.trace_model_update = steps // 5
+            legal = np.flatnonzero(ev.obs["action_mask"])
+            env.step(0, int(legal[chooser(spec.seed, steps, len(legal))]))
+            steps += 1
+        actions = result.pop("action_indices")
+        versions = result.pop("action_model_updates")
+        assert result == plain and result["reason"] == "win"
+        assert versions == [i // 5 for i in range(steps)] and len(actions) == steps
+        replay = EncodedVecEnv(1, 1, skip_forced=True, cancel_budget=1)
+        replay.reset(0, spec)
+        index = 0
+        while True:
+            ev = replay.recv()[0]
+            if ev.result is not None:
+                assert ev.result == plain and index == len(actions)
+                break
+            assert ev.obs["action_mask"][actions[index]]
+            replay.step(0, actions[index])
+            index += 1
+        assert not env._action_traces and not env._action_updates
+
+
+def test_success_trace_is_durable_before_optimizer_failure(tmp_path, monkeypatch):
+    cfg = TrainConfig(decks=DECKS, net={"d_model": 16, "n_heads": 2, "board_layers": 1, "history_layers": 1},
+                      num_envs=1, steps=1, event_length=8, complete_games=True,
+                      trace_games=True, eval_every=0, checkpoint_every=0,
+                      ppo=PPOConfig(epochs=1, minibatch_size=32))  # fmt: skip
+    trainer = Trainer(cfg, tmp_path, log=None)
+
+    def fail(*args, **kwargs):
+        with gzip.open(tmp_path / "game-traces.jsonl.gz", "rt") as f:
+            records = [json.loads(line) for line in f]
+        assert len(records) == 1
+        r = records[0]
+        assert r["reason"] == "win" and not r["truncated"]
+        assert r["action_indices"] and r["responses"]
+        assert set(r["action_model_updates"]) == {0}
+        assert r["collection_model_update"] == 0
+        assert r["encoding"]["event_length"] == 8
+        assert "update" not in r
+        raise RuntimeError("test optimizer failure")
+
+    monkeypatch.setattr(trainer.learner, "update", fail)
+    with pytest.raises(RuntimeError, match="test optimizer failure"):
+        trainer.step()
+    assert trainer.learner.updates == 0
+    trainer.save()
+    restored = Trainer.resume(tmp_path / "checkpoints/latest.pt", tmp_path / "resume", log=None)
+    assert restored.cfg.trace_games and restored.env.record_games
