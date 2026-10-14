@@ -1,6 +1,7 @@
 # Bounded attack-history retraining, 2026-10-14
 
-Status: protocol registered before collection. The preceding four-update canary
+Status: completed; see [results and replay audit](attack-history-retrain-results-2026-10-14.md).
+The protocol below was registered before collection. The preceding four-update canary
 established execution health, not a strength improvement. This experiment tests
 the repaired input and rollout path with successful-game evidence retained.
 
