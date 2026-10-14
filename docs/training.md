@@ -405,6 +405,7 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 | `metrics.jsonl` | 每次更新一行：更新号、行数、决策数、收集 / 更新秒数、决策/秒、行/秒、结束局数、自博弈 / 快照局数、对快照胜率、自博弈先攻胜率、截断与错误局数、终局原因、平均局长，§8.2 的损失指标，累计计数 |
 | `eval.jsonl` | 每次评估每个基线一行：局数、胜 / 负 / 平、胜率与 Wilson 区间、终局原因、耗时、是否新 best |
 | `checkpoints/latest.pt`、`checkpoints/update_N.pt`、`best.pt` | 最新（每 `checkpoint_every` 次）、每次评估的、keep-best |
+| `game-traces.jsonl.gz` | `--trace-games`：全部已结束对局的实际动作、逐动作 collection model update、engine-seat 结果、response 与编码设置；优化前写入 |
 | `games.jsonl.gz` | 仅 `--log-games`（`log_games`，默认关）：每局结束一行，见下 |
 
 **对局日志**（`--log-games`，#149）：给学习型组牌的 Δ 代理（[设计 05 §5.3](design/05-deck-building.md)）攒标签。每次更新把这批 rollout 里结束的每一局

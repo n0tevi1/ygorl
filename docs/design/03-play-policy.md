@@ -532,3 +532,20 @@ fixed-length collection retains its existing scheduling and sampling behavior. W
 the batch membership is identical. This makes full-batch comparisons reproducible
 under the same runtime; it does not promise reproducibility across different
 partial asynchronous batch membership, numerical backends, or live-game restarts.
+# Successful training-game diagnostics (2026-10-14)
+
+An opt-in `trace_games` training setting retains the actual explicit native action
+indices for every finished game, including healthy wins, in `game-traces.jsonl.gz`.
+Records bind the dealt specification, engine-seat outcome, engine responses and
+encoding flags; the run's vocabulary and environment artifacts remain required.
+Each explicit action also records the learner model update used by its collection
+segment. For pool-opponent actions this is the collection version, not the frozen
+opponent's version (the assignment carries its snapshot id). Cross-update games
+must not be attributed to their finishing model alone. Forced native decisions
+are reproduced by the identical runtime and `skip_forced` configuration.
+
+Recording must not change choices, masks, RNG consumption, or training. Flush
+finished-game records after collection, before optimization, including when the
+subsequent update fails. Defaults and existing error/limit diagnostics remain
+unchanged. Full optimizer replay additionally requires saved pre-update rollouts,
+checkpoints and RNG; these remain the bounded experiment runner's responsibility.

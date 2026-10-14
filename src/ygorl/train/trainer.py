@@ -142,6 +142,7 @@ class TrainConfig:
     # append one record per finished game to games.jsonl.gz (decks, first player, winner, turns, reason, update,
     # environment): labels for the deck surrogate (design 05 §5.3); off by default
     log_games: bool = False
+    trace_games: bool = False
 
     def __post_init__(self) -> None:
         if type(self.cancel_budget) is not int or self.cancel_budget not in (0, 1, 4, 32):
@@ -260,7 +261,7 @@ class Trainer:
                                          evolved=self.evolved)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
-                                 skip_forced=cfg.skip_forced, record_actions=True,
+                                 skip_forced=cfg.skip_forced, record_actions=True, record_games=cfg.trace_games,
                                  selection_history=self.net_config.selection_history, attack_history=self.net_config.attack_history, cancel_budget=cfg.cancel_budget)  # fmt: skip
         # the acting network: the model itself, or a copy refreshed before each overlapped collection
         self.acting = copy.deepcopy(self.model) if cfg.overlap_collect else self.model
@@ -278,6 +279,7 @@ class Trainer:
                              min_games=cfg.snapshot_min_games)  # fmt: skip
         if state is not None:
             self._restore(state)
+        self._acting_update = self.learner.updates
         (self.run_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
 
     def _event_length(self, cfg: TrainConfig, init) -> TrainConfig:
@@ -392,12 +394,17 @@ class Trainer:
         return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=enabled, cache_enabled=not learner)
 
     def _collect(self) -> Rollout:
+        model_update = self._acting_update if self.cfg.overlap_collect else self.learner.updates
+        self.env.trace_model_update = model_update
         if self._stream is None:
             with self._autocast():
-                return self.collector.collect()
-        with torch.cuda.stream(self._stream), self._autocast():
-            ro = self.collector.collect()
-        self._stream.synchronize()  # the rollout's tensors are complete before the learner's stream reads them
+                ro = self.collector.collect()
+        else:
+            with torch.cuda.stream(self._stream), self._autocast():
+                ro = self.collector.collect()
+            self._stream.synchronize()
+        if self.cfg.trace_games:
+            self._log_game_traces(ro.games, model_update)
         return ro
 
     @property
@@ -419,6 +426,7 @@ class Trainer:
         if cfg.overlap_collect:
             ro, self._pending = self._pending or self._collect(), None
             self.acting.load_state_dict(self.model.state_dict())
+            self._acting_update = self.learner.updates
             if self._stream is not None:
                 self._stream.wait_stream(torch.cuda.current_stream(self.device))
             future = self._executor.submit(self._collect)
@@ -482,6 +490,27 @@ class Trainer:
                 "undecodable_messages": result.get("undecodable_messages", 0),
                 "action_indices": result.get("action_indices"),
                 "responses": [bytes(r).hex() for r in result.get("responses", [])]}  # fmt: skip
+
+    def _log_game_traces(self, games, model_update: int) -> None:
+        """Record collection evidence before optimization, also for successful games."""
+        if not games:
+            return
+        with gzip.open(self.run_dir / "game-traces.jsonl.gz", "at") as f:
+            for game in games:
+                record = self._diagnostic_record(game)
+                record.pop("update")  # finishing collection does not identify every action's policy
+                record.update(
+                    format="ygorl.training-game-trace.v1",
+                    collection_model_update=model_update,
+                    action_model_updates=game.result["action_model_updates"],
+                    encoding={
+                        "event_length": self.cfg.event_length,
+                        "selection_history": self.net_config.selection_history,
+                        "attack_history": self.net_config.attack_history,
+                        "cancel_budget": self.cfg.cancel_budget,
+                    },
+                )
+                f.write(json.dumps(record) + "\n")
 
     def _log_errors(self, games) -> None:
         """Preserve unhealthy games even when the engine subsequently reported a winner."""
