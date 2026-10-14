@@ -114,9 +114,23 @@ or identify a causal explanation of the aggregate score difference.
 See `summary.json` and the preserved public traces for exact decisions. These
 remain investigation signals rather than automatic tactical-error labels.
 
-The next investigation should measure use of the repaired input on matched
-attack-target states and compare earlier phase/chain choices, before another
-training allocation. Distinguish whether
+A further inference-only probe covers **all 352 saved context-arm target rows**,
+including all 132 multi-attacker rows. Remove only the latest accepted-attacker
+event while keeping the board, legal actions and other history fixed. At final
+checkpoints, mean total-variation distance between full/ablated action
+distributions is 0.0891, with 33/352 greedy-choice changes (multi-attacker:
+0.0895, 11/132). Initial checkpoints already show 0.0994 and 34/352 changes.
+See `input-probe.json` and `input_probe.py` for all rows and input hashes.
+
+This rules out complete insensitivity to event presence on these observations.
+It does **not** show correct attacker identity reasoning: removing an event also
+changes attention context, and the states are saved training observations, not
+an independent held-out task. Similar initial sensitivity is not evidence that
+the 16 updates taught the relation. No games or optimizer updates were added.
+
+The next investigation should test correctness of attack-target rankings under
+controlled attacker/target changes and inspect earlier phase/chain choices,
+before another training allocation. Distinguish whether
 performance differences arise at attack targets, earlier setup/phase choices,
 or broader policy changes. Neither aggregate win rates nor selected divergent
 replays alone identify the causal mechanism of the treatment effect.
