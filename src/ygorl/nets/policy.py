@@ -23,6 +23,7 @@ from torch import Tensor, nn
 
 from ygorl.env.events import E_EVENT
 from ygorl.nets.batch import Batch
+from ygorl.nets.battle_context import BattleContext
 from ygorl.nets.config import NetConfig
 from ygorl.nets.encoders import ActionEncoder, BoardEncoder, CardIdentity, EffectText, EventEmbedding
 from ygorl.nets.heads import ActionHead
@@ -142,6 +143,7 @@ class PolicyNet(nn.Module):
         self.action_encoder = ActionEncoder(cfg, self.identity, self.effect)
         self.context = nn.Sequential(nn.Linear(3 * d, 2 * d), nn.ReLU(), nn.Linear(2 * d, d), nn.LayerNorm(d))
         self.head = ActionHead(cfg)
+        self.battle_context = BattleContext(d) if cfg.battle_context else None
 
     # -- trunk -------------------------------------------------------------------
     def features(self, obs: Batch, state: HistoryState | None = None) -> Features:
@@ -179,6 +181,8 @@ class PolicyNet(nn.Module):
         pooled = (card_out * m).sum(1) / m.sum(1).clamp(min=1)
         context = self.context(torch.cat([g, summary, pooled], -1))
         actions = self.action_encoder(obs["actions"], card_out)
+        if self.battle_context is not None:
+            actions = actions + self.battle_context(obs, card_out)
         return Features(context, g, card_out, card_mask, actions, obs["action_mask"], summary, tokens, history_state)
 
     # -- actor ---------------------------------------------------------------------

@@ -324,7 +324,12 @@ class Trainer:
                 "schedule": self.schedule.state_dict(), "counters": dict(self.counters), "rng": rng}  # fmt: skip
 
     def _restore(self, state: dict) -> None:
-        saved_net = {"selection_history": False, "attack_history": False, **state["net_config"]}
+        saved_net = {
+            "selection_history": False,
+            "attack_history": False,
+            "battle_context": False,
+            **state["net_config"],
+        }
         if saved_net != self.net_config.to_dict():
             raise ValueError("the checkpoint's network does not match the configuration")
         self.learner.load_state_dict(state["learner"])
