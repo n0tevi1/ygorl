@@ -200,3 +200,19 @@ the eight-deal canary cannot decide whether expected play improved or worsened.
 with two new fixed action-RNG offsets20000/30000, all three policies (48 games).
 This is bounded sampling replication, not new-deal efficacy or expanded training.
 Keep effect/cancel retention and independent-deal evaluation open.
+
+
+Sampling replication completed48 healthy games. For offset20000, source and both
+candidates each win3/8; for30000 each wins5/8. All16 paired outcomes match source
+for each candidate; complete action transcripts match10/16 and11/16 respectively.
+Mean turns are9.25→8.75 and11.25→10.75; no population strength/length claim follows.
+The original regression did not repeat in these two RNGs, but no win-rate gain was
+established either. These remain the same eight openings, not24 independent deals.
+
+Next: `battle-context-fresh-retention-2026-10-14`, fixed24 games on eight new
+openings, four previously untested panel pairings (Blue-Eyes/Sky Striker,
+Branded/Dracotail, Clown Crew/HEROs, Tearlaments/Maliss), both first-player
+assignments. Frozen source and both candidates, no fitting, independent watchdog,
+full traces and target/cancel audits. This budget does not exceed the initial
+canary and is not powered to promote a model; investigate any effect-sensitive
+regression before broader training.

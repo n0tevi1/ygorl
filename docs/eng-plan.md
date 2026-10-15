@@ -397,9 +397,11 @@ ordinary-battle results, not a promoted RL policy or full-game strength claim.
       continuation RNGs at the first divergence of a win-to-loss deal. Separate first-action
       causality from later policy outcomes. Failed-target probability is lower in candidates;
       the single realized paired loss does not establish expected regression.
-- [ ] Running: `battle-context-sampling-retention-2026-10-14`, same8 openings with
+- [x] Completed: `battle-context-sampling-retention-2026-10-14`, same8 openings with
       two new fixed action RNGs ×3 policies =48 games; no added training. Full-game
       independent-deal efficacy and effect/cancel retention still precede integration/RL.
+- [ ] Running: `battle-context-fresh-retention-2026-10-14`, eight new openings and
+      four new panel pairings, same fixed24-game budget; full traces and watchdog.
 - [ ] Selection loops: distinguish failed credit learning from already-repaired input aliasing;
       preserve legitimate cancellation and target switching (#239).
 - [ ] Chain ownership/self-obstruction competence with exceptions; no universal self-Ash ban.
