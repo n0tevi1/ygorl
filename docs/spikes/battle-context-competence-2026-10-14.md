@@ -216,3 +216,20 @@ assignments. Frozen source and both candidates, no fitting, independent watchdog
 full traces and target/cancel audits. This budget does not exceed the initial
 canary and is not powered to promote a model; investigate any effect-sensitive
 regression before broader training.
+
+## Fresh retention and effect challenge follow-up
+
+The fixed fresh-retention panel completed 24 healthy games. Source and both
+candidates each win 7/8 and average 7.875 turns. This does not establish a strength
+gain. The subsequent real-root effect audit completed 26 branches at eight roots,
+but all matched ordinary arithmetic, leaving actual effect exceptions untested.
+
+The [preregistered effect challenge](battle-context-effect-challenge-2026-10-15.md)
+now covers battle immunity, reflected damage, piercing and damage-step attack
+changes. All 80 branches and 16 cold repeats passed engine/replay checks. On 32
+effect roots the source chooses the native-preferred target 8 times; both frozen
+numeric candidates do so zero times. Ordinary controls improve from 6/8 to 8/8
+and 7/8. Both candidates fail every effect-family safety gate. Keep the numeric
+wrapper experimental and block unrestricted integration or RL scaling from its
+ordinary-battle gains. Effect-conditioned learning and independent exception
+validation are required next; these exposed challenge roots are no longer held-out.
