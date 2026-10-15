@@ -390,10 +390,16 @@ ordinary-battle results, not a promoted RL policy or full-game strength claim.
 - [x] Implement default-off adjacent attacker/target residual and transfer/resume checks.
 - [x] Native outcome competence, numeric control, independent frozen fresh boards.
 - [x] Two-seed conditional target-policy pilot, with fixed trunk/head and fresh boards.
-- [ ] Running: `battle-context-behavior-canary-2026-10-14`, 8 paired deals /24 games,
+- [x] Completed: `battle-context-behavior-canary-2026-10-14`, 8 paired deals /24 games,
       source versus both numeric-residual seeds; complete action traces, cancellation
       probability, effect-sensitive choices and engine-health checks. Independent watchdog.
-- [ ] Investigate retention failures before integrating numeric features or running broader RL.
+- [x] Completed: `battle-context-target-counterfactual-2026-10-14`, 5 legal targets ×2
+      continuation RNGs at the first divergence of a win-to-loss deal. Separate first-action
+      causality from later policy outcomes. Failed-target probability is lower in candidates;
+      the single realized paired loss does not establish expected regression.
+- [ ] Running: `battle-context-sampling-retention-2026-10-14`, same8 openings with
+      two new fixed action RNGs ×3 policies =48 games; no added training. Full-game
+      independent-deal efficacy and effect/cancel retention still precede integration/RL.
 - [ ] Selection loops: distinguish failed credit learning from already-repaired input aliasing;
       preserve legitimate cancellation and target switching (#239).
 - [ ] Chain ownership/self-obstruction competence with exceptions; no universal self-Ash ban.

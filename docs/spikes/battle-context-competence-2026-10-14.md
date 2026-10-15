@@ -156,3 +156,47 @@ structural checks, **not full strategic retention**. Conditional target accuracy
 also does not measure changes in cancellation probability. Next run a fixed small
 full-game/behavior retention panel before broader RL or integrating the numeric
 input into the production configuration; inspect effect-dependent target choices.
+
+## Full-game behavior canary: promotion withheld
+
+`battle-context-behavior-canary-2026-10-14` completed24 healthy games: four ordered
+deck pairings (Blue-Eyes/Branded, Branded/Clown Crew, Clown Crew/Tearlaments,
+Tearlaments/Blue-Eyes), both first-player assignments, common deals and sampling
+seeds, versus greedy. Each deal runs source and both fixed numeric-residual seeds.
+No weights are changed. Complete actions/responses/steps and every affected
+prompt's public observation and source/candidate probabilities are retained.
+
+Source wins4/8, both candidates3/8. Mean turns11.75 versus10.375; this is not a
+strength improvement: one source win becomes a loss and one retained win shortens.
+The panel is too small to estimate population win-rate change. All24 games terminate
+normally with zero retry/unknown/undecodable/script-error indicators. There are23
+source and19 per-candidate eligible target prompts. Recorded cancellation mass is
+zero in this panel, so it does not establish cancellation retention elsewhere.
+
+For the changed outcome, Branded versus Clown Crew (learner first), the identical
+prefix first diverges at decision457/turn13. Fallen of Albaz attacks: source samples
+Clown Crew Diabolo in defense (200ATK/1800DEF); both candidates sample Dimension
+Shifter in attack (1200ATK). The numeric residual most prefers Clown Crew Dristy
+(1000ATK), assigning it about91–94% probability. This does not itself prove the
+new first action was bad: immediate damage, effect value and later sampled play
+must be separated. A bounded10-game root counterfactual completed: all five
+legal targets, two common continuation RNGs, original policy after the forced
+choice, exact original target0/carry replay required. No numeric integration,
+RL expansion or checkpoint promotion proceeds from the ordinary-battle gains.
+
+
+The counterfactual reproduces the original target0/carry complete action and
+response transcript. With the source policy continuing after each forced target,
+target1 (Dimension Shifter) loses in both fixed suffix RNGs; targets0/2/3/4 win
+in both. This establishes an outcome difference for these interventions and
+continuations, not a universal tactical label or population value estimate.
+
+Crucially, source probability of target1 is41.72%, while the two candidates assign
+9.01%/5.76%. Their preferred target4 wins in both continuations. The observed
+common-uniform draw sent source to target0 but candidates to target1: one realized
+paired loss is compatible with a lower probability of this failing action. Thus
+the eight-deal canary cannot decide whether expected play improved or worsened.
+`battle-context-sampling-retention-2026-10-14` now repeats the same eight openings
+with two new fixed action-RNG offsets20000/30000, all three policies (48 games).
+This is bounded sampling replication, not new-deal efficacy or expanded training.
+Keep effect/cancel retention and independent-deal evaluation open.
