@@ -1,7 +1,7 @@
 """Persistent experiment incidents with verified delivery to the existing T3 thread.
 
-Run under a restarting user service. Tokens are short-lived, held in memory, and
-never written to reports. Delivery does not acknowledge or resolve an incident.
+Launch with --launch-unit for a user service that restarts only on failure.
+Tokens are short-lived, held in memory, and never written to reports. Delivery does not acknowledge or resolve an incident.
 """
 
 import argparse
@@ -9,8 +9,10 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
+import sys
 import time
 import urllib.request
 import uuid
@@ -229,21 +231,68 @@ def notify_service():
             sock.sendall(b"READY=1\nWATCHDOG=1")
 
 
+def acknowledge(monitor, incident_id, note):
+    if not re.fullmatch(r"[0-9a-f]{64}", incident_id) or not note or not note.strip():
+        raise ValueError("acknowledgment requires an exact incident ID and a nonempty note")
+    current = json.loads((monitor / "incident.json").read_text())
+    incident = (
+        current if current["id"] == incident_id else json.loads((monitor / f"incident-{incident_id}.json").read_text())
+    )
+    if incident["id"] != incident_id:
+        raise ValueError("incident ID does not match archive")
+    atomic(
+        monitor / f"ack-{incident_id}.json",
+        {
+            "id": incident_id,
+            "acknowledged_unix": time.time(),
+            "note": note,
+        },
+    )
+
+
+def launch_monitor(monitor, unit):
+    if not re.fullmatch(r"ygorl-[a-zA-Z0-9_-]+\.service", unit):
+        raise ValueError("watcher unit must be a ygorl-*.service name")
+    config = json.loads((monitor / "config.json").read_text())
+    if unit == config["unit"]:
+        raise ValueError("watcher unit must differ from the study unit")
+    subprocess.run(
+        [
+            "systemd-run",
+            "--user",
+            "--unit=" + unit,
+            "--property=Type=notify",
+            "--property=NotifyAccess=main",
+            "--property=Restart=on-failure",
+            "--property=RestartSec=10s",
+            "--property=WatchdogSec=120s",
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--monitor",
+            str(monitor.resolve()),
+        ],
+        check=True,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--monitor", type=Path, required=True)
-    parser.add_argument("--ack")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--ack")
+    mode.add_argument("--launch-unit")
     parser.add_argument("--note")
-    parser.add_argument("--once", action="store_true")
+    mode.add_argument("--once", action="store_true")
     args = parser.parse_args()
     monitor = args.monitor.resolve()
-    lock = (monitor / "watch.lock").open("a")
-    if args.ack:
-        # A separate file allows acknowledgment while the service holds its process lock.
-        incident = json.loads((monitor / "incident.json").read_text())
-        assert incident["id"] == args.ack and args.note
-        atomic(monitor / f"ack-{args.ack}.json", {"id": args.ack, "acknowledged_unix": time.time(), "note": args.note})
+    if args.launch_unit:
+        launch_monitor(monitor, args.launch_unit)
         return
+    if args.ack:
+        # A separate file allows acknowledgment while the service holds its lock.
+        acknowledge(monitor, args.ack, args.note)
+        return
+    lock = (monitor / "watch.lock").open("a")
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     config = json.loads((monitor / "config.json").read_text())
     delivery = T3Delivery(config)

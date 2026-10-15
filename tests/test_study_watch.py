@@ -193,3 +193,74 @@ def test_terminal_invocation_and_process_exit(tmp_path, invocation, state, subst
     if expected:
         (study / "errors.jsonl").write_text('{"error":"uncommitted Lua failure"}\n')
         assert not inspect_study(config, service, 1010)["complete"]
+
+
+def test_archived_ack_does_not_acknowledge_new_incident(tmp_path):
+    from study_watch import acknowledge
+
+    old_id, new_id = "a" * 64, "b" * 64
+    current = {"id": new_id, "kind": "complete", "acknowledgment": None}
+    old = {"id": old_id, "kind": "attention"}
+    atomic(tmp_path / "incident.json", current)
+    atomic(tmp_path / f"incident-{old_id}.json", old)
+    acknowledge(tmp_path, old_id, "investigated archived inspection failure")
+    assert json.loads((tmp_path / f"ack-{old_id}.json").read_text())["id"] == old_id
+    assert not (tmp_path / f"ack-{new_id}.json").exists()
+    assert json.loads((tmp_path / "incident.json").read_text()) == current
+    assert json.loads((tmp_path / f"incident-{old_id}.json").read_text()) == old
+
+
+@pytest.mark.parametrize("incident_id,note", [("../escape", "note"), ("a" * 64, " "), ("a" * 64, None)])
+def test_ack_rejects_invalid_id_or_empty_note(tmp_path, incident_id, note):
+    from study_watch import acknowledge
+
+    with pytest.raises(ValueError):
+        acknowledge(tmp_path, incident_id, note)
+    assert not list(tmp_path.iterdir())
+
+
+def test_ack_rejects_mismatched_archive(tmp_path):
+    from study_watch import acknowledge
+
+    atomic(tmp_path / "incident.json", {"id": "b" * 64})
+    atomic(tmp_path / f"incident-{'a' * 64}.json", {"id": "c" * 64})
+    with pytest.raises(ValueError, match="does not match"):
+        acknowledge(tmp_path, "a" * 64, "note")
+    assert not list(tmp_path.glob("ack-*.json"))
+
+
+def test_launcher_keeps_success_terminal_and_crashes_restartable(tmp_path, monkeypatch):
+    import study_watch
+
+    atomic(tmp_path / "config.json", {"unit": "ygorl-training.service"})
+    calls = []
+    monkeypatch.setattr(study_watch.subprocess, "run", lambda argv, **kw: calls.append((argv, kw)))
+    study_watch.launch_monitor(tmp_path, "ygorl-training-watch.service")
+    argv, kwargs = calls[0]
+    assert argv[:3] == ["systemd-run", "--user", "--unit=ygorl-training-watch.service"]
+    assert "--property=Restart=on-failure" in argv
+    assert "--property=Restart=always" not in argv
+    assert "--property=Type=notify" in argv
+    assert "--property=NotifyAccess=main" in argv
+    assert "--property=WatchdogSec=120s" in argv
+    assert argv[-4:] == [
+        study_watch.sys.executable,
+        str(study_watch.Path(study_watch.__file__).resolve()),
+        "--monitor",
+        str(tmp_path.resolve()),
+    ]
+    assert kwargs == {"check": True}
+
+
+@pytest.mark.parametrize("unit", ["ygorl-training.service", "other.service", "ygorl-x.service;bad"])
+def test_launcher_rejects_study_unit_and_invalid_names(tmp_path, monkeypatch, unit):
+    import study_watch
+
+    atomic(tmp_path / "config.json", {"unit": "ygorl-training.service"})
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("invalid launch must not invoke systemd")
+
+    monkeypatch.setattr(study_watch.subprocess, "run", unexpected)
+    with pytest.raises(ValueError):
+        study_watch.launch_monitor(tmp_path, unit)
