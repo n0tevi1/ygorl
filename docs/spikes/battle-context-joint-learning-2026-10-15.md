@@ -46,3 +46,15 @@ The script-only text arm outperforms original prose on this small fixed panel. A
 Every arm fails the preregistered joint gate. Script text’s 38/50 and 35/50 ordinary retention are below 45/50; it introduces six and eight errors on previously source-correct ordinary decisions. The three text arms all fit the 24 effect training prompts perfectly, so training accuracy does not settle generalization. Do not promote, scale or claim full-game improvement.
 
 The next bounded investigation should distinguish text/feature interference from missing coverage: inspect the piercing failures and test a factorized representation (explicit attacker and target effect roles, applicability conditions, ordinary outcome component) with balanced counterexamples and an ordinary-retention objective. Original prose remains a useful complementary input candidate, but simple concatenation is not supported by this result. Any new fitting must use a new protocol and new evaluation roots; the present panel is now exposed development evidence.
+
+## Post-hoc target-text role diagnostic
+
+A separate, recorded protocol (`text-role-audit-protocol.json`) tested the now-exposed panel without fitting or changing endpoints. Hold source, numeric inputs, contextual pair and attacker text fixed; replace both candidate target-text vectors by their per-root mean. Replayed baseline logits match the original report. This artificial intervention removes target text identity differences; it is not a legal card substitution or independent evaluation. All 40 roots are archived, with interpretation focused on the eight piercing roots.
+
+| Text arm | Piercing before (seed 1 / 2) | Equal target text (seed 1 / 2) |
+|---|---:|---:|
+| Original prose | 2 / 3 | 8 / 8 |
+| Structured script | 4 / 4 | 8 / 8 |
+| Both | 0 / 0 | 8 / 8 |
+
+Both target cards in these piercing fixtures are ordinary monsters with missing individual scripts; their script documents have identical boilerplate and differ only in card name. Thus the script channel’s target-name difference materially affects these failures despite the unchanged attacker’s piercing semantics and unchanged stats. The diagnostic supports prioritizing a **name-free structured effect representation** and explicit attacker/target roles in the next bounded ablation. It does not show that equalizing target text is safe for reflection or immunity (where different target effects matter), and it does not repair ordinary retention. Original joint-gate failures stand.
