@@ -162,7 +162,8 @@ def test_attack_warm_start_preserves_old_logits_and_enforces_schema(tmp_path, se
         session.close()
 
 
-def test_attack_training_checkpoint_and_legacy_resume(tmp_path):
+@pytest.mark.parametrize("battle_context", [False, True])
+def test_attack_training_checkpoint_and_legacy_resume(tmp_path, battle_context):
     pytest.importorskip("torch")
     from ygorl.train.trainer import TrainConfig, Trainer
     from ygorl.train.ppo import PPOConfig
@@ -174,7 +175,9 @@ def test_attack_training_checkpoint_and_legacy_resume(tmp_path):
         env_threads=1,
         steps=128,
         event_length=64,
-        net=dict(d_model=16, n_heads=2, board_layers=1, history_layers=1, attack_history=True),
+        net=dict(
+            d_model=16, n_heads=2, board_layers=1, history_layers=1, attack_history=True, battle_context=battle_context
+        ),
         privileged_dim=8,
         critic_hidden=16,
         ppo=PPOConfig(epochs=1, minibatch_size=32),
@@ -194,9 +197,11 @@ def test_attack_training_checkpoint_and_legacy_resume(tmp_path):
         del trainer
     policy = load_policy(checkpoint)
     assert policy.signature.attack_history and policy.net_config.attack_history
+    assert policy.net_config.battle_context == battle_context
     resumed = Trainer.resume(checkpoint, log=None)
     try:
         assert resumed.net_config.attack_history and np.isfinite(resumed.step()["loss"])
+        assert resumed.net_config.battle_context == battle_context
     finally:
         del resumed
 

@@ -549,3 +549,34 @@ finished-game records after collection, before optimization, including when the
 subsequent update fails. Defaults and existing error/limit diagnostics remain
 unchanged. Full optimizer replay additionally requires saved pre-update rollouts,
 checkpoints and RNG; these remain the bounded experiment runner's responsibility.
+
+
+## Experimental explicit battle context (2026-10-14)
+
+Opt-in `NetConfig.battle_context` requires accepted `attack_history`; defaults
+remain unchanged. At an immediate attack-target SelectCard prompt, resolve the
+last accepted attack event to exactly one visible own monster by card identity,
+controller, zone and sequence, in the same turn/phase. Require a current own-turn
+battle-step prompt with no chain. Missing/stale/ambiguous context abstains. Only
+visible opponent-monster select actions receive the relation; hidden targets,
+cancel, unrelated selection, effects and phase choices keep the old action path.
+
+A residual MLP connects the contextual attacker and target card embeddings
+directly to the target action embedding. Its final projection starts at zero;
+the preceding layers retain ordinary initialization so the new path can learn.
+Warm-start copies all inherited parameters and must preserve logits exactly on
+the same observations. This changes network architecture, not environment schema,
+legal masks, rewards or the privileged-information boundary. The critic sees the
+new action representation through the existing shared/separate trunk contract.
+
+This first implementation deliberately resolves only adjacent accepted-attacker
+context from the existing event stream; it is not a persistent engine-state
+tracker or a generic battle-result oracle. Do not infer ongoing attacks through
+intervening events. State-changing effects and battle exceptions remain learned
+context, not labels derived from ATK/DEF arithmetic. No automatic deployment.
+
+Gate: native/Python fixture parity, same-card different-slot identity, cancel and
+reattack, stale turn/phase/chain, invisible target abstention, zero-residual
+checkpoint migration and nonzero training gradients. Then a fixed bounded
+competence study with separately held-out configurations, source-policy
+retention and independent full-game evaluation before any expanded RL budget.

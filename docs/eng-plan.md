@@ -378,3 +378,28 @@ full与reward trace相关性.249→.875；这是幅度和相关性的变化，�
 新身份已于08:54:58 PDT启动，首个新增更新16,384行/63正常终局、零截断/错误；完整测试1548 passed/3 skipped。
 训练、评估、保留诊断及独立监控均已运行，最新进展见协议执行记录及#61/#83/#92监控。
 仍未完成#92两万更新或跨未见牌组泛化验收。
+
+### 2026-10-14: battle context repair queue
+
+Evidence and scope: [battle context competence](spikes/battle-context-competence-2026-10-14.md).
+The first relationship probe improved direction but failed its complete gate;
+public numeric/relative features then passed a separate frozen fresh-board gate.
+A bounded policy-residual pilot improved conditional target preference. These are
+ordinary-battle results, not a promoted RL policy or full-game strength claim.
+
+- [x] Implement default-off adjacent attacker/target residual and transfer/resume checks.
+- [x] Native outcome competence, numeric control, independent frozen fresh boards.
+- [x] Two-seed conditional target-policy pilot, with fixed trunk/head and fresh boards.
+- [ ] Running: `battle-context-behavior-canary-2026-10-14`, 8 paired deals /24 games,
+      source versus both numeric-residual seeds; complete action traces, cancellation
+      probability, effect-sensitive choices and engine-health checks. Independent watchdog.
+- [ ] Investigate retention failures before integrating numeric features or running broader RL.
+- [ ] Selection loops: distinguish failed credit learning from already-repaired input aliasing;
+      preserve legitimate cancellation and target switching (#239).
+- [ ] Chain ownership/self-obstruction competence with exceptions; no universal self-Ash ban.
+- [ ] Critic calibration and within-state ranking, stratified by deck, phase and resources (#61).
+
+Advance one bounded study at a time from evidence. Keep STOP and prior data intact;
+register budgets before running, checkpoint and monitor, report wins together with
+turn distributions/limits and behavior. Do not promote on shorter losses, LP advantage,
+or a small arithmetic probe. Full-game efficacy and broad retention remain gates (#83).

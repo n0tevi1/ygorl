@@ -296,12 +296,12 @@ def load_actor_critic(path: str | Path, text_dir: str | Path | None = None) -> L
 
 def warm_start(actor: PolicyNet, source: LoadedPolicy) -> list[str]:
     """Copy ``source``'s weights into ``actor``, a new network over the same vocab. The two networks must be the same
-    except for added card views (:data:`CARD_VIEW_FIELDS`) or enabling selection history. New card views
-    are explicitly zeroed; selection history inserts a zero event-type row. Returns the config fields that differ (empty = an exact copy)."""
+    except for added card views (:data:`CARD_VIEW_FIELDS`) or enabling accepted-action history / explicit battle context. New card views
+    are explicitly zeroed; selection history inserts a zero event-type row. Battle context adds a zero-output residual. Returns the changed config fields (empty = an exact copy)."""
     old, new = source.net_config.to_dict(), actor.cfg.to_dict()
     differ = sorted(k for k in old.keys() | new.keys() if old.get(k) != new.get(k))
-    if set(differ) - CARD_VIEW_FIELDS - {"selection_history", "attack_history"} or any(
-        old[k] and not new[k] for k in ("selection_history", "attack_history")
+    if set(differ) - CARD_VIEW_FIELDS - {"selection_history", "attack_history", "battle_context"} or any(
+        old[k] and not new[k] for k in ("selection_history", "attack_history", "battle_context")
     ):
         raise ValueError(f"{source.path}: its network {old} differs from the configured {new} "
                          "(set the same net options)")  # fmt: skip
@@ -326,14 +326,23 @@ def warm_start(actor: PolicyNet, source: LoadedPolicy) -> list[str]:
                 expanded[boundary + added_types :] = value[boundary:]
                 state[name] = expanded
     missing, unexpected = actor.load_state_dict(state, strict=not differ)
-    if unexpected or any(not any(m in k for m in CARD_VIEW_MODULES) for k in missing):
+    battle_added = new["battle_context"] and not old["battle_context"]
+    if unexpected or any(
+        not any(m in k for m in CARD_VIEW_MODULES) and not (battle_added and k.startswith("battle_context."))
+        for k in missing
+    ):
         raise ValueError(f"{source.path}: weights do not fit (missing {missing}, unexpected {unexpected})")
     # Constructors use ordinary random text projections for training from scratch.
     # Only newly added views must start silent when transferring an existing policy.
     # Do not reset a projection that already has learned weights in the source.
     with torch.no_grad():
         for name in missing:
-            actor.get_parameter(name).zero_()
+            if not name.startswith("battle_context."):
+                actor.get_parameter(name).zero_()
+        if battle_added:
+            # Silence only the final layer: zeroing the entire MLP kills learning.
+            actor.battle_context.pair[-1].weight.zero_()
+            actor.battle_context.pair[-1].bias.zero_()
     return differ
 
 
