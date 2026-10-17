@@ -2555,3 +2555,44 @@ The next study keeps all seven endpoints and conditions fixed and changes only t
 
 
 Launched identity `94571c5b53fb032938a979ab8ea0f191d6f89cbdf05f6131b376a72758b7ff84`; invocation `63d6c8d3fbdb43c38defcea8e5cd6c64`; service `ygorl-effect-resolution-action-value-head-low-value-confirmation-20261016.service`. Main and persistent watch services are active/running. Runtime limit5,400 seconds, five-second heartbeat. The service verifies frozen ancestry before executing3,584 new games/3,616 main paths. It reuses116 audited setup paths explicitly, generating no new setup games. No fitting, endpoint selection or pooled inference; production promotion remains false.
+
+
+## Low-value repair intermediate-LP transfer preregistration
+
+The independent32-suffix confirmation preliminarily shows each repair improves18/512 outcomes versus original, with no observed worsened conditions; repair9201/9202 improve10/8 versus their matched optimization controls, with positive shared-suffix overall intervals. Full parent independent audit must pass before main launch. Do not pool panels, select an endpoint or interpret correlated endpoints as independent replication. The next question is whether the local repair survives changing the LP state, rather than collecting more suffixes on the same two supervised LP regions.
+
+Keep all seven frozen policies and unchanged native code/backbone, resources27288416/57116033, both opponent-resource worlds and both initial optional choices. Set own starting LP to6001 in both strata, retaining opponent LP2400 and1800 respectively: pairs6001/2400,6001/1800. Use16 fresh actor continuation seeds2026109501–2026109516, bootstrap seed2026109517, with fixed core/opponent seeds and factual LP/history repair. These are LP shifts relative to the immediate two evaluation panels and the two low-value supervised decision contexts. LP6001 already appears in broader ancestral research; this is a scoped transfer/retention diagnostic, not a claim of wholly unseen states, cards or independent training data. No fitting, new labels, hyperparameter tuning, action forcing or policy selection.
+
+Budget256 requests x7 policies=1792 new full games,28 exact cold replays on world0/firstsuffix/decline in each resource/LP stratum,4 unchanged native controls:1824 main paths. Runtime limit3600 seconds, five-second heartbeat and persistent monitoring. Report all12 policy comparisons and23 summaries=276 contrasts, paired improved/worsened/tied counts, raw rates and2000 shared16-suffix bootstrap draws. Preserve all strata, regressions and zero effects. Report first changes and native Winged chain execution without equating execution with prevented damage or learned rule understanding. No pooling, optional sample extension, early efficacy stopping or promotion. Completion means execution validity only,candidate_pass=false,production_promotion=false.
+
+Because LP inputs change, generate a new bounded setup panel:2 resources x2 LP pairs x2 worlds x7 arms, initial decline and exposed setup suffix2026108503, each cold-replayed=112 paths, plus4 unchanged controls=116 new preflight paths. The changed LP requests cannot equal archived original/initializer trajectories; remove only that inapplicable equality check, retaining byte-identical native code, source/head provenance, exact cold replay, base-prefix equality until first intervention, network probabilities, legal masks, RNG, native LP/terminal health and all unchanged controls. Require each fitted control/repair to change at least one setup action and at least one nonnegated completed Winged link overall; these are exposure/implementation checks, not win-rate selection. Freeze scripts and independent auditor before setup. Preserve STOP on any inconsistency, without replacement cases or silent retries.
+
+Independently audit all116 setup paths and synthetic direction/count controls for276 summaries before main launch. Freeze request grid, heads, source provenance, protocol and native/analysis/auditor scripts. Existing user authorization covers autonomous bounded experiments and PR427 publication. Preserve all historical STOPs and raw evidence. Disk is35 GiB available before setup; this16-suffix panel is bounded at roughly half the preceding32-suffix output volume, with no evidence deletion.
+
+
+## Audited independent-suffix low-value confirmation
+
+All3584 games/3616 new main paths complete, with zero fits and116 explicitly reused setup paths. Independent audit checks203,254 hashes,389,226 network outputs,206,118 RNG records,565,401 native LP decisions, all276 summaries and1064 Winged chain links. Exact cold replay, unchanged native controls, factual observations, frozen heads and original-prefix invariants pass. Report SHA256 `df685a50ddafae78bb549c23abc660b3680246b3028775a5ae3e01294f8ada03`; auditor SHA256 `5721ad55a9afac0e816ff19c59f47b3c3b3ee0ebccda734b58f1119e6ad5bdbb`. Completion event `594878f74b2a8f2af3f342a85fea8208c9ebb34ef60e8454fbba00688212d95a` is acknowledged after independent verification.
+
+| Policy | Wins/512 | Win rate |
+| --- | --- | --- |
+| Original | 425 | 83.0078125% |
+| Initial value8401 | 435 | 84.9609375% |
+| Control9201 | 433 | 84.5703125% |
+| Repair9201 | 443 | 86.5234375% |
+| Initial value8402 | 433 | 84.5703125% |
+| Control9202 | 435 | 84.9609375% |
+| Repair9202 | 443 | 86.5234375% |
+
+Each repair has18 improved,0 worsened,494 tied conditions versus original: +3.515625 pp,95% shared32-suffix bootstrap interval[+1.5625,+5.859375] pp. Versus matched optimization controls, repair9201 has10 improved,0 worsened,502 tied(+1.953125 pp,interval[+0.390625,+4.1064453125]); repair9202 has8 improved,0 worsened,504 tied(+1.5625 pp,interval[+0.390625,+3.3203125]). These marginal exploratory intervals are not multiplicity-adjusted across276 summaries. Both repair winner vectors are identical and remain correlated evidence, not independent model replications. No observed harm does not establish safety outside this panel.
+
+Matched-control gains cover five of32 shared actor suffixes for each repair, rather than only two of16 in the previous panel. Relative to original, gains span ten suffixes. All four resource/LP strata have positive observed repair-minus-control mean changes, although most stratum intervals still include zero. Repairs recover the sampled low-Winged regression present in control9201, initializer8402 and control9202: each of those has one worsened condition versus original, while neither repair does. No model or outcome is omitted. The two panels are reported separately, without pooled inference or endpoint selection.
+
+Native Winged nonnegated chain counts at high LP are167(original),144(value8401/control9201/value8402),140(control9202),132(each repair); at low LP8(original),10(value8401),11(value8402),12(each control),4(each repair). Effect execution is present under repairs but is not evidence that damage was prevented or that general effect rules were learned. The causal contrast supports the incremental low-value supervision objective on these related fixtures, subject to the small shared-state panel and fixed continuation policies.
+
+The next preregistered study shifts own LP to6001, with opponent LP2400/1800 and both resources/worlds/initial choices. All seven heads stay frozen;16 fresh suffixes yield1792 games/1824 main paths. Broader ancestral research already used LP6001, so this is a repair transfer/retention check, not a wholly unseen-state claim. A new116-path setup validates changed LP inputs; no invalid archived trajectory-equality assertion is imposed across different LPs. No production promotion or historical STOP clearing.
+
+
+New LP setup passes all116 paths,56 exact cold replays and4 unchanged controls. Independent checks cover3,360 network outputs,2,157 RNG draws,6,209 native LP decisions and all276 statistical controls. Native Winged links:3; all fitted heads meet the preregistered intervention exposure check. Setup auditor SHA256 `0a5e9980fcc83f563f6c8f30e259072875baa8d23bd4c5a961738e33536dc444`. No win-rate gate or case replacement.
+
+Launched identity `3725c85a1ee6288ee02697fdc568d78cf8ae7e4f7739a0adb2a0d0b8e7a072a1`; invocation `3f9f63c867e04f9a8992571d90513521`; service `ygorl-effect-resolution-action-value-head-low-value-lp-transfer-20261016.service`. Main and persistent watch services are active/running, with3,600-second runtime limit and five-second heartbeat. The service verifies frozen ancestry before1792 new games/1824 main paths. No fitting, endpoint selection or production promotion.
