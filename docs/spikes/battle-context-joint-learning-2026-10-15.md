@@ -3953,3 +3953,33 @@ Solve for minimum Euclidean final-affine parameter change with combined source a
 Audit checks direct endpoint readouts, independent NumPy manual head arithmetic, source target residuals, probability normalization, frozen hidden parameters, SVD solution construction and row-space membership. Hash all code/data plus prior immutable ancestry before launch. Full dependency verification precedes execution. This reuses audited recorded states and branches; no population win-rate or general text-learning claim. CPU single-thread,1GiB reserve,3600seconds, persistent monitor. Preserve all earlier evidence and STOPs.
 
 Cross-prompt replay experiment is now launched: identity `f88334538de2a84c660ba06f8f09374a27625e1203cc88070f86784ee289840f`,220937 frozen file hashes; service invocation `ddb61da6e6fc4519984c105887d7662c`, watcher `178b45d9333849d1a496ba561649a86b`. It starts with dependency verification, then fits two output heads. No replay-fit result claimed at launch.
+
+
+# Cross-prompt replay result and soft-replay control (2026-10-17)
+
+Cross-prompt replay completed; event `89140b61cba953841c024b40e1e6d8af760279c677ad2220edc3b664b7a803b3` acknowledged. Report SHA256 `f98a7d3b6c0bde76ead7a9575248c8719738996c6dc9a8958d1b5a852fa05043`. The service verified220937 frozen files and completed two new closed-form head fits. Both preserve all8 source preferences and protected source returns. Each combined system has19 source and152 replay equations, rank171; float64 residuals <=1.12e-11 and maximum float32 postcast residual <=.000271. NumPy manual-forward maximum error <=.000243;580 teacher/regret readout controls reproduce exactly.
+
+| Metric | Initializer0: regret → replay | Initializer1: regret → replay |
+| --- | --- | --- |
+| Holdout mean TV,64 states | .6488 → .1389 | .6756 → .1380 |
+| Holdout greedy changes |42 →10 |44 →9 |
+| Replay greedy changes,65 states |49 →0 |50 →0 |
+| Replay max TV |1 →.00000957 |1 →.00001804 |
+
+The exact replay constraints substantially reduce holdout drift but do not eliminate it. Held-out Battle/Chain/Idle each retain3 greedy changes for each initializer. Place retains1/0. Maximum held-out TV is nearly1 in both. The4 effect diagnostics have no greedy changes and max TV .00215/.00256. Twelve forced states remain unchanged; there is no held-out multi-legal SelectCard input. Therefore both candidates fail the diagnostic max-TV criterion; no win-rate regression or improvement is inferred.
+
+This is consistent with incomplete constraint coverage and extrapolation of a shared affine head, rather than inability to satisfy the training equations or float32 numerical error. It does not yet establish why each remaining state changes. The parameter-change norms are123.10/122.81; the next control tests whether relaxing replay equalities reduces harmful extrapolation while preserving exact source targets. The same observed split makes this an exploratory mechanism comparison, not fresh confirmation.
+
+# Soft replay versus exact replay
+
+The preceding hard replay fit satisfies all171 equations and retains source learning, but its held-out drift remains ~.138 mean TV, with9/10 greedy changes out of64. Test whether reducing parameter movement by relaxing replay equalities improves this tradeoff. This is a diagnosis-conditioned comparison on the already-observed split; it is not a fresh confirmation and its best variant must not be promoted without new validation.
+
+Keep the same19 source regret19 target constraints exact, frozen backbone/hidden layer,65 replay/64 holdout/4 effect-diagnostic/12 forced states and two initializers. Use row-L2 normalization as before. Solve min ||delta||^2 + lambda||B delta||^2 subject to A_source delta=b_source, with lambda fixed at1,100,10000. Six closed-form fits, no gradient optimizer or new games. No changing weights after seeing outcomes. Existing hard replay and regret19 remain frozen controls.
+
+Compute source minimum-norm delta0 from SVD. Project normalized replay rows into source nullspace C=B(I-A_source^+ A_source), then solve correction C^T(CC^T+I/lambda)^-1(-B delta0) by thin SVD. Check source feasibility, nullspace membership and projected ridge stationarity independently. Known-answer two-parameter fixture has source x=1 and normalized replay (x+y)/sqrt2, giving y=-lambda/(2+lambda). Assert all three before launch.
+
+Evaluate every source/drift state, manual NumPy forward checks, original teacher/regret reproduction, float32 postcast residuals, parameter norm and all holdout metrics. Compare hard/soft on same source preferences and protected return floors. Preserve all failed scientific diagnostics as results. Retain existing diagnostic TV<=.05 without presenting it as a win-rate criterion. Do not claim a numerical solver error from a failed scientific gate. This study addresses fitting geometry; actual downstream return effects and independent game generalization remain unmeasured.
+
+Single-thread CPU,1GiB reserve,3600seconds,persistent monitor; freeze ancestry and all scripts before run. No production deployment or STOP deletion.
+
+Known-answer preflight passed all three weights: x=1,y=-lambda/(2+lambda), with stationarity residual <=3.76e-13. Frozen identity `c0ceaad53daeea5325b1b145e3882a56b917a29fa9c84c92534a21981eb9ed54`;220968 hashes. Soft-replay study now launched with invocation `6ba1cef1d92744ea901fbe3fe2b53919`, watcher `82a0658713494407821e84645d168e3f`. Six fits are queued after dependency verification; no soft-replay outcome claimed at launch.
