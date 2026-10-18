@@ -4213,3 +4213,23 @@ Report separately teacher gap, adapter gap and adapter-minus-teacher gap. For ea
 Independent process reconstructs all mutations, verifies only allowed public cells change, manually recomputes all heads, reproduces72 historical original endpoint readouts and checks summaries with separate scalar arithmetic. Known-answer two-factor interaction fixture before freeze; all dependencies/heads/code frozen,CPU one thread,3600s,2GiB reserve,persistent monitor. Preserve all evidence/STOPs. No production changes.
 
 All13 selected type masks exist in the frozen official card database; type-manifest.json records counts and representative official passwords.37 captures satisfy the public-defender and known-own-deck-spell selection conditions. The known-answer interaction fixture passes. Identity `11fb2bdbb9605cb283caba57cb57dbfef1e184b4702fcc1666acbb39e743bc8a` freezes223398 files. Attribute/type audit now launched: invocation `cc9b6e98ee1e4d8b90331951f08f291b`, watcher `08baf4b1dc224a5982ba90ea2993b3e3`. Dependency verification precedes8436 head readouts and independent audit; no results or mitigation success claimed. The race-residual experiment remains separately monitored. Preserve evidence and STOPs.
+
+
+# Race-residual averaging repairs some failures but damages retention (2026-10-17)
+
+The frozen inference control completes1554 readouts with no fits or native games.223397 dependencies verify. Independent audit passes1554 manual head evaluations,72 historical endpoints,222 original-race null controls,666 inference outputs and54 summaries. Teacher equality is preserved exactly by the residual construction when the adapter is the teacher. Report SHA256 `0baf620d75c099de8b9cb362f12140d5eadb115d8819b48a56b24cc4eaa79db9`; event `0636290b46ead38252c4bf17ecc611643a3ae748b237e5c67318e50a9fb780f4` acknowledged. Operational health is distinct from the failed scientific retention check.
+
+Counts below combine two initializers, not independent samples. The source panel has21 labeled states per initializer, including2 ties;4 additional states per initializer have no Q labels and remain distribution-only diagnostics. Conditional returns apply the new inference probability to the original frozen paired branch labels; synthetic race variants receive no native labels.
+
+| Adapter / inference | Source retention vs teacher | New defender retention vs teacher | LP-factorial retention vs teacher | Worst source difference vs teacher | Worst source difference vs unchanged adapter |
+| --- | --- | --- | --- | --- | --- |
+| Regret19 unchanged | 42/42 | 2/8 | 16/16 | ~0 | 0 |
+| Regret19 residual mean | 38/42 | 6/8 | 12/16 | −21.43pp | −37.97pp |
+| Regret19 full mean | 23/42 | 6/8 | 16/16 | −38.10pp | −38.10pp |
+| Replay unchanged | 42/42 | 2/8 | 16/16 | ~0 | 0 |
+| Replay residual mean | 38/42 | 6/8 | 9/16 | −15.87pp | −48.10pp |
+| Replay full mean | 24/42 | 6/8 | 16/16 | −22.90pp | −44.78pp |
+
+Residual averaging repairs the Axe preference on the two inspected LP settings; lower-opponent-LP Hitotsu remains below the teacher floor, by up to3.80pp(regret19)/2.98pp(replay). Both residual arms fail the eight historical source preferences. Relative to the unchanged adapter, source retention is only30/42(regret19) or32/42(replay), and LP retention only4/16 for both. Full averaging sometimes retains the weaker teacher comparison while erasing prior adapter gains; therefore both references matter. No arm is accepted or promoted.
+
+The mitigation demonstrates that removing field sensitivity is not enough: averaging can repair an observed shortcut while damaging useful conditional structure. The synthetic interventions also cannot establish that race is universally irrelevant to native outcomes. Continue the already-running attribute/type interaction audit before choosing the next model intervention. The next native-data step should use legal matched-card/state controls and explicitly distinguish rule-relevant attribute/type/race dependencies from correlations; do not train invariance from arbitrary hybrid inputs or narrow the existing public gate to hide regressions. Existing challenge panels are now development evidence, not fresh holdouts. All original evidence and STOPs remain.
