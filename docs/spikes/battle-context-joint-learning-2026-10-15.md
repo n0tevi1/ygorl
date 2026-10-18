@@ -3983,3 +3983,31 @@ Evaluate every source/drift state, manual NumPy forward checks, original teacher
 Single-thread CPU,1GiB reserve,3600seconds,persistent monitor; freeze ancestry and all scripts before run. No production deployment or STOP deletion.
 
 Known-answer preflight passed all three weights: x=1,y=-lambda/(2+lambda), with stationarity residual <=3.76e-13. Frozen identity `c0ceaad53daeea5325b1b145e3882a56b917a29fa9c84c92534a21981eb9ed54`;220968 hashes. Soft-replay study now launched with invocation `6ba1cef1d92744ea901fbe3fe2b53919`, watcher `82a0658713494407821e84645d168e3f`. Six fits are queued after dependency verification; no soft-replay outcome claimed at launch.
+
+
+# Soft replay result and scoped live integration (2026-10-17)
+
+Soft replay completes all6 preregistered closed-form fits. Event `5aa6653604b8b1f66c845194bd2e8b2b336ead271702eca5440da7712b00dd24` acknowledged. Report SHA256 `504634b99de561bb187d7366ae9f76531531828bf5754fdf77f064d8465a0c59`. All8 source preferences and protected return checks pass for every fit. Source float64 residuals <=4.14e-11, float32 residuals <=.000267; manual-forward error <=.000277. Nullspace and projected ridge stationarity checks pass,1740 frozen teacher/regret controls reproduce,220968 dependency hashes verified. No native games or gradient updates in this study.
+
+| Replay penalty | Parameter-change norm, two initializers | Holdout mean TV | Greedy changes /64 |
+| --- | --- | --- | --- |
+| lambda1 |101.65 /101.37 |.4542 /.4534 |31 /31 |
+| lambda100 |110.00 /109.72 |.1890 /.1872 |14 /14 |
+| lambda10000 |120.07 /119.79 |.1343 /.1342 |10 /9 |
+| Exact replay |123.10 /122.81 |.1389 /.1380 |10 /9 |
+
+Smaller parameter movement is not sufficient to preserve the decisions. Weakening replay markedly worsens holdout drift; the strongest soft penalty only slightly improves the mean relative to exact replay and leaves the worst TV nearly1. All6 fail the diagnostic maximum-TV condition. This does not support a simple claim that exact replay equality overfitting is the sole cause of remaining errors; state coverage/shared-head extrapolation remains unresolved. These are distribution changes on a diagnosis-conditioned split, not observed performance losses or a new win-rate comparison.
+
+The next control explicitly isolates the initial adapted decision from the frozen continuation. This moves from global head fitting to checking integration scope; it does not solve general rule understanding or global retention through training.
+
+# Scoped live routing integration control
+
+Soft replay keeps source learning but does not remove extreme holdout drift. Test explicit scope isolation instead of further weight tuning. Three frozen initial heads (original6 teacher, regret19, hard cross-prompt replay), two initializers. On4 existing LP5251/2100 cases x2 hidden worlds, use the first archived suffix (2026122001) and frozen respective continuous continuation heads. Execute48 native games with initial action sampled by an independent fixed router RNG seed2026122401, plus2 cold repeats (case0/world0/initializer0 teacher and regret19) and1 serialized history control:51 paths, no fits. All48 selected branches already have audited yes/no donor counterparts. This is integration/reproduction evidence, not new scenario coverage, independent win-rate confirmation or a globally deployed policy.
+
+The runtime gate consumes only lifecycle and public decision fields: unused initial window, continuation not enabled, player0, turn3, SelectEffectYn, exactly two legal yes/no actions both naming official password36088082. Compute the frozen adapted head only when eligible; consume once. Other calls return the original continuation policy scores unchanged. The sampled initial decision enters the existing native fixture's effect_choice bridge; disclose this is a scoped fixture override, not a new general production agent. No donor outcomes, filenames or future state are available to the gate. Original6 is an initial-choice comparator; fallback remains the already-executed continuation policy, not original6 installed globally.
+
+Record every policy call's public routing metadata and returned fallback scores, the single selected initial action and independent RNG draw. Require exact equality of the entire resulting native trajectory, responses, observations, continuation logits/probabilities/RNG and outcome to its archived branch after substituting only the actually sampled initial action. This catches extra RNG draws or changes beyond the intended initial choice. Validate native health. Cold repeats must match full outputs and route records. Independent audit reruns initial manual head arithmetic, legal masks, sampling, all continuation network/RNG/LP checks and donor equality. Report per-head sampled outcomes descriptively;48 correlated games and a single router draw are not a win-rate estimate.
+
+Preflight tests gate behavior for eligible input, consumed window, wrong player/turn/prompt/card, illegal second action, incomplete/mixed menu and enabled continuation. Test strict support semantics; do not silently widen scope after a failure. Test six real initial head forwards from one known capture without executing a game. Freeze inputs/code/model ancestry before launch. Two-GiB reserve, CPU one thread,3600seconds,persistent monitor. Preserve all prior evidence and STOPs; no deployment or broad performance claim.
+
+Preflight passes10 positive/negative gate fixtures and6 real initial-head forwards, with0 native paths. Frozen identity `a3dd4b415899a365ea5f5a5534d913f7fce91f67ff77e6777a69f5e67de1016b`;221011 hashes. Scoped-live control now launched: invocation `f0c15aa529af491b9d865ce80d37b10d`, watcher `4c53cc373f8445a2889aef28af478ddd`. Dependency verification precedes the51 planned paths; no completed integration result claimed at launch.
