@@ -4315,3 +4315,36 @@ Independent audit reconstructs frozen features and each design matrix,manually e
 
 
 The known-answer minimum-norm/anchor fixture passes before freeze. Identity `2ad2b17febe34fe195b9c2ab896b8d31578637a185cefae705a128ddd77b8761` freezes224188 files. Native-label repair now launched: invocation `e6b4846b46d64533b67da12aeb4975ea`, watcher `df8cf2ce5e70487bb77adaf7155bda73`. Dependency verification precedes12 closed-form fits and720 exported readouts,plus90 teacher readouts. Results pending. Preserve all evidence and STOPs; no production promotion.
+
+
+# Native-label repair preserves measured gains only with joint coverage (2026-10-17)
+
+All12 minimum-norm final-affine fits complete and pass float32 constraint tolerance1e-3; maximum residual.00030518.224188 dependency hashes verify. Independent audit reproduces12 NumPy solves,720 exported-head readouts,90 teacher readouts and80 summaries; frozen backbone/earlier head layers remain unchanged. Ranks20 for single-card and21 for dual-card fits; parameter-delta norms30.11–63.01. Report SHA256 `ae6356a1d2c12a6b0c65005600e738fa1adce83e07d1d2b89481d68d85ea7230`; event `1bbfe4fcdf04bfcff70adf7ee94f2af21f32ff095fc86607fbb994bbb4935ba6` acknowledged after verification. These are12 closed-form fits,0 optimizer steps and0 new native games.
+
+Counts combine both initializers and refer to the frozen development labels, not independent samples or fresh generalization. Source has21 labeled inputs per initializer,including2 ties;4 additional inputs per initializer have no Q labels. Both teacher and unchanged adapter references are reported.
+
+| Repair | Boundary retention vs teacher (regret19/replay) | Source retention vs unchanged adapter (regret19/replay) | Worst source change vs unchanged adapter (regret19/replay) |
+| --- | --- | --- | --- |
+| Unchanged | 4/8,4/8 | 42/42,42/42 | 0,0 |
+| Sorcerer only | 6/8,6/8 | 40/42,40/42 | −31.23pp,−22.24pp |
+| Ancient Elf only | 6/8,6/8 | 42/42,42/42 | >−.001pp,>−.001pp |
+| Both cards | 8/8,8/8 | 42/42,42/42 | >−.001pp,>−.001pp |
+
+Every arm retains42/42 versus teacher and all eight historical source preferences; that reference alone hides lost adapter gains. Single-Sorcerer damage is localized to source index23,Sand Stone73051941,which is outside the19 anchor constraints. Regret19's preference there actually flips to the inferior yes action in both initializers. This demonstrates nonlocal interference under the constrained shared output layer: preserved anchor gaps do not preserve unconstrained states. It does not establish a new universal feature-invariance rule. Neither single-card repair transfers sufficiently to the other card.
+
+Joint repair preserves all16 LP-factorial cells versus teacher and unchanged adapter (worst loss against adapter<.0067pp),and all8 matched1901LP cells against both references. All8 matched2100LP cells are tied and remain uninformative. Earlier failed-defender challenge still retains only2/8 against teacher for both heads,despite improving its worst loss to10.32pp(regret19)/14.08pp(replay). Thus the joint repair resolves the fitted boundary errors while preserving measured old gains; it does not solve the broader transfer problem. Keep the unresolved challenge visible and do not promote. Next test execution and fresh continuation labels for both joint candidates without selecting between them.
+
+# Native dual-label repair fresh-suffix confirmation (2026-10-17)
+
+The12 final-affine fits all pass numeric constraints and independent solves. Joint Sorcerer/Ancient Elf repair retains8/8 observed boundary cells and42/42 labeled historical source cells versus unchanged adapters; the earlier failed-defender panel remains2/8 versus teacher. Single-Sorcerer repair erases Sand Stone gains by up to31.23pp despite19 source anchors and42/42 teacher-relative retention. Hence both teacher and pre-repair adapter references are mandatory. Evaluate the joint candidate for each adapter/initializer without selecting between them or changing hyperparameters; this is explicit development selection from the12-arm diagnostic.
+
+Keep four matched original card states atLP6127/1901,resource27288416. Freeze exported both-repair heads and original teacher,public initial-only Bull gate and original continuation policy. Two new continuation suffixes2026123401/2026123402 replace2026123301/2026123302. Initial inputs must exactly match each prior boundary capture,not be novel. No new fit or new-state/generalization claim. New suffixes test continuation-label stability and real normal-sampler execution of the trained outputs; these small correlated constructed branches are not population evaluation.
+
+64 paired yes/no native branch games across4 cards,2 worlds,2 initializers,2 suffixes;48 normally sampled routed games on first suffix,2 cold repeats,1 history control=115 paths. Preserve exact donor-branch matching,initial single RNG draw,manual head readout,unchanged continuation network/RNG/LP audits and matched-card observation comparisons. Setup constraints and continuation reseeding remain. Head labels regret19/replay denote repaired descendants; frozen head_sources map them to the both-repair checkpoints. No arbitrary metadata interventions.
+
+Report all Qyes/Qno,ties,conditional returns,per-cell teacher retention floor−.01,and differences versus unchanged adapters using the same fresh branch labels. Baseline logits are frozen original boundary readouts and must match known initial fingerprints; repaired logits must reproduce the exported diagnostic outputs at indices41–44. Recompute Q from all four world/suffix pairs rather than reuse development labels. Do not presume old Q,consistent winner signs or broad preservation. The unaddressed failed-defender panel remains an explicit limitation and cannot be omitted from conclusions. No gate narrowing,production promotion or merge. Future new-state/rule-relevant type controls remain necessary.
+
+Preflight10 gate fixtures,6 known-input forwards and normal-sampler single-draw fixture only;0 native preflight games. CPU1thread,3600s,2GiB reserve,persistent monitor,freeze full ancestry and code before outcomes. Preserve all evidence and STOPs.
+
+
+Preflight10 gate fixtures,6 known-input forwards and single-draw sampler fixture pass. Identity `b3d7a75fbaedddcd5f7f7374c9c92b48ed582a8b5a6fb4b6bbefee42936b4297` freezes224252 files. Native repair confirmation now launched: invocation `9ac91848c7a746d0835f4674103aff31`, watcher `1451a5b94cf6415a9ba87c7632bc8152`. Dependency verification precedes115 paths; results pending. All existing STOPs and evidence remain.
