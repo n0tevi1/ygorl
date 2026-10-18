@@ -4348,3 +4348,14 @@ Preflight10 gate fixtures,6 known-input forwards and normal-sampler single-draw 
 
 
 Preflight10 gate fixtures,6 known-input forwards and single-draw sampler fixture pass. Identity `b3d7a75fbaedddcd5f7f7374c9c92b48ed582a8b5a6fb4b6bbefee42936b4297` freezes224252 files. Native repair confirmation now launched: invocation `9ac91848c7a746d0835f4674103aff31`, watcher `1451a5b94cf6415a9ba87c7632bc8152`. Dependency verification precedes115 paths; results pending. All existing STOPs and evidence remain.
+
+
+# Repair-confirmation dependency failure and isolated recovery (2026-10-17)
+
+The confirmation attempt verified224252 hashes,then stopped inside the first branch at `native.student_head`: missing `head-2026109201-repair.pt`. The study builder copied six initial scoped heads but omitted the existing continuation checkpoints. The former preflight only loaded scoped heads,so it missed this runtime dependency. No branch result completed or was written; this is an infrastructure failure and provides no new performance evidence. Event `21a23b9af0e0c022ecc31f526ab81a07ee32fdce5a62e3fea87c3a13b252dfa6` acknowledged after traceback inspection. The original STOP,request,service log,protocol and identity remain untouched and are frozen as failure evidence.
+
+An isolated `effect-resolution-initial-choice-retention-scoped-native-repair-recovery-2026-10-17` restores the three original non-scoped head files (`head-2026109201-repair.pt`,`head-2026109202-repair.pt`,`head-factual.pt`) from the already frozen successful native parent. Source/destination hashes match ancestry; all six repaired/teacher scoped checkpoints also remain byte-identical. Native code,models,cases,gate,scoring and suffixes2026123401/2026123402 remain unchanged. No new result selection or changed scientific threshold.
+
+Enhanced preflight loads and forwards all9 runtime heads through the actual loader,checks every configured continuation tag,passes the10 gate fixtures and single-draw sampler test,and reproduces one complete previously observed native branch and capture exactly. This adds1 known-outcome preflight path to the115 planned fresh-suffix paths(total116); it does not consume a new suffix outcome. Freeze includes restored dependencies and exact known-branch evidence.
+
+Recovery identity `2a91395d882ac779b1ed37cf5553b126b8ab9e99b1aa47eea3b872de932f64f4` covers224296 files. Recovery now launched: invocation `f1d5e0d951924d5b95ae2df21f5243d4`, watcher `087a0b3e0ce940d58ccd1652a7964b67`. Dependency verification precedes native work; results pending. Independent completion audit and both teacher/unchanged-adapter references remain required. Preserve all prior STOPs/evidence; no promotion or merge.
