@@ -4405,3 +4405,35 @@ Known-answer solver/anchor fixture before freeze;CPU1thread,3600s,2GiBreserve,pe
 
 
 Known-answer solver/anchor preflight passes. Identity `bf71fb62d64333381ce07af13c0540cbf8faeb67fc53135ea3b67aa1846218fc` freezes225051 files. Anchor coverage comparison now launched: invocation `995ebe30f7524850afe76a317f327516`, watcher `86a936ae8fff4309811b1f03f4c39391`. Dependency verification precedes12 closed-form fits,784 candidate/baseline readouts,98 teacher readouts and96 summaries; results pending. Preserve all earlier STOPs/evidence; no promotion.
+
+
+# Anchor coverage repairs targets but misses Spirit; complete-set feasibility (2026-10-17)
+
+All12 fits complete with independent NumPy solves,784 exported-head readouts,98 teacher readouts and96 summaries.225051 dependency hashes verify;12/12 numeric constraints pass,max float32 gap residual.00048828125. Ranks22/27/31 for19/24/28 anchors plus3 targets;delta norms128.03–169.08. Report SHA256 `41a79b19ea6a9097bf197d2b71415ca72ed9a4989b41942f56c1224e17e4e56c`; event `dc32a31809d271d815bafc074437bf8b21fc234187a93389f92a9554a0ff34ac` acknowledged. Backbone/earlier layers unchanged.0 new native games.
+
+Every arm fixes the observed Hitotsu/Axe challenge to8/8 teacher-relative retention,but historical source retention against the pre-update dual-repair adapter falls42/42→40/42. All source violations are Spirit of the Harp34690519,index22,at both initializers. This is the only labeled source input omitted by protected28;indices9,11,13,15 also remain unanchored but lack Q labels. The old eight-preference check passes despite this lost capability,demonstrating why that reduced check is insufficient.
+
+| Arm | Source vs prior adapter (both heads) | Worst source loss regret19/replay | Boundary vs prior adapter (both heads) | Own-LP vs prior adapter (both heads) |
+| --- | --- | --- | --- | --- |
+| source19 | 40/42 | 48.64pp/42.04pp | 6/8 | 6/8 |
+| protected24 | 40/42 | 49.29pp/42.17pp | 8/8 | 8/8 |
+| protected28 | 40/42 | 48.21pp/41.95pp | 8/8 | 8/8 |
+
+Counts combine two initializers and describe already observed development labels. All arms retain16/16 LP-factorial cells;worst loss there against prior adapter is.058pp. Matched2100LP cells remain tied and uninformative. Broader constraints protect the prior boundary fixes,but do not constrain Spirit;its yes probability rises to.971–.9996 even though Qyes=.5,Qno=1. Worst teacher-relative loss is only2.25pp,again obscuring the much larger loss of previously gained adapter performance. No arm satisfies full measured retention,and none is promoted.
+
+The evidence supports incomplete preservation coverage under shared-output updates: satisfying the listed anchors is insufficient for unlisted inputs. It does not show that the specified constraints were violated or that all regressions share one cause. Next isolate adding Spirit,compare complete observed-state preservation,and algebraically decompose the prior target updates' effect on Spirit. All fitted/evaluated data remain development evidence.
+
+# Complete observed-state retention and target-interference decomposition (2026-10-17)
+
+The19/24/28-anchor ablation fixes all8 Hitotsu/Axe groups but loses2/42 historical source cases for every arm against the pre-update dual-repair adapter. All violations map to Spirit of the Harp34690519,index22,the only labeled source input omitted from the broadest anchor set. Its loss reaches49.29pp;protected24/28 preserve the earlier boundary repairs. Numerical constraints pass12/12,so this is an unprotected-state problem under the shared affine update,not failure to enforce the specified constraints.
+
+Start from the SAME four dual-repair heads as the preceding ablation,not its degraded outputs. Keep final-affine minimum-norm SVD solver,temperature.05,rcond1e-12 and targets25,27,28 unchanged. Three fixed arms:protected28 reproduces prior control;protected29 adds only Spirit index22;all46 preserves every existing input except the three repair targets,including four source inputs with missing Q (distribution constraints only). Thus every labeled existing non-target is covered in all46,without inventing missing labels. Require disjoint anchor/target sets and all49 coverage for all46. This addresses finite observed-set feasibility,not population preservation or new-state generalization.
+
+12 closed-form fits,784 exported/baseline readouts,98 teacher readouts,96 summaries,0 new native games. Independent NumPy solve/manual head audit remains;all arms and numerical failures reported. Protected28 checkpoint/output reproduction is an explicit control. Report ranks,singular values,delta norms and postcast gap residuals≤1e-3 separately from retention floor−.01. Evaluate teacher and pre-update-adapter returns and old eight preferences. Large updates or perfect training constraints do not justify promotion.
+
+For causal diagnosis within the fixed linear model,also decompose each preceding12-fit minimum-norm update into its three target RHS contributions. Use the frozen previous design matrix and SVD cutoff;zero all RHS entries except one repair target,solve with independent NumPy least squares,and sum the three vectors. Require exact agreement within numerical tolerance with the recorded total update and resulting index22 gap shift;anchor contributions should be zero up to floating error. Report each target's Spirit gap contribution and row residual norm after projecting out anchor rows. This is algebraic attribution of the fitted affine intervention,not proof of card-rule causality or original pretraining causes.
+
+All49 states are previously observed development data. Constraints on them cannot be called holdout success;any useful candidate still needs fresh native execution and unseen cards/states,including actual type/rule controls. No gate narrowing,feature masking,production promotion or merge. Known-answer solver/anchor preflight,CPU1thread,3600s,2GiBreserve,persistent monitor. Preserve all previous evidence and STOPs.
+
+
+Known-answer solver/anchor preflight passes. Frozen identity `f9c806dd5a7130ec4da7dc7ae84d1ee608f0966ab5c460e3a8c8ceed344e88cb` covers225099 files. Complete-coverage comparison now launched: invocation `664479ff99914cf89346902eaa0dccaa`, watcher `8e9c58a2672742519c5a92c1713aabf6`. Dependency verification precedes12 fits,784 exported/baseline readouts,98 teacher readouts,96 summaries and12 prior-fit interference decompositions. Results pending;all prior STOPs/evidence retained.
