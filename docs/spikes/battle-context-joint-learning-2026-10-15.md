@@ -4284,3 +4284,34 @@ Primary outputs:Qyes/Qno per case/initializer,informative-versus-tied pairs,cond
 Known-input/gate/sampler preflight only;0 new native preflight paths. CPU1thread,3600s,2GiB reserve,persistent monitor. Preserve all research evidence/STOPs. No production modifications.
 
 Preflight10 gate fixtures,6 known-input forwards and exact one-draw sampler check pass;0 new native preflight paths. Frozen identity `c81f2a3470bcf4c890c8f01be5397a6af20e0ea7fba666fe7a9d27ed7d04fec4` covers223822 files. Boundary control now launched: invocation `4eeed35e49a14089b80155c79814479d`, watcher `162ff483948f4e369a83ad425c48a8f9`. Dependency verification precedes115 paths. All prior evidence and STOPs retained; no promotion,fit or post-outcome gate change.
+
+
+# Matched LP boundary reveals regressions; native-label constrained repair (2026-10-17)
+
+The matched1901LP control completes115 paths and223822 frozen dependency hashes. Independent audit verifies48 selected-branch matches,2592 unchanged continuation vectors,13152 network checks,6576 RNG checks,17136 LP checks,2 cold repeats and1 history control. Four new initial fingerprints are absent from71 enumerated prior inputs. Matched-card initial differences remain identity/attribute only;24 paired LP comparison groups pass. Report SHA256 `b0e0d485a0811190d36ad39d08767b36337cb2bd04f446027f6035d9f4193995`; event `10f9ae0f3a7c161b14122acd7a498ff1dd29963de18e737fcb1d16d6ac606c2c` acknowledged after verification.
+
+All8 case/initializer cells now haveQyes=.5,Qno=1. Both adapters retain only4/8 teacher-relative conditional-return groups: the Machine pair improves, while both Spellcasters regress. Ranges below combine two initializers and do not represent independent population estimates.
+
+| Matched defender | Regret19 difference vs teacher | Replay difference vs teacher |
+| --- | --- | --- |
+| Cyber Falcon30655537 | +42.19–42.31pp | +42.19–42.31pp |
+| Cyber Soldier of Darkworld75559356 | +48.11–48.19pp | +35.73–37.35pp |
+| Sorcerer of the Doomed49218300 | −28.66 to−28.59pp | −29.35 to−29.35pp |
+| Ancient Elf93221206 | −19.26 to−17.96pp | −22.09 to−20.52pp |
+
+This exposes a harmful preference in genuine native states, unlike the earlier2100LP ties. Identity remains confounded with attribute; the paired LP outcomes do not independently establish a pure terminal-threshold cause. Existing challenge states become development evidence. No masking, gate narrowing or promotion follows.
+
+# Native-label final-layer repair with fixed source anchors (2026-10-17)
+
+Matched LP1901 native outcomes reveal Qyes=.5,Qno=1 for all four cards; adapters improve Machines but regress Sorcerer/Ancient Elf by17.96–29.35 percentage points versus teacher. Both retain4/8 groups. Synthetic race averaging previously damaged old gains; train from actual original-state branch labels instead of assuming invariance of fields.
+
+Freeze backbone,card identity/attribute/type encoders and first head affine/ReLU. Modify only the final affine (16512 parameters) of each frozen regret19/replay head, both initializers. Preserve the original adapter's yes-minus-no gap at the same19 previously used source anchors [0,1,2,3,4,5,6,7,8,10,12,14,16,17,18,19,20,21,24]. Three repair sets:only Sorcerer boundary case2,only Ancient Elf boundary case3,both. Their indices are43/44 in the frozen45-input evaluation panel. Set repaired gap to(Qyes−Qno)/.05=−10. Solve the minimum-Euclidean-norm final-affine delta using double-precision SVD,relative cutoff1e-12,then cast/export float32 heads.12 fixed closed-form fits,no optimizer updates,no native games. No hyperparameter sweep or post-outcome selection.
+
+Evaluate every exported head on45 original native captures:25 historical source,4 prior failed-defender,8 LP-factorial,4 matched2100LP,4 matched1901LP. Four historical rows have missing Q and remain distribution-only. Readouts for unchanged teacher and adapter are references. Report probabilities,expected values,teacher-relative and unchanged-adapter-relative differences,per-panel retention floor−.01,old eight preferences and numeric target/anchor residuals. This evaluates retained gains as well as newly repaired errors. A solved anchor constraint alone is not proof of broad retention.
+
+Only the chosen repair subset and19 anchor gaps may enter each solve. Withheld paired card and every other panel are evaluation-only for that fit, but all have been observed during development:do not claim fresh heldout generalization. Single-card versus dual-card comparison tests transfer and interference under fixed representation. Large parameter norms,rank/condition issues and postcast residuals are reported even if they fail numeric target tolerance1e-3; scientific failure is not hidden by retrying. No promotion based on this diagnostic. Any candidate still needs fresh native continuation and new-state validation. No feature masking or gate narrowing.
+
+Independent audit reconstructs frozen features and each design matrix,manually evaluates exported heads,checks unchanged layers,uses NumPy least-squares as a separate solver for the minimum-norm delta,and recomputes all conditional returns/retention summaries. Known-answer min-norm/anchor-preservation fixture precedes freeze. CPU1thread,3600s,2GiBreserve,persistent monitor,freeze full ancestry/inputs/heads/code. Preserve STOPs/evidence. Ritual/spell/trap native-rule tests remain separate pending work.
+
+
+The known-answer minimum-norm/anchor fixture passes before freeze. Identity `2ad2b17febe34fe195b9c2ab896b8d31578637a185cefae705a128ddd77b8761` freezes224188 files. Native-label repair now launched: invocation `e6b4846b46d64533b67da12aeb4975ea`, watcher `df8cf2ce5e70487bb77adaf7155bda73`. Dependency verification precedes12 closed-form fits and720 exported readouts,plus90 teacher readouts. Results pending. Preserve all evidence and STOPs; no production promotion.
