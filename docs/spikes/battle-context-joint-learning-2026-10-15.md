@@ -4143,3 +4143,33 @@ Primary scientific check: conditional returns against teacher across8 case/initi
 Preflight10 gate fixtures,6 old-capture forwards and exact single-draw PolicyAgent fixture; verify database metadata and explicit source defender lists before outcomes. CPU one thread,2GiB reserve,3600seconds,persistent monitor. Freeze code/inputs/heads/ancestry. Preserve all research evidence and STOPs, no production changes or merge. Constructed setup and continuation reseeding remain.
 
 Database metadata and explicit source-protocol defender lists are frozen in defender-manifest.json. Preflight passes10 gate fixtures,6 known-input forwards and the exact one-draw sampler fixture. Frozen identity `06481a887355d22aa244161c36cff455686db67db673877cdc1f508cec25c0d8`,223011 hashes. In-scope defender challenge now launched: invocation `4bd90068331b4baa8047a10a625a0134`, watcher `62c5e854a03e4e0f8b87c374c22db579`. Dependency verification precedes115 paths; no challenge result claimed at launch. All evidence and STOPs remain preserved.
+
+
+# In-scope defender regression and paired feature attribution (2026-10-17)
+
+The prospective unchanged-gate challenge completes115 paths, but both adapters fail scientific retention: only2/8 case/initializer groups pass, and both are uninformative ties. Completion health must not be interpreted as performance success. Event `89195a4499724aaf05a116355b565f41de1c7dc6715686456e100eb149364061` acknowledged after reviewing report and independent audit. Report SHA256 `c571ddd403eb862a6b10cc0ce00e882cb13881260568a33911a72934c54b3fff`.
+
+| Defender and opponent LP (own6127) | Qno | Qyes | Teacher Pyes | Regret19 Pyes | Replay Pyes |
+| --- | --- | --- | --- | --- | --- |
+| Hitotsu-Me Giant76184692,2100 | 1 | .5 | .903–.904 | >.99999 | >.99997 |
+| Hitotsu-Me Giant76184692,2873 | .5 | .5 | .890–.892 | >.99999 | >.99996 |
+| Axe Raider48305365,2100 | 0 | .5 | .958 | .0223 | .0075 |
+| Axe Raider48305365,2873 | 0 | .5 | .958–.959 | .0433–.0438 | .0111–.0112 |
+
+Each Q averages four paired world/suffix branches per initializer; the two initializers share these conditional labels. Hitotsu low-opponent-LP losses are4.81–4.86 percentage points. Axe losses are45.74–46.80 points for regret19 and47.36–47.54 for replay. These are constructed conditional expected returns, not population win-rate estimates. No meaningful improvement occurs. Do not narrow the preregistered gate after seeing the failures to claim preservation.
+
+Execution isolation nevertheless passes:223011 dependency hashes,64 branches,48 normal-sampler routed games,2 cold repeats,history control;48 exact selected-branch matches,4282 unchanged continuation scores,18938 network checks,9469 RNG checks,23540 LP checks. All four initial fingerprints are new against the enumerated63-input prior set. This separates within-scope bad generalization from the previously measured outside-scope shared-head interference. Isolation alone is insufficient.
+
+Input-only comparison identifies exact same-state anchors: challenge cases0/1 versus LP-factorial Stone cases0/1, and cases2/3 versus Gemini cases4/5. All observation fields match except five cells in defender row3 (identity,race,level,ATK,DEF); Axe level already matches. This permits controlled sensitivity attribution, without yet establishing which field causes the failure.
+
+# Paired defender feature attribution (preregistered 2026-10-17)
+
+The unchanged scoped gate passed execution isolation but both adapters failed6/8 new defender retention cells (the two passes are ties). Axe Raider's conditional expected return falls about46–48 percentage points against teacher. No gate narrowing or promotion follows this failure.
+
+For each of four challenge inputs pair a same-LP anchor from the frozen LP-factorial: cases0,1 map to Stone cases0,1; cases2,3 map to Gemini cases4,5. Require all observation cells and dtypes identical except defender row3 identity0, race11, level12, attack17, defense18. These five changes fully reproduce the anchor observation. Level is unchanged for Axe and must be a null factor there.
+
+Evaluate the complete32-subset factorial for each pair with the frozen backbone and teacher/regret19/replay heads from both initializers:128 synthetic inputs,768 head readouts,0 fits/native games. Original and full-swap endpoints must reproduce frozen challenge/anchor logits and probabilities. Synthetic hybrids can contradict card metadata; they are input-sensitivity interventions, not legal game states. Do not assign them native outcome labels or claim win-rate gains.
+
+Primary outcome: exact five-factor Shapley decomposition of endpoint change in yes-minus-no logit gap, plus probability-yes decomposition. Report all factors, interactions via factorial contrasts and the adapted-minus-teacher change; no assumption that identity dominates. Also report first-order anchored effects and residual beyond their sum. Shapley efficiency, unchanged-level null effects and all endpoints must pass. Separate-process audit reconstructs every input, checks the mutation whitelist, recomputes backbone and manual affine/ReLU/dot head outputs, and computes Shapley independently by all120 permutations. Additive/interaction known-answer fixture precedes freeze. CPU one thread,3600s,2GiB reserve,persistent monitor,all ancestry/code/heads frozen. Preserve all STOPs/evidence. No production changes.
+
+Known-answer additive-plus-interaction fixture and four mutation-whitelist input checks pass. Identity `aaf5f3b8c458e59590ee3862350c800116821864f69f26d03f37410e24a9b948` freezes223375 files. Feature attribution now launched: invocation `569b66640e904c94b79aab07b108d463`, watcher `e9a2ab9ef7364035aa4ba7409a3f41fe`. Dependency verification precedes128 inputs and768 head readouts. Independent audit reconstructs all interventions, manually evaluates heads, checks48 endpoint readouts and192 unchanged-level duplicate readouts, and independently computes72 Shapley decompositions over120 permutations. Results pending at launch;0 fits/native games. All evidence and STOPs preserved.
