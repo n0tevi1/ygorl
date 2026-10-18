@@ -5435,3 +5435,32 @@ Prior exposure: all NO branches and unprepared YES are already represented in ea
 
 
 Preparation/effect interaction is now launched under identity `f9e21ac07c3948c147fd0eb6ca3b6400fb571301726dc6509ff1e970a6c88741` (253742 frozen files). Service invocation `cd9dd284bb334138b5b882e8766a264f`; watcher `7a15069daaa3457a96b4340b60194f04`. Preflight verifies complete known-NO reproduction, independent continuation reconstruction, 32 requests differing only in the effect flag, and unchanged native implementation. The 64 primary paths include 32 exact parent NO controls; two YES cold repeats bring the physical total to 66. All NO and unprepared YES states were previously observed; prepared YES cells are the new comparisons. One CPU thread, one-hour cap, persistent monitoring. No training, deletion or promotion; results pending.
+
+
+# Preparation changes the terminal effect-choice target (2026-10-18)
+
+Preparation/effect interaction report SHA256 `bcd75e266d7563c1a3b70512039728b88c6f44ed21282005b72ef7a38d1a3ccd`, identity and all 198 output hashes verified. Independent audit matches: 64 primary paths, two cold repeats, 32 exact historical controls, 32 effect-pair prefixes, 64 preparation prefixes, 10280 network outputs, 5140 RNG draws and 13092 LP states. Completion event `74b9ddb67219a9a388ba41d9324938756e64cf26a3eb5e99526f2203c9eba4ee` acknowledged. No model fitting.
+
+| Preparation | NO wins / 8 | YES wins / 8 | NO / YES net opponent LP loss |
+| --- | --- | --- | --- |
+| None | 0 | 0 | 2200 / 1800 |
+| Summon | 8 | 0 | 2500 / 2100 |
+| Reposition | 8 | 8 | 3400 / 3000 |
+| Both | 8 | 8 | 3700 / 3300 |
+
+NO deals 400 initial battle damage versus zero for YES in each cell. In the summon-only cell this crosses the winning boundary: NO wins on turn 5; YES loses on turn 12 with opponent LP 101. With reposition or both, either effect branch wins on turn 5; without preparation, either loses on turn 12. Therefore a uniform NO-preference target would overstate the terminal reward gap in three of four observed preparation states. Damage remains different even when terminal winner ties; this does not establish universal equivalence. Restricted fixture and shared contexts limit independence and do not establish unmodified-policy performance.
+
+Mitigation hypothesis: generate paired action-value labels conditioned on the actual pre-effect preparation state and preserve observed terminal ties instead of forcing every positive damage gap into a winner preference. Validate on new core/continuation seeds before retraining; this turn changes no model or production behavior.
+
+# Preparation/effect interaction with new core and continuation seeds (2026-10-18)
+
+Parent report bcd75e266d7563c1a3b70512039728b88c6f44ed21282005b72ef7a38d1a3ccd passes 64 primary paths, two cold repeats, 32 historical controls and 198 output hashes. Observed NO/YES wins: no preparation 0/0, summon 8/0, reposition 8/8, both 8/8, each out of eight. NO adds 400 damage in every preparation cell, but only summon changes terminal winner. These are paired restricted-fixture results, not 64 independent games or trained-model accuracy.
+
+Question: does this preparation-dependent terminal value gap persist with new core and suffix seeds? Freeze all four preparation modes crossed with explicit initial NO/YES and eight new contexts: core seeds 2026126401/2026126402, paired initial seeds 2026126501/2026126502 and continuation seeds 2026126511/2026126512, crossed with the same two frozen continuation heads. Keep official cards, LP 7507/2201, resource cards, native legal preparation, forced Bull/Panda encounter and every model parameter unchanged. Initial scores are observational; sample_initial_head=False. Core and suffix seeds are new to this study series; the fixture, cards and effect hypotheses are exposed.
+
+Sixty-four new primary paths plus two cold YES repeats (none and both, context zero), and eight historical controls (parent context zero, all preparation/effect cells) =74 actual paths. Known-control preflight reproduces parent none/NO exactly and validates all 32 paired requests without generating fresh outcomes. The parent output hashes and all dependency identities are frozen before any new-seed outcome is inspected. No fitting, model selection, deletion or promotion.
+
+Audit all eight historical native results and captures exactly; new YES/NO pairs share complete initial capture, actions, responses, trajectory and raw message prefix through their effect decision. All preparation arms share the no-preparation prefix through decision 17. Validate exact legal preparation stages, forced attack/target, explicit YES/NO execution, full post-effect network outputs/RNG/LP reconstruction and cold process equality. Report all eight cells and all 32 paired differences, including ties, terminal LP/turn and damage. Pairing and repeated fixture structure limit independence; do not attach binomial significance or generalization guarantees. A tie on winner does not imply equal damage or universal action equivalence. No changing the training target yet; retain context-dependent labels as a mitigation hypothesis. One CPU thread, one-hour cap, persistent heartbeat and monitor; retain all evidence and STOPs.
+
+
+Preparation/effect seed confirmation is now launched under identity `8d891d92c7614f95511a287877cf35e7250803909cc803d958468508c2aa23e5` (253968 frozen files). Service invocation `55e81f5d01604fd2a376e2fe3a690509`; watcher `9eba2dca8b964e4d9f9af211bb33ffbb`. Known-control preflight reproduces the complete parent none/NO result and capture, independently reconstructs continuation network/RNG/LP, checks unchanged native implementation and all 32 effect-only request pairs. New core and initial/continuation seed sets are checked against the parent; no fresh outcomes inspected before freeze. Sixty-four new primary paths, eight historical controls and two cold repeats; one CPU thread, one-hour cap, persistent monitoring. Results pending. No fitting, deletion or promotion.
