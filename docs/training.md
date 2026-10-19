@@ -567,3 +567,36 @@ critic-only warmup不受policy guard限制，策略参数仍被冻结。旧32-up
 [修复与复现](spikes/ema-shared-parameters-2026-10-05.md)：现有Transformer-history模型的CardIdentity
 有4个名字，旧τ=.02实际成为.07763184；修后按配置执行。旧checkpoint保留已有reference，
 修复不重建过去的历史。首步优化前reference仍等于learner，这个错误不是首步KL超调的原因。
+
+## 原生覆盖 × 冻结回放的有界试验
+
+`tools/retention_factorial.py` 是 opt-in 的 2×2 试验入口，默认训练命令不变。
+实验从同一 PPO 检查点恢复 actor **和 critic**，重新建立匹配的空 Adam、EMA 参考和冻结初始对手池；
+这不是原优化器的精确续跑。四组分别是 `uniform`、`uniform_replay`、`mechanism`、`mechanism_replay`。
+
+- `uniform` 保持均匀 cross-deck 配对；`mechanism` 将 50% 概率分给预定义卡片类型组
+  （仪式、融合、同调、超量、连接、灵摆、速攻魔法、陷阱），其余保留原分布。先/后攻和所有决策仍由原生引擎及策略执行。
+  类型组重叠，既不强制效果出现，也不生成新的卡组；必须用实际 prompt/phase 与 offered-action 统计核验采样变化。
+- `*_replay` 在每次被接受的 PPO minibatch 上另采 128 条冻结 teacher observation，
+  添加系数 0.5 的 `KL(teacher || current)`。bank 从独立 seed 的原生对局采集，按 prompt/phase
+  每组最多保留 64 行，训练时均匀抽组再抽行。旧样本仅产生 policy KL，不产生 PPO ratio、advantage 或 critic target。
+- 每组相同新 rollout 行数；KL early stop 可能导致 optimizer step 数不同，蒸馏也增加算力。
+  报告实际接受/拒绝次数、回放行数和耗时，不能视作等 FLOP 对照。
+- 正式 pilot：3 个训练 seed，每组 16 次更新 × 1,024 行，合计 196,608 行；bank 另采 8,192 行。
+  固定最终 checkpoint，与共用初始策略一起，分别对 Greedy、冻结初始策略、冻结更强策略评估。
+  32 个新发牌簇 × 4 种牌组/先后攻分配 × 3 个对手 × 13 个模型 = 4,992 局。
+  训练、bank、评估 seed 分离，评估只在全部训练完成后读出，不选 checkpoint、不自动调参或晋升。
+- 完整对局是评估单位；turn/decision limit 保留为删失并报告 `[0,1]` 的结果界限，
+  不把 LP 领先当成真实胜利。所有评估对局保存 replay 并做 cold replay 校验。
+  三训练 seed、32 发牌簇仅够可行性试验，不足以保证检出小幅胜率变化，也不能证明未见卡泛化。
+
+先运行 `prepare --root <new-dir> --source <ppo.pt> --opponent <stronger-ppo.pt> --smoke`，
+再执行 `run --root <new-dir>`。smoke 仅 1 seed × 4 组 × 1 次更新，以及 60 局完整评估，
+验证数据通路，不能判断算法优劣。正式运行在另一个新目录 `prepare`，去掉 `--smoke`。
+`prepare` 冻结代码、native library、卡片脚本/数据库、环境、模型、sampling 和 panel 的身份；
+正式运行前应先提交代码，后续修改需另建注册目录。
+
+默认最多 4 小时、4 GiB 新输出，并保留 2 GiB 空闲空间。成功的训练对局 trace、metrics、最终模型和
+失败证据保留；不保存每次更新的全部 rollout 或优化器快照，因此中断后**不提供精确 mid-arm resume**。
+重复启动拒绝覆盖，错误写入 STOP，处理后另建实验目录；通用 `Trainer.resume` 不会自动寻找 bank，
+配置中启用了 retention 却未绑定 bank 的 policy update 会直接报错。

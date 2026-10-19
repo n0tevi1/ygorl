@@ -24,6 +24,7 @@ league and the critic losses do not change.
 from __future__ import annotations
 
 import copy
+import math
 import time
 from collections import defaultdict
 from collections.abc import Callable
@@ -69,8 +70,12 @@ class PPOConfig:
     epochs: int = 2  # over the 16,384-row batch in 2,048-row minibatches (target_kl may stop earlier); design I1: 2 = 4 in strength
     minibatch_size: int = 2048  # 8 minibatches per epoch of the 16,384-row default batch (design I1)
     adv_norm: str = "standard"  # normalize_advantages mode, over the whole rollout
+    retention_coef: float = 0.0  # opt-in fixed observation-bank KL(teacher || current), never PPO replay
+    retention_batch: int = 128
 
     def __post_init__(self) -> None:
+        if not math.isfinite(self.retention_coef) or self.retention_coef < 0 or self.retention_batch < 1:
+            raise ValueError("retention requires a finite nonnegative coefficient and positive batch")
         if self.critic_target not in ("lambda", "terminal"):
             raise ValueError("critic_target must be lambda or terminal")
         if self.critic_target == "terminal" and (self.gamma != 1 or self.critic_lam is not None):
@@ -322,10 +327,12 @@ class PPOLearner:
             est.q_targets = est.v_targets = z
         return est
 
-    def update(self, ro: Rollout, policy: bool = True) -> dict[str, float]:
+    def update(self, ro: Rollout, policy: bool = True, *, replay=None) -> dict[str, float]:
         """One PPO update on ``ro``. ``policy=False`` (critic warm-up): only the Q / V losses, and only parameters the
         policy does not use are stepped, so the policy (actor and shared trunk) stays exactly as it was."""
         cfg, model = self.cfg, self.model
+        if policy and cfg.retention_coef > 0 and replay is None:
+            raise ValueError("retention enabled without a bound frozen replay bank")
         dev = next(model.parameters()).device
         laps = _Laps(dev if self.timing else None)
         est = self.targets(ro)  # on the CPU with the rollout's per-row data; the batch tensors go to the model
@@ -382,6 +389,10 @@ class PPOLearner:
                 )
                 laps.lap("kl_guard")
                 if not rejected:
+                    if policy and cfg.retention_coef > 0:
+                        retention = replay.loss(model, cfg.retention_batch)
+                        loss = loss + cfg.retention_coef * retention
+                        sums["retention_kl"] += float(retention.detach())
                     self.optimizer.zero_grad(set_to_none=True)
                     loss.backward()
                     if not policy:
@@ -421,6 +432,9 @@ class PPOLearner:
         stats["minibatches"], stats["early_stop"] = steps, int(stopped)
         stats["evaluated_minibatches"], stats["stop_approx_kl"] = checked, stop_kl
         stats["critic_warmup"] = int(not policy)
+        if cfg.retention_coef > 0:
+            stats["retention_kl"] = sums["retention_kl"] / steps if steps else 0.0
+            stats["retention_rows"] = steps * cfg.retention_batch if policy else 0
         stats.update(_advantage_by_kind(obs, actions, adv))
         if prior_rows is not None:
             stats["kl_prior_rows"] = int(prior_rows.sum())
