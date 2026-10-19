@@ -580,3 +580,19 @@ reattack, stale turn/phase/chain, invisible target abstention, zero-residual
 checkpoint migration and nonzero training gradients. Then a fixed bounded
 competence study with separately held-out configurations, source-policy
 retention and independent full-game evaluation before any expanded RL budget.
+
+**保留与覆盖的全局对照（2026-10-19，实验开关，不改变默认算法）**：使用同一完整 actor/critic
+初始化、独立训练种子和固定预算开展 2×2 对照。覆盖因素只改变原生完整对局的卡组配对分布：
+一半保持原有均匀分布，一半先均匀抽取预先定义的卡片机制组，再抽取包含该组的配对；
+不强制任何玩家动作，不重放旧轨迹作为 PPO 数据。机制组由官方卡片类型定义，其出现不等于机制决策已覆盖，
+必须同时报告实际提示、阶段和可选动作覆盖。保留因素在正常 PPO 损失上加入冻结初始策略的
+`KL(teacher || current)`，使用独立原生对局产生、按提示/阶段分组抽样的固定 observation bank；
+回放不含 reward、advantage 或行为比率，不参与 PPO surrogate 或 critic target。原有 EMA KL 保持不变。
+辅助损失与 PPO 使用同一次 optimizer step；关闭开关必须保持原路径与随机流不变。
+记录接受和拒绝的 minibatch、额外回放量及耗时，不能声称四组算力相等。
+
+先运行有界可行性试验，不能据此直接晋升模型。评估使用与回放及训练分离的完整对局，固定对手、
+发牌种子和卡组/先后攻四重配对；只评估初始与固定最终检查点，不按评估结果选 checkpoint。
+主分析报告覆盖、保留及二者交互的配对效应，并按训练种子和发牌簇报告不确定性。
+回合上限是删失，不计作胜/负；同时报告 score 区间边界。引擎错误、非法动作、非有限参数与证据身份
+漂移使实验停止；保留 STOP 及原始记录。首次试验使用相同卡池的新发牌，不能宣称未见卡泛化。
