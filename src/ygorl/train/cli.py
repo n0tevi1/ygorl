@@ -123,6 +123,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--minibatch", "ppo.minibatch_size"),
         _f("--adv-norm", "ppo.adv_norm", "advantage normalization over the whole rollout",
            choices=("none", "standard", "scale")),
+        _f("--adv-keep", "ppo.adv_keep", "advantage filtering: only rows with |A| at or above this quantile of the "
+           "rollout's |A| enter the update (0 = all rows)", metavar="Q"),
         _f("--bc-prior", "bc_prior", "policy (e.g. BC) or PPO checkpoint used as a KL prior; same card vocab",
            metavar="CKPT"),
         _f("--kl-prior", "ppo.kl_prior_coef", "KL coefficient to the BC prior"),
@@ -138,6 +140,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            "critic is fresh (0 = off)", metavar="N"),
         _f("--critic-warmup-ev", "critic_warmup_ev", "Q explained variance that ends the critic warm-up",
            metavar="EV"),
+        _f("--freeze-id-embedding", "freeze_id_embedding",
+           "keep the per-card ID embedding at its initial / warm-start values (no gradient, no Adam state)"),
         _f("--turn-discount", "turn_discount", "speed pressure: a decided game's terminal reward is +/- G ** turns "
            "(1.0 = off; a diagnostic arm, design T6 vs C3)", metavar="G"),
     )),

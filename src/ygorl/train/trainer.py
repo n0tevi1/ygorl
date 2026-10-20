@@ -136,6 +136,9 @@ class TrainConfig:
     # its Q explained variance averages critic_warmup_ev over 5 updates, or for critic_warmup updates at most. 0 = off
     critic_warmup: int = 0
     critic_warmup_ev: float = 0.6
+    # the per-card ID embedding (most of a small actor's parameters, dense gradients) stays at its initial or
+    # warm-start values; the structured card columns and any text / facts views carry the card identity
+    freeze_id_embedding: bool = False
     # speed pressure, a diagnostic arm for now (design T6 conflicts with C3): won / lost games end in
     # +/- turn_discount ** turns instead of +/- 1; 1.0 = off (docs/spikes/reward-signal.md R5)
     turn_discount: float = 1.0
@@ -230,6 +233,11 @@ class Trainer:
             added = warm_start(self.model.actor, init)
             added = f"; new input features start fresh: {added}" if added else ""
             self.log(f"initialized the actor from {cfg.init_from} (the critic starts fresh{added})")
+        if cfg.freeze_id_embedding:
+            emb = self.model.actor.identity.id_embedding
+            if emb is None:
+                raise ValueError("freeze_id_embedding needs an ID embedding (net.id_embedding = True)")
+            emb.weight.requires_grad_(False)
         signature = Signature.of(
             self.vocab, cfg.event_length, self.net_config.selection_history, self.net_config.attack_history
         )

@@ -951,3 +951,20 @@ def test_policy_kl_guard_does_not_block_a_frozen_actor_critic_warmup(tmp_path):
     assert stats["minibatches"] == stats["evaluated_minibatches"] == 1 and stats["early_stop"] == 0
     assert stats["approx_kl"] > 1.5 * trainer.cfg.ppo.target_kl and stats["stop_approx_kl"] == 0
     assert all(torch.equal(v, trainer.model.actor.state_dict()[k]) for k, v in before.items())
+
+
+def test_freeze_id_embedding_keeps_the_table_and_trains_the_rest(tmp_path):
+    cfg = TrainConfig(decks=PAIR, num_envs=2, env_threads=1, steps=12, event_length=16, net=TINY, privileged_dim=8,
+                      critic_hidden=16, max_decisions=40, ppo=PPOConfig(epochs=1, minibatch_size=16),
+                      snapshot_every=0, checkpoint_every=0, eval_every=0, torch_threads=1, collect_threads=1,
+                      seed=3, freeze_id_embedding=True)  # fmt: skip
+    trainer = Trainer(cfg, tmp_path, log=None)
+    emb = trainer.model.actor.identity.id_embedding
+    assert not emb.weight.requires_grad
+    before = emb.weight.detach().clone()
+    other = trainer.model.actor.context[0].weight.detach().clone()
+    trainer.train(max_updates=2)
+    assert torch.equal(emb.weight, before)
+    assert not torch.equal(trainer.model.actor.context[0].weight, other)
+    with pytest.raises(ValueError):
+        Trainer(replace(cfg, net={**TINY, "id_embedding": False}), tmp_path / "x", log=None)

@@ -548,3 +548,30 @@ def test_disabled_and_untriggered_kl_guards_apply_identical_updates():
         assert stats["early_stop"] == stats["stop_approx_kl"] == 0
         weights.append(copy.deepcopy(learner.model.state_dict()))
     assert all(torch.equal(weights[0][k], v) for k, v in weights[1].items())
+
+
+def test_advantage_filtering_updates_on_the_high_advantage_rows_only():
+    """PPOConfig.adv_keep: only rows with |A| at or above that quantile enter the minibatches; 0 keeps every row and
+    is bit-identical to the default."""
+
+    def run(adv_keep: float):
+        torch.manual_seed(0)
+        env = NimEnv(num_envs=4, max_pile=15)
+        model = NimModel(max_pile=15)
+        learner = PPOLearner(model, PPOConfig(epochs=1, minibatch_size=8, target_kl=None, adv_keep=adv_keep))
+        ro = RolloutCollector(env, model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0).collect()
+        return model, learner.update(ro)
+
+    plain, s0 = run(0.0)
+    same, s1 = run(0.0)
+    for (name, a), (_, b) in zip(plain.state_dict().items(), same.state_dict().items()):
+        assert torch.equal(a, b), name
+    assert s0["kept_rows"] == s0["rows"] == 64
+    filtered, s2 = run(0.75)
+    assert s2["rows"] == 64 and 16 <= s2["kept_rows"] <= 20  # ties at the quantile may keep a few more
+    assert s2["minibatches"] * 8 >= s2["kept_rows"] and s2["minibatches"] < s0["minibatches"]
+    assert any(
+        not torch.equal(a, b) for (_, a), (_, b) in zip(plain.state_dict().items(), filtered.state_dict().items())
+    )
+    with pytest.raises(ValueError):
+        PPOConfig(adv_keep=1.0)

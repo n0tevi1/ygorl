@@ -69,6 +69,10 @@ class PPOConfig:
     epochs: int = 2  # over the 16,384-row batch in 2,048-row minibatches (target_kl may stop earlier); design I1: 2 = 4 in strength
     minibatch_size: int = 2048  # 8 minibatches per epoch of the 16,384-row default batch (design I1)
     adv_norm: str = "standard"  # normalize_advantages mode, over the whole rollout
+    # Advantage filtering (MirrorForce's "kept rows"): only rows whose |A| is at or above this quantile of the
+    # rollout's |A| enter the update (policy and critic losses alike); the rest are forced-like decisions whose
+    # gradient is noise. 0 = every row. The KL guard then measures approx_kl on the kept rows only.
+    adv_keep: float = 0.0
 
     def __post_init__(self) -> None:
         if self.critic_target not in ("lambda", "terminal"):
@@ -91,6 +95,8 @@ class PPOConfig:
             raise ValueError("kl_prior_turns must be >= 0 (0 = every row)")
         if self.target_kl is not None and not self.target_kl > 0:
             raise ValueError("target_kl must be positive (or None)")
+        if not 0 <= self.adv_keep < 1:
+            raise ValueError("adv_keep must be a quantile in [0, 1)")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -340,6 +346,12 @@ class PPOLearner:
         obs = trim_padding(ro.obs)
         mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]].to(dev)
         n = actions.shape[0]
+        # advantage filtering: the rows the minibatches draw from (all of them with adv_keep = 0 or in a critic warm-up)
+        if policy and cfg.adv_keep > 0:
+            kept = (adv.abs() >= torch.quantile(adv.abs(), cfg.adv_keep)).nonzero().squeeze(1)
+        else:
+            kept = torch.arange(n, device=dev)
+        n_kept = kept.shape[0]
         laps.lap("setup")
         ref_logits = self._score(self.reference, obs, n) if cfg.kl_ref_coef > 0 else None
         prior_logits = self._score(self.prior, obs, n) if self.prior is not None and cfg.kl_prior_coef > 0 else None
@@ -354,9 +366,9 @@ class PPOLearner:
         for _ in range(cfg.epochs):
             if stopped:
                 break
-            perm = torch.randperm(n, device=dev)
+            perm = kept[torch.randperm(n_kept, device=dev)]
             laps.lap("setup")
-            for start in range(0, n, cfg.minibatch_size):
+            for start in range(0, n_kept, cfg.minibatch_size):
                 idx = perm[start : start + cfg.minibatch_size]
                 out = model(_index(obs, idx), _index(ro.privileged, idx))
                 logits = out.logits.float()
@@ -417,7 +429,7 @@ class PPOLearner:
             stats["q_terminal_mse"] = float((taken_q - z).square().mean())
             stats["v_terminal_mse"] = float((ro.values.reshape(-1) - z).square().mean())
         stats["adv_mean"], stats["adv_std"] = float(adv.mean()), float(adv.std(correction=0))
-        stats["rows"] = n
+        stats["rows"], stats["kept_rows"] = n, n_kept
         stats["minibatches"], stats["early_stop"] = steps, int(stopped)
         stats["evaluated_minibatches"], stats["stop_approx_kl"] = checked, stop_kl
         stats["critic_warmup"] = int(not policy)
