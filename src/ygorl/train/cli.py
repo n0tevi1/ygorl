@@ -125,6 +125,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            choices=("none", "standard", "scale")),
         _f("--adv-keep", "ppo.adv_keep", "advantage filtering: only rows with |A| at or above this quantile of the "
            "rollout's |A| enter the update (0 = all rows)", metavar="Q"),
+        _f("--response-weight", "ppo.response_weight",
+           "multiply the policy-gradient weight of rows decided during the opponent's turn (1 = off)"),
         _f("--adv-keep-mode", "ppo.adv_keep_mode", "rows: drop the other rows from the update; policy: forward every "
            "row, restrict only the policy loss (critic, entropy, KL see all rows)", choices=("rows", "policy")),
         _f("--bc-prior", "bc_prior", "policy (e.g. BC) or PPO checkpoint used as a KL prior; same card vocab",

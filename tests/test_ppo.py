@@ -589,3 +589,20 @@ def test_policy_only_advantage_filtering_forwards_every_row():
     assert np.isfinite(stats["loss"])
     with pytest.raises(ValueError):
         PPOConfig(adv_keep_mode="half")
+
+
+def test_response_weight_scales_opponent_turn_rows_only():
+    """PPOConfig.response_weight multiplies the advantages of rows whose globals say it is not the actor's turn."""
+    torch.manual_seed(0)
+    env = NimEnv(num_envs=4, max_pile=15)
+    model = NimModel(max_pile=15)
+    learner = PPOLearner(model, PPOConfig(epochs=1, minibatch_size=8, target_kl=None, response_weight=4.0))
+    ro = RolloutCollector(env, model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0).collect()
+    if not (isinstance(ro.obs, dict) and "globals" in ro.obs):
+        with pytest.raises(ValueError):
+            learner.update(ro)
+        return
+    stats = learner.update(ro)
+    assert np.isfinite(stats["loss"])
+    with pytest.raises(ValueError):
+        PPOConfig(response_weight=0.0)

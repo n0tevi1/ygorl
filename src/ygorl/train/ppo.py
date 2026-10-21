@@ -77,6 +77,10 @@ class PPOConfig:
     # entropy and KL terms see all rows, only the policy loss is restricted to the kept rows (their advantages are
     # kept, the others zeroed, the surrogate rescaled to the kept count)
     adv_keep_mode: str = "rows"
+    # Policy-gradient weight multiplier on rows decided during the opponent's turn (globals is_my_turn == 0: chain
+    # windows, responses, selections inside the opponent's effects). 1 = unchanged. Diagnostic for whether those
+    # decisions lack gradient rather than signal (docs/spikes/rl-methodology-review-2026-10-20.md §7.2)
+    response_weight: float = 1.0
 
     def __post_init__(self) -> None:
         if self.critic_target not in ("lambda", "terminal"):
@@ -103,6 +107,8 @@ class PPOConfig:
             raise ValueError("adv_keep must be a quantile in [0, 1)")
         if self.adv_keep_mode not in ("rows", "policy"):
             raise ValueError("adv_keep_mode must be rows or policy")
+        if not self.response_weight > 0:
+            raise ValueError("response_weight must be positive")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -343,6 +349,11 @@ class PPOLearner:
         est = self.targets(ro)  # on the CPU with the rollout's per-row data; the batch tensors go to the model
         laps.lap("targets")
         adv = self.objective.prepare(ro, est).reshape(-1).float().to(dev)
+        if cfg.response_weight != 1.0:
+            if not isinstance(ro.obs, dict) or "globals" not in ro.obs:
+                raise ValueError("response_weight needs observations with globals (is_my_turn)")
+            opp_turn = (ro.obs["globals"][:, 2] == 0).to(dev)
+            adv = torch.where(opp_turn, adv * cfg.response_weight, adv)
         q_targets = est.q_targets.reshape(-1).float().to(dev)
         v_targets = est.v_targets.reshape(-1).float().to(dev)
         actions = ro.actions.reshape(-1).to(dev)
