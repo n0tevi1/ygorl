@@ -73,6 +73,10 @@ class PPOConfig:
     # rollout's |A| enter the update (policy and critic losses alike); the rest are forced-like decisions whose
     # gradient is noise. 0 = every row. The KL guard then measures approx_kl on the kept rows only.
     adv_keep: float = 0.0
+    # "rows": only the kept rows enter the update at all (cheapest); "policy": every row is forwarded, the critic,
+    # entropy and KL terms see all rows, only the policy loss is restricted to the kept rows (their advantages are
+    # kept, the others zeroed, the surrogate rescaled to the kept count)
+    adv_keep_mode: str = "rows"
 
     def __post_init__(self) -> None:
         if self.critic_target not in ("lambda", "terminal"):
@@ -97,6 +101,8 @@ class PPOConfig:
             raise ValueError("target_kl must be positive (or None)")
         if not 0 <= self.adv_keep < 1:
             raise ValueError("adv_keep must be a quantile in [0, 1)")
+        if self.adv_keep_mode not in ("rows", "policy"):
+            raise ValueError("adv_keep_mode must be rows or policy")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -348,7 +354,12 @@ class PPOLearner:
         n = actions.shape[0]
         # advantage filtering: the rows the minibatches draw from (all of them with adv_keep = 0 or in a critic warm-up)
         if policy and cfg.adv_keep > 0:
-            kept = (adv.abs() >= torch.quantile(adv.abs(), cfg.adv_keep)).nonzero().squeeze(1)
+            keep = adv.abs() >= torch.quantile(adv.abs(), cfg.adv_keep)
+            if cfg.adv_keep_mode == "policy":  # all rows forwarded; the policy loss only sees the kept ones
+                adv = torch.where(keep, adv * (n / max(1, int(keep.sum()))), torch.zeros_like(adv))
+                kept = torch.arange(n, device=dev)
+            else:
+                kept = keep.nonzero().squeeze(1)
         else:
             kept = torch.arange(n, device=dev)
         n_kept = kept.shape[0]

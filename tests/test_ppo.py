@@ -575,3 +575,17 @@ def test_advantage_filtering_updates_on_the_high_advantage_rows_only():
     )
     with pytest.raises(ValueError):
         PPOConfig(adv_keep=1.0)
+
+
+def test_policy_only_advantage_filtering_forwards_every_row():
+    torch.manual_seed(0)
+    env = NimEnv(num_envs=4, max_pile=15)
+    model = NimModel(max_pile=15)
+    cfg = PPOConfig(epochs=1, minibatch_size=8, target_kl=None, adv_keep=0.75, adv_keep_mode="policy")
+    learner = PPOLearner(model, cfg)
+    ro = RolloutCollector(env, model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0).collect()
+    stats = learner.update(ro)
+    assert stats["kept_rows"] == stats["rows"] == 64 and stats["minibatches"] == 8
+    assert np.isfinite(stats["loss"])
+    with pytest.raises(ValueError):
+        PPOConfig(adv_keep_mode="half")
