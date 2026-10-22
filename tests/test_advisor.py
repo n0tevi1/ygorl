@@ -249,3 +249,14 @@ def test_advise_with_a_policy(cards, tmp_path):
     assert advice.policy
     probs = [s.prob for s in advice.suggestions]
     assert probs == sorted(probs, reverse=True) and sum(probs) == pytest.approx(1.0)
+
+
+def test_a_trap_set_this_turn_is_masked(cards):
+    mirror_force = 44095762
+    prior = OpponentPrior((load_ydk(MALISS),), (1.0,))
+    for set_now, expect in ((True, True), (False, False)):
+        me = [SnapshotCard("szone", mirror_force, 0, "facedown", set_this_turn=set_now)]
+        board = complete(snapshot(me), Deck((BLUE_EYES,) * 40), prior, cards, random.Random(0))
+        rec = build(board, C.DUEL_MODE_MR5, cards=cards)
+        acts = [a for a in rec.point.actions if a.kind == "activate" and a.card.code == mirror_force]
+        assert all(masked(board.snapshot, a, cards) == expect for a in acts)

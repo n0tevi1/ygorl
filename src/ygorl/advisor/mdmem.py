@@ -335,9 +335,11 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[
             else:
                 pos = "faceup" if faceup else "facedown"
             known = mine or faceup
-            locked = loc == "mzone" and bool(c.slot[off.semantics["locked_byte"]] & off.semantics["locked"])
+            flags = c.slot[off.semantics["locked_byte"]]
+            locked = loc == "mzone" and bool(flags & off.semantics["locked"])
+            set_turn = mine and loc == "szone" and not faceup and bool(flags & off.semantics["set_turn"])
             cards.append(SnapshotCard(location=loc, sequence=seq, position=pos, position_locked=locked,
-                                      attacked=mine and loc == "mzone" and c.uid in attacked,
+                                      attacked=mine and loc == "mzone" and c.uid in attacked, set_this_turn=set_turn,
                                       password=pw(c.cid) if known else UNKNOWN,
                                       materials=tuple(pw(m) for m in c.materials) if known else ()))  # fmt: skip
         cards += [SnapshotCard("grave", pw(c.cid)) for c in pl.piles["grave"]]

@@ -52,7 +52,8 @@
   "locked": "0x40",
   "cpu_type": "0x1",
   "turn_base": "0x1",
-  "normal_summons": "0x30"
+  "normal_summons": "0x30",
+  "set_turn": "0x10"
  },
  "notes": [
   "2026-10-21 Solo duel: Field Spell face-up face=0x01, Set S/T face=0x00; Set monster face=0x00 turn=0x01, after Flip Summon face=0x01 turn=0x00 (DLL_DuelGetCardTurn = sideways, i.e. Defense Position)",
@@ -62,6 +63,7 @@
   "Extra Monster Zone left/right (slots 5/6) not yet seen in a duel",
   "player types in a Solo duel (2026-10-21): client 0 (human), computer opponent 1",
   "turn counter 3 while the screen showed \"Turn 4 Main 1\" on the client's turn; the computer went first (it had a board at counter 1, the client opened with 6 cards): screen turn = counter + 1",
-  "player block +0x30: 0 -> 1 after a Normal Summon on turn 4 (incremented next to the duel statistic for Normal Summons); whether a Set counts is not yet checked"
+  "player block +0x30: 0 -> 1 after a Normal Summon on turn 4 (incremented next to the duel statistic for Normal Summons); whether a Set counts is not yet checked",
+  "slot byte +0x14 low bits, all cards seen 2026-10-21: 0x50 monster Set this turn, 0x41 Normal Summoned, 0x44 Special Summoned, 0x4a Flip Summoned, 0x10 Trap Set this turn, 0x00 the same cards a turn later: 0x10 = Set this turn, 0x40 = position locked"
  ]
 }

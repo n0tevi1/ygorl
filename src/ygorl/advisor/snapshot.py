@@ -79,6 +79,7 @@ class SnapshotCard:
     counters: tuple[tuple[int, int], ...] = ()  # (counter type, count)
     position_locked: bool = False  # summoned, Set or repositioned this turn: cannot change position now
     attacked: bool = False  # declared an attack this turn (Battle Phase snapshots): cannot attack again
+    set_this_turn: bool = False  # Set this turn (Spell & Trap Zone): a Trap or Quick-Play Spell cannot activate yet
 
     @property
     def pos(self) -> str:
@@ -114,6 +115,8 @@ class SnapshotCard:
             out["position_locked"] = True
         if self.attacked:
             out["attacked"] = True
+        if self.set_this_turn:
+            out["set_this_turn"] = True
         return out
 
     @classmethod
@@ -121,7 +124,7 @@ class SnapshotCard:
         if not isinstance(data, Mapping):
             raise SnapshotError(f"a card must be an object, not {data!r}")
         unknown = set(data) - {"location", "password", "sequence", "position", "owner", "materials", "counters",
-                               "position_locked", "attacked"}  # fmt: skip
+                               "position_locked", "attacked", "set_this_turn"}  # fmt: skip
         if unknown:
             raise SnapshotError(f"unknown card keys {sorted(unknown)}")
         try:
@@ -130,7 +133,8 @@ class SnapshotCard:
                        owner=data.get("owner"), materials=tuple(int(p) for p in data.get("materials", ())),
                        counters=tuple((int(t), int(n)) for t, n in data.get("counters", ())),
                        position_locked=bool(data.get("position_locked", False)),
-                       attacked=bool(data.get("attacked", False)))  # fmt: skip
+                       attacked=bool(data.get("attacked", False)),
+                       set_this_turn=bool(data.get("set_this_turn", False)))  # fmt: skip
         except KeyError:
             raise SnapshotError(f"card without a location: {dict(data)}") from None
         except (TypeError, ValueError) as exc:

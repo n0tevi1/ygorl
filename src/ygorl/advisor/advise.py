@@ -35,12 +35,18 @@ def action_key(action: Action) -> tuple[str, int, int]:
     return action.kind, action.card.code if action.card is not None else 0, action.description
 
 
-def masked(snapshot: BoardSnapshot, action: Action) -> bool:
+def masked(snapshot: BoardSnapshot, action: Action, cards: Mapping | None = None) -> bool:
     """True for an action the core offers but the real game does not allow (what the core cannot be told)."""
     if action.kind in NORMAL_SUMMON_KINDS and snapshot.normal_summoned:
         return True
     if action.kind == "battle_phase" and snapshot.phase == "main2":
         return True
+    if action.kind == "activate" and action.card is not None and action.card.loc.location == C.LOCATION_SZONE:
+        card = cards.get(action.card.code) if cards is not None else None
+        waits = card is None or card.type & C.TYPE_TRAP or card.type & C.TYPE_QUICKPLAY
+        for c in snapshot.sides[0].cards:
+            if c.location == "szone" and c.sequence == action.card.loc.sequence and c.set_this_turn and waits:
+                return True
     if action.kind == "attack" and action.card is not None:
         loc = action.card.loc
         for card in snapshot.sides[0].cards:
@@ -127,7 +133,7 @@ def advise(snapshot: BoardSnapshot, own_deck: Deck, policy, prior: OpponentPrior
         logits = _logits(rec, policy, cards, starting_lp)
         actions = rec.point.actions
         n = min(len(actions), logits.shape[0])
-        keep = np.array([not masked(snapshot, a) for a in actions[:n]])
+        keep = np.array([not masked(snapshot, a, cards) for a in actions[:n]])
         if not keep.any():
             raise ValueError("every legal action of the reconstruction is masked by the snapshot")
         p = softmax_kept(logits[:n], keep).tolist()

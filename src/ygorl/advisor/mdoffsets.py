@@ -37,7 +37,7 @@ from pathlib import Path
 OFFSETS_DIR = Path(__file__).with_name("offsets")
 PILES = ("hand", "extra", "deck", "grave", "removed")  # MD locate 13..17, in this order
 FIELD_SLOTS = 13
-SEMANTICS = {"faceup", "defense", "locked_byte", "locked", "cpu_type", "turn_base", "normal_summons"}
+SEMANTICS = {"faceup", "defense", "locked_byte", "locked", "cpu_type", "turn_base", "normal_summons", "set_turn"}
 
 
 class OffsetError(RuntimeError):
@@ -85,7 +85,7 @@ class Offsets:
     # "locked" mask of the slot byte at "locked_byte" (summoned, Set or repositioned this turn),
     # "cpu_type" the player type of the computer opponent in a Solo duel, "turn_base" what to add to the turn
     # counter to get the turn number on screen, "normal_summons" the u32 in the player block counting this turn's
-    # Normal Summons
+    # Normal Summons, "set_turn" the mask in the slot byte at "locked_byte" for a card Set this turn
     semantics: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 

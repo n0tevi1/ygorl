@@ -35,6 +35,7 @@ SEM = {
     "cpu_type": 1,
     "turn_base": 1,
     "normal_summons": 0x30,
+    "set_turn": 0x10,
 }
 
 BEWD, DM, ASH, ZEUS, MAT = 4007, 4041, 13587, 16210, 4844  # MD card ids
