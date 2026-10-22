@@ -618,6 +618,11 @@ class Player:
                                list_candidates=[[c.cid, c.location, c.sequence] for c in req.candidates])  # fmt: skip
             self.context = "list"
         else:
+            # an animation (battle damage, a summon) can pass for a dialog: only explore what is still there
+            self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+            if self.ui.dialog() != kind:
+                self.trace.observe(dialog=f"{kind} gone after the screen settled")
+                return
             self.explore(f"no script for the {kind} screen")
 
     def field_target(self, raw: RawDuel, lit) -> tuple[int, int] | None:
