@@ -84,6 +84,15 @@ def yellow_highlight(img: np.ndarray, x: int, y: int, w: int = 150, h: int = 180
     return bool(yellow.mean() > 0.08)
 
 
+def is_activate_icon(img: np.ndarray, x: int, y: int, r: int = 30) -> bool:
+    """MD's Activate icon has a yellow-green glyph (0.65 of the disc measured); Summon / Set glyphs are blue (0.25-0.52
+    blue, no yellow-green)."""
+    yy, xx = np.mgrid[-r : r + 1, -r : r + 1]
+    disc = img[y - r : y + r + 1, x - r : x + r + 1][(yy**2 + xx**2) <= r * r].astype(int)
+    yellow_green = (disc[:, 0] > 140) & (disc[:, 1] > 170) & (disc[:, 2] < 120)
+    return bool(yellow_green.mean() > 0.2)
+
+
 def command_order(is_monster: bool, options: Iterable[str]) -> list[str]:
     """MD's left-to-right icon order above a hand card, restricted to the commands in ``options``.
 
@@ -193,18 +202,30 @@ class UI:
         return True
 
     def choose_command(self, icons: Sequence[XY], kind: str, order: Sequence[str], name: str = "") -> XY | None:
-        """Click the icon of command ``kind`` among the ``icons`` an opened hand card shows, MD drawing them in
-        ``order`` (:func:`command_order`). None (nothing clicked) when the card shows no command at all."""
+        """Click the icon of command ``kind`` among the ``icons`` an opened hand card shows. The Activate icon is
+        told by its yellow-green glyph (:func:`is_activate_icon`), so a monster's hand effect never takes the place
+        of its Summon; the other icons are matched in MD's ``order`` (:func:`command_order`) without Activate.
+        None (nothing clicked) when the card shows no command at all, or not the one asked for."""
         if kind not in order:
             raise Stuck(f"{kind} not among the buttons {list(order)}")
-        if len(icons) == len(order):
-            target = icons[order.index(kind)]
-        elif len(icons) == 1 and kind in ("mset", "sset") and order[-1] == kind:
-            target = icons[0]  # MD offers only Set here although the reconstruction also allowed more
-        elif not icons:
+        if not icons:
+            return None
+        img = self.capture()
+        activate = [p for p in icons if is_activate_icon(img, *p)]
+        others = [p for p in icons if p not in activate]
+        rest = [k for k in order if k != "activate"]
+        if kind == "activate":
+            if not activate:
+                return None
+            target = activate[0]
+        elif len(others) == len(rest):
+            target = others[rest.index(kind)]
+        elif len(others) == 1 and kind in ("mset", "sset") and rest[-1] == kind:
+            target = others[0]  # MD offers only Set here although the reconstruction also allowed more
+        elif not others:
             return None
         else:
-            raise Stuck(f"{len(icons)} command icons for {name or 'the card'}, expected {list(order)}")
+            raise Stuck(f"{len(others)} non-activate command icons for {name or 'the card'}, expected {rest}")
         self.click(*target, kind, 1.5)
         return target
 

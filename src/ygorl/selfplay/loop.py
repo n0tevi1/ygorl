@@ -25,6 +25,7 @@ import json
 import random
 import struct
 import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,6 +42,7 @@ from ygorl.selfplay.trace import Trace
 
 # --- input state (S + ...): written by duel.dll's command layer, read by DLL_DuelComGetCommandMask --------------
 INPUT_MODE, INPUT_ACCEPT, INPUT_PLAYER, FOCUS_CID = 0x3CD0, 0x3CDC, 0x3D00, 0x3CF0
+NEUTRAL_SPOT = (1300, 640)  # empty board between the rows: clicking it closes a card left open
 RESULT_RETRY = (743, 1093)  # MD's result screen: Retry (left) and OK (right)
 MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, PLACE, FIELD_PICK = 2, 3, 4, 5, 6, 7, 8  # observed modes
 
@@ -143,6 +145,8 @@ class Player:
 
     expect: Expectation | None = None
     recent: list = field(default_factory=list)  # the last states seen, to stop instead of looping
+    recoveries: dict = field(default_factory=dict)  # state -> self-recovery attempts this duel
+    recovery_count: int = 0
     phase_seen: tuple = (-1, -1)
     forbidden: set = field(default_factory=set)  # ((turn, phase), action key) MD refused this phase
 
@@ -181,7 +185,7 @@ class Player:
         pw = self.passwords.get(cid)
         return self.cards[pw].name if pw in self.cards else str(cid)
 
-    def wait_turn(self, timeout: float = 600) -> tuple[RawDuel, Input, str | None]:
+    def wait_turn(self, timeout: float = 240) -> tuple[RawDuel, Input, str | None]:
         """Wait until the client must act: an engine input addressed to it, or one of MD's dialogs (stable ~1 s)."""
         end, stable, last = time.time() + timeout, 0, None
         while time.time() < end:
@@ -200,7 +204,7 @@ class Player:
             if stable >= 3:
                 return raw, inp, dialog
             time.sleep(0.35)
-        raise Stuck("nothing to do for a long time")
+        raise Stuck(f"nothing to do for {timeout:.0f} s")
 
     def hand_xy(self, raw: RawDuel, cid: int) -> tuple[int, int]:
         """Screen position of the hand card with MD id ``cid`` (MD sorts the hand on screen)."""
@@ -468,14 +472,72 @@ class Player:
         if observer is not None:
             self.trace.observe(shadow_place=observer.placed(location, zone))
 
+    MAX_RECOVERIES_PER_STATE, MAX_RECOVERIES_PER_DUEL = 4, 30
+
+    def recover(self, why: str, raw: RawDuel, inp: Input, dialog: str | None, state) -> bool:
+        """Self-recovery after a failure (design 10): record it, then escalate per state — (1) mask the action that
+        led here, close what may be open, let the screen settle and decide again; (2) answer the shown dialog
+        differently; (3) move on to the next phase. False (give up) after too many attempts."""
+        key = state[:4] if isinstance(state, tuple) and len(state) > 4 else state  # not the refusal count
+        self.recoveries[key] = n = self.recoveries.get(key, 0) + 1
+        self.recovery_count += 1
+        record = self.record_stuck(why)
+        print(f"RECOVER {n} ({self.recovery_count} this duel): {why} -> {record}", flush=True)
+        self.trace.observe(recovery={"why": why, "level": n, "record": str(record)})
+        if n > self.MAX_RECOVERIES_PER_STATE or self.recovery_count > self.MAX_RECOVERIES_PER_DUEL:
+            print(f"STUCK: giving up after {n} recoveries on this state ({self.recovery_count} this duel)", flush=True)
+            return False
+        if self.expect is not None:  # the policy's last action did not happen as intended: do not repeat it now
+            self.forbidden.add(((raw.turn, raw.phase), _action_key(self.expect.action)))
+        self.expect, self.recent = None, []
+        mine = inp.accepting and inp.player == raw.me
+        try:
+            if n == 1:
+                self.ui.click(*NEUTRAL_SPOT, "recover: click an empty spot", 1.0)
+                self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=10.0)
+            elif n == 2 or n == 3:
+                alt = n - 1  # the 1st / 2nd alternative
+                if dialog == "list":
+                    cards = self.ui.pick_list_cards([alt])
+                    self.trace.rule(f"recover-list-#{alt + 1}", cards=len(cards))
+                elif dialog == "yesno":
+                    self.ui.yesno(alt == 1, "recover: the other answer")
+                elif mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT):
+                    self.ui.respond_prompt(False)
+                elif dialog == "banner" or (mine and inp.mode == FIELD_PICK):
+                    lit = self.ui.highlighted()
+                    if len(lit) > alt:
+                        self.ui.card_command(lit[alt], "recover: another highlighted card", "confirm")
+                elif mine and inp.mode in (MAIN, BATTLE):
+                    self.ui.phase("end")
+                else:
+                    self.ui.click(*NEUTRAL_SPOT, "recover: click an empty spot", 1.0)
+                    self.ui.continue_draw()
+            else:
+                if mine and inp.mode in (MAIN, BATTLE):
+                    self.ui.phase("end")
+                else:
+                    self.ui.click(*NEUTRAL_SPOT, "recover: click an empty spot", 1.0)
+        except Exception as exc:  # a recovery step that fails is just a failed attempt
+            print(f"  recovery step failed: {type(exc).__name__}: {exc}", flush=True)
+        time.sleep(1.0)
+        return True
+
     def reset_game_state(self) -> None:
         self.attacked, self.forbidden, self.recent = set(), set(), []
+        self.recoveries, self.recovery_count = {}, 0
         self.turn_seen, self.phase_seen, self.expect, self.context = -1, (-1, -1), None, ""
 
     def _run(self, max_steps: int) -> int:
         for step in range(max_steps):
             self.trace.end_step(self.ui.take_clicks())  # the previous step, with its clicks
-            raw, inp, dialog = self.wait_turn()
+            try:
+                raw, inp, dialog = self.wait_turn()
+            except Stuck as exc:  # nothing to do for a long time: MD may wait for a click we do not see
+                raw, inp, dialog = self.game.read(), self.input(), self.ui.dialog()
+                if not self.recover(str(exc), raw, inp, dialog, ("idle", raw.turn, raw.phase)):
+                    return 3
+                continue
             solo_gate(raw)
             self.trace.begin(step, raw, inp, dialog)
             if inp.accepting and inp.player == raw.me:
@@ -507,8 +569,9 @@ class Player:
             state = (inp.mode, dialog, raw.phase, _board_key(me, op), len(self.forbidden))  # a refusal is progress
             self.recent = (self.recent + [state])[-3:]
             if len(self.recent) == 3 and len(set(self.recent)) == 1:
-                print(f"STUCK: no progress -> {self.record_stuck('the same state three steps in a row')}", flush=True)
-                return 3
+                if not self.recover("the same state three steps in a row", raw, inp, dialog, state):
+                    return 3
+                continue
             phase = PHASES[raw.phase] if raw.phase < len(PHASES) else str(raw.phase)
             print(f"[{step}] turn {raw.turn + 1} {phase} mode {inp.mode} dialog {dialog} "
                   f"LP {raw.players[raw.me].lp}/{raw.players[1 - raw.me].lp}", flush=True)  # fmt: skip
@@ -544,9 +607,12 @@ class Player:
                     self.ui.continue_draw()
                 else:
                     raise Stuck(f"unknown input mode {inp.mode}")
-            except Stuck as exc:
-                print(f"STUCK: {exc} -> {self.record_stuck(str(exc))}", flush=True)
-                return 3
+            except Exception as exc:  # Stuck, or anything unexpected inside a step: recover, do not die
+                why = str(exc) if isinstance(exc, Stuck) else f"{type(exc).__name__}: {exc}"
+                if not isinstance(exc, (Stuck, MemoryReadError)):
+                    traceback.print_exc()
+                if not self.recover(why, raw, inp, dialog, state):
+                    return 3
         return 0
 
 

@@ -141,7 +141,7 @@ def test_choose_command_set_only_no_command_and_mismatch():
     ui, mouse, _ = make_ui(board())
     assert ui.choose_command([ROW[0]], "mset", order) == ROW[0]  # MD offers only Set
     assert ui.choose_command([], "summon", order) is None and mouse.clicks == [ROW[0]]  # refused: nothing clicked
-    with pytest.raises(Stuck, match="1 command icons"):
+    with pytest.raises(Stuck, match="1 non-activate command icons"):
         ui.choose_command([ROW[0]], "summon", order)
     with pytest.raises(Stuck, match="not among"):
         ui.choose_command(ROW, "activate", order)
@@ -277,3 +277,44 @@ def test_trace_round_trip_and_summary(tmp_path, capsys):
     assert T.main(["SUMMARY", str(tr.path)]) == 0
     out = capsys.readouterr().out
     assert "steps 4, clicks 3, stuck 1" in out and "checks: ok 1, failed 1" in out and "4:2, 5:2" in out
+
+
+def test_activate_icon_is_told_by_its_glyph_colour():
+    """A monster with a hand effect: MD shows Summon, Activate and Set; Activate is found by colour, whatever its
+    place in the row (King of the Swamp's Activate was clicked for its Summon by position)."""
+    from ygorl.md.ui import is_activate_icon
+
+    row = [(880, 880), (1050, 880), (1220, 880)]
+    img = with_icons(board(), row)
+    yy, xx = np.mgrid[0:1184, 0:2054]
+    for i, (x, y) in enumerate(row):
+        img[np.hypot(xx - x, yy - y) <= 25] = (190, 220, 60) if i == 0 else (40, 120, 230)  # glyphs
+    assert [is_activate_icon(img, *p) for p in row] == [True, False, False]
+    ui, mouse, _ = make_ui(img, img, img)
+    assert ui.choose_command(row, "summon", ["summon", "activate", "mset"]) == row[1]
+    assert ui.choose_command(row, "activate", ["summon", "activate", "mset"]) == row[0]
+    assert ui.choose_command(row, "mset", ["summon", "activate", "mset"]) == row[2]
+
+
+def test_recovery_escalates_per_state_and_gives_up(tmp_path):
+    """Self-recovery: level 1 clicks an empty spot, level 2 answers a shown list differently; past the limit it
+    gives up. Every attempt is recorded."""
+    from ygorl.selfplay.loop import NEUTRAL_SPOT, Input, Player
+
+    player = Player.__new__(Player)
+    ui, mouse, _ = make_ui(*([list_panel(3)[0]] * 40))
+    player.ui = ui
+    player.recoveries, player.recovery_count, player.forbidden, player.recent = {}, 0, set(), []
+    player.expect = None
+    player.record_stuck = lambda why: tmp_path / "stuck"
+    player.trace = type("T", (), {"observe": lambda self, **k: None, "rule": lambda self, *a, **k: None})()
+    raw = read_duel(build_memory(), BASE, OFF)
+    inp = Input(0, False, 0)
+    state = (0, "list", raw.phase, "board", 0)
+    assert player.recover("first", raw, inp, "list", state)
+    assert mouse.clicks[0] == NEUTRAL_SPOT
+    assert player.recover("second", raw, inp, "list", state[:4] + (1,))  # same state despite a new refusal
+    assert player.recoveries[state[:4]] == 2
+    for _ in range(2):
+        assert player.recover("again", raw, inp, "list", state)
+    assert not player.recover("too many", raw, inp, "list", state)
