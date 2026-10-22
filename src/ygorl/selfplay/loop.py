@@ -7,10 +7,10 @@ prompts use small rules. Anything it does not recognise is a *stuck* record: a f
 state and the context, written to ``--out`` before the player stops. Those records are how recognisers get added
 until the player needs no help (the goal: a scripted-only player).
 
-Every click goes through :class:`ygorl.advisor.mdinput.GatedMouse`, which re-checks the Solo gate (verified DLL,
+Every click goes through :class:`ygorl.md.input.GatedMouse`, which re-checks the Solo gate (verified DLL,
 human client, computer opponent) before each event.
 
-    python -m ygorl.advisor.mdplay --env md-2026-09 --policy CHECKPOINT [--out out/mdplay] [--max-steps 400]
+    python -m ygorl.selfplay.loop --env md-2026-09 --policy CHECKPOINT [--out out/mdplay] [--max-steps 400]
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ from pathlib import Path
 
 import numpy as np
 
-from ygorl.advisor import mdlayout as L
-from ygorl.advisor.mdinput import GatedMouse
-from ygorl.advisor.mdmem import PHASES, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
-from ygorl.advisor.mdscreen import capture as capture_client
+from ygorl.md import layout as L
+from ygorl.md.input import GatedMouse
+from ygorl.md.memory import PHASES, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
+from ygorl.md.screen import capture as capture_client
 
 # --- input state (S + ...): written by duel.dll's command layer, read by DLL_DuelComGetCommandMask --------------
 INPUT_MODE, INPUT_ACCEPT, INPUT_PLAYER, FOCUS_CID = 0x3CD0, 0x3CDC, 0x3D00, 0x3CF0
@@ -36,7 +36,7 @@ MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, FIELD_PICK = 2, 3, 4, 5, 6
 
 
 def capture(window) -> np.ndarray:
-    """A capture in the reference frame (see :mod:`ygorl.advisor.mdlayout`), whatever the window size."""
+    """A capture in the reference frame (see :mod:`ygorl.md.layout`), whatever the window size."""
     return L.reference_image(capture_client(window))
 
 

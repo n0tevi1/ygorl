@@ -26,7 +26,7 @@ Konami《使用条款》第 3 节禁止自动化软件、bot、未授权第三�
 - **状态来源与建议器相同**：只读读取 → `BoardSnapshot` → 重建 → 策略。动作只从建议方可见的信息里选，与人打时一样。
 - **动作 → 点击**：把重建里的 `Action` 映射成画面上的点击序列（选卡 → 选命令 → 选目标 / 区域 / 确认）。
   每次点击后重新读内存，确认局面按预期变化，不符就停，不盲点。
-- 需要显式开启（单独运行 `python -m ygorl.advisor.mdplay`），默认关闭；建议器 `ygorl advise` 本身仍然只读。
+- 需要显式开启（单独运行 `python -m ygorl.selfplay.loop`），默认关闭；建议器 `ygorl advise` 本身仍然只读。
 - 记录每局：快照序列、所选动作、结果，作为「真实 MD 规则下的评估」数据，绑定环境版本。
 
 ### 自博弈的架构：MD 管状态，ygopro 管规则与决策
@@ -60,8 +60,8 @@ ygopro 让「小丑骑士」攻击，MD 不给攻击命令（多半是「王牌�
 **组件。**
 
 ```
-MD 进程 ─► mdmem      局面（BoardSnapshot）
-        └► mdrequest  MD 在问什么：种类、候选（uid → password + 位置）、选几张          ─┐
+MD 进程 ─► md.memory  局面（BoardSnapshot）
+        └► md.request MD 在问什么：种类、候选（uid → password + 位置）、选几张          ─┐
                                                                                         ├─► bridge：MD 请求 ↔ ygopro 决策点
 ygopro 影子对局 ◄── 在命令点从快照重建；在自己的一个动作之内与 MD 同步前进            ─┘     对齐选项集、记录不一致
 策略 ◄── ygopro 的观测与动作列表（遮住 MD 不允许的）                                         │
@@ -93,14 +93,14 @@ trace ◄── 每一步：MD 请求、ygopro 选项、选择、点击、之后
 需要回退到规则的步数。目标是只靠脚本跑完整局：卡住为 0，回退步数逐局下降。
 
 **迁移步骤**（每步单独可用）：
-1. `mdrequest`：从内存读 MD 的请求（模式、列表、对话框），偏移从导出函数推导；先以只观察方式接到现有循环里，记录
+1. `md.request`：从内存读 MD 的请求（模式、列表、对话框），偏移从导出函数推导；先以只观察方式接到现有循环里，记录
    MD 请求与界面识别的对照。
 2. 影子对局：重建后不在第一个决策点停下，按选择继续推进；暴露当前决策点；选项集对齐与 trace。
-3. 拆分 `mdplay`：`mdrequest`（读）、`bridge`（对齐）、`mdui`（点击，不做决策）、薄的循环；逐个删掉写死的规则，
+3. 拆分 `mdplay`：`md.request`（读）、`bridge`（对齐）、`mdui`（点击，不做决策）、薄的循环；逐个删掉写死的规则，
    让影子对局 + 策略决策。
 4. 对手回合的请求接策略（单步打分）；解码一回合一次与回合内效果，减少遮罩兜底。
 
-**当前实现（2026-10-21）**，即迁移前的状态，`ygorl.advisor.mdplay` / `mdlayout` / `mdscreen` / `mdinput`：
+**当前实现（2026-10-21）**，即迁移前的状态，`ygorl.selfplay.loop` 与 `ygorl.md.layout` / `screen` / `input`：
 
 - **输入**：`XSendEvent` 直接发给游戏的 XWayland 窗口，用户自己的鼠标指针不动；每个事件前都重跑单人模式门禁。
 - **坐标**：所有位置记在一个参考坐标系里（2054×1184 窗口、客户区 2048×1152 @ (3, 29)）。截图与点击只针对 Wine 的
@@ -146,14 +146,14 @@ MD 进程 ──(只读内存 / 手写 JSON)──► BoardSnapshot ──► �
   - 用 `env.observer.PointObserver` 编码观测。
   - 输出 top-k 动作、概率和各样本间的离散程度。
   - 只在重建出的第一个决策点给建议。选定一个动作后，局面变化要等下一张快照。
-- **读取器**（`ygorl.advisor.mdmem`，T7.6）：在 Linux 上对 Proton 里的游戏进程做 `process_vm_readv`。
+- **读取器**（`ygorl.md.memory`，T7.6）：在 Linux 上对 Proton 里的游戏进程做 `process_vm_readv`。
   - 读 MD 的原生规则引擎 `duel.dll`（不是 Unity 的 IL2CPP 层）：从 `/proc/<pid>/maps` 找到 `duel.dll` 的映射基址和磁盘路径，
     读它的全局对局状态指针，再按偏移读各字段。
-  - **偏移不手写，从 `duel.dll` 自动推导**（`ygorl.advisor.mdoffsets`）：解析 PE 导出表，用 GNU `objdump` 反汇编
+  - **偏移不手写，从 `duel.dll` 自动推导**（`ygorl.md.offsets`）：解析 PE 导出表，用 GNU `objdump` 反汇编
     `DLL_DuelGetLP`、`DLL_DuelGetCardNum` 等查询函数，按指令模式取出位移。导出名在游戏更新后不变，地址和字段位置可以变，
     所以更新后读取器直接对新 DLL 重新推导，不需要人工 rebase；模式匹配不上时报 `OffsetError`，说明查询函数本身改了，要重新看反汇编。
   - 推导不出来的只有**标志位的含义**（正反面、守备表示、除外区里背面的位），它们要对着画面确定。按 DLL 的 sha256 记录在
-    `src/ygorl/advisor/offsets/<sha256 前 16 位>.json`（`verified` + `semantics`）。没有记录或未核对的版本，
+    `src/ygorl/md/offsets_data/<sha256 前 16 位>.json`（`verified` + `semantics`）。没有记录或未核对的版本，
     `--attach --raw` 照常可用，生成快照会被拒绝。Steam `buildid` 只作显示。
   - MD 内部卡 id（`md_cid`）就是 Konami 卡片数据库 id（YgoMaster 的数据里 Blue-Eyes White Dragon 89631139 = 4007），
     YGOPRODECK 以 `misc_info.konami_id` 给出。映射表是环境产物 `artifacts/md_cid.json`，由 `tools/build_md_cid.py` 生成。
@@ -189,7 +189,7 @@ MD 进程 ──(只读内存 / 手写 JSON)──► BoardSnapshot ──► �
 - 表侧：表侧的场地魔法 `face = 0x01`，盖放的魔陷 `0x00`；盖放的怪兽 `face = 0x00`、横置 `0x01`，反转召唤后变成 `0x01` / `0x00`。
 - 格子编号按控制者自己的视角（M1 = 自己最左边），画面上对手一侧左右镜像，与 ygopro-core 相同，不需要换算。
 - 本地内存里确实有对手的手牌卡 id；快照与 `--raw` 都不输出它们。
-- 结果记在 `src/ygorl/advisor/offsets/97bd4d136e39b087.json`（`verified: true`）。游戏更新时 sha256 不变就直接复用；
+- 结果记在 `src/ygorl/md/offsets_data/97bd4d136e39b087.json`（`verified: true`）。游戏更新时 sha256 不变就直接复用；
   变了就自动重新推导，标志位含义需要再按上面的步骤核对一次（盖放一只怪兽、反转召唤，看两个字节）。
 - 还没在对局中见过：额外怪兽区左右与格子 5 / 6 的对应。里侧除外的位由反汇编得到。
 

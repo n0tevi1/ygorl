@@ -2,7 +2,7 @@
 
 Read-only: ``xwininfo`` lists windows, ``xwd`` dumps one window's contents (both from x11-apps, present on
 Ubuntu desktops). The self-play tool uses captures to place clicks and to check that the screen changed as
-expected; the board state itself always comes from memory (:mod:`ygorl.advisor.mdmem`).
+expected; the board state itself always comes from memory (:mod:`ygorl.md.memory`).
 """
 
 from __future__ import annotations

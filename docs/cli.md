@@ -263,7 +263,7 @@ opponent deck samples: Maliss 8
 - `tests/test_data_sources.py`：`ygorl env build --offline`（小型原始文件）与 `ygorl env check`，以及用法错误（非 `md-` 版本、`--offline` 与 `--refresh` 同用）。
 - `tests/test_readme.py`：逐行执行 README「快速开始」里以 `uv run ygorl` 开头的示例（在临时目录中，`tests/decks` 与 `environments` 链接到仓库，`--games` 上限 2、`--rollouts` 上限 1），
   全部退出码 0，且每个子命令至少有一个示例。
-- `tests/test_mdmem.py`：`objdump` 输出解析、偏移 JSON 往返、对已安装客户端的偏移推导（未安装时跳过）、合成内存上的读取、
+- `tests/test_md.py`：`objdump` 输出解析、偏移 JSON 往返、对已安装客户端的偏移推导（未安装时跳过）、合成内存上的读取、
   快照只含建议方可见的卡（对手手牌 / 里侧卡未知）、未核对版本拒绝生成快照、`--raw` 隐藏对手、`/proc/<pid>/maps` 与 `buildid` 解析。
 - `tests/test_advisor.py`：快照 JSON 往返与不可能盘面的报错、按公开卡过滤 meta 卡组、暗牌采样、自博弈盘面导出 → 重建 → 再导出一致、超量素材 / 场地区 / 双方 LP、
   第 1 回合之后允许战斗、遮罩（通常召唤已用、表示形式锁定、主要阶段 2）、不给策略与给策略两种输出。

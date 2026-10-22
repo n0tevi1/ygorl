@@ -1,7 +1,7 @@
 """Read-only Master Duel state reader (design 10, T7.6): game memory -> :class:`BoardSnapshot`.
 
 Linux + Proton only. The reader finds the game process, locates ``duel.dll`` in ``/proc/<pid>/maps``, derives the
-duel-state layout from that DLL (:mod:`ygorl.advisor.mdoffsets`) and copies the state out with
+duel-state layout from that DLL (:mod:`ygorl.md.offsets`) and copies the state out with
 ``process_vm_readv``. It never writes to the process, never sends input, never injects code.
 
 What the advisor cannot see on screen is never put in a snapshot, even though the local ``duel.dll`` may hold it:
@@ -25,7 +25,7 @@ from typing import Protocol
 
 from ygorl.cards.ydk import Deck
 from ygorl.engine import constants as C
-from ygorl.advisor.mdoffsets import FIELD_SLOTS, PILES, Offsets, load_or_derive
+from ygorl.md.offsets import FIELD_SLOTS, PILES, Offsets, load_or_derive
 from ygorl.advisor.snapshot import UNKNOWN, BoardSnapshot, SnapshotCard, SnapshotError, SnapshotSide
 
 PROCESS_NAME = "masterduel.exe"

@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ygorl.advisor.mdmem import BufferMemory, decode_uid, find_module, format_raw, read_duel, steam_buildid, to_snapshot
-from ygorl.advisor.mdoffsets import Offsets, OffsetError, derive, parse_objdump
+from ygorl.md.memory import BufferMemory, decode_uid, find_module, format_raw, read_duel, steam_buildid, to_snapshot
+from ygorl.md.offsets import Offsets, OffsetError, derive, parse_objdump
 from ygorl.advisor.snapshot import UNKNOWN, SnapshotError
 
 INSTALLED = Path.home() / ".steam/steam/steamapps/common/Yu-Gi-Oh!  Master Duel/masterduel_Data/Plugins/x86_64/duel.dll"
@@ -65,7 +65,7 @@ def test_offsets_json_round_trip_and_verified_needs_semantics():
 
 def test_recorded_offsets_match_the_derivation():
     """The committed file for build 23020425 is the derivation plus the screen-checked semantics."""
-    from ygorl.advisor.mdoffsets import offsets_file
+    from ygorl.md.offsets import offsets_file
 
     rec = Offsets.from_json(__import__("json").loads(offsets_file(BUILD_23020425).read_text()))
     assert rec.verified and rec.semantics == SEM
@@ -242,7 +242,7 @@ def test_find_module_and_buildid(tmp_path):
 
 @pytest.mark.parametrize("types,ok", [((0, 1), True), ((0, 0), False), ((0, 2), False), ((1, 1), False)])
 def test_solo_gate_acts_only_against_the_computer(types, ok):
-    from ygorl.advisor.mdmem import GateError, solo_gate
+    from ygorl.md.memory import GateError, solo_gate
 
     verified = replace(OFF, verified=True, semantics=SEM)
     for me in (0, 1):
@@ -257,7 +257,7 @@ def test_solo_gate_acts_only_against_the_computer(types, ok):
 
 
 def test_parse_tree_and_xwd():
-    from ygorl.advisor.mdscreen import parse_tree, parse_xwd
+    from ygorl.md.screen import parse_tree, parse_xwd
 
     tree = ('     0x6000003 "masterduel": ("steam_app_1449850" "steam_app_1449850")  2054x1184+2776+128  +2776+128\n'
             '     0x6000010 "x": ("steam_app_1449850" "steam_app_1449850")  10x10+0+0  +0+0\n'
@@ -279,10 +279,10 @@ def test_normal_summoned_from_the_counter():
 
 
 def test_layout_hand_order_and_positions():
-    from ygorl.advisor.mdlayout import hand_card, hand_order, my_zone
+    from ygorl.md.layout import hand_card, hand_order, my_zone
     from ygorl.engine.duel import default_cards
 
-    from ygorl.advisor.mdmem import load_md_cid
+    from ygorl.md.memory import load_md_cid
 
     cards = default_cards()
     pw = load_md_cid(Path(__file__).parents[1] / "environments/md-2026-09/artifacts/md_cid.json")
@@ -297,8 +297,8 @@ def test_layout_hand_order_and_positions():
 
 
 def test_client_area_and_reference_frame():
-    from ygorl.advisor.mdlayout import REF_CLIENT, reference_image, to_client
-    from ygorl.advisor.mdscreen import parse_children
+    from ygorl.md.layout import REF_CLIENT, reference_image, to_client
+    from ygorl.md.screen import parse_children
 
     kids = ('xwininfo: Window id: 0x6000003 "masterduel"\n\n  Root window id: 0x416 (the root window) (has no name)\n'
             "     1 child:\n     0x5e0002f (has no name): ()  2048x1152+3+29  +2779+157\n")  # fmt: skip
@@ -319,7 +319,7 @@ def test_client_area_and_reference_frame():
 
 def test_find_icons_on_a_drawn_board():
     """Two command icons (dark discs with a glyph) above a hand card; a dark square card art is not an icon."""
-    from ygorl.advisor.mdlayout import find_icons
+    from ygorl.md.layout import find_icons
 
     img = np.full((1184, 2054, 3), 180, np.uint8)
     yy, xx = np.mgrid[0:1184, 0:2054]
@@ -333,7 +333,7 @@ def test_find_icons_on_a_drawn_board():
 
 
 def test_new_icons_ignore_card_art_that_was_already_there():
-    from ygorl.advisor.mdlayout import new_icons
+    from ygorl.md.layout import new_icons
 
     before = np.full((1184, 2054, 3), 180, np.uint8)
     before[700:780, 600:680] = (20, 20, 20)  # dark card art: looks like an icon to the shape test
@@ -346,7 +346,7 @@ def test_new_icons_ignore_card_art_that_was_already_there():
 
 @pytest.mark.parametrize("n", [1, 2, 3, 6])
 def test_list_cards_from_the_tray_width(n):
-    from ygorl.advisor.mdlayout import CARD_STEP, TRAY_RGB, list_cards
+    from ygorl.md.layout import CARD_STEP, TRAY_RGB, list_cards
 
     img = np.full((1184, 2054, 3), 15, np.uint8)  # the panel's dark background
     width = CARD_STEP * n - 20
@@ -362,7 +362,7 @@ def test_list_cards_from_the_tray_width(n):
 def test_expectation_checks_the_policys_action_against_memory():
     from types import SimpleNamespace
 
-    from ygorl.advisor.mdplay import Expectation, check_expectation
+    from ygorl.selfplay.loop import Expectation, check_expectation
     from ygorl.engine import constants as C
 
     off = replace(OFF, verified=True, semantics=SEM)

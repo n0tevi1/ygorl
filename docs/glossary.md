@@ -166,5 +166,5 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `BoardSnapshot` / board snapshot | 盘面快照 | 建议方可见的局面（公开信息 + 自己手牌），卡片用密码标识；与 arena 的 `snapshot`（核心内存拷贝）无关 |
 | `reconstruct` | 重建 | 把盘面快照放进核心、补全暗牌样本，得到可查询的 `DecisionPoint` |
 | `md_cid` | MD 内部卡 id | MD 客户端内部的卡片编号，与密码不同；映射表是环境产物 `artifacts/md_cid.json` |
-| `mdmem` | 内存读取器 | 从运行中的 MD 客户端只读读取 `duel.dll` 的对局状态并转成盘面快照（`ygorl.advisor.mdmem`） |
+| `mdmem` | 内存读取器 | 从运行中的 MD 客户端只读读取 `duel.dll` 的对局状态并转成盘面快照（`ygorl.md.memory`） |
 | `uid` | 对局内卡片唯一 id | MD 给对局中每张卡的编号（< 512），与卡 id 无关；超量素材、效果链表按它引用卡 |

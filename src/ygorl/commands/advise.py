@@ -82,8 +82,8 @@ def run(args: argparse.Namespace) -> int:
 
 def _attach(args: argparse.Namespace, env):
     """(snapshot, own deck list) from the running client; None after --raw, which only prints."""
-    from ygorl.advisor.mdmem import MemoryReadError, attach, format_raw, load_md_cid, own_deck, to_snapshot
-    from ygorl.advisor.mdoffsets import OffsetError
+    from ygorl.md.memory import MemoryReadError, attach, format_raw, load_md_cid, own_deck, to_snapshot
+    from ygorl.md.offsets import OffsetError
     from ygorl.advisor.snapshot import SnapshotError
     from ygorl.engine.duel import default_cards
 

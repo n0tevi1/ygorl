@@ -2,14 +2,14 @@
 
 Input is an OS-level synthetic pointer event sent to the game's XWayland window (``XSendEvent``), so the user's own
 pointer does not move; ``--shared-pointer`` uses X11 XTEST instead, which moves the real pointer. Nothing is written to the game process. Every call first reads the duel from memory and runs
-:func:`ygorl.advisor.mdmem.solo_gate`: unless a verified Solo duel against the computer is in progress, no event is
-sent. Coordinates are in the reference frame of :mod:`ygorl.advisor.mdlayout` and are mapped to the game's actual
+:func:`ygorl.md.memory.solo_gate`: unless a verified Solo duel against the computer is in progress, no event is
+sent. Coordinates are in the reference frame of :mod:`ygorl.md.layout` and are mapped to the game's actual
 client area, so the same numbers work at any window size.
 
 Usage (one action per invocation, for testing the mapping)::
 
-    python -m ygorl.advisor.mdinput move X Y
-    python -m ygorl.advisor.mdinput click X Y
+    python -m ygorl.md.input move X Y
+    python -m ygorl.md.input click X Y
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ import ctypes
 import ctypes.util
 import time
 
-from ygorl.advisor.mdmem import attach, solo_gate
-from ygorl.advisor.mdlayout import to_client
-from ygorl.advisor.mdscreen import Window, find_window
+from ygorl.md.memory import attach, solo_gate
+from ygorl.md.layout import to_client
+from ygorl.md.screen import Window, find_window
 
 
 class InputError(RuntimeError):

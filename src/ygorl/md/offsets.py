@@ -34,7 +34,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-OFFSETS_DIR = Path(__file__).with_name("offsets")
+OFFSETS_DIR = Path(__file__).with_name("offsets_data")
 PILES = ("hand", "extra", "deck", "grave", "removed")  # MD locate 13..17, in this order
 FIELD_SLOTS = 13
 SEMANTICS = {"faceup", "defense", "locked_byte", "locked", "cpu_type", "turn_base", "normal_summons", "set_turn"}
