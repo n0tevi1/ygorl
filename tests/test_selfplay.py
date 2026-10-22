@@ -236,3 +236,67 @@ def test_md_requests_map_to_bridge_requests():
                      0, pw).kind == "position"  # fmt: skip
     assert to_bridge(MDRequest(kind="position", mode=7, accepting=True, player=0), 0, pw).kind == "place"
     assert to_bridge(MDRequest(kind="draw", mode=1, accepting=True, player=0), 0, pw) is None
+
+
+def test_lockstep_answers_md_dialogs_through_the_shadow(cards):
+    """design 10 「边角情况由 player 自己学会」: MD's dialogs inside our action are answered by the policy on the
+    shadow's decision point and mapped back to MD's options; a dialog the shadow does not ask drops it."""
+    import numpy as np
+
+    from ygorl.md.request import Candidate
+    from ygorl.md.request import Request as MDRequest
+    from ygorl.selfplay.observe import ShadowObserver
+
+    me = [SnapshotCard("mzone", KING, 0), SnapshotCard("mzone", JOKER, 1), SnapshotCard("hand", JACK),
+          SnapshotCard("hand", FACE_CARD_FUSION), SnapshotCard("hand", BLUE_EYES)]  # fmt: skip
+    sh = shadow(me, (QUEEN,) * 3 + (BLUE_EYES,) * 3, (ARCANA_KNIGHT_JOKER,) * 3, cards=cards)
+    sh.pick(Option(FACE_CARD_FUSION, "hand"), "activate")
+    sh.step(0)  # the zone
+    sh.step(0)  # the Fusion Monster
+    assert isinstance(sh.point.decision, M.SelectUnselectCard)
+
+    def prefer(code=None, value=None):  # a scorer that likes one card / one value
+        def score(shadow_duel, point):
+            return np.array([1.0 if (a.card is not None and a.card.code == code and a.kind == "select")
+                             or (value is not None and a.value == value) else 0.0 for a in point.actions])  # fmt: skip
+
+        return score
+
+    pw = {1: JACK, 2: KING}
+    obs = ShadowObserver(C.DUEL_MODE_MR5, cards, None, prefer(KING))
+    obs.shadow = sh
+    req = MDRequest(kind="mode0", mode=0, accepting=False, player=0,
+                    candidates=(Candidate(1, 10, 0, "hand", 0), Candidate(2, 11, 0, "mzone", 0)))  # fmt: skip
+    pick, record = obs.choose("list", req, 0, pw)
+    assert (
+        pick == 1 and record["action"][1] == KING and record["options"] == 2
+    )  # the King's Knight, second in MD's list
+    assert isinstance(sh.point.decision, M.SelectUnselectCard)  # the next material
+    obs.scorer = prefer(JACK)
+    pick, _ = obs.choose("list", req, 0, pw)
+    assert pick == 0
+    assert isinstance(sh.point.decision, M.SelectPlace)  # the Queen's Knight was filled in, then the Fusion's zone
+    sh.step(0)
+
+    # the position dialog: the policy wants face-up Defense -> the right button
+    obs.scorer = prefer(value=C.POS_FACEUP_DEFENSE)
+    pick, record = obs.choose("position", None, 0, pw)
+    assert pick == 1 and record["ygo"] == "SelectPosition"
+
+    # a yes / no the shadow does not ask: the shadow is dropped and the caller's rule decides
+    obs.shadow = shadow(me, (QUEEN,) * 3, cards=cards)
+    pick, record = obs.choose("yesno", None, 0, pw)
+    assert pick is None and record["desync"] and obs.shadow is None
+    assert obs.choose("yesno", None, 0, pw) == (None, {})
+
+
+def test_md_option_descriptions_pair_with_ygopro_options():
+    from ygorl.selfplay.observe import md_option_desc, option_pairs
+
+    pw = {0x4064: 1234}
+    assert md_option_desc(0x800A4064, pw) == 1234 * 16 + 0  # card string 10 -> effect 0
+    assert md_option_desc(0x800B4064, pw) == 1234 * 16 + 1
+    assert md_option_desc(0xC00001AC, pw) is None  # a system string
+    assert option_pairs([1234 * 16 + 1, 1234 * 16], [1234 * 16, 1234 * 16 + 1]) == {0: 1, 1: 0}
+    assert option_pairs([None, None], [7, 8]) == {0: 0, 1: 1}  # by order when the counts agree
+    assert option_pairs([None, None, None], [7, 8]) is None

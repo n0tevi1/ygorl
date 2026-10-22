@@ -10,7 +10,7 @@ A run writes ``<out>/<run>.jsonl``: a ``start`` record (run metadata), one ``ste
                 "opp": {"lp": 6100, "field": [... face-down cards as [0, face, sideways]], "grave": [...],
                         "counts": {...}}},
      "decision": {"by": "policy", "action": "summon", "card": 89631139, "p": 0.61, "phase": "main1",
-                  "top": [["summon", 89631139, 0.61], ...]}            # or {"by": "rule", "rule": "prompt-pass"}
+                  "top": [["summon", 89631139, 0.61], ...]}            # or {"by": "rule", "rule": "prompt-pass"}, {"by": "shadow", "dialog": "list", "pick": 1, ...}
      "observed": {"icons": [[x, y], ...]},                              # what the UI layer reported
      "clicks": [{"t": ..., "xy": [x, y], "why": "summon"}, ...],
      "check": {"action": "summon", "card": 89631139, "ok": true, "problem": null},   # the previous action's check
@@ -124,6 +124,10 @@ class Trace:
         """A hard-coded rule decided this step (prompt, dialog, field pick, ...)."""
         self._current()["decision"] = {"by": "rule", "rule": rule, **detail}
 
+    def shadow(self, dialog: str, pick: int, **detail) -> None:
+        """The policy decided this dialog through the shadow duel (design 10 「边角情况由 player 自己学会」)."""
+        self._current()["decision"] = {"by": "shadow", "dialog": dialog, "pick": pick, **detail}
+
     def observe(self, **seen) -> None:
         """What the UI layer reported (icons found, list cards, highlighted cards, ...)."""
         self._current()["observed"].update(_jsonable(seen))
@@ -220,7 +224,9 @@ def summarize(records: Iterable[dict]) -> dict:
         per_turn[r.get("turn", 0)] += 1
         d = r.get("decision")
         if d:
-            decisions[f"policy:{d['action']}" if d.get("by") == "policy" else f"rule:{d.get('rule')}"] += 1
+            by = d.get("by")
+            label = {"policy": f"policy:{d.get('action')}", "shadow": f"shadow:{d.get('dialog')}"}
+            decisions[label.get(by, f"rule:{d.get('rule')}")] += 1
         c = r.get("check")
         if c:
             checks["ok" if c.get("ok") else "failed"] += 1

@@ -71,8 +71,9 @@ def _locate(raw: RawDuel, uid: int) -> tuple[int, str, int | None]:
     return -1, "", None
 
 
-def read_request(mem: Memory, base: int, off: Offsets, raw: RawDuel) -> Request:
-    """MD's pending request; ``raw`` is a board read at the same moment (to locate the candidates)."""
+def read_request(mem: Memory, base: int, off: Offsets, raw: RawDuel, *, list_shown: bool = False) -> Request:
+    """MD's pending request; ``raw`` is a board read at the same moment (to locate the candidates). ``list_shown``:
+    a card list is on screen, so the list is current even with the engine's input closed (MD's own dialogs)."""
     state = struct.unpack("<Q", mem.read(base + off.state_ptr, 8))[0]
     lst = struct.unpack("<Q", mem.read(base + off.list_ptr, 8))[0]
 
@@ -91,7 +92,7 @@ def read_request(mem: Memory, base: int, off: Offsets, raw: RawDuel) -> Request:
     marker = struct.unpack_from("<H", head, off.list_marker)[0]
     most = head[off.list_max]
     candidates = []
-    if kind in ("select_card", "summon_pick", "open", "chain") and count:  # the list is stale otherwise
+    if (list_shown or kind in ("select_card", "summon_pick", "open", "chain")) and count:  # stale otherwise
         items = mem.read(lst + off.list_item_cid, 4 * count)
         sources = mem.read(lst + off.list_item_from, 4 * count)
         for i in range(count):

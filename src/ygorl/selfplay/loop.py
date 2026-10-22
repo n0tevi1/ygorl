@@ -38,7 +38,7 @@ from ygorl.md.input import GatedMouse
 from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
 from ygorl.md.screen import ScreenError
 from ygorl.md.screen import capture as capture_client
-from ygorl.md.ui import PHASE_MENU_CANCEL, UI, Stuck, command_order, my_monster_xy, opp_monster_xy
+from ygorl.md.ui import PHASE_MENU_CANCEL, UI, Stuck, command_order, my_monster_xy, opp_monster_xy, radio_rows
 from ygorl.md.panel import PanelBook, panel_kind
 from ygorl.md.request import read_request
 from ygorl.selfplay.observe import ShadowObserver
@@ -186,7 +186,7 @@ class Player:
         self.prior = OpponentPrior.from_environment(self.env)
         self.out.mkdir(parents=True, exist_ok=True)
         self.trace = Trace(self.out, screen_every=self.screen_every)
-        self.observer = ShadowObserver(self.env.rule_flags, self.cards, self.prior)  # observe only (design 10)
+        self.observer = ShadowObserver(self.env.rule_flags, self.cards, self.prior, self._score)  # design 10
         self.panel = PanelBook(self.out / "panel_book.npz")  # learned across runs
         self.attacked: set[int] = set()  # uids that attacked (or could not) in this Battle Phase
         self.turn_seen = -1
@@ -471,6 +471,9 @@ class Player:
         phase = PHASES[raw.phase] if raw.phase < len(PHASES) else ""
         theirs = raw.turn_player != raw.me
         respond = (theirs and phase == "battle") or (not theirs and phase == "end")
+        pick = None if theirs else self.lockstep("prompt", raw, lambda: self.request_now(raw))
+        if pick is not None:
+            respond = pick == 0
         # the same prompt again with nothing of ours changed: the activation did not happen (MD can offer a card it
         # then greys the Activate button for), so pass instead of ticking it forever
         seen = (raw.turn, raw.phase, inp.mode, _own_cards(raw))
@@ -478,54 +481,128 @@ class Player:
             respond = False
             self.trace.observe(prompt="the response did not take: passing")
         self.responded = seen if respond else None
-        self.trace.rule("prompt-respond" if respond else "prompt-pass")
+        if pick is None:
+            self.trace.rule("prompt-respond" if respond else "prompt-pass")
         self.ui.respond_prompt(respond)
         if respond:
             self.context = "respond"
 
+    def _score(self, shadow, point):
+        """The policy's logits on a shadow decision point (sub-picks inside our own action)."""
+        from dataclasses import replace
+
+        from ygorl.advisor.advise import _logits
+
+        return _logits(replace(shadow.rec, point=point), self.policy, self.cards, self.env.player.starting_lp)
+
+    def lockstep(self, dialog: str, raw: RawDuel, req=None, count: int = 0) -> int | None:
+        """The option the policy picks for MD's ``dialog`` through the shadow duel (None: no shadow, or it does not
+        match; the caller's rule decides). Recorded as the step's decision."""
+        observer = getattr(self, "observer", None)  # tests build players without one
+        if observer is None or observer.shadow is None:
+            return None
+        if callable(req):  # read only when there is a shadow to ask
+            req = req()
+        pick, record = observer.choose(dialog, req, raw.me, self.passwords, count=count)
+        if record:
+            self.trace.observe(lockstep=record)
+        if pick is not None:
+            self.trace.shadow(dialog, pick, action=record.get("action"))
+            print(f"  shadow ({record.get('ygo')}): {dialog} option {pick + 1} of {record.get('options')}", flush=True)
+        elif record:
+            print(f"  shadow: {record.get('desync') or record.get('shadow_error')} ({record.get('ygo')})", flush=True)
+        return pick
+
+    def request_now(self, raw: RawDuel, list_shown: bool = False):
+        return read_request(self.game.memory, self.game.module.base, self.game.offsets, raw, list_shown=list_shown)
+
     def dialog(self, raw: RawDuel, kind: str) -> None:
         if kind == "position":
-            self.trace.rule("position-faceup-attack")
-            self.ui.pick_position("faceup_attack")
+            pick = self.lockstep("position", raw)
+            if pick == 1:
+                self.ui.pick_position("faceup_defense")
+            else:
+                if pick is None:
+                    self.trace.rule("position-faceup-attack")
+                self.ui.pick_position("faceup_attack")
             zone = self.free_zone(raw, "mzone")
             self.ui.pick_zone("mzone", zone, "zone for the summon")
             self._placed("mzone", zone)
         elif kind == "option":
-            req = read_request(self.game.memory, self.game.module.base, self.game.offsets, raw)
+            req = self.request_now(raw)
             n = len(req.choices)
-            pick = next((i for i, c in enumerate(req.choices) if c >> 31), 0)  # the first enabled effect
-            self.trace.rule("option-first-enabled", choices=[hex(c) for c in req.choices], pick=pick)
+            pick = self.lockstep("option", raw, req)
+            if pick is None:
+                pick = next((i for i, c in enumerate(req.choices) if c >> 31), 0)  # the first enabled effect
+                self.trace.rule("option-first-enabled", choices=[hex(c) for c in req.choices], pick=pick)
+            self.trace.observe(option_choices=[hex(c) for c in req.choices])
             self.ui.click(*option_tab(pick, n), f"effect {pick + 1} of {n}", 0.8)
             self.ui.click(*OPTION_OK, "ok", 1.5)
         elif kind == "radio":
-            self.trace.rule("radio-first")  # e.g. Pot of Extravagance: banish 3 (the first row) rather than 6
-            self.trace.observe(radio_rows=self.ui.pick_radio(0))
+            pick = self.lockstep("radio", raw, count=len(radio_rows(self.ui.capture())))
+            if pick is None:
+                self.trace.rule("radio-first")  # e.g. Pot of Extravagance: banish 3 (the first row) rather than 6
+            self.trace.observe(radio_rows=self.ui.pick_radio(pick or 0))
         elif kind == "phase_menu":
             self.trace.rule("phase-menu-cancel")
             self.ui.click(*PHASE_MENU_CANCEL, "close the phase menu", 1.2)
         elif kind == "yesno":
-            self.trace.rule("yesno-no")
-            self.ui.yesno(False)
+            pick = self.lockstep("yesno", raw)
+            if pick is None:
+                self.trace.rule("yesno-no")
+            self.ui.yesno(pick == 0)
         elif kind == "list":
             if not L.list_cards(self.ui.capture()):  # a passing frame (a turn change) looked like a list
                 self.trace.observe(list="gone before the pick")
                 return
-            self.trace.rule("list-first")
-            self.trace.observe(list_cards=self.ui.pick_list_cards([0]))
+            req = self.request_now(raw, list_shown=True)
+            pick = self.lockstep("list", raw, req)
+            if pick is None:
+                self.trace.rule("list-first")
+            self.trace.observe(list_cards=self.ui.pick_list_cards([pick or 0]),
+                               list_candidates=[[c.cid, c.location, c.sequence] for c in req.candidates])  # fmt: skip
             self.context = "list"
         else:
             raise Stuck(f"no script for the {kind} screen (context {self.context!r})")
 
+    def field_target(self, raw: RawDuel, lit) -> tuple[int, int] | None:
+        """The field card the policy picks through the shadow for MD's field selection (tributes, targets), if the
+        shadow matches and the card is one MD highlights; else None (the caller's rule decides)."""
+        req = None
+        try:
+            req = self.request_now(raw)
+        except Exception:  # noqa: BLE001 - no request: the rule decides
+            return None
+        pick = self.lockstep("list", raw, req)
+        if pick is None:
+            return None
+        c = req.candidates[pick]
+        xy = None
+        if c.location == "mzone" and c.sequence is not None:
+            xy = my_monster_xy(c.sequence) if c.player == raw.me else opp_monster_xy(c.sequence)
+        elif c.location == "szone" and c.player == raw.me and c.sequence is not None and c.sequence < 5:
+            xy = L.my_zone("szone", c.sequence)
+        if xy is None or xy not in set(lit):
+            self.observer.shadow = None  # it took a pick MD will not see: rebuild at the next command point
+            self.trace.observe(lockstep_field=f"no highlighted card at {xy} for candidate {pick}")
+            return None
+        return xy
+
     def pick_tributes(self, raw: RawDuel) -> None:
-        """Tributes: highlighted monsters of the advisor's, lowest ATK first, each confirmed, until none is left
-        highlighted. (A rule for now; the shadow duel will let the policy decide.)"""
+        """Tributes: the policy's picks through the shadow; without a shadow, highlighted monsters of the advisor's,
+        lowest ATK first. Each is confirmed, until none is left highlighted."""
         me = raw.players[raw.me]
-        self.trace.rule("tribute-lowest-atk")
         for _ in range(3):
             lit = set(self.ui.highlighted())
             mine = [(s, c) for s, c in enumerate(me.slots[:7]) if c and my_monster_xy(s) in lit]
             if not mine:
                 return
+            xy = self.field_target(self.game.read(), lit)
+            if xy is not None:
+                if not self.ui.card_command(xy, "tribute (policy)", "confirm tribute", 2.0):
+                    raise Stuck("no Confirm icon above the tribute")
+                continue
+            self.trace.rule("tribute-lowest-atk")
 
             def atk(c):
                 k = self.cards.get(self.passwords.get(c.cid))
@@ -538,11 +615,14 @@ class Player:
     def field_pick(self, raw: RawDuel) -> None:
         """Mode 8 outside an attack: pick the highlighted cards one by one and confirm each."""
         lit = self.ui.highlighted()
-        self.trace.rule("field-pick-first")
         self.trace.observe(highlighted=lit)
         if not lit:
             raise Stuck("a field selection with no highlighted card found")
-        if not self.ui.card_command(lit[0], "highlighted card", "confirm"):
+        xy = self.field_target(raw, lit)
+        if xy is None:
+            self.trace.rule("field-pick-first")
+            xy = lit[0]
+        if not self.ui.card_command(xy, "highlighted card", "confirm"):
             raise Stuck("no Confirm icon above the selected card")
 
     # --- loop -----------------------------------------------------------------------------------------------

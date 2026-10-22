@@ -36,6 +36,7 @@ class Mouse(Protocol):
 
 # --- fixed positions (reference frame, measured on the 2054x1184 window) ---------------------------------------
 POSITION_FACEUP_ATTACK = (940, 956)  # the left button of the summon-position dialog
+POSITION_FACEUP_DEFENSE = (1115, 956)  # its right button (the dark disc measured at 1100-1130, 940-970)
 YESNO_NO, YESNO_YES = (866, 658), (1186, 658)
 PHASE_MENU_CANCEL = (1026, 1035)
 MY_DECK = (1625, 985)  # the advisor's Deck pile, bottom right
@@ -294,10 +295,11 @@ class UI:
         return xy
 
     def pick_position(self, position: str = "faceup_attack") -> None:
-        """The summon-position dialog. Only face-up Attack Position is measured."""
-        if position != "faceup_attack":
+        """The summon-position dialog: face-up Attack (left button) or face-up Defense (right button)."""
+        buttons = {"faceup_attack": POSITION_FACEUP_ATTACK, "faceup_defense": POSITION_FACEUP_DEFENSE}
+        if position not in buttons:
             raise Stuck(f"no measured button for {position} in the position dialog")
-        self.click(*POSITION_FACEUP_ATTACK, "face-up attack", 1.5)
+        self.click(*buttons[position], position.replace("_", " ").replace("faceup", "face-up"), 1.5)
 
     def yesno(self, yes: bool, why: str = "") -> None:
         """MD's yes / no dialog (both buttons measured: Tribute Summon confirmation, "Normal Summon now?")."""
