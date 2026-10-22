@@ -173,6 +173,7 @@ class Player:
 
     expect: Expectation | None = None
     recent: list = field(default_factory=list)  # the last states seen, to stop instead of looping
+    phase_seen: tuple = (-1, -1)
 
     def __post_init__(self) -> None:
         from ygorl.advisor.reconstruct import OpponentPrior
@@ -242,12 +243,14 @@ class Player:
         x, y = xy
         box = ((max(x - 380, 0), 790, min(x + 380, L.REF_W), 975) if hand
                else (max(x - 130, 0), max(y - 260, 0), min(x + 130, L.REF_W), y - 60))  # fmt: skip
-        before = capture(self.mouse.window)
-        self.click(x, y, why, 1.2)
-        after = capture(self.mouse.window)
-        icons = L.new_icons(before, after, *box)
-        if icons or not hand:
-            return icons
+        for attempt in range(2):  # the first click can land while an animation still covers the hand
+            before = capture(self.mouse.window)
+            self.click(x, y, why if not attempt else f"{why} (again)", 1.2)
+            after = capture(self.mouse.window)
+            icons = L.new_icons(before, after, *box)
+            if icons or not hand:
+                return icons
+            time.sleep(1.5)
         # a hand card left open by an earlier stop stays open when clicked again: its icons were already there;
         # in the hand band only command icons sit above y 940 (the lifted card's art starts lower)
         return [p for p in L.find_icons(after, *box) if p[1] < 940]
@@ -444,6 +447,10 @@ class Player:
             if dialog == "over":
                 print("duel over, LP", [p.lp for p in raw.players])
                 return 0
+            if (raw.turn, raw.phase) != self.phase_seen:
+                # the engine accepts input before MD's turn / phase animations (the drawn card shown big) are over
+                self.phase_seen = (raw.turn, raw.phase)
+                time.sleep(2.5)
             if raw.turn != self.turn_seen:
                 self.turn_seen, self.attacked = raw.turn, set()
             me, op = raw.players[raw.me], raw.players[1 - raw.me]
