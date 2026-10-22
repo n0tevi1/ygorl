@@ -8,6 +8,7 @@ import struct
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from ygorl.advisor.mdmem import BufferMemory, decode_uid, find_module, format_raw, read_duel, steam_buildid, to_snapshot
@@ -290,3 +291,24 @@ def test_layout_hand_order_and_positions():
         assert tuple(hand[i] for i in hand_order(hand, pw.get, cards.get)) == screen
     assert hand_card(4, 5) == (1300, 1100) and hand_card(0, 5) == (740, 1100)
     assert my_zone("szone", 0) == (650, 930)
+
+
+def test_client_area_and_reference_frame():
+    from ygorl.advisor.mdlayout import REF_CLIENT, reference_image, to_client
+    from ygorl.advisor.mdscreen import parse_children
+
+    kids = ('xwininfo: Window id: 0x6000003 "masterduel"\n\n  Root window id: 0x416 (the root window) (has no name)\n'
+            "     1 child:\n     0x5e0002f (has no name): ()  2048x1152+3+29  +2779+157\n")  # fmt: skip
+    c = parse_children(kids)
+    assert (c.id, c.x, c.y, c.width, c.height) == (0x5E0002F, 2779, 157, 2048, 1152)
+    assert parse_children("     0 children.\n") is None
+    # the reference client area maps to itself; a half-size client halves the offsets
+    assert to_client(1580, 560, 2048, 1152) == (1577, 531)
+    assert to_client(1580, 560, 1024, 576) == (788, 266)
+    # a half-size capture comes back at reference size, content where the reference client was
+    small = np.zeros((576, 1024, 3), np.uint8)
+    small[266, 788] = 255
+    ref = reference_image(small)
+    assert ref.shape == (1184, 2054, 3)
+    cx, cy, _, _ = REF_CLIENT
+    assert ref[cy + 532, cx + 1576].tolist() == [255, 255, 255]

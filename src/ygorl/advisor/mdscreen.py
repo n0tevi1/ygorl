@@ -29,6 +29,12 @@ class Window:
     y: int
     width: int
     height: int
+    client: Window | None = None  # Wine's client child (the game's pixels, no title bar or border)
+
+    @property
+    def area(self) -> Window:
+        """The window holding the game's pixels: the client child if there is one."""
+        return self.client or self
 
 
 _TREE_LINE = re.compile(
@@ -49,12 +55,28 @@ def parse_tree(text: str, wm_class: str = WINDOW_CLASS) -> Window:
     return max(found, key=lambda w: w.width * w.height)
 
 
+_CHILD_LINE = re.compile(r"^\s*(0x[0-9a-f]+) .*?\s(\d+)x(\d+)\+-?\d+\+-?\d+\s+\+(-?\d+)\+(-?\d+)\s*$")
+
+
+def parse_children(text: str) -> Window | None:
+    """The largest child in ``xwininfo -id W -children`` output (Wine's client area), or None."""
+    found = []
+    for line in text.splitlines():
+        m = _CHILD_LINE.match(line)
+        if m:
+            wid, w, h, x, y = int(m.group(1), 16), *map(int, m.group(2, 3, 4, 5))
+            found.append(Window(wid, x, y, w, h))
+    return max(found, key=lambda w: w.width * w.height) if found else None
+
+
 def find_window() -> Window:
     exe = shutil.which("xwininfo")
     if exe is None:
         raise ScreenError("xwininfo is required (sudo apt install x11-utils)")
     out = subprocess.run([exe, "-root", "-tree"], capture_output=True, text=True, check=True).stdout
-    return parse_tree(out)
+    top = parse_tree(out)
+    kids = subprocess.run([exe, "-id", hex(top.id), "-children"], capture_output=True, text=True, check=True).stdout
+    return Window(top.id, top.x, top.y, top.width, top.height, parse_children(kids))
 
 
 def parse_xwd(data: bytes) -> np.ndarray:
@@ -77,7 +99,8 @@ def parse_xwd(data: bytes) -> np.ndarray:
 
 
 def capture(window: Window | None = None) -> np.ndarray:
-    window = window or find_window()
+    """The game's pixels (the client area, without Wine's title bar and border), at the window's own size."""
+    window = (window or find_window()).area
     exe = shutil.which("xwd")
     if exe is None:
         raise ScreenError("xwd is required (sudo apt install x11-apps)")
@@ -85,4 +108,4 @@ def capture(window: Window | None = None) -> np.ndarray:
     return parse_xwd(out)
 
 
-__all__ = ["ScreenError", "Window", "capture", "find_window", "parse_tree", "parse_xwd"]
+__all__ = ["ScreenError", "Window", "capture", "find_window", "parse_children", "parse_tree", "parse_xwd"]

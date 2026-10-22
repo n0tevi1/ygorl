@@ -3,7 +3,8 @@
 Input is an OS-level synthetic pointer event sent to the game's XWayland window (``XSendEvent``), so the user's own
 pointer does not move; ``--shared-pointer`` uses X11 XTEST instead, which moves the real pointer. Nothing is written to the game process. Every call first reads the duel from memory and runs
 :func:`ygorl.advisor.mdmem.solo_gate`: unless a verified Solo duel against the computer is in progress, no event is
-sent. Coordinates are window-relative pixels of the game window found by :mod:`ygorl.advisor.mdscreen`.
+sent. Coordinates are in the reference frame of :mod:`ygorl.advisor.mdlayout` and are mapped to the game's actual
+client area, so the same numbers work at any window size.
 
 Usage (one action per invocation, for testing the mapping)::
 
@@ -19,6 +20,7 @@ import ctypes.util
 import time
 
 from ygorl.advisor.mdmem import attach, solo_gate
+from ygorl.advisor.mdlayout import to_client
 from ygorl.advisor.mdscreen import Window, find_window
 
 
@@ -104,13 +106,16 @@ class GatedMouse:
     def __init__(self, window: Window | None = None, *, shared_pointer: bool = False) -> None:
         self.game = attach()
         self.window = window or find_window()
-        self.pointer = Pointer() if shared_pointer else WindowPointer(self.window)
+        self.pointer = Pointer() if shared_pointer else WindowPointer(self.window.area)
 
     def _check(self, x: int, y: int) -> tuple[int, int]:
+        """Reference-frame point -> absolute screen point inside the game's client area (after the Solo gate)."""
         solo_gate(self.game.read())
-        if not (0 <= x < self.window.width and 0 <= y < self.window.height):
-            raise InputError(f"({x}, {y}) is outside the game window {self.window.width}x{self.window.height}")
-        return self.window.x + x, self.window.y + y
+        area = self.window.area
+        cx, cy = to_client(x, y, area.width, area.height)
+        if not (0 <= cx < area.width and 0 <= cy < area.height):
+            raise InputError(f"reference ({x}, {y}) is outside the game's client area {area.width}x{area.height}")
+        return area.x + cx, area.y + cy
 
     def move(self, x: int, y: int) -> None:
         self.pointer.move(*self._check(x, y))
@@ -132,7 +137,8 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     mouse = GatedMouse(shared_pointer=args.shared_pointer)
     getattr(mouse, args.op)(args.x, args.y)
-    print(f"{args.op} ({args.x}, {args.y}) in window {mouse.window.width}x{mouse.window.height}")
+    area = mouse.window.area
+    print(f"{args.op} reference ({args.x}, {args.y}) in client area {area.width}x{area.height}")
     return 0
 
 

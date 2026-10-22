@@ -28,11 +28,16 @@ import numpy as np
 from ygorl.advisor import mdlayout as L
 from ygorl.advisor.mdinput import GatedMouse
 from ygorl.advisor.mdmem import PHASES, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
-from ygorl.advisor.mdscreen import capture
+from ygorl.advisor.mdscreen import capture as capture_client
 
 # --- input state (S + ...): written by duel.dll's command layer, read by DLL_DuelComGetCommandMask --------------
 INPUT_MODE, INPUT_ACCEPT, INPUT_PLAYER, FOCUS_CID = 0x3CD0, 0x3CDC, 0x3D00, 0x3CF0
 MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, FIELD_PICK = 2, 3, 4, 5, 6, 8  # observed modes
+
+
+def capture(window) -> np.ndarray:
+    """A capture in the reference frame (see :mod:`ygorl.advisor.mdlayout`), whatever the window size."""
+    return L.reference_image(capture_client(window))
 
 
 class Stuck(RuntimeError):

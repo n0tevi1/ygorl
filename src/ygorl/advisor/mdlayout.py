@@ -1,7 +1,11 @@
 """Where things are in the Master Duel window (design 10, Solo self-play), as fractions of the window size.
 
-Measured 2026-10-21 on a 2054x1184 window (Wine frame included) in a Solo duel; each point was clicked and the
-result checked in memory. Fractions keep the layout usable when the window is resized at the same aspect ratio.
+Measured 2026-10-21 in a Solo duel on a 2054x1184 window whose client area (the game's pixels, without Wine's
+title bar and border) was 2048x1152 at (3, 29); each point was clicked and the result checked in memory. Positions
+below stay in that *reference frame*. :func:`to_client` maps a reference point to the actual client area, and
+:func:`reference_image` resamples a capture of any size back into the reference frame, so recognisers and click
+positions are written once for every window size. MD's layout is fixed at 16:9; other client aspect ratios are
+mapped per axis, which is exact only while the game itself letterboxes to 16:9.
 
 - Hand: centred, one card every 140 px; MD shows it sorted (:func:`hand_order`), not in memory order.
 - Clicking a hand card lifts it and shows its commands as round buttons above it (Set for a Trap).
@@ -20,9 +24,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 
+import numpy as np
+
 from ygorl.engine import constants as C
 
-REF_W, REF_H = 2054, 1184  # the window the measurements below come from
+REF_W, REF_H = 2054, 1184  # the reference frame: the window the measurements below come from
+REF_CLIENT = (3, 29, 2048, 1152)  # its client area: x, y, width, height
 
 HAND_Y, HAND_CENTER_X, HAND_STEP = 1100, 1020, 140
 COMMAND_DY = -220  # first command button, relative to the clicked hand card
@@ -35,8 +42,25 @@ PROMPT_CARD = (1026, 934)  # the first card of a response prompt
 PROMPT_CANCEL, PROMPT_ACTIVATE = (870, 1117), (1180, 1117)
 
 
-def scale(point: tuple[float, float], width: int, height: int) -> tuple[int, int]:
-    return round(point[0] * width / REF_W), round(point[1] * height / REF_H)
+def to_client(x: float, y: float, width: int, height: int) -> tuple[int, int]:
+    """A reference-frame point as pixels of a ``width`` x ``height`` client area."""
+    cx, cy, cw, ch = REF_CLIENT
+    return round((x - cx) * width / cw), round((y - cy) * height / ch)
+
+
+def reference_image(client: np.ndarray) -> np.ndarray:
+    """A client-area capture of any size, resampled (nearest) into the reference frame."""
+    cx, cy, cw, ch = REF_CLIENT
+    h, w = client.shape[:2]
+    if (w, h) == (cw, ch):
+        scaled = client
+    else:
+        ys = np.minimum((np.arange(ch) * h / ch).astype(int), h - 1)
+        xs = np.minimum((np.arange(cw) * w / cw).astype(int), w - 1)
+        scaled = client[ys][:, xs]
+    out = np.zeros((REF_H, REF_W, 3), dtype=np.uint8)
+    out[cy : cy + ch, cx : cx + cw] = scaled
+    return out
 
 
 def hand_card(index: int, count: int) -> tuple[int, int]:
@@ -72,4 +96,4 @@ def hand_order(cids: Sequence[int], passwords: Callable[[int], int], cards: Call
     return sorted(range(len(cids)), key=lambda i: _sort_key(cards(passwords(cids[i])), cids[i]))
 
 
-__all__ = ["command_button", "hand_card", "hand_order", "my_zone", "scale"]
+__all__ = ["REF_CLIENT", "command_button", "hand_card", "hand_order", "my_zone", "reference_image", "to_client"]
