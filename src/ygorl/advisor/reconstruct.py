@@ -1,4 +1,4 @@
-"""Put a :class:`BoardSnapshot` into the core so the policy can be asked about it (design 09, 「重建」).
+"""Put a :class:`BoardSnapshot` into the core so the policy can be asked about it (design 10, 「重建」).
 
 Two steps:
 
@@ -13,7 +13,7 @@ Two steps:
   later in the game. The real turn number and who went first are restored in the observation
   (:func:`ygorl.advisor.advise.observe`).
 
-Lost on the way (design 09「重建的已知失真」): the event history, once-per-turn and Normal Summon usage, effect
+Lost on the way (design 10「重建的已知失真」): the event history, once-per-turn and Normal Summon usage, effect
 states such as equips and targets, and anything mid-chain. Only the advisor's own Main Phase is supported.
 """
 

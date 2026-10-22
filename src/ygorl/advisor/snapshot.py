@@ -1,4 +1,4 @@
-"""Board snapshots: what the advisor can see of a game, independent of where it was read (design 09).
+"""Board snapshots: what the advisor can see of a game, independent of where it was read (design 10).
 
 A :class:`BoardSnapshot` is the only interface between a state source (a hand-written JSON file, the Master Duel
 memory reader, a self-play duel for fidelity tests) and the decision side (:mod:`ygorl.advisor.reconstruct`). It

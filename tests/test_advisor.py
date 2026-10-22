@@ -1,4 +1,4 @@
-"""Master Duel advisor (design 09): board snapshots, reconstruction in the core, suggestions."""
+"""Master Duel advisor (design 10): board snapshots, reconstruction in the core, suggestions."""
 
 import random
 from dataclasses import replace

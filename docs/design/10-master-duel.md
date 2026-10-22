@@ -46,35 +46,51 @@ MD 进程 ──(只读内存 / 手写 JSON)──► BoardSnapshot ──► �
   - 用 `env.observer.PointObserver` 编码观测。
   - 输出 top-k 动作、概率和各样本间的离散程度。
   - 只在重建出的第一个决策点给建议。选定一个动作后，局面变化要等下一张快照。
-- **读取器**（`ygorl.advisor.mdmem`，B4）：在 Linux 上对 Proton 里的游戏进程做 `process_vm_readv`。
-  - 读 MD 的原生规则引擎 `duel.dll`（不是 Unity 的 IL2CPP 层）：从 `/proc/<pid>/maps` 找到 `duel.dll` 的映射基址，
-    读它的全局对局状态指针，再按偏移读各字段。偏移来自 `duel.dll` 导出的查询函数（`DLL_DuelGetLP` 等）的反汇编，见下文「探路结论」。
-  - 偏移按游戏版本存放在 `src/ygorl/advisor/offsets/<md-build>.json`；IL2CPP 层（Il2CppDumper）只在需要 UI 状态时再考虑。
-  - 启动时核对游戏版本（Steam `buildid`），不匹配就拒绝运行。
-  - MD 内部卡 id 与 `password` 不同，映射表是环境产物 `artifacts/md_cid.json`。
+- **读取器**（`ygorl.advisor.mdmem`，T7.6）：在 Linux 上对 Proton 里的游戏进程做 `process_vm_readv`。
+  - 读 MD 的原生规则引擎 `duel.dll`（不是 Unity 的 IL2CPP 层）：从 `/proc/<pid>/maps` 找到 `duel.dll` 的映射基址和磁盘路径，
+    读它的全局对局状态指针，再按偏移读各字段。
+  - **偏移不手写，从 `duel.dll` 自动推导**（`ygorl.advisor.mdoffsets`）：解析 PE 导出表，用 GNU `objdump` 反汇编
+    `DLL_DuelGetLP`、`DLL_DuelGetCardNum` 等查询函数，按指令模式取出位移。导出名在游戏更新后不变，地址和字段位置可以变，
+    所以更新后读取器直接对新 DLL 重新推导，不需要人工 rebase；模式匹配不上时报 `OffsetError`，说明查询函数本身改了，要重新看反汇编。
+  - 推导不出来的只有**标志位的含义**（正反面、守备表示、除外区里背面的位），它们要对着画面确定。按 DLL 的 sha256 记录在
+    `src/ygorl/advisor/offsets/<sha256 前 16 位>.json`（`verified` + `semantics`）。没有记录或未核对的版本，
+    `--attach --raw` 照常可用，生成快照会被拒绝。Steam `buildid` 只作显示。
+  - MD 内部卡 id（`md_cid`）就是 Konami 卡片数据库 id（YgoMaster 的数据里 Blue-Eyes White Dragon 89631139 = 4007），
+    YGOPRODECK 以 `misc_info.konami_id` 给出。映射表是环境产物 `artifacts/md_cid.json`，由 `tools/build_md_cid.py` 生成。
+  - **只放建议方在画面上能看到的东西**：本地 `duel.dll` 可能存着对手的手牌、卡组和盖放卡，读取器一律不用。
+    对手手牌和卡组只取张数，盖放 / 里侧的卡只取位置，背面除外的卡记为未知；`--raw` 的输出里对手场上的卡也一律隐藏。
   - 能读到的额外信息（一回合一次的已用标记、连锁、本回合事件）逐步补进快照，用来降低下述失真。
 
-## 探路结论（T7.5，2026-09-24，Steam buildid 23020425）
+## 探路结论（T7.5 / T7.6，Steam buildid 23020425）
 
 **可行，走 `duel.dll`。** `global-metadata.dat` 未加密（版本 31）；更直接的是规则引擎 `masterduel_Data/Plugins/x86_64/duel.dll`
-（原生 PE，ImageBase `0x180000000`，203 个 `DLL_Duel*` 导出，YgoMaster 也调用同一组函数）。查询函数都很短，直接读一块全局状态：
+（原生 PE，ImageBase `0x180000000`，203 个 `DLL_Duel*` 导出，YgoMaster 也调用同一组函数）。查询函数都很短，直接读一块全局状态。
+下表是 `mdoffsets.derive` 在该版本上得到的结果（`S` = `[duel.dll + 0x11f9c50]`，`K` = `[duel.dll + 0x11f9c48]`，`p` 为 0/1）：
 
-| 导出函数 | 读取的位置（`S` = `[duel.dll + 0x11adc50]` 指向的对局状态） |
-|----------|------------------------------------------------------------|
-| `DLL_DuelWhichTurnNow` | `S + 0x3c08`（回合玩家） |
-| `DLL_DuelGetTurnNum` | `S + 0x3c14` |
-| `DLL_DuelGetCurrentPhase` | `S + 0x3c1c`（0 抽卡、1 准备、2 主要 1、3 战斗、4 主要 2、5 结束） |
-| `DLL_DuelGetLP(p)` | `S + p × 0xddc`，与 `[duel.dll + 0x11adc48]` 指向的 16 位值异或 |
-| `DLL_DuelGetCardNum(p, locate)` | `locate` ≤ 12 为场上格子：`S + p × 0xddc + locate × 0x1c + 0x5c` 起的 16 位卡 id；13 以上（手牌、额外、卡组、墓地、除外）的张数在玩家块开头 `+0x10`…`+0x1c` |
+| 字段 | 位置 | 来源导出函数 |
+|------|------|--------------|
+| 回合玩家 / 回合数 / 阶段 | `S + 0x3c08` / `0x3c14` / `0x3c1c`（阶段 0 抽卡 … 2 主要 1、3 战斗、4 主要 2、5 结束） | `DLL_DuelWhichTurnNow` 等 |
+| 本客户端的玩家号 | `K + 4` | `DLL_DuelGetMyPlayerNum` |
+| LP | `S + p × 0xddc`，与 `K` 处的 16 位值异或 | `DLL_DuelGetLP` |
+| 各区张数 | 玩家块 `+0x0c` 手牌、`+0x10` 卡组、`+0x14` 墓地、`+0x18` 额外、`+0x1c` 除外 | `DLL_DuelGetCardNum` |
+| 场上格子 | 玩家块 `+0x5c + i × 0x1c`：`+0` 卡 id，`+2` uid 字，`+6` 回合，`+7` 正反面字节，`+0xa` 效果链表头；i = 0–4 主要怪兽区、5–6 额外怪兽区、7–11 魔陷区、12 场地 | `DLL_DuelGetCardUniqueID` / `GetCardTurn` / `GetCardFace` |
+| 手牌、卡组、额外、墓地、除外 | 玩家块 `+0x1e4`、`+0x3c4`、`+0x5a4`、`+0x7fc`、`+0xa54` 起，每张 4 字节：卡 id + uid 字 | `DLL_DuelGetCardUniqueID` |
+| uid → 卡 id | `S + 0x1bec + uid × 8`（uid < 512） | `DLL_DuelGetCardIDByUniqueID2` |
+| 超量素材 | 效果链表节点 `S + 0x2bec + n × 16`：`+0` 代码，`+2` 种类，`+4` uid，`+0xc` 下一个；素材 = 代码 `0x3fb` 且种类低 4 位为 5 | `DLL_DuelGetThisCardOverlayNum` |
 
-- 每名玩家一块 `0xddc` 字节；`locate` 编号与 YgoMaster 一致（0–12 场上，13 手牌，16 墓地，18 选择中）。
-- 卡片是 MD 内部卡 id（`md_cid`）+ 每张卡的 unique id（`DLL_DuelGetCardUniqueID`、`DLL_DuelGetCardIDByUniqueID2`）；
-  表示形式、正反面、本回合是否召唤（`DLL_DuelGetCardFace` / `DLL_DuelGetCardTurn`）、超量素材数、指示物都有对应的导出函数，
-  反汇编同样得到偏移。
+- uid 字的编码是 `uid = (w & 1) | (w >> 8) << 1`，低字节其余位是标志（墓地里 `0x40` 有特殊含义）。
 - LP 的异或只是防篡改的混淆，读取时按函数里的做法还原即可。
+- 2026-09-24 初稿把状态指针写成 `+0x11adc50`（差 `0x4c000`，把文件偏移当成了 RVA）；按初稿手写偏移的读取器会读到无关内存。
+  改成自动推导后，这类抄写错误不会再出现。
 
-下一步（T7.6）需要在游戏运行时核对：在单人模式对局中逐项比对这些偏移与画面，补齐 unique id → 卡片与各区顺序的布局，
-再建立 `md_cid` → `password` 映射。这一步需要有人启动游戏；读取器本身始终只读。
+**仍需在游戏运行时核对（T7.6 验收）**：在单人模式对局中用 `ygorl advise --attach --raw` 比对画面，确定
+
+1. 正反面字节里「表侧」与「守备表示」各是哪一位（自己盖一只怪兽、盖一张魔陷、把怪兽改成守备表示，看字节怎么变）；
+2. 额外怪兽区左右与格子 5 / 6 的对应，场地区与格子 12 的对应；
+3. 除外区「里侧除外」的标志位；
+4. 对手视角下双方的格子编号是否需要镜像。
+
+核对结果写进该 DLL 的 `offsets/<sha>.json` 并置 `verified: true`，之后 `--attach` 才会生成快照。读取器始终只读。
 
 ## 重建的已知失真
 

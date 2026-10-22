@@ -62,3 +62,24 @@ def parse_md_pool(data: Any, mapper: CardMapper, source: str = str(RAW_FILE)) ->
             out.by_name.append({"id": card["id"], "name": card["name"], "password": mapped.password})
         out.passwords.add(mapped.password)
     return out
+
+
+def md_card_ids(data: Any, mapper: CardMapper) -> tuple[dict[int, int], list[dict]]:
+    """MD card id -> canonical password from a ``cardinfo.php?misc=yes`` response, and the unmapped cards.
+
+    Master Duel's internal card id is the Konami card database id (``misc_info[0].konami_id``); alternate
+    artworks share it. Cards without a ``konami_id`` (not yet in the Konami database) are skipped.
+    """
+    ids: dict[int, int] = {}
+    unmapped = []
+    for card in data["data"]:
+        misc = (card.get("misc_info") or [{}])[0]
+        cid = misc.get("konami_id")
+        if not cid:
+            continue
+        mapped = mapper.map(card.get("id"), card.get("name"))
+        if mapped is None:
+            unmapped.append({"konami_id": cid, "id": card.get("id"), "name": card.get("name")})
+        else:
+            ids[int(cid)] = mapped.password
+    return ids, unmapped

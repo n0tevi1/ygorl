@@ -1,4 +1,4 @@
-"""Reconstruction fidelity of the Master Duel advisor (design 09「评估」, T7.3 / T7.4).
+"""Reconstruction fidelity of the Master Duel advisor (design 10「评估」, T7.3 / T7.4).
 
 Usage: uv run python tools/advisor_fidelity.py --env md-2026-09 --policy out/gpu/GF/best.pt [--games 100]
 

@@ -123,8 +123,9 @@ M4 待议的消融（不改变主线设计，结果先入 `docs/experiments/`）
 - **T4e.1 阶段 A**（[benchmarks.md](benchmarks.md)「致死搜索原型」）：`lethal:<agent>` 包在 K 外面对 Random 0.910 → 0.925、对 Greedy 0.550 → 0.555，在噪声以内；K 的负局不是因为漏斩杀，只为斩杀做阶段 B 不值得，阶段 B 并入 C（PIMC）再议，见 #62。
 - **T7.1–T7.4**（[design/10](design/10-master-duel.md)、[benchmarks.md](benchmarks.md)「MD 建议器：重建保真」）：`ydke://` 读写；环境 `match` 段；`BoardSnapshot` 与重建（`Debug.AddCard` 脚本放卡，含超量素材 / 指示物）；`ygorl advise`。
   自博弈 327 个决策点上合法动作 Jaccard 0.91、策略 top-1 一致 78%，差异主要来自本回合已用的效果。
-- **T7.5**（design/10「探路结论」）：可行。`duel.dll` 的查询函数直接读一块全局对局状态（回合、阶段、LP 与各区卡片的偏移已从反汇编得到，buildid 23020425）；
-  T7.6 需要在游戏运行时核对。
+- **T7.5**（design/10「探路结论」）：可行。`duel.dll` 的查询函数直接读一块全局对局状态（回合、阶段、LP 与各区卡片的偏移已从反汇编得到，buildid 23020425）。
+- **T7.6**（进行中）：读取器、从 `duel.dll` 自动推导偏移（游戏更新后不需要人工 rebase）、`md_cid.json`、`ygorl advise --attach [--raw]` 已完成；
+  剩下在单人模式对局中核对标志位含义（design/10「仍需在游戏运行时核对」），需要有人启动游戏。
 - **`.yrpX` 导出**（T1.8 补充）：现按 EDOPro 方式 LZMA 压缩（1–3 MB → 10–20 KB）；T1.8 的人工回看需确认压缩文件在客户端里能打开（`--yrpx-uncompressed` 可对照）。
 
 ### M6 元游戏闭环与 off-meta 报告
@@ -147,7 +148,7 @@ M4 待议的消融（不改变主线设计，结果先入 `docs/experiments/`）
 | T7.3 | `BoardSnapshot`（JSON）与重建：逐张放卡、分别设定双方 LP、按 meta 采样暗牌、改写回合数 | T2.2, T5.1 | 重建保真：自博弈决策点上合法动作集合的重合率达到报告水平 | |
 | T7.4 | `ygorl advise`：多样本平均后输出 top-k 建议，BC 与 PPO 检查点都能读 | T7.3, T4a.2 | 同一批决策点上，重建局面与原局面的 top-1 一致率达到报告水平 | |
 | T7.5 | 探路：用 Il2CppDumper 处理 MD 当前版本，定位对局状态与 `md_cid` 映射；给出继续或放弃的结论 | — | 结论写入 design/10 | |
-| T7.6 | `ygorl advise --attach`：用 `process_vm_readv` 只读取内存 → 快照 → 建议；偏移按 `buildid` 存放 | T7.4, T7.5 | 单人模式对局中快照与画面人工核对一致 | |
+| T7.6 | `ygorl advise --attach`：用 `process_vm_readv` 只读取内存 → 快照 → 建议；偏移从 `duel.dll` 自动推导，标志位含义按 DLL 记录 | T7.4, T7.5 | 单人模式对局中快照与画面人工核对一致 | |
 
 ## 3. 推进顺序
 

@@ -13,7 +13,7 @@
 | `ygorl matrix` | 牌组两两对局的胜率矩阵 + Nash 混合 + alpha-rank | `build_matrix`、`analyze`、`MetaGame.save` |
 | `ygorl strength` | agent 两两对局的策略对局矩阵，按 alpha-rank / Nash 排出强度 | `build_agent_matrix`、`AgentMatrix.save`（[evaluation.md](evaluation.md)） |
 | `ygorl env` | `build`：抓取数据并生成 MD 环境；`check`：校验环境并打印摘要 | `ygorl.data.build.build`、`load_environment`（[data.md](data.md)） |
-| `ygorl advise` | MD 只读建议器：重建盘面快照，输出策略的动作概率（不给策略时列出合法动作） | `ygorl.advisor`（[design/09](design/10-master-duel.md)） |
+| `ygorl advise` | MD 只读建议器：重建盘面快照，输出策略的动作概率（不给策略时列出合法动作） | `ygorl.advisor`（[design/10](design/10-master-duel.md)） |
 
 ## 通用约定
 
@@ -217,9 +217,16 @@ meta        20 decks, share 71.7%, all legal
 
 ```
 ygorl advise SNAPSHOT.json --deck DECK --env PATH|VERSION [--policy CHECKPOINT] [--samples N] [--seed S] [--top K]
+ygorl advise --attach [--raw] [--save SNAPSHOT.json] --deck DECK --env PATH|VERSION [--policy CHECKPOINT] ...
 ```
 
-Master Duel 只读建议器（[design/09](design/10-master-duel.md)）：读盘面快照（JSON，格式见 `ygorl.advisor.snapshot`），把它重建进核心
+`--attach` 从运行中的 Master Duel 客户端只读读取盘面（Linux + Proton，`process_vm_readv`，需要 ptrace 权限与 GNU `objdump`），
+代替快照文件；偏移每次从磁盘上的 `duel.dll` 推导，游戏更新后不需要改代码。需要环境产物 `artifacts/md_cid.json`
+（`uv run python tools/build_md_cid.py <版本>`）。`--raw` 只打印读到的内容（自己的卡全部、对手场上的卡隐藏、双方墓地），
+用来对着画面核对，不需要 `--deck`；该 DLL 的标志位含义未核对（`offsets/<sha>.json` 未标 `verified`）时只能用 `--raw`。
+`--save` 同时把快照写成 JSON。对手的手牌、卡组和里侧的卡即使在本地内存里也不会进入快照。
+
+Master Duel 只读建议器（[design/10](design/10-master-duel.md)）：读盘面快照（JSON，格式见 `ygorl.advisor.snapshot`），把它重建进核心
 （建议方的卡组 = `--deck` 减去已见的卡；对手的暗牌从环境里与其公开卡相容的 meta 卡组按份额采样），在建议方的空闲决策点上：
 
 - 给 `--policy`（PPO 或 BC 检查点，需要 `train` 可选依赖）时，输出 `N` 个样本平均后的动作概率与样本间标准差，按概率从高到低列前 `K` 个；
@@ -256,5 +263,7 @@ opponent deck samples: Maliss 8
 - `tests/test_data_sources.py`：`ygorl env build --offline`（小型原始文件）与 `ygorl env check`，以及用法错误（非 `md-` 版本、`--offline` 与 `--refresh` 同用）。
 - `tests/test_readme.py`：逐行执行 README「快速开始」里以 `uv run ygorl` 开头的示例（在临时目录中，`tests/decks` 与 `environments` 链接到仓库，`--games` 上限 2、`--rollouts` 上限 1），
   全部退出码 0，且每个子命令至少有一个示例。
+- `tests/test_mdmem.py`：`objdump` 输出解析、偏移 JSON 往返、对已安装客户端的偏移推导（未安装时跳过）、合成内存上的读取、
+  快照只含建议方可见的卡（对手手牌 / 里侧卡未知）、未核对版本拒绝生成快照、`--raw` 隐藏对手、`/proc/<pid>/maps` 与 `buildid` 解析。
 - `tests/test_advisor.py`：快照 JSON 往返与不可能盘面的报错、按公开卡过滤 meta 卡组、暗牌采样、自博弈盘面导出 → 重建 → 再导出一致、超量素材 / 场地区 / 双方 LP、
   第 1 回合之后允许战斗、遮罩（通常召唤已用、表示形式锁定、主要阶段 2）、不给策略与给策略两种输出。

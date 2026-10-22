@@ -1,4 +1,4 @@
-"""Suggestions for a board snapshot: the policy's action distribution averaged over hidden-card samples (design 09).
+"""Suggestions for a board snapshot: the policy's action distribution averaged over hidden-card samples (design 10).
 
 For each sample, :func:`ygorl.advisor.reconstruct.complete` fills in the hidden cards and
 :func:`~ygorl.advisor.reconstruct.build` puts the board into the core; the network (a PPO or BC checkpoint,
