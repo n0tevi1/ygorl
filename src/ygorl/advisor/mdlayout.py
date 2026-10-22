@@ -8,6 +8,13 @@ result checked in memory. Fractions keep the layout usable when the window is re
 - Clicking a hand card lifts it and shows its commands as round buttons above it (Set for a Trap).
 - Setting a Spell/Trap asks for a zone: the free zones are highlighted, CANCEL sits left of the phase badge.
 - Zones are in the owner's frame (M1 = the owner's leftmost); the opponent's rows are mirrored on screen.
+- Clicking a monster on the field shows its command (攻击 Attack in the Battle Phase) about 145 px above it.
+- The phase badge opens a menu: Battle, Main2, End (greyed when not available).
+- A response prompt on the opponent's turn ("对手宣告了战斗。要发动卡的效果吗？") lists the cards that can respond:
+  click a card to tick it, then 发动效果 (Activate); 取消 (Cancel) declines.
+- Memory runs ahead of the animations: wait for the input state (``S + 0x3cd0`` mode, ``+0x3cdc`` accepting,
+  ``+0x3d00`` the player asked) before the next click. Seen: mode 3 = the turn player's command (Battle Phase),
+  mode 4 = a response prompt, accepting 0 while animations or the opponent run.
 """
 
 from __future__ import annotations
@@ -23,6 +30,10 @@ COMMAND_DY = -220  # first command button, relative to the clicked hand card
 MY_MZONE_Y, MY_SZONE_Y = 740, 930
 ZONE_X = (650, 844, 1038, 1232, 1426)  # columns 1-5 from the advisor's left
 PHASE_BADGE = (1580, 560)
+PHASE_MENU = {"battle": (1145, 855), "main2": (1380, 855), "end": (1615, 855)}
+FIELD_COMMAND_DY = -145
+PROMPT_CARD = (1026, 934)  # the first card of a response prompt
+PROMPT_CANCEL, PROMPT_ACTIVATE = (870, 1117), (1180, 1117)
 
 
 def scale(point: tuple[float, float], width: int, height: int) -> tuple[int, int]:
