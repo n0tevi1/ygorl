@@ -278,10 +278,15 @@ def test_layout_hand_order_and_positions():
     from ygorl.advisor.mdlayout import hand_card, hand_order, my_zone
     from ygorl.engine.duel import default_cards
 
+    from ygorl.advisor.mdmem import load_md_cid
+
     cards = default_cards()
-    # memory order seen in the Solo duel; the screen showed King's Knight, Slifer, Polymerization,
-    # Joker's Straight, Mirror Force
-    hand = [64788463, 44095762, 24094653, 92067220, 10000020]
-    assert [hand[i] for i in hand_order(hand, cards.get)] == [64788463, 10000020, 24094653, 92067220, 44095762]
+    pw = load_md_cid(Path(__file__).parents[1] / "environments/md-2026-09/artifacts/md_cid.json")
+    # memory order -> screen order, seen in the Solo duel (MD card ids)
+    seen = {(5558, 4887, 4837, 16480, 4999): (5558, 4999, 4837, 16480, 4887),
+            (16480, 4999, 16482, 6511): (4999, 6511, 16480, 16482),
+            (16480, 6511, 16482, 4755, 16479): (16479, 4755, 6511, 16480, 16482)}  # fmt: skip
+    for hand, screen in seen.items():
+        assert tuple(hand[i] for i in hand_order(hand, pw.get, cards.get)) == screen
     assert hand_card(4, 5) == (1300, 1100) and hand_card(0, 5) == (740, 1100)
     assert my_zone("szone", 0) == (650, 930)

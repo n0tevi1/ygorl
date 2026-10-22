@@ -153,18 +153,11 @@ class Player:
         self.click(*L.PHASE_BADGE, "phase menu", 1.2)
         self.click(*L.PHASE_MENU[which], which, 2.0)
 
-    def focus_hand(self, raw: RawDuel, cid: int) -> tuple[int, int]:
-        """Click hand cards until MD focuses the one with ``cid``; return its screen position."""
-        hand = raw.players[raw.me].piles["hand"]
-        n = len(hand)
-        guess = L.hand_order([self.passwords.get(c.cid, 0) for c in hand], self.cards.get)
-        order = [guess.index(i) for i in range(n) if hand[i].cid == cid] + list(range(n))
-        for slot in dict.fromkeys(order):
-            xy = L.hand_card(slot, n)
-            self.click(*xy, f"hand {slot}/{n}", 1.0)
-            if self.focus_cid() == cid:
-                return xy
-        raise Stuck(f"could not focus {self.name(cid)} in a {n}-card hand")
+    def hand_xy(self, raw: RawDuel, cid: int) -> tuple[int, int]:
+        """Screen position of the hand card with MD id ``cid`` (MD sorts the hand on screen)."""
+        hand = [c.cid for c in raw.players[raw.me].piles["hand"]]
+        order = L.hand_order(hand, lambda c: self.passwords.get(c, 0), self.cards.get)
+        return L.hand_card(order.index(hand.index(cid)), len(hand))
 
     def buttons(self, card_xy: tuple[int, int], n: int) -> list[tuple[int, int]]:
         x, y = card_xy
@@ -210,7 +203,8 @@ class Player:
 
         if where.location != C.LOCATION_HAND:
             raise Stuck(f"no click script for {best.kind} from location {where.location}")
-        xy = self.focus_hand(raw, cid)
+        xy = self.hand_xy(raw, cid)
+        self.click(*xy, f"hand {self.name(cid)}", 1.2)
         card = self.cards[best.card.code]
         options = kinds.get(best.card.code, set())
         if card.is_monster:
@@ -222,6 +216,13 @@ class Player:
         self.click(*self.buttons(xy, len(order))[order.index(best.kind)], best.kind, 1.5)
         location = "mzone" if card.is_monster else "szone"
         self.click(*self.free_zone(raw, location), f"zone for {best.kind}", 2.5)
+        before = sum(c.cid == cid for c in raw.players[raw.me].piles["hand"])
+        for _ in range(10):
+            after = self.game.read()
+            if sum(c.cid == cid for c in after.players[after.me].piles["hand"]) < before:
+                return
+            time.sleep(0.5)
+        raise Stuck(f"{best.kind} {self.name(cid)}: the card is still in hand after the clicks")
 
     def battle(self, raw: RawDuel) -> None:
         """Strongest attacker into the best monster it beats, direct attacks when the field is empty."""

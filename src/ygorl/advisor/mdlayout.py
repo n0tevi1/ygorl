@@ -3,8 +3,7 @@
 Measured 2026-10-21 on a 2054x1184 window (Wine frame included) in a Solo duel; each point was clicked and the
 result checked in memory. Fractions keep the layout usable when the window is resized at the same aspect ratio.
 
-- Hand: centred, one card every 140 px; MD shows it sorted by kind (monsters, spells, traps), in memory order
-  within a kind (:func:`hand_order`).
+- Hand: centred, one card every 140 px; MD shows it sorted (:func:`hand_order`), not in memory order.
 - Clicking a hand card lifts it and shows its commands as round buttons above it (Set for a Trap).
 - Setting a Spell/Trap asks for a zone: the free zones are highlighted, CANCEL sits left of the phase badge.
 - Zones are in the owner's frame (M1 = the owner's leftmost); the opponent's rows are mirrored on screen.
@@ -56,15 +55,21 @@ def my_zone(location: str, sequence: int) -> tuple[int, int]:
     return ZONE_X[sequence], MY_MZONE_Y if location == "mzone" else MY_SZONE_Y
 
 
-def _kind(card) -> int:
-    if card is None or card.type & C.TYPE_MONSTER:
-        return 0
-    return 1 if card.type & C.TYPE_SPELL else 2
+def _sort_key(card, cid: int) -> tuple:
+    if card is None:
+        return (3, 0, 0, cid)
+    if card.type & C.TYPE_MONSTER:
+        return (0, card.level, 0, cid)
+    return (1 if card.type & C.TYPE_SPELL else 2, 0, card.type, cid)
 
 
-def hand_order(passwords: Sequence[int], cards: Callable[[int], object]) -> list[int]:
-    """Indices into the memory-order hand ``passwords`` in on-screen order (left to right)."""
-    return sorted(range(len(passwords)), key=lambda i: (_kind(cards(passwords[i])), i))
+def hand_order(cids: Sequence[int], passwords: Callable[[int], int], cards: Callable[[int], object]) -> list[int]:
+    """Indices into the memory-order hand (MD card ids) in on-screen order, left to right.
+
+    Seen in three hands: monsters by level, then spells with Normal before Quick-Play, then traps; ascending MD
+    card id within a group (King's Knight 4 < Slifer 10; Imperial Bower 4 < Berfomet 5; Pot of Avarice 6511 <
+    Joker's Straight 16480 < Thunderspeed Summon 16482, a Quick-Play)."""
+    return sorted(range(len(cids)), key=lambda i: _sort_key(cards(passwords(cids[i])), cids[i]))
 
 
 __all__ = ["command_button", "hand_card", "hand_order", "my_zone", "scale"]
