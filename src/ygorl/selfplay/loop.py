@@ -482,7 +482,8 @@ class Player:
             if (raw.turn, raw.phase) != self.phase_seen:
                 # the engine accepts input before MD's turn / phase animations (the drawn card shown big) are over
                 self.phase_seen = (raw.turn, raw.phase)
-                time.sleep(2.5)
+                time.sleep(1.0)
+                self.ui.wait_still()  # e.g. the drawn card flying to the hand: hand positions count it already
             if raw.turn != self.turn_seen:
                 self.turn_seen, self.attacked = raw.turn, set()
             me, op = raw.players[raw.me], raw.players[1 - raw.me]

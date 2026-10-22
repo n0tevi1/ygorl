@@ -128,6 +128,25 @@ class UI:
         return [xy for xy in spots if yellow_highlight(img, *xy)]
 
     # --- cards and commands -----------------------------------------------------------------------------------
+    def wait_still(
+        self, box: tuple[int, int, int, int] = (300, 1000, 1760, 1180), timeout: float = 8.0, tolerance: float = 4.0
+    ) -> bool:
+        """Wait until ``box`` (default: the hand) stops changing for three captures in a row: MD keeps animating
+        after the engine accepts input (a drawn card still flying to the hand, while memory already counts it)."""
+        x0, y0, x1, y1 = box
+        last, still = None, 0
+        for _ in range(max(1, round(timeout / 0.4))):
+            now = self.capture()[y0:y1, x0:x1].astype(np.int16)
+            if last is not None and float(np.abs(now - last).mean()) < tolerance:
+                still += 1
+                if still >= 3:
+                    return True
+            else:
+                still = 0
+            last = now
+            self.sleep(0.4)
+        return False
+
     def open_card(self, xy: XY, why: str, *, hand: bool = False) -> list[XY]:
         """Click a card and return the command icons that click opened: a row above a hand card, an icon above a
         field card (compared with a capture from just before, so card art is never taken for an icon)."""
