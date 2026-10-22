@@ -39,7 +39,7 @@ from ygorl.selfplay.trace import Trace
 
 # --- input state (S + ...): written by duel.dll's command layer, read by DLL_DuelComGetCommandMask --------------
 INPUT_MODE, INPUT_ACCEPT, INPUT_PLAYER, FOCUS_CID = 0x3CD0, 0x3CDC, 0x3D00, 0x3CF0
-MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, FIELD_PICK = 2, 3, 4, 5, 6, 8  # observed modes
+MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, PLACE, FIELD_PICK = 2, 3, 4, 5, 6, 7, 8  # observed modes
 
 
 def capture(window) -> np.ndarray:
@@ -432,6 +432,10 @@ class Player:
                 mine = inp.accepting and inp.player == raw.me
                 if mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT) and dialog in (None, "list"):
                     self.prompt(raw, inp)  # an activate-or-pass prompt panel looks like a list
+                elif dialog == "banner" and mine and inp.mode == PLACE:
+                    # where to put a monster (after a Tribute Summon: message 327, the free zones highlighted)
+                    self.trace.rule("zone-first-free")
+                    self.ui.pick_zone("mzone", self.free_zone(raw, "mzone"), "zone for the summon")
                 elif dialog == "banner" and mine and inp.mode == FIELD_PICK:
                     self.field_pick(raw)  # the banner states what to pick on the field (tributes, targets)
                 elif dialog:
