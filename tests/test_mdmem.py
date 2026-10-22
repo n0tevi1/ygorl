@@ -261,7 +261,9 @@ def test_parse_tree_and_xwd():
     w = parse_tree(tree)
     assert (w.id, w.x, w.y, w.width, w.height) == (0x6000003, 2776, 128, 2054, 1184)
     # a 2x1 LSBFirst TrueColor dump: red, then blue
-    header = [100, 7, 2, 24, 2, 1, 0, 0, 32, 0, 32, 32, 8, 4, 8, 0xFF0000, 0xFF00, 0xFF, 8, 0, 0, 0, 0, 0, 0]
+    # xwd header: size, version, format, depth, width, height, xoffset, byte order, unit, bit order, pad,
+    # bits per pixel, bytes per line, visual class, red / green / blue masks, bits per rgb, ...
+    header = [100, 7, 2, 24, 2, 1, 0, 0, 32, 0, 32, 32, 8, 4, 0xFF0000, 0xFF00, 0xFF, 8, 0, 0, 0, 0, 0, 0, 0]
     data = struct.pack(">25I", *header) + bytes([0, 0, 255, 0, 255, 0, 0, 0])
     assert parse_xwd(data).tolist() == [[[255, 0, 0], [0, 0, 255]]]
 

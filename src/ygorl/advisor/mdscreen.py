@@ -62,7 +62,7 @@ def parse_xwd(data: bytes) -> np.ndarray:
     header = struct.unpack(">25I", data[:100])
     header_size, depth, width, height = header[0], header[3], header[4], header[5]
     bits_per_pixel, bytes_per_line, byte_order, ncolors = header[11], header[12], header[7], header[19]
-    red_mask = header[15]
+    red_mask = header[14]
     if bits_per_pixel != 32 or depth not in (24, 32):
         raise ScreenError(f"unsupported xwd format: depth {depth}, {bits_per_pixel} bits per pixel")
     start = header_size + ncolors * 12
