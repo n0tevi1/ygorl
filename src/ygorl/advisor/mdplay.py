@@ -170,13 +170,15 @@ class Player:
         x, y = xy
         box = ((max(x - 380, 0), 790, min(x + 380, L.REF_W), 975) if hand
                else (max(x - 130, 0), max(y - 260, 0), min(x + 130, L.REF_W), y - 60))  # fmt: skip
-        for attempt in range(2):  # a card left open (lifted) closes on the first click: open it again
-            before = capture(self.mouse.window)
-            self.click(x, y, why if not attempt else f"{why} (again)", 1.2)
-            icons = L.new_icons(before, capture(self.mouse.window), *box)
-            if icons:
-                return icons
-        return []
+        before = capture(self.mouse.window)
+        self.click(x, y, why, 1.2)
+        after = capture(self.mouse.window)
+        icons = L.new_icons(before, after, *box)
+        if icons or not hand:
+            return icons
+        # a hand card left open by an earlier stop stays open when clicked again: its icons were already there;
+        # in the hand band only command icons sit above y 940 (the lifted card's art starts lower)
+        return [p for p in L.find_icons(after, *box) if p[1] < 940]
 
     def open_and_click_icon(self, xy: tuple[int, int], why_card: str, why: str, pause: float = 1.8) -> bool:
         icons = self.open_card(xy, why_card)
