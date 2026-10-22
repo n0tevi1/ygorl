@@ -337,6 +337,10 @@ class Player:
         self.click(*target, best.kind, 1.5)
         if card.is_monster and best.kind == "activate":
             return  # a hand effect: no zone, the card may stay in hand; its prompts are handled by the loop
+        if best.kind in ("summon", "mset") and screen_dialog(capture(self.mouse.window)) == "yesno":
+            # a Tribute Summon / Set asks to confirm first; the tributes (and zone) are asked by the engine next
+            self.click(1186, 658, "yes: tribute", 1.5)
+            return
         location = "mzone" if card.is_monster else "szone"
         self.click(*self.free_zone(raw, location), f"zone for {best.kind}", 2.5)
         before = sum(c.cid == cid for c in raw.players[raw.me].piles["hand"])
