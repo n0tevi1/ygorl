@@ -206,10 +206,12 @@ def opp_monsters(snap):
 
 def test_to_snapshot_only_on_the_advisors_main_phase():
     off = replace(OFF, verified=True, semantics=SEM)
-    with pytest.raises(SnapshotError, match="Main Phase"):
+    with pytest.raises(SnapshotError, match="Main and Battle"):
         to_snapshot(read_duel(build_memory(turn_player=1), BASE, off), PASSWORDS)
-    with pytest.raises(SnapshotError, match="Main Phase"):
-        to_snapshot(read_duel(build_memory(phase=3), BASE, off), PASSWORDS)
+    with pytest.raises(SnapshotError, match="Main and Battle"):
+        to_snapshot(read_duel(build_memory(phase=5), BASE, off), PASSWORDS)
+    battle = to_snapshot(read_duel(build_memory(phase=3), BASE, off), PASSWORDS, attacked=frozenset({1}))
+    assert battle.phase == "battle"
 
 
 def test_format_raw_hides_the_opponents_cards():

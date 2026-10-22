@@ -236,7 +236,8 @@ class Reconstruction:
 
 
 def build(board: CompletedBoard, rule_flags: int, *, cards=None, scripts=None, seed: int = 1) -> Reconstruction:
-    """Start a duel holding ``board`` and run it to the advisor's first Main Phase idle decision."""
+    """Start a duel holding ``board`` and run it to the advisor's first idle decision: Main Phase 1, or for a
+    Battle Phase snapshot the battle command reached by taking the core's own ``battle_phase`` action there."""
     cards = cards if cards is not None else default_cards()
     base = scripts if scripts is not None else default_scripts()
     snap = board.snapshot
@@ -269,9 +270,21 @@ def build(board: CompletedBoard, rule_flags: int, *, cards=None, scripts=None, s
         point = tracker.point()
         if point is None:
             raise ReconstructError(f"the duel stopped while being set up ({tracker.result.reason})")
-        if point.player == 0 and isinstance(point.decision, M.SelectIdleCmd) and point.phase == C.PHASE_MAIN1:
+        if point.player == 0 and isinstance(point.decision, M.SelectBattleCmd) and snap.phase == "battle":
             warnings += [f"script error: {e}" for e in tracker.result.script_errors]
             return Reconstruction(board, core, tracker, point, warnings)
+        if point.player == 0 and isinstance(point.decision, M.SelectIdleCmd) and point.phase == C.PHASE_MAIN1:
+            if snap.phase != "battle":
+                warnings += [f"script error: {e}" for e in tracker.result.script_errors]
+                return Reconstruction(board, core, tracker, point, warnings)
+            index = next((i for i, a in enumerate(point.actions) if a.kind == "battle_phase"), None)
+            if index is None:
+                raise ReconstructError("the reconstruction cannot enter the Battle Phase")
+            response = tracker.act(index)
+            run = response is not None
+            if run:
+                core.set_response(response)
+            continue
         index = next((i for i, a in enumerate(point.actions) if a.kind in DECLINE), 0)
         warnings.append(f"answered {point.decision.name} of player {point.player} before Main Phase 1: "
                         f"{point.actions[index].kind}")  # fmt: skip

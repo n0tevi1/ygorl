@@ -192,27 +192,16 @@ class Player:
 
     # --- decisions ------------------------------------------------------------------------------------------
     def main_phase(self, raw: RawDuel) -> None:
-        from ygorl.advisor.advise import advise
-
-        snap = to_snapshot(raw, self.passwords)
-        deck = own_deck(raw, self.passwords, self.cards)
-        advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
-                        samples=self.samples, seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip
-        legal = advice.suggestions
-        if not legal:
-            raise Stuck("no legal action in the reconstruction")
-        best = legal[0].action
+        best, legal = self.decide(raw)
         kinds = {}
         for s in legal:
             if s.action.card is not None:
                 kinds.setdefault(s.action.card.code, set()).add(s.action.kind)
-        print(f"policy: {best.kind} {self.cards[best.card.code].name if best.card else ''} p={legal[0].prob:.2f}", flush=True)  # fmt: skip
-        self.log.append({"decide": best.kind, "card": best.card.code if best.card else 0, "p": legal[0].prob})
         self.context = best.kind
         if best.kind == "battle_phase":
             self.attacked.clear()
             return self.phase("battle")
-        if best.kind in ("end_phase", "main2"):
+        if best.kind == "end_phase":
             return self.phase("end")
         if best.card is None:
             raise Stuck(f"no click script for {best.kind}")
@@ -249,49 +238,57 @@ class Player:
             time.sleep(0.5)
         raise Stuck(f"{best.kind} {self.name(cid)}: the card is still in hand after the clicks")
 
+    def decide(self, raw: RawDuel):
+        """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""
+        from ygorl.advisor.advise import advise
+
+        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked))
+        deck = own_deck(raw, self.passwords, self.cards)
+        advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
+                        samples=self.samples, seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip
+        if not advice.suggestions:
+            raise Stuck(f"no legal action in the {snap.phase} reconstruction")
+        top = advice.suggestions[0]
+        name = self.cards[top.action.card.code].name if top.action.card else ""
+        print(f"policy ({snap.phase}): {top.action.kind} {name} p={top.prob:.2f}", flush=True)
+        self.log.append({"decide": top.action.kind, "card": top.action.card.code if top.action.card else 0,
+                         "p": top.prob, "phase": snap.phase})  # fmt: skip
+        return top.action, advice.suggestions
+
     def battle(self, raw: RawDuel) -> None:
-        """Strongest attacker into the best monster it beats, direct attacks when the field is empty."""
-        me, opp = raw.players[raw.me], raw.players[1 - raw.me]
-
-        def atk(cid: int) -> int:
-            pw = self.passwords.get(cid)
-            return self.cards[pw].attack if pw in self.cards else 0
-
-        mine = [(atk(c.cid), s, c) for s, c in enumerate(me.slots[:7]) if c and c.face and not c.sideways
-                and c.uid not in self.attacked]  # fmt: skip
-        if not mine:
-            self.context = "end"
+        """The policy chooses: attack with which monster, Main Phase 2 or End Phase. The target is a rule: the most
+        valuable monster the attacker beats, else the weakest; direct when the opponent has no monster."""
+        best, _ = self.decide(raw)
+        self.context = best.kind
+        if best.kind == "main2":
+            return self.phase("main2")
+        if best.kind == "end_phase":
             return self.phase("end")
-        power, slot, card = max(mine, key=lambda t: t[0])
-        targets = [(s, c) for s, c in enumerate(opp.slots[:7]) if c]
-        beatable = []
-        for s, c in targets:
-            if not c.face:
-                beatable.append((1500, s))  # unknown face-down: assume an average defender
-                continue
-            pw = self.passwords.get(c.cid)
-            k = self.cards.get(pw)
-            if k is not None:
-                value = k.defense if c.sideways else k.attack
-                if power > value:
-                    beatable.append((value, s))
-        if targets and not beatable:
-            self.attacked.add(card.uid)
-            return
+        if best.kind != "attack" or best.card is None:
+            raise Stuck(f"no click script for {best.kind} in the Battle Phase")
+        me, opp = raw.players[raw.me], raw.players[1 - raw.me]
+        slot = best.card.loc.sequence
+        card = me.slots[slot]
+        if card is None:
+            raise Stuck(f"the policy attacks with an empty zone {slot}")
         self.attacked.add(card.uid)
+        pw = self.passwords.get(card.cid)
+        power = self.cards[pw].attack if pw in self.cards else 0
+        targets = []
+        for s, c in enumerate(opp.slots[:7]):
+            if c is None:
+                continue
+            k = self.cards.get(self.passwords.get(c.cid)) if c.face else None
+            value = (k.defense if c.sideways else k.attack) if k is not None else 1500  # face-down: average guess
+            targets.append((value < power, value if value < power else -value, s))
         x, y = my_monster_xy(slot)
-        lp_before = opp.lp
         if not self.open_and_click_icon((x, y), f"attacker {self.name(card.cid)}", "attack"):
-            return  # no Attack command: this monster cannot attack now (Gate of Darkness, already attacked)
-        inp = self.input()
-        if targets:
-            if inp.mode != FIELD_PICK:
-                return  # the attack was not possible (Gate of Darkness, already attacked): try the next monster
-            _, s = max(beatable)
-            tx, ty = opp_monster_xy(s)
-            if not self.open_and_click_icon((tx, ty), f"target {s}", "confirm target", 2.0):
+            return  # MD offers no Attack command (Gate of Darkness, already attacked): the policy is asked again
+        if targets and self.input().mode == FIELD_PICK:
+            _, _, s = max(targets)
+            if not self.open_and_click_icon(opp_monster_xy(s), f"target {s}", "confirm target", 2.0):
                 raise Stuck("no Confirm icon above the attack target")
-        self.context = f"attack lp {lp_before}"
+        self.context = f"attack lp {opp.lp}"
 
     def prompt(self, raw: RawDuel, inp: Input) -> None:
         """Chain / open-timing prompts: respond to the opponent's attacks and in our own End Phase, else pass."""

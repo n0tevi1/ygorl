@@ -50,7 +50,7 @@ POSITIONS: Mapping[str, int] = {
     "facedown": C.POS_FACEDOWN,
 }
 _ZONES = {"mzone": 7, "szone": 6}  # sequences per side
-PHASES = ("main1", "main2")
+PHASES = ("main1", "battle", "main2")  # the advisor's own idle points: Main Phases and the Battle Phase command
 UNKNOWN = 0  # password of a card the advisor cannot see
 
 
@@ -78,6 +78,7 @@ class SnapshotCard:
     materials: tuple[int, ...] = ()  # Xyz materials (mzone only), bottom first
     counters: tuple[tuple[int, int], ...] = ()  # (counter type, count)
     position_locked: bool = False  # summoned, Set or repositioned this turn: cannot change position now
+    attacked: bool = False  # declared an attack this turn (Battle Phase snapshots): cannot attack again
 
     @property
     def pos(self) -> str:
@@ -111,6 +112,8 @@ class SnapshotCard:
             out["counters"] = [list(c) for c in self.counters]
         if self.position_locked:
             out["position_locked"] = True
+        if self.attacked:
+            out["attacked"] = True
         return out
 
     @classmethod
@@ -118,7 +121,7 @@ class SnapshotCard:
         if not isinstance(data, Mapping):
             raise SnapshotError(f"a card must be an object, not {data!r}")
         unknown = set(data) - {"location", "password", "sequence", "position", "owner", "materials", "counters",
-                               "position_locked"}  # fmt: skip
+                               "position_locked", "attacked"}  # fmt: skip
         if unknown:
             raise SnapshotError(f"unknown card keys {sorted(unknown)}")
         try:
@@ -126,7 +129,8 @@ class SnapshotCard:
                        sequence=int(data.get("sequence", 0)), position=data.get("position", ""),
                        owner=data.get("owner"), materials=tuple(int(p) for p in data.get("materials", ())),
                        counters=tuple((int(t), int(n)) for t, n in data.get("counters", ())),
-                       position_locked=bool(data.get("position_locked", False)))  # fmt: skip
+                       position_locked=bool(data.get("position_locked", False)),
+                       attacked=bool(data.get("attacked", False)))  # fmt: skip
         except KeyError:
             raise SnapshotError(f"card without a location: {dict(data)}") from None
         except (TypeError, ValueError) as exc:
@@ -260,6 +264,8 @@ def _check_card(card: SnapshotCard, side: int, who: str, used: set[tuple[str, in
         used.add((card.location, card.sequence))
         if not card.known and card.pos.startswith("faceup"):
             raise SnapshotError(f"{where}: a face-up card must be known")
+    if card.attacked and card.location != "mzone":
+        raise SnapshotError(f"{where}: only monsters in a Monster Zone attack")
     if card.materials and card.location != "mzone":
         raise SnapshotError(f"{where}: only monsters in a Monster Zone have materials")
 

@@ -303,14 +303,17 @@ def format_raw(raw: RawDuel, names: Mapping[int, str] | None = None) -> str:
     return "\n".join(lines)
 
 
-def to_snapshot(raw: RawDuel, passwords: Mapping[int, int]) -> BoardSnapshot:
-    """The advisor's view (seat 0 = the client) as a :class:`BoardSnapshot`; MD card ids -> passwords."""
+def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[int] = frozenset()) -> BoardSnapshot:
+    """The advisor's view (seat 0 = the client) as a :class:`BoardSnapshot`; MD card ids -> passwords.
+
+    ``attacked``: unique ids of the advisor's monsters that already attacked this turn (the caller tracks them;
+    the flag is not decoded from memory yet)."""
     off = raw.offsets
     if not off.verified:
         raise SnapshotError(f"duel.dll {off.dll_sha256[:16]} is not verified against the screen yet; "
                             "use --raw and record the flag semantics first")  # fmt: skip
-    if raw.turn_player != raw.me or PHASES[raw.phase] not in ("main1", "main2"):
-        raise SnapshotError("the advisor only handles its own Main Phase")
+    if raw.turn_player != raw.me or PHASES[raw.phase] not in ("main1", "battle", "main2"):
+        raise SnapshotError("the advisor only handles its own Main and Battle Phases")
 
     def pw(cid: int) -> int:
         if cid not in passwords:
@@ -334,6 +337,7 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int]) -> BoardSnapshot:
             known = mine or faceup
             locked = loc == "mzone" and bool(c.slot[off.semantics["locked_byte"]] & off.semantics["locked"])
             cards.append(SnapshotCard(location=loc, sequence=seq, position=pos, position_locked=locked,
+                                      attacked=mine and loc == "mzone" and c.uid in attacked,
                                       password=pw(c.cid) if known else UNKNOWN,
                                       materials=tuple(pw(m) for m in c.materials) if known else ()))  # fmt: skip
         cards += [SnapshotCard("grave", pw(c.cid)) for c in pl.piles["grave"]]

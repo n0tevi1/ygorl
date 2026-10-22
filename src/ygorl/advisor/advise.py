@@ -41,6 +41,11 @@ def masked(snapshot: BoardSnapshot, action: Action) -> bool:
         return True
     if action.kind == "battle_phase" and snapshot.phase == "main2":
         return True
+    if action.kind == "attack" and action.card is not None:
+        loc = action.card.loc
+        for card in snapshot.sides[0].cards:
+            if card.location == "mzone" and card.sequence == loc.sequence and card.attacked:
+                return True
     if action.kind == "reposition" and action.card is not None:
         loc = action.card.loc
         for card in snapshot.sides[0].cards:
@@ -56,7 +61,7 @@ def observe(rec: Reconstruction, observer: PointObserver) -> dict[str, np.ndarra
     g = obs["globals"]
     g[GLOBAL_WENT_FIRST] = int(snap.went_first)
     g[GLOBAL_TURN] = min(snap.turn, 999)
-    phase = C.PHASE_MAIN2 if snap.phase == "main2" else C.PHASE_MAIN1
+    phase = {"main2": C.PHASE_MAIN2, "battle": C.PHASE_BATTLE}.get(snap.phase, C.PHASE_MAIN1)
     g[GLOBAL_PHASE] = (phase & -phase).bit_length()
     return obs
 

@@ -64,7 +64,8 @@ def test_snapshot_json_roundtrip():
     "snap, msg",
     [
         (snapshot(turn=0), "turn must be at least 1"),
-        (snapshot(phase="battle"), "phase must be one of"),
+        (snapshot(phase="draw"), "phase must be one of"),
+        (snapshot(me=[SnapshotCard("hand", BLUE_EYES, attacked=True)]), "only monsters in a Monster Zone attack"),
         (snapshot(me=[SnapshotCard("hand")]), "must be known"),
         (snapshot(op=[SnapshotCard("grave")]), "give the password"),
         (snapshot(op=[SnapshotCard("mzone", BLUE_EYES, 1), SnapshotCard("mzone", ASH, 1)]), "holds two cards"),
@@ -206,6 +207,18 @@ def test_masks_what_the_core_cannot_be_told(cards):
     assert all(by_kind.get("summon", [True])) and all(by_kind.get("mset", [True]))
     repos = {a.card.loc.sequence: masked(snap, a) for a in rec.point.actions if a.kind == "reposition"}
     assert repos == {1: True, 2: False}
+
+
+def test_battle_phase_snapshot_reaches_the_battle_command(cards):
+    """A Battle Phase snapshot is rebuilt at the battle command; a monster that already attacked is masked."""
+    me = [SnapshotCard("mzone", BLUE_EYES, 1, attacked=True), SnapshotCard("mzone", BLUE_EYES, 2)]
+    prior = OpponentPrior((load_ydk(MALISS),), (1.0,))
+    board = complete(snapshot(me, phase="battle"), Deck((BLUE_EYES,) * 40), prior, cards, random.Random(0))
+    rec = build(board, C.DUEL_MODE_MR5, cards=cards)
+    assert isinstance(rec.point.decision, M.SelectBattleCmd)
+    attacks = {a.card.loc.sequence: masked(board.snapshot, a) for a in rec.point.actions if a.kind == "attack"}
+    assert attacks == {1: True, 2: False}
+    assert {a.kind for a in rec.point.actions} >= {"attack", "main2", "end_phase"}
 
 
 def test_advise_without_a_policy_lists_legal_actions(cards):
