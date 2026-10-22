@@ -357,3 +357,34 @@ def test_list_cards_from_the_tray_width(n):
         img[890:1030, x - 60 : x + 60] = (200, 160, 90)  # card art, with some tray-blue in it
         img[930:950, x - 10 : x + 10] = TRAY_RGB
     assert list_cards(img) == [(x, 960) for x in centres]
+
+
+def test_expectation_checks_the_policys_action_against_memory():
+    from types import SimpleNamespace
+
+    from ygorl.advisor.mdplay import Expectation, check_expectation
+    from ygorl.engine import constants as C
+
+    off = replace(OFF, verified=True, semantics=SEM)
+    before = read_duel(build_memory(), BASE, off)
+    me = before.players[before.me]
+    hand_bewd = next(c for c in me.piles["hand"] if c.cid == BEWD)
+    card = SimpleNamespace(code=PASSWORDS[BEWD], loc=SimpleNamespace(location=C.LOCATION_HAND, sequence=0))
+
+    def moved(face, sideways):  # Blue-Eyes left the hand for Main Monster Zone 1
+        slots = list(me.slots)
+        slots[1] = replace(hand_bewd, face=face, sideways=sideways)
+        piles = dict(me.piles, hand=tuple(c for c in me.piles["hand"] if c is not hand_bewd))
+        players = list(before.players)
+        players[before.me] = replace(me, slots=tuple(slots), piles=piles)
+        return replace(before, players=tuple(players))
+
+    summon = Expectation(SimpleNamespace(kind="summon", card=card), before, "main1")
+    mset = Expectation(SimpleNamespace(kind="mset", card=card), before, "main1")
+    assert check_expectation(summon, moved(1, 0), PASSWORDS) is None
+    assert "summon" in check_expectation(summon, moved(0, 1), PASSWORDS)  # Set instead of Summon
+    assert check_expectation(mset, moved(0, 1), PASSWORDS) is None
+    assert "summon" in check_expectation(summon, before, PASSWORDS)  # nothing happened
+    battle = Expectation(SimpleNamespace(kind="battle_phase", card=None), before, "main1")
+    assert "phase" in check_expectation(battle, before, PASSWORDS)
+    assert check_expectation(battle, replace(before, phase=3), PASSWORDS) is None

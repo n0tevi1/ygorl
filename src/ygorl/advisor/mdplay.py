@@ -58,7 +58,8 @@ def box_mean(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
 def screen_dialog(img: np.ndarray) -> str | None:
     """MD UI dialogs that are not engine input states (measured on the 2054x1184 window)."""
     pos_l, pos_r = box_mean(img, 925, 940, 955, 970), box_mean(img, 1100, 940, 1130, 970)
-    if pos_l[0] < 30 and pos_l[1] < 60 and pos_r[0] < 30 and pos_r[1] < 70:
+    above = box_mean(img, 700, 760, 1350, 790)  # the board around the position dialog, a prompt panel's title row
+    if pos_l[0] < 30 and pos_l[1] < 60 and pos_r[0] < 30 and pos_r[1] < 70 and above.mean() > 100:
         return "position"
     band, mid = box_mean(img, 620, 520, 1430, 560), box_mean(img, 900, 560, 1150, 600)
     if band.mean() < 100 and mid.mean() < 120:
@@ -94,6 +95,74 @@ def opp_monster_xy(slot: int) -> tuple[int, int]:
 
 
 @dataclass
+class Expectation:
+    """What the policy chose and the board it chose on, checked against memory once the action has resolved."""
+
+    action: object
+    before: RawDuel
+    phase: str
+
+
+def _cards(pl, location: str) -> list:
+    if location == "hand":
+        return list(pl.piles["hand"])
+    if location == "mzone":
+        return [c for c in pl.slots[:7] if c]
+    if location == "szone":
+        return [c for c in pl.slots[7:12] if c]
+    return list(pl.piles[location])
+
+
+def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int]) -> str | None:
+    """None when ``now`` shows the chosen action happened, else what is inconsistent."""
+    act, before = exp.action, exp.before
+    me0, me1 = before.players[before.me], now.players[now.me]
+    op0, op1 = before.players[1 - before.me], now.players[1 - now.me]
+    kind = act.kind
+    if kind in ("battle_phase", "main2", "end_phase"):
+        want = {"battle_phase": "battle", "main2": "main2"}.get(kind)
+        phase = PHASES[now.phase] if now.phase < len(PHASES) else str(now.phase)
+        if now.turn != before.turn:
+            return None if kind == "end_phase" else f"{kind}: the turn ended instead"
+        if want is not None and phase != want:
+            return f"{kind}: the phase is {phase}"
+        if kind == "end_phase" and phase in ("main1", "battle"):
+            return f"end_phase: still in {phase}"
+        return None
+    cid = next((c for c, p in passwords.items() if act.card is not None and p == act.card.code), None)
+
+    def count(pl, loc, **kw):
+        return sum(c.cid == cid and all(getattr(c, k) == v for k, v in kw.items()) for c in _cards(pl, loc))
+
+    left_hand = count(me1, "hand") < count(me0, "hand")
+    if kind == "summon":
+        ok = left_hand and count(me1, "mzone", face=1, sideways=0) > count(me0, "mzone", face=1, sideways=0)
+        return None if ok else "summon: no new face-up Attack Position monster from the hand"
+    if kind == "mset":
+        ok = left_hand and count(me1, "mzone", face=0) > count(me0, "mzone", face=0)
+        return None if ok else "mset: no new face-down monster from the hand"
+    if kind == "sset":
+        ok = left_hand and count(me1, "szone", face=0) > count(me0, "szone", face=0)
+        return None if ok else "sset: no new face-down Spell/Trap from the hand"
+    if kind == "attack":
+        changed = (op1.lp, me1.lp, len(_cards(op1, "mzone")), len(_cards(me1, "mzone"))) != (
+            op0.lp, me0.lp, len(_cards(op0, "mzone")), len(_cards(me0, "mzone")))  # fmt: skip
+        return None if changed else "attack: nothing changed (no damage, no monster left the field)"
+    if kind in ("activate", "spsummon"):
+        if _board_key(me0, op0) == _board_key(me1, op1):
+            return f"{kind}: nothing changed on the board"
+        return None
+    return None  # reposition and others: not checked yet
+
+
+def _board_key(me, op) -> tuple:
+    return (tuple((c.cid, c.face, c.sideways) if c else None for c in me.slots),
+            tuple(c.cid for c in me.piles["hand"]), tuple(c.cid for c in me.piles["grave"]),
+            tuple((c.cid, c.face) if c else None for c in op.slots), op.lp, me.lp,
+            len(me.piles["removed"]), len(op.piles["grave"]))  # fmt: skip
+
+
+@dataclass
 class Player:
     env: object
     policy: object
@@ -101,6 +170,9 @@ class Player:
     samples: int = 4
     mouse: GatedMouse = field(init=False)
     log: list[dict] = field(default_factory=list)
+
+    expect: Expectation | None = None
+    recent: list = field(default_factory=list)  # the last states seen, to stop instead of looping
 
     def __post_init__(self) -> None:
         from ygorl.advisor.reconstruct import OpponentPrior
@@ -270,6 +342,7 @@ class Player:
         print(f"policy ({snap.phase}): {top.action.kind} {name} p={top.prob:.2f}", flush=True)
         self.log.append({"decide": top.action.kind, "card": top.action.card.code if top.action.card else 0,
                          "p": top.prob, "phase": snap.phase})  # fmt: skip
+        self.expect = Expectation(top.action, raw, snap.phase)
         return top.action, advice.suggestions
 
     def battle(self, raw: RawDuel) -> None:
@@ -300,7 +373,12 @@ class Player:
             targets.append((value < power, value if value < power else -value, s))
         x, y = my_monster_xy(slot)
         if not self.open_and_click_icon((x, y), f"attacker {self.name(card.cid)}", "attack"):
-            return  # MD offers no Attack command (Gate of Darkness, already attacked): the policy is asked again
+            # MD offers no Attack command (Gate of Darkness, already attacked): a rule the reconstruction does not
+            # know, not a click bug; the monster is marked and the policy is asked again
+            self.log.append({"check": "attack", "card": best.card.code, "ok": False, "problem": "MD refused"})
+            print(f"  check attack: MD offers no Attack for {self.name(card.cid)}", flush=True)
+            self.expect = None
+            return
         if targets and self.input().mode == FIELD_PICK:
             _, _, s = max(targets)
             if not self.open_and_click_icon(opp_monster_xy(s), f"target {s}", "confirm target", 2.0):
@@ -368,18 +446,34 @@ class Player:
                 return 0
             if raw.turn != self.turn_seen:
                 self.turn_seen, self.attacked = raw.turn, set()
+            me, op = raw.players[raw.me], raw.players[1 - raw.me]
+            state = (inp.mode, dialog, raw.phase, _board_key(me, op))
+            self.recent = (self.recent + [state])[-3:]
+            if len(self.recent) == 3 and len(set(self.recent)) == 1:
+                print(f"STUCK: no progress -> {self.record_stuck('the same state three steps in a row')}", flush=True)
+                return 3
             phase = PHASES[raw.phase] if raw.phase < len(PHASES) else str(raw.phase)
             print(f"[{step}] turn {raw.turn + 1} {phase} mode {inp.mode} dialog {dialog} "
                   f"LP {raw.players[raw.me].lp}/{raw.players[1 - raw.me].lp}", flush=True)  # fmt: skip
             try:
-                if dialog:
+                if self.expect is not None and not dialog and inp.mode in (MAIN, BATTLE):
+                    problem = check_expectation(self.expect, raw, self.passwords)
+                    entry = {"check": self.expect.action.kind, "card": self.expect.action.card.code
+                             if self.expect.action.card else 0, "ok": problem is None, "problem": problem}  # fmt: skip
+                    self.log.append(entry)
+                    print(f"  check {entry['check']}: {'ok' if problem is None else problem}", flush=True)
+                    self.expect = None
+                    if problem is not None:
+                        raise Stuck(f"the game does not show the policy's action: {problem}")
+                mine = inp.accepting and inp.player == raw.me
+                if mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT) and dialog in (None, "list"):
+                    self.prompt(raw, inp)  # an activate-or-pass prompt panel looks like a list
+                elif dialog:
                     self.dialog(raw, dialog)
                 elif inp.mode == MAIN:
                     self.main_phase(raw)
                 elif inp.mode == BATTLE:
                     self.battle(raw)
-                elif inp.mode in (OPEN_PROMPT, CHAIN_PROMPT):
-                    self.prompt(raw, inp)
                 elif inp.mode == FIELD_PICK:
                     self.field_pick(raw)
                 elif inp.mode == 1:
