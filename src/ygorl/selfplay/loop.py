@@ -548,9 +548,14 @@ class Player:
             self.ui.click(*PHASE_MENU_CANCEL, "close the phase menu", 1.2)
         elif kind == "yesno":
             pick = self.lockstep("yesno", raw)
-            if pick is None:
+            if pick is None and self.context == "summon":
+                pick = 0  # our own summon asks to confirm the Tribute Summon (message 335): the tributes come next
+                self.trace.rule("yesno-yes-tribute")
+            elif pick is None:
                 self.trace.rule("yesno-no")
             self.ui.yesno(pick == 0)
+            if self.context == "summon" and pick == 0:
+                self.context = "tribute"
         elif kind == "list":
             if not L.list_cards(self.ui.capture()):  # a passing frame (a turn change) looked like a list
                 self.trace.observe(list="gone before the pick")
@@ -823,11 +828,16 @@ class Player:
                 self.turn_seen, self.attacked = raw.turn, set()
             me, op = raw.players[raw.me], raw.players[1 - raw.me]
             state = (inp.mode, dialog, raw.phase, _board_key(me, op), len(self.forbidden))  # a refusal is progress
-            self.recent = (self.recent + [state])[-3:]
+            self.recent = (self.recent + [state])[-8:]
             # the Draw Phase takes a few clicks (badge, Deck) by design: it has its own budget of attempts
             in_draw = inp.mode == 1 and dialog is None and self.draw_attempts < 6
-            if len(self.recent) == 3 and len(set(self.recent)) == 1 and not in_draw:
+            if len(self.recent) >= 3 and len(set(self.recent[-3:])) == 1 and not in_draw:
                 if not self.recover("the same state three steps in a row", raw, inp, dialog, state):
+                    return 3
+                continue
+            if self.recent.count(state) >= 3 and not in_draw:  # a cycle: answers that keep undoing each other
+                self.recent = []
+                if not self.recover("the same state three times in eight steps", raw, inp, dialog, state):
                     return 3
                 continue
             phase = PHASES[raw.phase] if raw.phase < len(PHASES) else str(raw.phase)
@@ -861,6 +871,9 @@ class Player:
                     self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
                     self.ui.pick_zone(*self.last_zone, "zone again")
                     self.last_zone = None
+                elif mine and inp.mode == FIELD_PICK and self.context == "tribute":
+                    self.pick_tributes(raw)  # all of them in one step: the board does not change in between
+                    self.context = ""
                 elif dialog == "banner" and mine and inp.mode == FIELD_PICK:
                     self.field_pick(raw)  # the banner states what to pick on the field (tributes, targets)
                 elif dialog == "banner" and not inp.accepting:
