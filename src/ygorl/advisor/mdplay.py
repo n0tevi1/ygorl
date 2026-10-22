@@ -130,7 +130,7 @@ class Player:
         end, stable, last = time.time() + timeout, 0, None
         while time.time() < end:
             raw, inp = self.game.read(), self.input()
-            if min(p.lp for p in raw.players) <= 0:
+            if raw.finished:  # the engine's own flag: LP reads can catch the obfuscated value mid-update
                 return raw, inp, "over"
             mine = inp.accepting and inp.player == raw.me
             dialog = screen_dialog(capture(self.mouse.window)) if not mine else None

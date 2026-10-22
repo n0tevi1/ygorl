@@ -3,6 +3,8 @@
  "key_ptr": "0x11f9c48",
  "my_player": "0x4",
  "player_type": "0x8",
+ "duel_finish": "0x334",
+ "duel_result": "0x330",
  "turn": "0x3c14",
  "turn_player": "0x3c08",
  "phase": "0x3c1c",

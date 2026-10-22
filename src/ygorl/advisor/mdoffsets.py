@@ -50,6 +50,8 @@ class Offsets:
     key_ptr: int  # RVA of the pointer to the LP XOR key (u16 at +0) and my player number (u32 at +4)
     my_player: int
     player_type: int  # u32 per player at key struct + player_type + p*4; 0 = human (DLL_DuelIsHuman)
+    duel_finish: int  # u32 at key struct + duel_finish: non-zero once the duel is decided (DLL_DuelGetDuelFinish)
+    duel_result: int  # u32 at key struct + duel_result (DLL_DuelGetDuelResult)
     turn: int
     turn_player: int
     phase: int
@@ -272,6 +274,11 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
         raise OffsetError("DLL_DuelIsHuman: expected a load of the key struct pointer")
     player_type = int(_find(human, r"cmp\s+dword ptr \[\w+\+\w+\*4" + disp, "player type").group(1), 16)
 
+    finish_ptr, duel_finish = single_field("DLL_DuelGetDuelFinish")
+    result_ptr, duel_result = single_field("DLL_DuelGetDuelResult")
+    if {finish_ptr, result_ptr} != {key_ptr}:
+        raise OffsetError("DLL_DuelGetDuelFinish / Result: expected the key struct")
+
     lp_body = _until_ret(code.fn("DLL_DuelGetLP", 0x40))
     if set(_rip_loads(lp_body, image_base)) != {state_ptr, key_ptr}:
         raise OffsetError("DLL_DuelGetLP: expected loads of the state and key pointers")
@@ -350,7 +357,8 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
     search = code.fn("DLL_DuelSearchCardByUniqueID", 0x100)
     effect_uid = int(_find(search, r"cmp\s+dword ptr \[\w+\+\w+\*8" + disp, "node uid").group(1), 16) - effect_table
 
-    return Offsets(state_ptr=state_ptr, key_ptr=key_ptr, my_player=my_player, player_type=player_type, turn=turn, turn_player=turn_player,
+    return Offsets(state_ptr=state_ptr, key_ptr=key_ptr, my_player=my_player, player_type=player_type,
+                   duel_finish=duel_finish, duel_result=duel_result, turn=turn, turn_player=turn_player,
                    phase=phase, player_stride=player_stride, lp=lp, count=counts, pile=pile, pile_stride=pile_stride,
                    slot_base=slot_base, slot_stride=slot_stride, slot_uid=slot_uid, slot_turn=slot_turn,
                    slot_face=slot_face, slot_chain=slot_chain, removed_face=removed_face,

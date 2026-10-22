@@ -182,6 +182,7 @@ class RawDuel:
     players: tuple[RawPlayer, RawPlayer]
     offsets: Offsets = field(repr=False)
     player_types: tuple[int, int] = (0, 0)  # 0 = human (DLL_DuelIsHuman)
+    finished: bool = False  # DLL_DuelGetDuelFinish: the duel is decided
 
 
 def _u16(b: bytes, off: int) -> int:
@@ -199,7 +200,7 @@ def read_duel(mem: Memory, base: int, off: Offsets) -> RawDuel:
     if not state or not key_struct:
         raise MemoryReadError(errno.EAGAIN, "no duel in progress (duel-state pointer is null)")
     s = mem.read(state, STATE_SIZE)
-    key = mem.read(key_struct, off.player_type + 8)
+    key = mem.read(key_struct, max(off.player_type + 8, off.duel_finish + 4))
     xor_key, me = _u16(key, 0), _u32(key, off.my_player) & 1
 
     def node(index: int) -> bytes:
@@ -245,7 +246,8 @@ def read_duel(mem: Memory, base: int, off: Offsets) -> RawDuel:
                                  header=bytes(s[blk : blk + off.slot_base])))  # fmt: skip
     return RawDuel(turn=_u32(s, off.turn), phase=_u32(s, off.phase), turn_player=_u32(s, off.turn_player) & 1,
                    me=me, players=(players[0], players[1]), offsets=off,
-                   player_types=(_u32(key, off.player_type), _u32(key, off.player_type + 4)))  # fmt: skip
+                   player_types=(_u32(key, off.player_type), _u32(key, off.player_type + 4)),
+                   finished=bool(_u32(key, off.duel_finish)))  # fmt: skip
 
 
 @dataclass(frozen=True)

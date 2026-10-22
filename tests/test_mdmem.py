@@ -18,7 +18,7 @@ INSTALLED = Path.home() / ".steam/steam/steamapps/common/Yu-Gi-Oh!  Master Duel/
 BUILD_23020425 = "97bd4d136e39b0872e4a8a9171632f1f0bd9bb04d69af08e836c56e684d43c44"
 
 # derived from build 23020425 (checked by hand against the disassembly, see design 10)
-OFF = Offsets(state_ptr=0x11F9C50, key_ptr=0x11F9C48, my_player=0x4, player_type=0x8, turn=0x3C14, turn_player=0x3C08, phase=0x3C1C,
+OFF = Offsets(state_ptr=0x11F9C50, key_ptr=0x11F9C48, my_player=0x4, player_type=0x8, duel_finish=0x334, duel_result=0x330, turn=0x3C14, turn_player=0x3C08, phase=0x3C1C,
               player_stride=0xDDC, lp=0x0,
               count={"hand": 0xC, "extra": 0x18, "deck": 0x10, "grave": 0x14, "removed": 0x1C},
               pile={"hand": 0x1E4, "extra": 0x5A4, "deck": 0x3C4, "grave": 0x7FC, "removed": 0xA54}, pile_stride=4,
@@ -150,7 +150,7 @@ def build_memory(*, me=0, turn=3, turn_player=0, phase=2, types=(0, 1), summons=
     pile(opp, "deck", [(BEWD, 0)] * 28)
     pile(opp, "grave", [(ASH, 0)])
     pile(opp, "removed", [(BEWD, False), (DM, True)])
-    key = struct.pack("<HHIII", XOR, 0, me, *(types if me == 0 else types[::-1]))
+    key = struct.pack("<HHIII", XOR, 0, me, *(types if me == 0 else types[::-1])).ljust(0x340, b"\0")
     regions = {BASE + OFF.state_ptr: struct.pack("<Q", STATE), BASE + OFF.key_ptr: struct.pack("<Q", KEY),
                STATE: bytes(s), KEY: key}  # fmt: skip
     return BufferMemory(regions)
