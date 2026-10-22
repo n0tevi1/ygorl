@@ -242,6 +242,15 @@ class Player:
             raise Stuck(f"no click script for {best.kind} from location {where.location}")
         xy = self.hand_xy(raw, cid)
         icons = self.ui.open_hand_card(xy, f"hand {self.name(cid)}")
+        if not icons:
+            # before taking it for MD refusing: the hand may have been dimmed by an effect resolving; let the screen
+            # settle, re-read the hand (positions) and try once more
+            self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=10.0)
+            raw = self.game.read()
+            if not any(c.cid == cid for c in raw.players[raw.me].piles["hand"]):
+                raise Stuck(f"{self.name(cid)} left the hand before it was used")
+            xy = self.hand_xy(raw, cid)
+            icons = self.ui.open_hand_card(xy, f"hand {self.name(cid)} (after the screen settled)")
         self.trace.observe(icons=icons)
         card = self.cards[best.card.code]
         order = command_order(card.is_monster, kinds.get(best.card.code, set()))
