@@ -133,6 +133,9 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
     return None  # reposition and others: not checked yet
 
 
+ATTACKS_MASKED = ("attack", "*")  # a forbidden entry masking every attack of a phase
+
+
 def _action_key(action) -> tuple:
     card = action.card
     return (action.kind, card.code if card else 0, card.loc.location if card else 0, card.loc.sequence if card else 0)
@@ -405,7 +408,13 @@ class Player:
     def refused(self, raw: RawDuel, action, why: str) -> None:
         """MD shows no command for an action the reconstruction allows: a state the snapshot does not carry
         (a turn-long restriction, a once-per-turn already used). Masked for this phase; the policy decides again."""
-        self.forbidden.add(((raw.turn, raw.phase), _action_key(action)))
+        key = (raw.turn, raw.phase)
+        self.forbidden.add((key, _action_key(action)))
+        if action.kind == "attack" and sum(1 for k, a in self.forbidden if k == key and a[0] == "attack") >= 2:
+            # two monsters refused in one Battle Phase: a phase-wide attack limit the reconstruction cannot see (The
+            # Dark Door counts the attacks already made this phase): no more attacks this phase
+            self.forbidden.add((key, ATTACKS_MASKED))
+            why += "; all attacks masked for this phase"
         self.trace.refusal(action, f"MD refused: {why}")
         print(f"  check {action.kind}: MD refused ({why}); masked for this phase", flush=True)
         self.expect = None
@@ -419,7 +428,9 @@ class Player:
         advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
                         samples=self.samples, seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip
         key = (raw.turn, raw.phase)
-        allowed = [g for g in advice.suggestions if (key, _action_key(g.action)) not in self.forbidden]
+        no_attacks = (key, ATTACKS_MASKED) in self.forbidden
+        allowed = [g for g in advice.suggestions if (key, _action_key(g.action)) not in self.forbidden
+                   and not (no_attacks and g.action.kind == "attack")]  # fmt: skip
         if not allowed:
             raise Stuck(f"no legal action left in the {snap.phase} reconstruction (MD refused the rest)")
         top = allowed[0]
