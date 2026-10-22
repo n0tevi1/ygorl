@@ -588,6 +588,30 @@ class Player:
             return None
         return xy
 
+    def summon_pick(self, raw: RawDuel) -> None:
+        """Mode 6 (MD's "summon a monster", e.g. an effect granting a Summon): one of the listed hand monsters,
+        opened in the hand and summoned with its Summon icon. The policy picks through the shadow; without one, the
+        highest ATK. The zone and any further dialog are the loop's next steps."""
+        req = self.request_now(raw)
+        hand = [i for i, c in enumerate(req.candidates) if c.location == "hand" and c.player == raw.me]
+        if not hand:
+            raise Stuck(f"a summon pick with no hand candidate ({len(req.candidates)} candidates)")
+        pick = self.lockstep("list", raw, req)
+        if pick not in hand:
+
+            def atk(i):
+                k = self.cards.get(self.passwords.get(req.candidates[i].cid))
+                return k.attack if k is not None else 0
+
+            pick = max(hand, key=atk)
+            self.trace.rule("summon-pick-strongest")
+        cid = req.candidates[pick].cid
+        xy = self.hand_xy(raw, cid)
+        icons = self.verify_hand_card(raw, cid, xy, self.ui.open_hand_card(xy, f"hand {self.name(cid)} to summon"))
+        if self.ui.choose_command(icons, "summon", ["summon", "mset"], self.name(cid)) is None:
+            raise Stuck(f"no Summon icon on {self.name(cid)} for the summon pick")
+        self.context = "summon"
+
     def pick_tributes(self, raw: RawDuel) -> None:
         """Tributes: the policy's picks through the shadow; without a shadow, highlighted monsters of the advisor's,
         lowest ATK first. Each is confirmed, until none is left highlighted."""
@@ -820,7 +844,9 @@ class Player:
                 mine = inp.accepting and inp.player == raw.me
                 if dialog == "phase_menu" and mine and inp.mode in (MAIN, BATTLE):
                     dialog = None  # a phase change under way: the decision below uses (or closes) the open menu
-                if mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT) and dialog in (None, "list"):
+                if mine and inp.mode == SUMMON_PICK and dialog in (None, "banner"):
+                    self.summon_pick(raw)  # the banner says "summon a monster"
+                elif mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT) and dialog in (None, "list"):
                     self.prompt(raw, inp)  # an activate-or-pass prompt panel looks like a list
                 elif dialog == "banner" and mine and inp.mode == PLACE:
                     # where to put a monster (after a Tribute Summon: message 327, the free zones highlighted)
