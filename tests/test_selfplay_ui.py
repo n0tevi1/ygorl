@@ -78,7 +78,7 @@ def test_phase_menu_that_never_opens_is_retried_once_then_stuck():
     with pytest.raises(Stuck, match="did not open"):
         ui.phase("battle")
     assert mouse.clicks == [L.PHASE_BADGE, L.PHASE_BADGE]  # never the End button's spot (the Graveyard)
-    assert sleeps == [1.2] + [0.3] * 8 + [1.2] + [0.3] * 8  # polled while the menu could still fade in
+    assert sleeps == [1.2] + [0.3] * 16 + [1.2] + [0.3] * 16  # polled while the menu could still fade in
     assert [c["why"] for c in ui.take_clicks()] == ["phase menu", "phase menu (again)"] and ui.clicks == []
 
 

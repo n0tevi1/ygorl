@@ -320,8 +320,14 @@ class Player:
         raise Stuck(f"no free {location}")
 
     # --- decisions ------------------------------------------------------------------------------------------
+    def close_phase_menu_unless(self, kind: str) -> None:
+        """An open phase menu covers the hand: close it unless the decision is a phase change."""
+        if kind not in ("battle_phase", "main2", "end_phase") and self.ui.dialog() == "phase_menu":
+            self.ui.click(*PHASE_MENU_CANCEL, "close the phase menu", 1.2)
+
     def main_phase(self, raw: RawDuel) -> None:
         best, legal = self.decide(raw)
+        self.close_phase_menu_unless(best.kind)
         kinds = {}
         for s in legal:
             if s.action.card is not None:
@@ -418,6 +424,7 @@ class Player:
         """The policy chooses: attack with which monster, Main Phase 2 or End Phase. The target is a rule: the most
         valuable monster the attacker beats, else the weakest; direct when the opponent has no monster."""
         best, _ = self.decide(raw)
+        self.close_phase_menu_unless(best.kind)
         self.context = best.kind
         if best.kind == "main2":
             return self.ui.phase("main2")
@@ -697,6 +704,8 @@ class Player:
                     if problem is not None:
                         raise Stuck(f"the game does not show the policy's action: {problem}")
                 mine = inp.accepting and inp.player == raw.me
+                if dialog == "phase_menu" and mine and inp.mode in (MAIN, BATTLE):
+                    dialog = None  # a phase change under way: the decision below uses (or closes) the open menu
                 if mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT) and dialog in (None, "list"):
                     self.prompt(raw, inp)  # an activate-or-pass prompt panel looks like a list
                 elif dialog == "banner" and mine and inp.mode == PLACE:

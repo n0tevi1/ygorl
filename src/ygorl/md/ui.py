@@ -310,7 +310,7 @@ class UI:
             else:
                 self.click(*L.PHASE_BADGE, "phase menu" if not attempt else "phase menu (again)", 1.2)
                 img = None
-                for _ in range(8):  # the menu fades in over about a second
+                for _ in range(16):  # the menu fades in over about a second, more when MD is busy
                     shot = self.capture()
                     if L.menu_button(shot, *L.PHASE_MENU["end"]):
                         img = shot
