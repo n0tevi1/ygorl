@@ -497,6 +497,9 @@ class Player:
             self.trace.rule("option-first-enabled", choices=[hex(c) for c in req.choices], pick=pick)
             self.ui.click(*option_tab(pick, n), f"effect {pick + 1} of {n}", 0.8)
             self.ui.click(*OPTION_OK, "ok", 1.5)
+        elif kind == "radio":
+            self.trace.rule("radio-first")  # e.g. Pot of Extravagance: banish 3 (the first row) rather than 6
+            self.trace.observe(radio_rows=self.ui.pick_radio(0))
         elif kind == "phase_menu":
             self.trace.rule("phase-menu-cancel")
             self.ui.click(*PHASE_MENU_CANCEL, "close the phase menu", 1.2)
@@ -635,6 +638,8 @@ class Player:
                 alt = n - 1  # the 1st / 2nd alternative
                 if mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT):  # its panel looks like a list: pass first
                     self.ui.respond_prompt(False)
+                elif dialog == "radio":
+                    self.ui.pick_radio(alt)
                 elif dialog == "list":
                     cards = self.ui.pick_list_cards([alt])
                     self.trace.rule(f"recover-list-#{alt + 1}", cards=len(cards))

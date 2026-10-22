@@ -73,10 +73,32 @@ def box_mean(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
     return img[y0:y1, x0:x1].reshape(-1, 3).mean(0)
 
 
+RADIO_X = (540, 590)  # the yellow radio rings of MD's "pick one" dialog (e.g. banish 3 or 6 cards), left of the rows
+RADIO_ROW_X, RADIO_CONFIRM = 1027, (1026, 840)
+
+
+def radio_rows(img: np.ndarray) -> list[int]:
+    """The y centres of the rows of MD's radio-button dialog (rings measured 43 px tall, 77 px apart), top down."""
+    x0, x1 = RADIO_X
+    band = img[300:1000, x0:x1].astype(int)
+    ring = ((band[:, :, 0] > 150) & (band[:, :, 1] > 150) & (band[:, :, 2] < 110)).any(axis=1)
+    rows, start = [], None
+    for y, on in enumerate(np.append(ring, False)):
+        if on and start is None:
+            start = y
+        elif not on and start is not None:
+            if 30 <= y - start <= 56:
+                rows.append(300 + (start + y) // 2)
+            start = None
+    return rows
+
+
 def screen_dialog(img: np.ndarray) -> str | None:
     """MD UI dialogs that are not engine input states (measured on the 2054x1184 window)."""
     if L.menu_button(img, *L.PHASE_MENU["end"]):
         return "phase_menu"  # MD's phase menu (left open by an interrupted phase change)
+    if len(radio_rows(img)) >= 2:
+        return "radio"  # its dark panel would otherwise read as a yes / no dialog
     pos_l, pos_r = box_mean(img, 925, 940, 955, 970), box_mean(img, 1100, 940, 1130, 970)
     above = box_mean(img, 700, 760, 1350, 790)  # the board around the position dialog, a prompt panel's title row
     if pos_l[0] < 30 and pos_l[1] < 60 and pos_r[0] < 30 and pos_r[1] < 70 and above.mean() > 100:
@@ -280,6 +302,15 @@ class UI:
     def yesno(self, yes: bool, why: str = "") -> None:
         """MD's yes / no dialog (both buttons measured: Tribute Summon confirmation, "Normal Summon now?")."""
         self.click(*(YESNO_YES if yes else YESNO_NO), why or ("yes" if yes else "no"), 1.5)
+
+    def pick_radio(self, index: int = 0) -> int:
+        """MD's radio-button dialog: pick row ``index`` (top down) and Confirm; returns the number of rows."""
+        rows = radio_rows(self.capture())
+        if not 0 <= index < len(rows):
+            raise Stuck(f"radio row {index} asked for, {len(rows)} rows shown")
+        self.click(RADIO_ROW_X, rows[index], f"option {index + 1} of {len(rows)}", 0.8)
+        self.click(*RADIO_CONFIRM, "confirm", 1.5)
+        return len(rows)
 
     def pick_list_cards(self, indices: Sequence[int]) -> list[XY]:
         """Tick ``indices`` (left to right on screen) in MD's card-list panel and press Select; returns the cards

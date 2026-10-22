@@ -398,3 +398,18 @@ def test_list_select_state_reads_the_label_colour():
     assert list_select_state(img) == "disabled"
     img[y0 + 10 : y0 + 20, x0 + 30 : x1 - 30] = (203, 255, 0)  # ticked: bright label
     assert list_select_state(img) == "enabled"
+
+
+def test_radio_dialog_rows_and_pick():
+    """MD's radio-button dialog (Pot of Extravagance: banish 3 or 6): rows from the yellow rings, first row then
+    Confirm."""
+    from ygorl.md.ui import RADIO_CONFIRM, RADIO_ROW_X, radio_rows, screen_dialog
+
+    img = np.full((L.REF_H, L.REF_W, 3), 20, np.uint8)
+    for cy in (413, 489):
+        img[cy - 21 : cy + 22, 545:585] = (230, 220, 60)
+    assert radio_rows(img) == [413, 489]
+    assert screen_dialog(img) == "radio"
+    ui, mouse, _ = make_ui(img)
+    assert ui.pick_radio(0) == 2
+    assert mouse.clicks == [(RADIO_ROW_X, 413), RADIO_CONFIRM]
