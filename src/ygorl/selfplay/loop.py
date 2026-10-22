@@ -41,6 +41,7 @@ from ygorl.selfplay.trace import Trace
 
 # --- input state (S + ...): written by duel.dll's command layer, read by DLL_DuelComGetCommandMask --------------
 INPUT_MODE, INPUT_ACCEPT, INPUT_PLAYER, FOCUS_CID = 0x3CD0, 0x3CDC, 0x3D00, 0x3CF0
+RESULT_RETRY = (743, 1093)  # MD's result screen: Retry (left) and OK (right)
 MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, PLACE, FIELD_PICK = 2, 3, 4, 5, 6, 7, 8  # observed modes
 
 
@@ -399,6 +400,52 @@ class Player:
         finally:
             self.trace.end_step(self.ui.take_clicks())
 
+    def run_games(self, games: int, max_steps: int) -> int:
+        """Play ``games`` duels in a row: after each one, press Retry on MD's result screen (the same Solo duel
+        again) and wait for the new duel. Stops at the first duel that does not finish on its own."""
+        for g in range(games):
+            print(f"=== game {g + 1}/{games}", flush=True)
+            code = self.run(max_steps)
+            raw = self.game.read()
+            result = struct.unpack("<I", self.game.memory.read(self._key() + self.game.offsets.duel_result, 4))[0]
+            summary = {"game": g + 1, "exit": code, "finished": raw.finished, "result": result,
+                       "lp": [raw.players[raw.me].lp, raw.players[1 - raw.me].lp], "turn": raw.turn + 1}  # fmt: skip
+            self.trace.game(**summary)
+            print(f"=== game {g + 1} summary {summary}", flush=True)
+            if code != 0:
+                return code
+            if g + 1 < games:
+                self.restart_duel()
+        return 0
+
+    def _key(self) -> int:
+        return struct.unpack("<Q", self.game.memory.read(self.game.module.base + self.game.offsets.key_ptr, 8))[0]
+
+    def restart_duel(self, timeout: float = 150) -> None:
+        """MD's result screen: press Retry, then wait until a new duel is running (not finished, turn 1)."""
+        time.sleep(6.0)  # the win / loss animation
+        end = time.time() + timeout
+        last_click = 0.0
+        while time.time() < end:
+            try:
+                raw = self.game.read()
+            except Exception:
+                raw = None
+            if raw is not None and not raw.finished and raw.turn == 0:
+                self.reset_game_state()
+                time.sleep(3.0)
+                return
+            if raw is not None and raw.finished and time.time() - last_click > 8:
+                self.ui.click(*RESULT_RETRY, "retry the duel", 2.0)
+                self.ui.take_clicks()
+                last_click = time.time()
+            time.sleep(1.0)
+        raise Stuck("the duel did not restart after Retry")
+
+    def reset_game_state(self) -> None:
+        self.attacked, self.forbidden, self.recent = set(), set(), []
+        self.turn_seen, self.phase_seen, self.expect, self.context = -1, (-1, -1), None, ""
+
     def _run(self, max_steps: int) -> int:
         for step in range(max_steps):
             self.trace.end_step(self.ui.take_clicks())  # the previous step, with its clicks
@@ -480,7 +527,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--policy", type=Path, required=True)
     ap.add_argument("--out", type=Path, default=Path("out/mdplay"))
     ap.add_argument("--samples", type=int, default=4)
-    ap.add_argument("--max-steps", type=int, default=400)
+    ap.add_argument("--max-steps", type=int, default=1500, help="most loop steps per duel")
+    ap.add_argument("--games", type=int, default=1, help="duels in a row: Retry on MD's result screen in between")
     ap.add_argument("--screen-every", type=int, default=0, help="save a capture into the trace every N steps")
     args = ap.parse_args(argv)
     from ygorl.data.environment import load_environment
@@ -491,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
     player.trace.start(env=args.env, policy=str(args.policy), samples=args.samples, max_steps=args.max_steps)
     result: dict = {"exit": None}
     try:
-        result["exit"] = player.run(args.max_steps)
+        result["exit"] = player.run_games(args.games, args.max_steps)
         return result["exit"]
     except BaseException as exc:
         result["error"] = f"{type(exc).__name__}: {exc}"

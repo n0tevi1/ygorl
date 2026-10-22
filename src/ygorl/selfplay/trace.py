@@ -135,6 +135,10 @@ class Trace:
     def refusal(self, action, reason: str) -> None:
         self._current()["refusal"] = {"action": action.kind, "card": _card(action), "reason": reason}
 
+    def game(self, **summary) -> None:
+        """One duel's outcome (several per trace with --games)."""
+        self._write({"kind": "game", "t": round(time.time(), 2), **summary})
+
     def stuck(self, why: str, record: str | None = None) -> None:
         rec = self._current()
         rec["stuck"] = why

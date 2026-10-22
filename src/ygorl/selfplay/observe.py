@@ -84,9 +84,13 @@ class ShadowObserver:
                    "auto": self.auto, "shadow_stopped": shadow.stopped or ""}  # fmt: skip
             if ask is None or point is None:
                 return out
+            if ask.kind == "chain" and type(point.decision).__name__ == "SelectEffectYn":
+                ask = Request(kind="yesno", options=[], min=1, max=1)  # an optional trigger: MD asks it as a prompt
             a = align(ask, point)
+            # command points: MD keeps no option list in memory, so only the kind can be compared
+            consistent = a.kind_match if ask.kind in ("idle", "battle", "yesno") else a.consistent
             out.update(kind_match=a.kind_match, pairs=len(a.pairs), md_only=len(a.md_only), ygo_only=len(a.ygo_only),
-                       consistent=a.consistent)  # fmt: skip
+                       consistent=consistent)  # fmt: skip
             return out
         except Exception as exc:
             return {"shadow_error": f"{type(exc).__name__}: {exc}", "where": traceback.format_exc(limit=3)}
