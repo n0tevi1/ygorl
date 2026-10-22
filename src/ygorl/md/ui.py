@@ -114,7 +114,9 @@ def screen_dialog(img: np.ndarray) -> str | None:
     if box_mean(img, 950, 1100, 1100, 1130).max() < 30 and L.list_cards(img):
         return "list"  # the dark strip alone also shows during a turn change: the list's blue tray must be up too
     banner = box_mean(img, 900, 270, 1150, 300)
-    if banner[0] < 60 and banner[2] < 110 and banner.mean() < 80:
+    text = (img[260:330, 470:1590].min(axis=2) > 200).mean()
+    # MD's banner is a navy band (32 68 84 measured) with white text: a dark field (the lava stage, 53 44 48) is not
+    if banner[0] < 60 and banner[2] < 110 and banner.mean() < 80 and banner[2] > banner[0] + 25 and text > 0.0015:
         return "banner"
     return None
 
