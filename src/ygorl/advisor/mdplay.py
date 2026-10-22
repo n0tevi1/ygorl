@@ -233,6 +233,8 @@ class Player:
         else:
             raise Stuck(f"{len(icons)} command icons for {self.name(cid)}, expected {order}")
         self.click(*target, best.kind, 1.5)
+        if card.is_monster and best.kind == "activate":
+            return  # a hand effect: no zone, the card may stay in hand; its prompts are handled by the loop
         location = "mzone" if card.is_monster else "szone"
         self.click(*self.free_zone(raw, location), f"zone for {best.kind}", 2.5)
         before = sum(c.cid == cid for c in raw.players[raw.me].piles["hand"])
