@@ -865,8 +865,10 @@ class Player:
             solo_gate(raw)
             self.trace.begin(step, raw, inp, dialog)
             req = read_request(self.game.memory, self.game.module.base, self.game.offsets, raw)
-            if dialog == "yesno" and req.dialog_type == OPTION_DIALOG and len(req.choices) >= 2:
-                dialog = "option"  # an effect choice: looks like yes / no on screen, told apart in memory
+            if dialog in ("yesno", "panel") and req.dialog_type == OPTION_DIALOG and len(req.choices) >= 2:
+                dialog = "option"  # an effect choice: a dark panel like yes / no on screen, told apart in memory
+            elif dialog == "panel":
+                dialog = None  # a dark band without buttons: a dimmed or dark board, nothing to answer
             if inp.accepting and inp.player == raw.me:
                 self.trace.observe(md_request={"kind": req.kind, "candidates": [[c.cid, c.location, c.sequence, c.player]
                                                                                 for c in req.candidates],

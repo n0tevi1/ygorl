@@ -110,7 +110,10 @@ def screen_dialog(img: np.ndarray) -> str | None:
         return "position"
     band, mid = box_mean(img, 620, 520, 1430, 560), box_mean(img, 900, 560, 1150, 600)
     if band.mean() < 100 and mid.mean() < 120:
-        return "yesno"
+        # yes / no has lime labels on both buttons (0.06 of the label box measured); without them the dark band is
+        # another panel (the effect choice, told apart in memory) or just a dark / dimmed board
+        lime = [_lime(img, x, YESNO_NO[1]) for x in (YESNO_NO[0], YESNO_YES[0])]
+        return "yesno" if min(lime) > 0.02 else "panel"
     if box_mean(img, 950, 1100, 1100, 1130).max() < 30 and L.list_cards(img):
         return "list"  # the dark strip alone also shows during a turn change: the list's blue tray must be up too
     banner = box_mean(img, 900, 270, 1150, 300)
@@ -119,6 +122,12 @@ def screen_dialog(img: np.ndarray) -> str | None:
     if banner[0] < 60 and banner[2] < 110 and banner.mean() < 80 and banner[2] > banner[0] + 25 and text > 0.0015:
         return "banner"
     return None
+
+
+def _lime(img: np.ndarray, x: int, y: int) -> float:
+    """The share of lime (enabled button label) pixels in a 120x28 box around (x, y)."""
+    r = img[y - 14 : y + 14, x - 60 : x + 60].reshape(-1, 3).astype(int)
+    return float(((r[:, 1] > 150) & (r[:, 2] < 90)).mean())
 
 
 def yellow_highlight(img: np.ndarray, x: int, y: int, w: int = 150, h: int = 180, t: int = 12) -> bool:

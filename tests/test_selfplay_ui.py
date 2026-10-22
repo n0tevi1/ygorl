@@ -416,3 +416,15 @@ def test_radio_dialog_rows_and_pick():
     ui, mouse, _ = make_ui(img)
     assert ui.pick_radio(0) == 2
     assert mouse.clicks == [(RADIO_ROW_X, 413), RADIO_CONFIRM]
+
+
+def test_yesno_needs_its_button_labels():
+    """A dark band alone is a dimmed or dark board (the lava stage) or the effect choice: "panel"; yes / no shows
+    lime labels on both buttons."""
+    from ygorl.md.ui import YESNO_NO, YESNO_YES, screen_dialog
+
+    img = np.full((L.REF_H, L.REF_W, 3), 40, np.uint8)
+    assert screen_dialog(img) == "panel"
+    for x, y in (YESNO_NO, YESNO_YES):
+        img[y - 8 : y + 8, x - 30 : x + 30] = (203, 255, 0)
+    assert screen_dialog(img) == "yesno"
