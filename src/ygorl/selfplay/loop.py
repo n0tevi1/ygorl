@@ -36,6 +36,7 @@ from ygorl.md.input import GatedMouse
 from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
 from ygorl.md.screen import capture as capture_client
 from ygorl.md.ui import UI, Stuck, command_order, my_monster_xy, opp_monster_xy
+from ygorl.md.panel import PanelBook
 from ygorl.md.request import read_request
 from ygorl.selfplay.observe import ShadowObserver
 from ygorl.selfplay.trace import Trace
@@ -145,6 +146,7 @@ class Player:
 
     expect: Expectation | None = None
     recent: list = field(default_factory=list)  # the last states seen, to stop instead of looping
+    pending_panel: tuple | None = None  # (capture, card id) of the last opened hand card, learned once confirmed
     recoveries: dict = field(default_factory=dict)  # state -> self-recovery attempts this duel
     recovery_count: int = 0
     phase_seen: tuple = (-1, -1)
@@ -163,6 +165,7 @@ class Player:
         self.out.mkdir(parents=True, exist_ok=True)
         self.trace = Trace(self.out, screen_every=self.screen_every)
         self.observer = ShadowObserver(self.env.rule_flags, self.cards, self.prior)  # observe only (design 10)
+        self.panel = PanelBook(self.out / "panel_book.npz")  # learned across runs
         self.attacked: set[int] = set()  # uids that attacked (or could not) in this Battle Phase
         self.turn_seen = -1
         self.context = ""  # what the last action was, for sub-prompts
@@ -205,6 +208,38 @@ class Player:
                 return raw, inp, dialog
             time.sleep(0.35)
         raise Stuck(f"nothing to do for {timeout:.0f} s")
+
+    def card_stats(self, cid: int) -> tuple[int, int, int] | None:
+        k = self.cards.get(self.passwords.get(cid))
+        if k is None or not k.is_monster:
+            return None
+        return (k.level, k.attack, k.defense)
+
+    def verify_hand_card(self, raw: RawDuel, cid: int, xy, icons):
+        """Check on MD's information panel that the opened card is ``cid`` (the hand order on screen is inferred).
+        A different card: try the other hand positions until the panel shows ``cid``. Unknown (nothing learned for
+        these cards yet): keep the click, and learn from it once memory confirms the action."""
+        hand = [c.cid for c in raw.players[raw.me].piles["hand"]]
+        stats = {c: self.card_stats(c) for c in hand}
+        img = self.ui.capture()
+        got, how = self.panel.identify(img, hand, stats)
+        self.trace.observe(panel={"want": cid, "got": got, "how": how})
+        if got is None or got == cid:
+            self.pending_panel = (img, cid)
+            return icons
+        print(f"  panel shows {self.name(got)} ({how}), not {self.name(cid)}: searching the hand", flush=True)
+        for i in range(len(hand)):
+            pos = L.hand_card(i, len(hand))
+            if pos == xy:
+                continue
+            found = self.ui.open_hand_card(pos, f"hand #{i + 1}: looking for {self.name(cid)}")
+            img = self.ui.capture()
+            seen, how = self.panel.identify(img, hand, stats)
+            if seen == cid:
+                self.trace.observe(panel={"want": cid, "found_at": i, "how": how})
+                self.pending_panel = (img, cid)
+                return found
+        raise Stuck(f"{self.name(cid)} not found in the hand by its information panel")
 
     def hand_xy(self, raw: RawDuel, cid: int) -> tuple[int, int]:
         """Screen position of the hand card with MD id ``cid`` (MD sorts the hand on screen)."""
@@ -263,6 +298,7 @@ class Player:
                 raise Stuck(f"{self.name(cid)} left the hand before it was used")
             xy = self.hand_xy(raw, cid)
             icons = self.ui.open_hand_card(xy, f"hand {self.name(cid)} (after the screen settled)")
+        icons = self.verify_hand_card(raw, cid, xy, icons)
         self.trace.observe(icons=icons)
         card = self.cards[best.card.code]
         order = command_order(card.is_monster, kinds.get(best.card.code, set()))
@@ -579,6 +615,11 @@ class Player:
                 if self.expect is not None and not dialog and inp.mode in (MAIN, BATTLE):
                     problem = check_expectation(self.expect, raw, self.passwords)
                     self.trace.check(self.expect.action, problem)
+                    if problem is None and self.pending_panel is not None:
+                        img, pcid = self.pending_panel  # the panel showed pcid: confirmed by memory, learn it
+                        self.panel.learn(img, pcid, self.card_stats(pcid))
+                        self.panel.save()
+                    self.pending_panel = None
                     print(f"  check {self.expect.action.kind}: {'ok' if problem is None else problem}", flush=True)
                     self.expect = None
                     if problem is not None:

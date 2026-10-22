@@ -318,3 +318,38 @@ def test_recovery_escalates_per_state_and_gives_up(tmp_path):
     for _ in range(2):
         assert player.recover("again", raw, inp, "list", state)
     assert not player.recover("too many", raw, inp, "list", state)
+
+
+def _panel(name_width: int, numbers: tuple[str, str, str]) -> np.ndarray:
+    """A synthetic information panel: dark body, a white name bar, digits drawn as distinct block shapes."""
+    from ygorl.md import panel as P
+
+    img = np.full((1184, 2054, 3), 180, np.uint8)
+    img[160:420, 30:450] = (8, 12, 14)
+    x0, y0, _, y1 = P.NAME_BAND
+    img[y0 + 4 : y1 - 4, x0 : x0 + name_width] = 255
+    shapes = {"0": [(0, 0, 14, 4), (0, 18, 14, 22), (0, 0, 3, 22), (11, 0, 14, 22)], "1": [(6, 0, 9, 22)],
+              "2": [(0, 0, 14, 4), (0, 9, 14, 13), (0, 18, 14, 22), (11, 0, 14, 11), (0, 11, 3, 22)],
+              "4": [(0, 0, 3, 12), (0, 9, 14, 13), (11, 0, 14, 22)], "5": [(0, 0, 14, 4), (0, 9, 14, 13),
+              (0, 18, 14, 22), (0, 0, 3, 11), (11, 11, 14, 22)]}  # fmt: skip
+    for band, text in zip((P.LEVEL_BAND, P.ATK_BAND, P.DEF_BAND), numbers, strict=True):
+        bx, by = band[0] + 6, band[1] + 5
+        for i, ch in enumerate(text):
+            for a, b, c, d in shapes[ch]:
+                img[by + b : by + d, bx + 20 * i + a : bx + 20 * i + c] = 255
+    return img
+
+
+def test_panel_book_learns_names_and_digits_then_tells_cards_apart():
+    from ygorl.md.panel import PanelBook
+
+    stats = {1: (5, 2000, 1400), 2: (4, 1500, 1000), 3: (4, 1200, 1000)}
+    book = PanelBook()
+    a = _panel(120, ("5", "2000", "1400"))
+    assert book.identify(a, [1, 2, 3], stats) == (None, "unknown")  # nothing learned yet
+    book.learn(a, 1, stats[1])
+    assert book.identify(a, [1, 2, 3], stats) == (1, "name")
+    b = _panel(200, ("4", "1500", "1000"))  # an unseen name: told apart by its digits (5 -> card 2 only)
+    assert book.identify(b, [1, 2, 3], stats) == (2, "stats")
+    closed = board()
+    assert book.identify(closed, [1, 2], stats) == (None, "closed")
