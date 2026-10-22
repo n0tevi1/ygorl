@@ -173,6 +173,7 @@ class UI:
     sleep: Callable[[float], None] = time.sleep
     echo: bool = True  # print every click (the live player's console log)
     clicks: list[dict] = field(default_factory=list)
+    evidence: list[np.ndarray] = field(default_factory=list)  # frames a failed step saw (taken by the stuck record)
 
     # --- primitives -------------------------------------------------------------------------------------------
     def click(self, x: int, y: int, why: str, pause: float = 1.0) -> None:
@@ -368,18 +369,20 @@ class UI:
             else:
                 self.click(*L.PHASE_BADGE, "phase menu" if not attempt else "phase menu (again)", 1.2)
                 img = None
-                for _ in range(16):  # the menu fades in over about a second, more when MD is busy
+                for poll in range(16):  # the menu fades in over about a second, more when MD is busy
                     shot = self.capture()
                     if L.menu_button(shot, *L.PHASE_MENU["end"]):
                         img = shot
                         break
+                    if poll in (2, 8, 15):
+                        self.evidence.append(shot)  # what the screen showed instead, for the stuck record
                     self.sleep(0.3)
             if img is not None:
                 if not L.menu_button(img, *L.PHASE_MENU[which]):
                     raise Stuck(f"the phase menu offers no {which}")
                 self.click(*L.PHASE_MENU[which], which, 2.0)
                 return
-        raise Stuck("the phase menu did not open")
+        raise Stuck("the phase menu did not open")  # self.evidence: frames seen while waiting for it
 
     def continue_draw(self, attempt: int = 0) -> None:
         """Draw Phase: MD sometimes waits for a click to go on. The phase badge did it once (Graveyard viewer open);

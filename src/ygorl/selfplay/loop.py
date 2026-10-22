@@ -632,6 +632,9 @@ class Player:
         d = self.out / f"stuck-{time.strftime('%Y%m%d-%H%M%S')}"
         d.mkdir(parents=True)
         np.save(d / "screen.npy", self.ui.capture())
+        for i, frame in enumerate(self.ui.evidence):
+            np.save(d / f"evidence-{i}.npy", frame)
+        self.ui.evidence.clear()
         raw, inp = self.game.read(), self.input()
         step = dict(self.trace.rec or {}, clicks=list(self.ui.clicks))
         (d / "state.json").write_text(json.dumps({"why": why, "context": self.context, "input": inp.__dict__,
