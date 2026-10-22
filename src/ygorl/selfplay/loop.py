@@ -561,6 +561,12 @@ class Player:
                 self.trace.observe(list="gone before the pick")
                 return
             req = self.request_now(raw, list_shown=True)
+            need = next((v for k, v in req.params if k == 8), 1)  # "choose N cards" (Fusion Materials)
+            if 1 < need <= len(L.list_cards(self.ui.capture())):
+                self.trace.rule("list-set-first-accepted", need=need)  # MD's list here is not the one in memory
+                self.trace.observe(list_set=self.ui.pick_list_set(need))
+                self.context = "list"
+                return
             pick = self.lockstep("list", raw, req)
             if pick is None:
                 self.trace.rule("list-first")

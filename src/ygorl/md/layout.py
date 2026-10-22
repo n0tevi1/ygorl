@@ -184,19 +184,21 @@ LIST_CARD_Y = 905  # the middle of a listed card's art: y 960, near its lower ed
 def list_cards(img: np.ndarray) -> list[tuple[int, int]]:
     """Centres of the cards shown in MD's card-list panel, left to right.
 
-    The cards sit on a flat blue tray whose strip just below them (y ~1030-1060) is unbroken; its width is
-    ``158 * n - 20`` for n cards (lists of 2, 3, 4 and 6 cards measured), and the cards are spread evenly over it.
+    The cards sit on flat blue trays whose strip just below them (y ~1030-1060) is unbroken; a tray is
+    ``158 * n - 20`` wide for n cards (lists of 2, 3, 4 and 6 cards measured), and its cards are spread evenly over
+    it. Cards from different places (the field, the Deck: Fusion Materials) sit on separate trays 20 px apart.
     """
-    best_run, best_left = 0, 0
+    best: list[tuple[int, int]] = []  # (left, width) of the trays on the row that shows the most tray
     for y in range(1030, 1062, 2):
         tray = (np.abs(img[y].astype(int) - np.array(TRAY_RGB)) < 22).all(axis=1)
         padded = np.concatenate([[False], tray, [False]])
         edges = np.flatnonzero(padded[1:] != padded[:-1])
-        for a, b in zip(edges[::2], edges[1::2], strict=True):
-            if b - a > best_run:
-                best_run, best_left = b - a, a
-    n = round((best_run + 20) / CARD_STEP)
-    if n < 1:
-        return []
-    first = best_left + (best_run - (n - 1) * CARD_STEP) / 2
-    return [(round(first + i * CARD_STEP), LIST_CARD_Y) for i in range(n)]
+        runs = [(int(a), int(b - a)) for a, b in zip(edges[::2], edges[1::2], strict=True) if b - a >= CARD_STEP - 40]
+        if sum(w for _, w in runs) > sum(w for _, w in best):
+            best = runs
+    cards = []
+    for left, width in best:
+        n = round((width + 20) / CARD_STEP)
+        first = left + (width - (n - 1) * CARD_STEP) / 2
+        cards += [(round(first + i * CARD_STEP), LIST_CARD_Y) for i in range(n)]
+    return cards

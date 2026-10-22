@@ -44,10 +44,13 @@ LIST_SELECT, LIST_SELECT_TWO_BUTTONS = (1026, 1116), (1180, 1117)
 LIST_SELECT_TEXT = (963, 1099, 1093, 1139)  # the one-button list's Select label: x0, y0, x1, y1
 
 
-def list_select_state(img: np.ndarray) -> str:
+LIST_SELECT_TWO_TEXT = (1150, 1102, 1215, 1134)  # the two-button list's right (Select) label
+
+
+def list_select_state(img: np.ndarray, box: tuple[int, int, int, int] = LIST_SELECT_TEXT) -> str:
     """The one-button card list's Select: "enabled" (bright yellow-green label, measured 0.075 of the box),
     "disabled" (dim olive label, nothing ticked yet: 0.05 dim, 0 bright), "" (no such label: another layout)."""
-    x0, y0, x1, y1 = LIST_SELECT_TEXT
+    x0, y0, x1, y1 = box
     r = img[y0:y1, x0:x1].reshape(-1, 3).astype(int)
     if ((r[:, 1] > 150) & (r[:, 2] < 90)).mean() > 0.03:
         return "enabled"
@@ -314,6 +317,32 @@ class UI:
         self.click(RADIO_ROW_X, rows[index], f"option {index + 1} of {len(rows)}", 0.8)
         self.click(*RADIO_CONFIRM, "confirm", 1.5)
         return len(rows)
+
+    def pick_list_set(self, need: int, order: Sequence[int] | None = None, tries: int = 20) -> tuple[int, ...]:
+        """A list that wants ``need`` cards ticked before Select (Fusion Materials): tick a combination of the cards
+        (in ``order`` of preference, default left to right), wait for Select to light up and press it; a combination
+        MD does not accept (Select stays dark) is unticked and the next one tried. Returns the combination."""
+        from itertools import combinations, islice
+
+        img = self.capture()
+        cards = L.list_cards(img)
+        if len(cards) < need:
+            raise Stuck(f"a list asking for {need} cards shows {len(cards)}")
+        two = list_select_state(img, LIST_SELECT_TWO_TEXT) != ""
+        box, button = (LIST_SELECT_TWO_TEXT, LIST_SELECT_TWO_BUTTONS) if two else (LIST_SELECT_TEXT, LIST_SELECT)
+        order = list(order) if order is not None else list(range(len(cards)))
+        for combo in islice(combinations(order, need), tries):
+            for i in combo:
+                self.click(*cards[i], f"#{i + 1} of {len(cards)} cards in the list", 0.8)
+            for _ in range(7):
+                if list_select_state(self.capture(), box) == "enabled":
+                    self.click(*button, f"select {need} cards", 1.5)
+                    self._list_open(4.0)
+                    return combo
+                self.sleep(0.3)
+            for i in combo:  # MD does not take this set: untick it
+                self.click(*cards[i], f"untick #{i + 1}", 0.6)
+        raise Stuck(f"no set of {need} of the {len(cards)} list cards lit Select")
 
     def pick_list_cards(self, indices: Sequence[int]) -> list[XY]:
         """Tick ``indices`` (left to right on screen) in MD's card-list panel and press Select; returns the cards
