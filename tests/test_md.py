@@ -293,7 +293,8 @@ def test_layout_hand_order_and_positions():
     # memory order -> screen order, seen in the Solo duel (MD card ids)
     seen = {(5558, 4887, 4837, 16480, 4999): (5558, 4999, 4837, 16480, 4887),
             (16480, 4999, 16482, 6511): (4999, 6511, 16480, 16482),
-            (16480, 6511, 16482, 4755, 16479): (16479, 4755, 6511, 16480, 16482)}  # fmt: skip
+            (16480, 6511, 16482, 4755, 16479): (16479, 4755, 6511, 16480, 16482),
+            (6044, 4041, 5559, 15839, 5559, 4343): (5559, 5559, 4041, 6044, 4343, 15839)}  # fmt: skip
     for hand, screen in seen.items():
         assert tuple(hand[i] for i in hand_order(hand, pw.get, cards.get)) == screen
     assert hand_card(4, 5) == (1300, 1100) and hand_card(0, 5) == (740, 1100)

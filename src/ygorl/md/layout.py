@@ -95,16 +95,17 @@ def _sort_key(card, cid: int) -> tuple:
     if card is None:
         return (3, 0, 0, cid)
     if card.type & C.TYPE_MONSTER:
-        return (0, card.level, 0, cid)
+        return (0, 0 if card.type & C.TYPE_NORMAL else 1, card.level, cid)
     return (1 if card.type & C.TYPE_SPELL else 2, 0, card.type, cid)
 
 
 def hand_order(cids: Sequence[int], passwords: Callable[[int], int], cards: Callable[[int], object]) -> list[int]:
     """Indices into the memory-order hand (MD card ids) in on-screen order, left to right.
 
-    Seen in three hands: monsters by level, then spells with Normal before Quick-Play, then traps; ascending MD
-    card id within a group (King's Knight 4 < Slifer 10; Imperial Bower 4 < Berfomet 5; Pot of Avarice 6511 <
-    Joker's Straight 16480 < Thunderspeed Summon 16482, a Quick-Play)."""
+    Seen in four hands: Normal Monsters, then Effect Monsters, each by level; then spells with Normal before
+    Quick-Play, then traps; ascending MD card id within a group (Jack's Knight 5, Dark Magician 7 before King of
+    the Swamp 3, an Effect Monster; King's Knight 4 < Slifer 10; Imperial Bower 4 < Berfomet 5; Pot of Avarice 6511
+    < Joker's Straight 16480 < Thunderspeed Summon 16482, a Quick-Play)."""
     return sorted(range(len(cids)), key=lambda i: _sort_key(cards(passwords(cids[i])), cids[i]))
 
 
