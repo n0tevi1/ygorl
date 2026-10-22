@@ -316,7 +316,7 @@ class Player:
             else:
                 raise Stuck("no position measured for the Field Zone yet")
             if not self.ui.card_command(xy, f"field {self.name(cid)}", "activate", 2.0):
-                raise Stuck(f"no Activate icon above {self.name(cid)} on the field")
+                return self.refused(raw, best, f"no Activate for {self.name(cid)} on the field")
             return
         if where.location != C.LOCATION_HAND:
             raise Stuck(f"no click script for {best.kind} from location {where.location}")
