@@ -272,3 +272,16 @@ def test_normal_summoned_from_the_counter():
     off = replace(OFF, verified=True, semantics=SEM)
     assert not to_snapshot(read_duel(build_memory(), BASE, off), PASSWORDS).normal_summoned
     assert to_snapshot(read_duel(build_memory(summons=1), BASE, off), PASSWORDS).normal_summoned
+
+
+def test_layout_hand_order_and_positions():
+    from ygorl.advisor.mdlayout import hand_card, hand_order, my_zone
+    from ygorl.engine.duel import default_cards
+
+    cards = default_cards()
+    # memory order seen in the Solo duel; the screen showed King's Knight, Slifer, Polymerization,
+    # Joker's Straight, Mirror Force
+    hand = [64788463, 44095762, 24094653, 92067220, 10000020]
+    assert [hand[i] for i in hand_order(hand, cards.get)] == [64788463, 10000020, 24094653, 92067220, 44095762]
+    assert hand_card(4, 5) == (1300, 1100) and hand_card(0, 5) == (740, 1100)
+    assert my_zone("szone", 0) == (650, 930)
