@@ -72,13 +72,14 @@ def screen_dialog(img: np.ndarray) -> str | None:
     return None
 
 
-def yellow_highlight(img: np.ndarray, x: int, y: int, w: int = 130, h: int = 165) -> bool:
-    """A card outlined in MD's yellow selection frame around (x, y)."""
+def yellow_highlight(img: np.ndarray, x: int, y: int, w: int = 150, h: int = 180, t: int = 12) -> bool:
+    """A card outlined in MD's (thin, animated) yellow selection frame around (x, y): measured 0.15 of the ring band
+    yellow on a highlighted monster, at most 0.04 elsewhere."""
     x0, x1, y0, y1 = x - w // 2, x + w // 2, y - h // 2, y + h // 2
-    ring = np.concatenate([img[y0 : y0 + 8, x0:x1].reshape(-1, 3), img[y1 - 8 : y1, x0:x1].reshape(-1, 3),
-                           img[y0:y1, x0 : x0 + 8].reshape(-1, 3), img[y0:y1, x1 - 8 : x1].reshape(-1, 3)])  # fmt: skip
+    ring = np.concatenate([img[y0 : y0 + t, x0:x1].reshape(-1, 3), img[y1 - t : y1, x0:x1].reshape(-1, 3),
+                           img[y0:y1, x0 : x0 + t].reshape(-1, 3), img[y0:y1, x1 - t : x1].reshape(-1, 3)])  # fmt: skip
     yellow = (ring[:, 0] > 190) & (ring[:, 1] > 170) & (ring[:, 2] < 110)
-    return yellow.mean() > 0.25
+    return bool(yellow.mean() > 0.08)
 
 
 # screen centres of field cards (window pixels); the opponent's row is mirrored
@@ -340,6 +341,7 @@ class Player:
         if best.kind in ("summon", "mset") and screen_dialog(capture(self.mouse.window)) == "yesno":
             # a Tribute Summon / Set asks to confirm first; the tributes (and zone) are asked by the engine next
             self.click(1186, 658, "yes: tribute", 1.5)
+            self.pick_tributes(raw)
             return
         location = "mzone" if card.is_monster else "szone"
         self.click(*self.free_zone(raw, location), f"zone for {best.kind}", 2.5)
@@ -444,6 +446,24 @@ class Player:
             self.context = "list"
         else:
             raise Stuck(f"no script for the {kind} screen (context {self.context!r})")
+
+    def pick_tributes(self, raw: RawDuel) -> None:
+        """MD's own tribute choice before the summon command (no engine input pending): highlighted monsters are
+        tributed lowest ATK first, each confirmed, until none is highlighted. (The shadow duel will decide this.)"""
+        me = raw.players[raw.me]
+        for _ in range(3):
+            img = capture(self.mouse.window)
+            lit = [(s, c) for s, c in enumerate(me.slots[:7]) if c and yellow_highlight(img, *my_monster_xy(s))]
+            if not lit:
+                return
+
+            def atk(c):
+                k = self.cards.get(self.passwords.get(c.cid))
+                return k.attack if k is not None else 0
+
+            s, c = min(lit, key=lambda t: atk(t[1]))
+            if not self.open_and_click_icon(my_monster_xy(s), f"tribute {self.name(c.cid)}", "confirm tribute", 2.0):
+                raise Stuck("no Confirm icon above the tribute")
 
     def field_pick(self, raw: RawDuel) -> None:
         """Mode 8 outside an attack: pick the highlighted cards one by one and confirm each."""
