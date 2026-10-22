@@ -168,12 +168,15 @@ class Player:
         """Click a card and return the command icons that click opened: a row above a hand card, an icon above a
         field card (compared with a capture from just before, so card art is never taken for an icon)."""
         x, y = xy
-        before = capture(self.mouse.window)
-        self.click(x, y, why, 1.2)
-        after = capture(self.mouse.window)
-        if hand:
-            return L.new_icons(before, after, max(x - 380, 0), 790, min(x + 380, L.REF_W), 975)
-        return L.new_icons(before, after, max(x - 130, 0), max(y - 260, 0), min(x + 130, L.REF_W), y - 60)
+        box = ((max(x - 380, 0), 790, min(x + 380, L.REF_W), 975) if hand
+               else (max(x - 130, 0), max(y - 260, 0), min(x + 130, L.REF_W), y - 60))  # fmt: skip
+        for attempt in range(2):  # a card left open (lifted) closes on the first click: open it again
+            before = capture(self.mouse.window)
+            self.click(x, y, why if not attempt else f"{why} (again)", 1.2)
+            icons = L.new_icons(before, capture(self.mouse.window), *box)
+            if icons:
+                return icons
+        return []
 
     def open_and_click_icon(self, xy: tuple[int, int], why_card: str, why: str, pause: float = 1.8) -> bool:
         icons = self.open_card(xy, why_card)
@@ -215,10 +218,10 @@ class Player:
         icons = self.open_card(xy, f"hand {self.name(cid)}", hand=True)
         card = self.cards[best.card.code]
         options = kinds.get(best.card.code, set())
-        if card.is_monster:
-            order = [k for k in ("summon", "spsummon", "mset") if k in options]
-        else:
-            order = [k for k in ("activate", "sset") if k in options]
+        # MD's icon order: Summon, Set for monsters; Activate, Set for spells and traps. Where a monster's hand effect
+        # (Activate) sits among Summon / Set has only been seen alone, so its place in a longer row is a guess.
+        kinds_order = ("summon", "spsummon", "activate", "mset") if card.is_monster else ("activate", "sset")
+        order = [k for k in kinds_order if k in options]
         if best.kind not in order:
             raise Stuck(f"{best.kind} not among the buttons {order}")
         if len(icons) == len(order):
