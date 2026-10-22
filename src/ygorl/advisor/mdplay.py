@@ -214,6 +214,16 @@ class Player:
         where = best.card.loc
         from ygorl.engine import constants as C
 
+        if where.location in (C.LOCATION_MZONE, C.LOCATION_SZONE) and best.kind == "activate":
+            if where.location == C.LOCATION_MZONE:
+                xy = my_monster_xy(where.sequence)
+            elif where.sequence < 5:
+                xy = L.my_zone("szone", where.sequence)
+            else:
+                raise Stuck("no position measured for the Field Zone yet")
+            if not self.open_and_click_icon(xy, f"field {self.name(cid)}", "activate", 2.0):
+                raise Stuck(f"no Activate icon above {self.name(cid)} on the field")
+            return
         if where.location != C.LOCATION_HAND:
             raise Stuck(f"no click script for {best.kind} from location {where.location}")
         xy = self.hand_xy(raw, cid)
