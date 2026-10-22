@@ -96,6 +96,17 @@ def is_activate_icon(img: np.ndarray, x: int, y: int, r: int = 30) -> bool:
     return bool(yellow_green.mean() > 0.2)
 
 
+def icon_kind(img: np.ndarray, x: int, y: int, r: int = 30) -> str:
+    """A command icon's kind from its glyph: "activate" (yellow-green), "summon" (blue on 0.51-0.52 of the disc),
+    "set" (blue on 0.23-0.36: monster Set 0.23-0.26, Spell / Trap Set 0.32-0.36), "" else (measured on 8 icons)."""
+    if is_activate_icon(img, x, y, r):
+        return "activate"
+    yy, xx = np.mgrid[-r : r + 1, -r : r + 1]
+    disc = img[y - r : y + r + 1, x - r : x + r + 1][(yy**2 + xx**2) <= r * r].astype(int)
+    blue = float(((disc[:, 2] > 180) & (disc[:, 0] < 120)).mean())
+    return "summon" if blue > 0.43 else "set" if blue > 0.15 else ""
+
+
 def is_command_icon(img: np.ndarray, x: int, y: int, r: int = 30) -> bool:
     """A real command icon has a blue (Summon / Set: 0.25-0.52 of the disc) or yellow-green (Activate) glyph; a
     face-down card's back in the Spell & Trap row (which the hand's icon band overlaps) has neither."""
@@ -215,30 +226,27 @@ class UI:
         return True
 
     def choose_command(self, icons: Sequence[XY], kind: str, order: Sequence[str], name: str = "") -> XY | None:
-        """Click the icon of command ``kind`` among the ``icons`` an opened hand card shows. The Activate icon is
-        told by its yellow-green glyph (:func:`is_activate_icon`), so a monster's hand effect never takes the place
-        of its Summon; the other icons are matched in MD's ``order`` (:func:`command_order`) without Activate.
-        None (nothing clicked) when the card shows no command at all, or not the one asked for."""
+        """Click the icon of command ``kind`` among the ``icons`` an opened hand card shows, each told by its glyph
+        (:func:`icon_kind`): Activate yellow-green, Summon mostly blue, Set less blue. Special Summon has no
+        measured glyph yet and falls back to MD's ``order`` (:func:`command_order`) among the unclassified icons.
+        None (nothing clicked) when the card does not show the command asked for: MD refuses it."""
         if kind not in order:
             raise Stuck(f"{kind} not among the buttons {list(order)}")
         if not icons:
             return None
         img = self.capture()
-        activate = [p for p in icons if is_activate_icon(img, *p)]
-        others = [p for p in icons if p not in activate]
-        rest = [k for k in order if k != "activate"]
-        if kind == "activate":
-            if not activate:
-                return None
-            target = activate[0]
-        elif len(others) == len(rest):
-            target = others[rest.index(kind)]
-        elif len(others) == 1 and kind in ("mset", "sset") and rest[-1] == kind:
-            target = others[0]  # MD offers only Set here although the reconstruction also allowed more
-        elif not others:
+        kinds = [icon_kind(img, *p) for p in icons]
+        want = {"activate": "activate", "summon": "summon", "mset": "set", "sset": "set"}.get(kind)
+        hits = [p for p, k in zip(icons, kinds, strict=True) if k == want] if want else []
+        if want and hits:
+            target = hits[0]
+        elif want:
             return None
-        else:
-            raise Stuck(f"{len(others)} non-activate command icons for {name or 'the card'}, expected {rest}")
+        else:  # spsummon: by position among the icons that are neither Activate nor Set nor Summon
+            rest = [p for p, k in zip(icons, kinds, strict=True) if k == ""]
+            if len(rest) != 1:
+                raise Stuck(f"cannot tell the {kind} icon of {name or 'the card'} among {kinds}")
+            target = rest[0]
         self.click(*target, kind, 1.5)
         return target
 

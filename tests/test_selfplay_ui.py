@@ -40,13 +40,19 @@ def board(value: int = 180) -> np.ndarray:
 YY, XX = np.mgrid[0:H, 0:W]
 
 
-def with_icons(img: np.ndarray, centres) -> np.ndarray:
-    """MD command icons: dark discs (radius 44) with a coloured glyph."""
+GLYPHS = {"summon": (21, (36, 128, 251)), "set": (16, (36, 128, 251)), "activate": (20, (190, 220, 60))}
+
+
+def with_icons(img: np.ndarray, centres, kinds=None) -> np.ndarray:
+    """MD command icons: dark discs (radius 44) with a glyph whose size and colour tell the command (blue on about
+    half the inner disc for Summon, a quarter for Set, yellow-green for Activate). Default: Summon, then Set."""
     img = img.copy()
-    for cx, cy in centres:
+    kinds = kinds or ["summon"] + ["set"] * (len(centres) - 1)
+    for (cx, cy), kind in zip(centres, kinds, strict=True):
         d = np.hypot(XX - cx, YY - cy)
         img[d <= 44] = (15, 20, 25)
-        img[d <= 44 * 0.4] = (36, 128, 251)
+        radius, colour = GLYPHS[kind]
+        img[d <= radius] = colour
     return img
 
 
@@ -109,8 +115,9 @@ def test_command_order():
 
 
 @pytest.mark.parametrize("kind,index", [("summon", 0), ("mset", 1)])
-def test_hand_card_command_chosen_by_icon_order(kind, index):
-    ui, mouse, sleeps = make_ui(board(), with_icons(board(), ROW))
+def test_hand_card_command_chosen_by_its_glyph(kind, index):
+    opened = with_icons(board(), ROW)
+    ui, mouse, sleeps = make_ui(board(), opened, opened)
     icons = ui.open_hand_card(HAND_XY, "hand Blue-Eyes")
     assert near(icons, ROW)
     target = ui.choose_command(icons, kind, command_order(True, {"summon", "mset"}))
@@ -143,13 +150,14 @@ def test_hand_card_left_open_keeps_its_icons():
     assert near(ui.open_hand_card(HAND_XY, "hand"), ROW)
 
 
-def test_choose_command_set_only_no_command_and_mismatch():
+def test_choose_command_set_only_and_refusals():
     order = ["summon", "mset"]
-    ui, mouse, _ = make_ui(board())
+    set_only = with_icons(board(), [ROW[0]], ["set"])
+    ui, mouse, _ = make_ui(set_only)
     assert ui.choose_command([ROW[0]], "mset", order) == ROW[0]  # MD offers only Set
-    assert ui.choose_command([], "summon", order) is None and mouse.clicks == [ROW[0]]  # refused: nothing clicked
-    with pytest.raises(Stuck, match="1 non-activate command icons"):
-        ui.choose_command([ROW[0]], "summon", order)
+    assert ui.choose_command([], "summon", order) is None  # no command at all: refused
+    assert ui.choose_command([ROW[0]], "summon", order) is None  # no Summon among them: refused, nothing clicked
+    assert mouse.clicks == [ROW[0]]
     with pytest.raises(Stuck, match="not among"):
         ui.choose_command(ROW, "activate", order)
 
@@ -291,12 +299,12 @@ def test_activate_icon_is_told_by_its_glyph_colour():
     place in the row (King of the Swamp's Activate was clicked for its Summon by position)."""
     from ygorl.md.ui import is_activate_icon
 
+    from ygorl.md.ui import icon_kind
+
     row = [(880, 880), (1050, 880), (1220, 880)]
-    img = with_icons(board(), row)
-    yy, xx = np.mgrid[0:1184, 0:2054]
-    for i, (x, y) in enumerate(row):
-        img[np.hypot(xx - x, yy - y) <= 25] = (190, 220, 60) if i == 0 else (40, 120, 230)  # glyphs
+    img = with_icons(board(), row, ["activate", "summon", "set"])
     assert [is_activate_icon(img, *p) for p in row] == [True, False, False]
+    assert [icon_kind(img, *p) for p in row] == ["activate", "summon", "set"]
     ui, mouse, _ = make_ui(img, img, img)
     assert ui.choose_command(row, "summon", ["summon", "activate", "mset"]) == row[1]
     assert ui.choose_command(row, "activate", ["summon", "activate", "mset"]) == row[0]

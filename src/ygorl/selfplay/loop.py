@@ -44,6 +44,15 @@ from ygorl.selfplay.trace import Trace
 
 # --- input state (S + ...): written by duel.dll's command layer, read by DLL_DuelComGetCommandMask --------------
 INPUT_MODE, INPUT_ACCEPT, INPUT_PLAYER, FOCUS_CID = 0x3CD0, 0x3CDC, 0x3D00, 0x3CF0
+OPTION_DIALOG = 6  # the dialog type of MD's "which effect?" choice (DLL_DuelDlg*: tabs and an OK button)
+OPTION_OK = (1024, 788)
+
+
+def option_tab(index: int, count: int) -> tuple[int, int]:
+    """The tab of choice ``index`` among ``count`` in the effect-choice dialog (tabs span x 520-1540 at y 418)."""
+    return round(520 + (index + 0.5) * 1020 / count), 418
+
+
 NEUTRAL_SPOT = (1300, 640)  # empty board between the rows: clicking it closes a card left open
 RESULT_RETRY = (743, 1093)  # MD's result screen: Retry (left) and OK (right)
 MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, PLACE, FIELD_PICK = 2, 3, 4, 5, 6, 7, 8  # observed modes
@@ -437,6 +446,13 @@ class Player:
             zone = self.free_zone(raw, "mzone")
             self.ui.pick_zone("mzone", zone, "zone for the summon")
             self._placed("mzone", zone)
+        elif kind == "option":
+            req = read_request(self.game.memory, self.game.module.base, self.game.offsets, raw)
+            n = len(req.choices)
+            pick = next((i for i, c in enumerate(req.choices) if c >> 31), 0)  # the first enabled effect
+            self.trace.rule("option-first-enabled", choices=[hex(c) for c in req.choices], pick=pick)
+            self.ui.click(*option_tab(pick, n), f"effect {pick + 1} of {n}", 0.8)
+            self.ui.click(*OPTION_OK, "ok", 1.5)
         elif kind == "phase_menu":
             self.trace.rule("phase-menu-cancel")
             self.ui.click(*PHASE_MENU_CANCEL, "close the phase menu", 1.2)
@@ -613,8 +629,10 @@ class Player:
                 continue
             solo_gate(raw)
             self.trace.begin(step, raw, inp, dialog)
+            req = read_request(self.game.memory, self.game.module.base, self.game.offsets, raw)
+            if dialog == "yesno" and req.dialog_type == OPTION_DIALOG and len(req.choices) >= 2:
+                dialog = "option"  # an effect choice: looks like yes / no on screen, told apart in memory
             if inp.accepting and inp.player == raw.me:
-                req = read_request(self.game.memory, self.game.module.base, self.game.offsets, raw)
                 self.trace.observe(md_request={"kind": req.kind, "candidates": [[c.cid, c.location, c.sequence, c.player]
                                                                                 for c in req.candidates],
                                                "params": req.params, "min": req.min, "max": req.max})  # fmt: skip
