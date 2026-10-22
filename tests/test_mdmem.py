@@ -26,7 +26,7 @@ OFF = Offsets(state_ptr=0x11F9C50, key_ptr=0x11F9C48, my_player=0x4, turn=0x3C14
               removed_face=0xCAC, removed_facedown=0x80, uid_table=0x1BEC, uid_mask=0x1FF, effect_table=0x2BEC, effect_stride=0x10, effect_kind=0x2,
               effect_uid=0x4, effect_next=0xC, overlay_code=0x3FB, overlay_kind=0x5)  # fmt: skip
 # read off the screen in a Solo duel on this build (design 10)
-SEM = {"faceup": 0x01, "defense": 0x01}
+SEM = {"faceup": 0x01, "defense": 0x01, "locked_byte": 0x14, "locked": 0x40}
 
 BEWD, DM, ASH, ZEUS, MAT = 4007, 4041, 13587, 16210, 4844  # MD card ids
 PASSWORDS = {BEWD: 89631139, DM: 46986414, ASH: 14558127, ZEUS: 90448279, MAT: 70095154}
@@ -98,11 +98,12 @@ def build_memory(*, me=0, turn=3, turn_player=0, phase=2):
         struct.pack_into("<H", s, OFF.uid_table + uid * 8, cid)
         return uid
 
-    def slot(p, i, cid, face, sideways=0, chain=0):
+    def slot(p, i, cid, face, sideways=0, chain=0, locked=False):
         at = p * OFF.player_stride + OFF.slot_base + i * OFF.slot_stride
         struct.pack_into("<HH", s, at, cid, uid_word(put_uid(cid)))
         s[at + OFF.slot_face] = face
         s[at + OFF.slot_turn] = sideways
+        s[at + SEM["locked_byte"]] = SEM["locked"] | 0x0A if locked else 0
         struct.pack_into("<H", s, at + OFF.slot_chain, chain)
 
     def pile(p, zone, cards):
@@ -126,7 +127,7 @@ def build_memory(*, me=0, turn=3, turn_player=0, phase=2):
     mat = put_uid(MAT)
     node(1, OFF.overlay_code, 0x15, mat, 2)
     node(2, 0x123, 0x05, 0, 0)
-    slot(adv, 5, ZEUS, SEM["faceup"], chain=1)
+    slot(adv, 5, ZEUS, SEM["faceup"], chain=1, locked=True)
     slot(adv, 7, DM, 0)
     pile(adv, "hand", [(BEWD, 0), (ASH, 0)])
     pile(adv, "deck", [(DM, 0)] * 30)
@@ -175,6 +176,7 @@ def test_to_snapshot_shows_only_what_the_advisor_can_see(me):
     assert (adv.lp, opp.lp) == (8000, 6100)
     zeus = next(c for c in adv.cards if c.location == "mzone")
     assert (zeus.sequence, zeus.password, zeus.materials) == (5, PASSWORDS[ZEUS], (PASSWORDS[MAT],))
+    assert zeus.position_locked and not any(c.position_locked for c in opp_monsters(snap))
     assert any(c.location == "szone" and c.password == PASSWORDS[DM] and c.pos == "facedown" for c in adv.cards)
     assert [c.password for c in adv.at("hand")] == [PASSWORDS[BEWD], PASSWORDS[ASH]]
     assert (adv.deck_count, adv.extra_count) == (30, 14)
@@ -186,6 +188,10 @@ def test_to_snapshot_shows_only_what_the_advisor_can_see(me):
     assert [c.password for c in opp.at("szone")] == [UNKNOWN]
     assert [c.password for c in opp.at("removed")] == [PASSWORDS[BEWD], UNKNOWN]
     assert opp.deck_count == 28
+
+
+def opp_monsters(snap):
+    return snap.sides[1].at("mzone")
 
 
 def test_to_snapshot_only_on_the_advisors_main_phase():

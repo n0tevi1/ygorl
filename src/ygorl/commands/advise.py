@@ -27,7 +27,7 @@ def add_parser(subparsers) -> None:
     )
     p.add_argument("--save", type=Path, default=None, metavar="PATH", help="with --attach: also write the snapshot")
     p.add_argument("--deck", type=deck_arg, default=None, metavar="DECK",
-                   help="the advisor's own deck list (.ydk file or ydke:// link)")  # fmt: skip
+                   help="the advisor's own deck list (.ydk file or ydke:// link); --attach reads it from the game")  # fmt: skip
     p.add_argument("--policy", type=Path, default=None, metavar="PATH",
                    help="policy checkpoint, PPO or BC (needs the train extra; without it: list the legal actions)")  # fmt: skip
     p.add_argument("--samples", type=int, default=8, metavar="N", help="hidden-card samples (default 8)")
@@ -49,16 +49,19 @@ def run(args: argparse.Namespace) -> int:
         raise CommandError("--raw and --save need --attach")
     if args.env is None:
         raise CommandError("advise needs --env (the opponent is sampled from its meta decks)")
-    if args.deck is None and not args.raw:
-        raise CommandError("advise needs --deck (the advisor's own deck list)")
+    if args.deck is None and not args.attach:
+        raise CommandError("advise needs --deck (the advisor's own deck list; --attach reads it from the game)")
     if args.samples < 1:
         raise CommandError("--samples must be at least 1")
     env = load_env(args.env)
+    deck = None
     if args.attach:
-        snapshot = _attach(args, env)
-        if snapshot is None:
+        attached = _attach(args, env)
+        if attached is None:
             return 0
-    (deck,) = load_decks([args.deck], env)
+        snapshot, deck = attached
+    if args.deck is not None:
+        (deck,) = load_decks([args.deck], env)
     try:
         if not args.attach:
             snapshot = load_snapshot(args.snapshot)
@@ -78,8 +81,8 @@ def run(args: argparse.Namespace) -> int:
 
 
 def _attach(args: argparse.Namespace, env):
-    """Snapshot from the running client (None after --raw, which only prints)."""
-    from ygorl.advisor.mdmem import MemoryReadError, attach, format_raw, load_md_cid, to_snapshot
+    """(snapshot, own deck list) from the running client; None after --raw, which only prints."""
+    from ygorl.advisor.mdmem import MemoryReadError, attach, format_raw, load_md_cid, own_deck, to_snapshot
     from ygorl.advisor.mdoffsets import OffsetError
     from ygorl.advisor.snapshot import SnapshotError
     from ygorl.engine.duel import default_cards
@@ -100,8 +103,8 @@ def _attach(args: argparse.Namespace, env):
         f"# pid {game.pid}, duel.dll {off.dll_sha256[:16]} at {game.module.base:#x}, buildid {game.buildid or '?'}, "
         f"offsets {'verified' if off.verified else 'derived, NOT verified'}"
     )
+    cards = default_cards()
     if args.raw:
-        cards = default_cards()
         names = {cid: cards[pw].name for cid, pw in passwords.items() if pw in cards}
         print(format_raw(raw, names))
         return None
@@ -111,4 +114,4 @@ def _attach(args: argparse.Namespace, env):
         raise CommandError(str(exc)) from None
     if args.save:
         args.save.write_text(snapshot.dumps(), encoding="utf-8")
-    return snapshot
+    return snapshot, own_deck(raw, passwords, cards)

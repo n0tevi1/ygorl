@@ -127,7 +127,9 @@ def advise(snapshot: BoardSnapshot, own_deck: Deck, policy, prior: OpponentPrior
             raise ValueError("every legal action of the reconstruction is masked by the snapshot")
         p = softmax_kept(logits[:n], keep).tolist()
         seen = set()
-        for a, q in zip(actions[:n], p, strict=True):
+        for a, q, ok in zip(actions[:n], p, keep, strict=True):
+            if not ok:  # the real game forbids it: never suggested, never listed
+                continue
             key = action_key(a)
             if key in seen:  # copies of one card: merge
                 probs[key][-1] += q

@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from ygorl.cards.ydk import Deck
+from ygorl.engine import constants as C
 from ygorl.advisor.mdoffsets import FIELD_SLOTS, PILES, Offsets, load_or_derive
 from ygorl.advisor.snapshot import UNKNOWN, BoardSnapshot, SnapshotCard, SnapshotError, SnapshotSide
 
@@ -158,6 +160,7 @@ class RawCard:
     face: int = 0  # field slots only: the DLL_DuelGetCardFace byte (face-up)
     sideways: int = 0  # field slots only: the DLL_DuelGetCardTurn byte (turned sideways = Defense Position)
     facedown: bool = False  # banished cards only
+    slot: bytes = b""  # field slots only: the whole slot struct, for flags interpreted via Offsets.semantics
     materials: tuple[int, ...] = ()  # Xyz materials, MD card ids
 
 
@@ -226,7 +229,7 @@ def read_duel(mem: Memory, base: int, off: Offsets) -> RawDuel:
                 continue
             w = _u16(s, at + off.slot_uid)
             slots.append(RawCard(cid=cid, uid=decode_uid(w), flags=w & 0xFE, face=s[at + off.slot_face],
-                                 sideways=s[at + off.slot_turn], materials=materials(_u16(s, at + off.slot_chain))))  # fmt: skip
+                                 sideways=s[at + off.slot_turn], slot=bytes(s[at : at + off.slot_stride]), materials=materials(_u16(s, at + off.slot_chain))))  # fmt: skip
         counts = {z: _u32(s, blk + off.count[z]) for z in PILES}
         piles = {}
         for z in PILES:
@@ -323,7 +326,8 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int]) -> BoardSnapshot:
             else:
                 pos = "faceup" if faceup else "facedown"
             known = mine or faceup
-            cards.append(SnapshotCard(location=loc, sequence=seq, position=pos,
+            locked = loc == "mzone" and bool(c.slot[off.semantics["locked_byte"]] & off.semantics["locked"])
+            cards.append(SnapshotCard(location=loc, sequence=seq, position=pos, position_locked=locked,
                                       password=pw(c.cid) if known else UNKNOWN,
                                       materials=tuple(pw(m) for m in c.materials) if known else ()))  # fmt: skip
         cards += [SnapshotCard("grave", pw(c.cid)) for c in pl.piles["grave"]]
@@ -344,7 +348,30 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int]) -> BoardSnapshot:
 
 __all__ = ["Attached", "BufferMemory", "Memory", "MemoryReadError", "Module", "ProcessMemory", "RawCard", "RawDuel",
            "RawPlayer", "attach", "decode_uid", "find_module", "find_pid", "format_raw", "ptrace_hint", "read_duel",
-           "load_md_cid", "steam_buildid", "to_snapshot"]  # fmt: skip
+           "load_md_cid", "own_deck", "steam_buildid", "to_snapshot"]  # fmt: skip
+
+
+def own_deck(raw: RawDuel, passwords: Mapping[int, int], cards: Mapping) -> Deck:
+    """The advisor's deck list as read from memory: its Deck and Extra Deck piles plus its known cards already out
+    of them. Sorted: the Deck's order is hidden information and is never used."""
+    pl = raw.players[raw.me]
+    main, extra = [], []
+
+    def add(cid: int) -> None:
+        pw = passwords.get(cid)
+        card = cards.get(pw) if pw else None
+        if card is None or card.type & C.TYPE_TOKEN:
+            return
+        (extra if card.is_extra_deck else main).append(pw)
+
+    for c in pl.piles["deck"] + pl.piles["extra"] + pl.piles["hand"] + pl.piles["grave"] + pl.piles["removed"]:
+        add(c.cid)
+    for c in pl.slots:
+        if c is not None:
+            add(c.cid)
+            for m in c.materials:
+                add(m)
+    return Deck(main=tuple(sorted(main)), extra=tuple(sorted(extra)), name="md-memory")
 
 
 def load_md_cid(path: str | Path) -> dict[int, int]:

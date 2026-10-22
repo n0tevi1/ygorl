@@ -37,7 +37,7 @@ from pathlib import Path
 OFFSETS_DIR = Path(__file__).with_name("offsets")
 PILES = ("hand", "extra", "deck", "grave", "removed")  # MD locate 13..17, in this order
 FIELD_SLOTS = 13
-SEMANTICS = {"faceup", "defense"}
+SEMANTICS = {"faceup", "defense", "locked_byte", "locked"}
 
 
 class OffsetError(RuntimeError):
@@ -78,7 +78,8 @@ class Offsets:
     dll_sha256: str = ""
     buildid: str = ""
     verified: bool = False  # flag semantics checked against the screen in a Solo duel
-    # bit masks read off the screen, not the code: "faceup" in a slot's face byte, "defense" in its turn byte
+    # read off the screen, not derived: "faceup" mask of a slot's face byte, "defense" mask of its turn byte,
+    # "locked" mask of the slot byte at "locked_byte" (summoned, Set or repositioned this turn)
     semantics: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 

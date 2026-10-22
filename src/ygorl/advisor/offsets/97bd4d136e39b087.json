@@ -44,10 +44,13 @@
  "verified": true,
  "semantics": {
   "faceup": "0x1",
-  "defense": "0x1"
+  "defense": "0x1",
+  "locked_byte": "0x14",
+  "locked": "0x40"
  },
  "notes": [
   "2026-10-21 Solo duel: Field Spell face-up face=0x01, Set S/T face=0x00; Set monster face=0x00 turn=0x01, after Flip Summon face=0x01 turn=0x00 (DLL_DuelGetCardTurn = sideways, i.e. Defense Position)",
+  "slot byte +0x14 bit 0x40 = summoned/Set/repositioned this turn: 0x50 on the turn the monster was Set, 0x00 next turn, 0x4a after its Flip Summon; the Main Phase position-change check (called from DLL_DuelComGetCommandMask) tests exactly this bit",
   "slots are in the owner's frame (M1 = owner's leftmost), mirrored on the opponent's side of the screen as in ygopro-core",
   "banished face-down bit derived from DLL_DuelGetCardFace, not yet seen in a duel",
   "Extra Monster Zone left/right (slots 5/6) not yet seen in a duel"
