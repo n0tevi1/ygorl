@@ -96,6 +96,15 @@ def is_activate_icon(img: np.ndarray, x: int, y: int, r: int = 30) -> bool:
     return bool(yellow_green.mean() > 0.2)
 
 
+def is_command_icon(img: np.ndarray, x: int, y: int, r: int = 30) -> bool:
+    """A real command icon has a blue (Summon / Set: 0.25-0.52 of the disc) or yellow-green (Activate) glyph; a
+    face-down card's back in the Spell & Trap row (which the hand's icon band overlaps) has neither."""
+    yy, xx = np.mgrid[-r : r + 1, -r : r + 1]
+    disc = img[y - r : y + r + 1, x - r : x + r + 1][(yy**2 + xx**2) <= r * r].astype(int)
+    blue = (disc[:, 2] > 180) & (disc[:, 0] < 120)
+    return bool(blue.mean() > 0.1) or is_activate_icon(img, x, y, r)
+
+
 def command_order(is_monster: bool, options: Iterable[str]) -> list[str]:
     """MD's left-to-right icon order above a hand card, restricted to the commands in ``options``.
 
@@ -188,6 +197,7 @@ class UI:
             for _ in range(10):
                 after = self.capture()
                 icons = L.new_icons(before, after, *box) or [p for p in L.find_icons(after, *box) if p[1] < 940]
+                icons = [p for p in icons if is_command_icon(after, *p)]
                 if icons:
                     return icons
                 self.sleep(0.3)
