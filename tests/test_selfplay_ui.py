@@ -108,16 +108,24 @@ def test_hand_card_command_chosen_by_icon_order(kind, index):
     assert near(icons, ROW)
     target = ui.choose_command(icons, kind, command_order(True, {"summon", "mset"}))
     assert target == icons[index]
-    assert mouse.clicks == [HAND_XY, icons[index]] and sleeps == [1.2, 1.5]
+    assert mouse.clicks == [HAND_XY, icons[index]] and sleeps == [0.6, 1.5]
     ui.pick_zone("mzone", 2, "zone")
     assert mouse.clicks[-1] == L.my_zone("mzone", 2) and sleeps[-1] == 2.5
 
 
-def test_hand_card_opened_on_the_second_click():
-    """The first click lands during an animation: nothing new; wait, click again, find the row."""
+def test_hand_card_icons_that_come_late_are_polled_for():
+    """The icons appear a few captures after the click: found by polling, no second click."""
     ui, mouse, sleeps = make_ui(board(), board(), board(), with_icons(board(), ROW))
     assert near(ui.open_hand_card(HAND_XY, "hand"), ROW)
-    assert mouse.clicks == [HAND_XY, HAND_XY] and sleeps == [1.2, 1.5, 1.2]
+    assert mouse.clicks == [HAND_XY] and sleeps == [0.6, 0.3, 0.3]
+
+
+def test_hand_card_clicked_again_when_nothing_comes():
+    """Nothing within the polling window (an animation swallowed the click): click again."""
+    frames = [board()] * 12 + [with_icons(board(), ROW)]
+    ui, mouse, _ = make_ui(*frames)
+    assert near(ui.open_hand_card(HAND_XY, "hand"), ROW)
+    assert mouse.clicks == [HAND_XY, HAND_XY]
     assert [c["why"] for c in ui.clicks] == ["hand", "hand (again)"]
 
 

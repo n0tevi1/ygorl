@@ -134,26 +134,33 @@ class UI:
         x, y = xy
         box = ((max(x - 380, 0), 790, min(x + 380, L.REF_W), 975) if hand
                else (max(x - 130, 0), max(y - 260, 0), min(x + 130, L.REF_W), y - 60))  # fmt: skip
-        for attempt in range(2):  # the first click can land while an animation still covers the hand
+        if not hand:
             before = self.capture()
-            self.click(x, y, why if not attempt else f"{why} (again)", 1.2)
-            after = self.capture()
-            icons = L.new_icons(before, after, *box)
+            self.click(x, y, why, 1.2)
+            icons = L.new_icons(before, self.capture(), *box)
             if icons:
                 return icons
-            if not hand:
-                # MD's Confirm icon blinks (about 2 s on, 2 s off) and may already be up from an earlier click:
-                # poll for one straight above the card
-                for _ in range(16):
-                    found = [p for p in L.find_icons(self.capture(), *box) if abs(p[0] - x) <= 40]
-                    if found:
-                        return found
-                    self.sleep(0.3)
-                return []
-            self.sleep(1.5)
-        # a hand card left open by an earlier stop stays open when clicked again: its icons were already there;
-        # in the hand band only command icons sit above y 940 (the lifted card's art starts lower)
-        return [p for p in L.find_icons(after, *box) if p[1] < 940]
+            # MD's Confirm icon blinks (about 2 s on, 2 s off) and may already be up from an earlier click:
+            # poll for one straight above the card
+            for _ in range(16):
+                found = [p for p in L.find_icons(self.capture(), *box) if abs(p[0] - x) <= 40]
+                if found:
+                    return found
+                self.sleep(0.3)
+            return []
+        for attempt in range(2):  # the first click can land while an animation still covers the hand
+            before = self.capture()
+            self.click(x, y, why if not attempt else f"{why} (again)", 0.6)
+            # the icons can take a few seconds (a King's Knight Summon icon came only after the check); a card left
+            # open by an earlier stop keeps its icons, so icons already there count too (only command icons sit
+            # above y 940 in the hand band: the lifted card's art starts lower)
+            for _ in range(10):
+                after = self.capture()
+                icons = L.new_icons(before, after, *box) or [p for p in L.find_icons(after, *box) if p[1] < 940]
+                if icons:
+                    return icons
+                self.sleep(0.3)
+        return []
 
     def open_hand_card(self, xy: XY, why: str) -> list[XY]:
         return self.open_card(xy, why, hand=True)
