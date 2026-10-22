@@ -745,6 +745,10 @@ class Player:
                     self.last_zone = None
                 elif dialog == "banner" and mine and inp.mode == FIELD_PICK:
                     self.field_pick(raw)  # the banner states what to pick on the field (tributes, targets)
+                elif dialog == "banner" and not inp.accepting:
+                    # a banner while the engine takes no input is MD's own text (a Summon animating): let it pass
+                    self.trace.rule("banner-wait")
+                    self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
                 elif dialog:
                     self.dialog(raw, dialog)
                 elif inp.mode == MAIN:
