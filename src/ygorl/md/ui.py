@@ -106,8 +106,15 @@ def screen_dialog(img: np.ndarray) -> str | None:
         return "radio"  # its dark panel would otherwise read as a yes / no dialog (rings alone: an animation)
     pos_l, pos_r = box_mean(img, 925, 940, 955, 970), box_mean(img, 1100, 940, 1130, 970)
     above = box_mean(img, 700, 760, 1350, 790)  # the board around the position dialog, a prompt panel's title row
-    if pos_l[0] < 30 and pos_l[1] < 60 and pos_r[0] < 30 and pos_r[1] < 70 and above.mean() > 100:
-        return "position"
+    labels = [float((img[1025:1065, x0 : x0 + 120].min(axis=2) > 200).mean()) for x0 in (880, 1060)]  # 表侧…
+    if (
+        pos_l[0] < 30
+        and pos_l[1] < 60
+        and pos_r[0] < 30
+        and pos_r[1] < 70
+        and (above.mean() > 100 or min(labels) > 0.08)
+    ):
+        return "position"  # the white labels under the buttons (0.19 measured) also show on a dark (lava) board
     band, mid = box_mean(img, 620, 520, 1430, 560), box_mean(img, 900, 560, 1150, 600)
     if band.mean() < 100 and mid.mean() < 120:
         # yes / no has lime labels on both buttons (0.06 of the label box measured); without them the dark band is
