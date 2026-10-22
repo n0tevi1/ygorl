@@ -579,7 +579,11 @@ class Player:
             self.ui.click(*option_tab(pick, n), f"effect {pick + 1} of {n}", 0.8)
             self.ui.click(*OPTION_OK, "ok", 1.5)
         elif kind == "radio":
-            pick = self.lockstep("radio", raw, count=len(radio_rows(self.ui.capture())))
+            rows = len(radio_rows(self.ui.capture()))
+            if not rows:  # a passing frame looked like the radio dialog
+                self.trace.observe(radio="gone before the pick")
+                return
+            pick = self.lockstep("radio", raw, count=rows)
             if pick is None:
                 self.trace.rule("radio-first")  # e.g. Pot of Extravagance: banish 3 (the first row) rather than 6
             self.trace.observe(radio_rows=self.ui.pick_radio(pick or 0))
