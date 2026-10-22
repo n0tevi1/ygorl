@@ -170,6 +170,7 @@ class RawPlayer:
     slots: tuple[RawCard | None, ...]  # FIELD_SLOTS entries: 0-4 Main Monster, 5-6 Extra Monster, 7-11 S/T, 12 Field
     piles: dict[str, tuple[RawCard, ...]]  # PILES -> cards in index order
     counts: dict[str, int]
+    header: bytes = b""  # the player block before the field slots, for counters read via Offsets.semantics
 
 
 @dataclass(frozen=True)
@@ -180,6 +181,7 @@ class RawDuel:
     me: int  # which of players[0..1] the client plays
     players: tuple[RawPlayer, RawPlayer]
     offsets: Offsets = field(repr=False)
+    player_types: tuple[int, int] = (0, 0)  # 0 = human (DLL_DuelIsHuman)
 
 
 def _u16(b: bytes, off: int) -> int:
@@ -197,7 +199,7 @@ def read_duel(mem: Memory, base: int, off: Offsets) -> RawDuel:
     if not state or not key_struct:
         raise MemoryReadError(errno.EAGAIN, "no duel in progress (duel-state pointer is null)")
     s = mem.read(state, STATE_SIZE)
-    key = mem.read(key_struct, 8)
+    key = mem.read(key_struct, off.player_type + 8)
     xor_key, me = _u16(key, 0), _u32(key, off.my_player) & 1
 
     def node(index: int) -> bytes:
@@ -239,9 +241,11 @@ def read_duel(mem: Memory, base: int, off: Offsets) -> RawDuel:
                                      facedown=z == "removed" and bool(s[blk + off.removed_face + 2 * i] & off.removed_facedown))
                              for i, e in enumerate(entries))  # fmt: skip
         lp = (_u32(s, blk + off.lp) ^ xor_key) & 0xFFFFFFFF
-        players.append(RawPlayer(lp=lp, slots=tuple(slots), piles=piles, counts=counts))
+        players.append(RawPlayer(lp=lp, slots=tuple(slots), piles=piles, counts=counts,
+                                 header=bytes(s[blk : blk + off.slot_base])))  # fmt: skip
     return RawDuel(turn=_u32(s, off.turn), phase=_u32(s, off.phase), turn_player=_u32(s, off.turn_player) & 1,
-                   me=me, players=(players[0], players[1]), offsets=off)  # fmt: skip
+                   me=me, players=(players[0], players[1]), offsets=off,
+                   player_types=(_u32(key, off.player_type), _u32(key, off.player_type + 4)))  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -279,7 +283,7 @@ def format_raw(raw: RawDuel, names: Mapping[int, str] | None = None) -> str:
         return f"{c.cid} {names.get(c.cid, '?')} uid={c.uid} flags={c.flags:#04x}"
 
     phase = PHASES[raw.phase] if 0 <= raw.phase < len(PHASES) else str(raw.phase)
-    lines = [f"turn {raw.turn} {phase}, turn player {'me' if raw.turn_player == raw.me else 'opponent'}"
+    lines = [f"turn counter {raw.turn} {phase}, turn player {'me' if raw.turn_player == raw.me else 'opponent'}"
              f" (MD player {raw.turn_player}; I am {raw.me})"]  # fmt: skip
     for p in (raw.me, 1 - raw.me):
         pl = raw.players[p]
@@ -341,14 +345,37 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int]) -> BoardSnapshot:
             cards += [SnapshotCard("hand") for _ in range(pl.counts["hand"])]
         sides.append(SnapshotSide(lp=pl.lp, cards=tuple(cards), deck_count=pl.counts["deck"],
                                   extra_count=pl.counts["extra"]))  # fmt: skip
-    went_first = (raw.turn % 2 == 1) == (raw.turn_player == raw.me)
-    return BoardSnapshot(turn=raw.turn, phase=PHASES[raw.phase], sides=(sides[0], sides[1]), turn_player=0,
+    turn = raw.turn + off.semantics["turn_base"]  # duel.dll counts from 0, the screen from 1
+    went_first = (turn % 2 == 1) == (raw.turn_player == raw.me)
+    me = raw.players[raw.me]
+    normal_summoned = _u32(me.header, off.semantics["normal_summons"]) > 0
+    return BoardSnapshot(turn=turn, phase=PHASES[raw.phase], sides=(sides[0], sides[1]), turn_player=0,
+                         normal_summoned=normal_summoned,
                          went_first=went_first, source=f"mdmem:{off.dll_sha256[:16]}").check()  # fmt: skip
 
 
-__all__ = ["Attached", "BufferMemory", "Memory", "MemoryReadError", "Module", "ProcessMemory", "RawCard", "RawDuel",
+__all__ = ["Attached", "BufferMemory", "GateError", "Memory", "MemoryReadError", "Module", "ProcessMemory", "RawCard", "RawDuel",
            "RawPlayer", "attach", "decode_uid", "find_module", "find_pid", "format_raw", "ptrace_hint", "read_duel",
            "load_md_cid", "own_deck", "steam_buildid", "to_snapshot"]  # fmt: skip
+
+
+class GateError(RuntimeError):
+    """Automation must not act in this duel (not a verified Solo duel against the computer)."""
+
+
+def solo_gate(raw: RawDuel) -> None:
+    """Raise :class:`GateError` unless this is a duel the Solo self-play tool may act in (design 10): a verified
+    ``duel.dll``, the client is the human player, and the opponent's player type is the verified computer value.
+    Fail-closed: anything unexpected stops automation."""
+    off = raw.offsets
+    if not off.verified or "cpu_type" not in off.semantics:
+        raise GateError(f"duel.dll {off.dll_sha256[:16]} is not verified")
+    mine, theirs = raw.player_types[raw.me], raw.player_types[1 - raw.me]
+    if mine != 0:
+        raise GateError(f"the client's player type is {mine}, not human (replay or spectating?)")
+    if theirs != off.semantics["cpu_type"]:
+        raise GateError(f"the opponent's player type is {theirs}, not the computer ({off.semantics['cpu_type']}): "
+                        "only Solo duels against the computer are automated")  # fmt: skip
 
 
 def own_deck(raw: RawDuel, passwords: Mapping[int, int], cards: Mapping) -> Deck:

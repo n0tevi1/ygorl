@@ -18,7 +18,7 @@ INSTALLED = Path.home() / ".steam/steam/steamapps/common/Yu-Gi-Oh!  Master Duel/
 BUILD_23020425 = "97bd4d136e39b0872e4a8a9171632f1f0bd9bb04d69af08e836c56e684d43c44"
 
 # derived from build 23020425 (checked by hand against the disassembly, see design 10)
-OFF = Offsets(state_ptr=0x11F9C50, key_ptr=0x11F9C48, my_player=0x4, turn=0x3C14, turn_player=0x3C08, phase=0x3C1C,
+OFF = Offsets(state_ptr=0x11F9C50, key_ptr=0x11F9C48, my_player=0x4, player_type=0x8, turn=0x3C14, turn_player=0x3C08, phase=0x3C1C,
               player_stride=0xDDC, lp=0x0,
               count={"hand": 0xC, "extra": 0x18, "deck": 0x10, "grave": 0x14, "removed": 0x1C},
               pile={"hand": 0x1E4, "extra": 0x5A4, "deck": 0x3C4, "grave": 0x7FC, "removed": 0xA54}, pile_stride=4,
@@ -26,7 +26,15 @@ OFF = Offsets(state_ptr=0x11F9C50, key_ptr=0x11F9C48, my_player=0x4, turn=0x3C14
               removed_face=0xCAC, removed_facedown=0x80, uid_table=0x1BEC, uid_mask=0x1FF, effect_table=0x2BEC, effect_stride=0x10, effect_kind=0x2,
               effect_uid=0x4, effect_next=0xC, overlay_code=0x3FB, overlay_kind=0x5)  # fmt: skip
 # read off the screen in a Solo duel on this build (design 10)
-SEM = {"faceup": 0x01, "defense": 0x01, "locked_byte": 0x14, "locked": 0x40}
+SEM = {
+    "faceup": 0x01,
+    "defense": 0x01,
+    "locked_byte": 0x14,
+    "locked": 0x40,
+    "cpu_type": 1,
+    "turn_base": 1,
+    "normal_summons": 0x30,
+}
 
 BEWD, DM, ASH, ZEUS, MAT = 4007, 4041, 13587, 16210, 4844  # MD card ids
 PASSWORDS = {BEWD: 89631139, DM: 46986414, ASH: 14558127, ZEUS: 90448279, MAT: 70095154}
@@ -85,7 +93,7 @@ def uid_word(uid: int, flags: int = 0) -> int:
     return (uid & 1) | flags | ((uid >> 1) << 8)
 
 
-def build_memory(*, me=0, turn=3, turn_player=0, phase=2):
+def build_memory(*, me=0, turn=3, turn_player=0, phase=2, types=(0, 1), summons=0):
     s = bytearray(0x3C40)
     struct.pack_into("<III", s, 0, 0, 0, 0)
     struct.pack_into("<I", s, OFF.turn, turn)
@@ -121,6 +129,7 @@ def build_memory(*, me=0, turn=3, turn_player=0, phase=2):
         struct.pack_into("<H", s, at + OFF.effect_next, nxt)
 
     adv, opp = me, 1 - me
+    struct.pack_into("<I", s, adv * OFF.player_stride + SEM["normal_summons"], summons)
     for p, lp in ((adv, 8000), (opp, 6100)):
         struct.pack_into("<I", s, p * OFF.player_stride + OFF.lp, lp ^ XOR)
     # advisor: Zeus with one material (node 1 -> unrelated node 2), a face-down Set S/T, two hand cards
@@ -141,7 +150,7 @@ def build_memory(*, me=0, turn=3, turn_player=0, phase=2):
     pile(opp, "deck", [(BEWD, 0)] * 28)
     pile(opp, "grave", [(ASH, 0)])
     pile(opp, "removed", [(BEWD, False), (DM, True)])
-    key = struct.pack("<HHI", XOR, 0, me)
+    key = struct.pack("<HHIII", XOR, 0, me, *(types if me == 0 else types[::-1]))
     regions = {BASE + OFF.state_ptr: struct.pack("<Q", STATE), BASE + OFF.key_ptr: struct.pack("<Q", KEY),
                STATE: bytes(s), KEY: key}  # fmt: skip
     return BufferMemory(regions)
@@ -171,7 +180,7 @@ def test_to_snapshot_shows_only_what_the_advisor_can_see(me):
     raw = read_duel(build_memory(me=me, turn_player=me), BASE, off)
     snap = to_snapshot(raw, PASSWORDS)
     assert snap.turn_player == 0 and snap.phase == "main1" and snap.source == "mdmem:" + "ab" * 8
-    assert snap.went_first is True  # turn 3 is the first player's
+    assert snap.turn == 4 and snap.went_first is False  # counter 3 = turn 4 on screen, the second player's
     adv, opp = snap.sides
     assert (adv.lp, opp.lp) == (8000, 6100)
     zeus = next(c for c in adv.cards if c.location == "mzone")
@@ -225,3 +234,39 @@ def test_find_module_and_buildid(tmp_path):
     module = find_module(42, proc=tmp_path)
     assert module.base == 0x6FFFF1000000 and module.path == dll
     assert steam_buildid(module.path) == "23020425"
+
+
+@pytest.mark.parametrize("types,ok", [((0, 1), True), ((0, 0), False), ((0, 2), False), ((1, 1), False)])
+def test_solo_gate_acts_only_against_the_computer(types, ok):
+    from ygorl.advisor.mdmem import GateError, solo_gate
+
+    verified = replace(OFF, verified=True, semantics=SEM)
+    for me in (0, 1):
+        raw = read_duel(build_memory(me=me, types=types), BASE, verified)
+        if ok:
+            solo_gate(raw)
+        else:
+            with pytest.raises(GateError):
+                solo_gate(raw)
+    with pytest.raises(GateError, match="not verified"):
+        solo_gate(read_duel(build_memory(), BASE, OFF))
+
+
+def test_parse_tree_and_xwd():
+    from ygorl.advisor.mdscreen import parse_tree, parse_xwd
+
+    tree = ('     0x6000003 "masterduel": ("steam_app_1449850" "steam_app_1449850")  2054x1184+2776+128  +2776+128\n'
+            '     0x6000010 "x": ("steam_app_1449850" "steam_app_1449850")  10x10+0+0  +0+0\n'
+            '     0x1200001 "other": ("other" "Other")  4000x4000+0+0  +0+0\n')  # fmt: skip
+    w = parse_tree(tree)
+    assert (w.id, w.x, w.y, w.width, w.height) == (0x6000003, 2776, 128, 2054, 1184)
+    # a 2x1 LSBFirst TrueColor dump: red, then blue
+    header = [100, 7, 2, 24, 2, 1, 0, 0, 32, 0, 32, 32, 8, 4, 8, 0xFF0000, 0xFF00, 0xFF, 8, 0, 0, 0, 0, 0, 0]
+    data = struct.pack(">25I", *header) + bytes([0, 0, 255, 0, 255, 0, 0, 0])
+    assert parse_xwd(data).tolist() == [[[255, 0, 0], [0, 0, 255]]]
+
+
+def test_normal_summoned_from_the_counter():
+    off = replace(OFF, verified=True, semantics=SEM)
+    assert not to_snapshot(read_duel(build_memory(), BASE, off), PASSWORDS).normal_summoned
+    assert to_snapshot(read_duel(build_memory(summons=1), BASE, off), PASSWORDS).normal_summoned

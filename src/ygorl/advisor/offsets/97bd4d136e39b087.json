@@ -2,6 +2,7 @@
  "state_ptr": "0x11f9c50",
  "key_ptr": "0x11f9c48",
  "my_player": "0x4",
+ "player_type": "0x8",
  "turn": "0x3c14",
  "turn_player": "0x3c08",
  "phase": "0x3c1c",
@@ -46,13 +47,19 @@
   "faceup": "0x1",
   "defense": "0x1",
   "locked_byte": "0x14",
-  "locked": "0x40"
+  "locked": "0x40",
+  "cpu_type": "0x1",
+  "turn_base": "0x1",
+  "normal_summons": "0x30"
  },
  "notes": [
   "2026-10-21 Solo duel: Field Spell face-up face=0x01, Set S/T face=0x00; Set monster face=0x00 turn=0x01, after Flip Summon face=0x01 turn=0x00 (DLL_DuelGetCardTurn = sideways, i.e. Defense Position)",
   "slot byte +0x14 bit 0x40 = summoned/Set/repositioned this turn: 0x50 on the turn the monster was Set, 0x00 next turn, 0x4a after its Flip Summon; the Main Phase position-change check (called from DLL_DuelComGetCommandMask) tests exactly this bit",
   "slots are in the owner's frame (M1 = owner's leftmost), mirrored on the opponent's side of the screen as in ygopro-core",
   "banished face-down bit derived from DLL_DuelGetCardFace, not yet seen in a duel",
-  "Extra Monster Zone left/right (slots 5/6) not yet seen in a duel"
+  "Extra Monster Zone left/right (slots 5/6) not yet seen in a duel",
+  "player types in a Solo duel (2026-10-21): client 0 (human), computer opponent 1",
+  "turn counter 3 while the screen showed \"Turn 4 Main 1\" on the client's turn; the computer went first (it had a board at counter 1, the client opened with 6 cards): screen turn = counter + 1",
+  "player block +0x30: 0 -> 1 after a Normal Summon on turn 4 (incremented next to the duel statistic for Normal Summons); whether a Set counts is not yet checked"
  ]
 }

@@ -37,7 +37,7 @@ from pathlib import Path
 OFFSETS_DIR = Path(__file__).with_name("offsets")
 PILES = ("hand", "extra", "deck", "grave", "removed")  # MD locate 13..17, in this order
 FIELD_SLOTS = 13
-SEMANTICS = {"faceup", "defense", "locked_byte", "locked"}
+SEMANTICS = {"faceup", "defense", "locked_byte", "locked", "cpu_type", "turn_base", "normal_summons"}
 
 
 class OffsetError(RuntimeError):
@@ -49,6 +49,7 @@ class Offsets:
     state_ptr: int  # RVA of the pointer to the duel state S
     key_ptr: int  # RVA of the pointer to the LP XOR key (u16 at +0) and my player number (u32 at +4)
     my_player: int
+    player_type: int  # u32 per player at key struct + player_type + p*4; 0 = human (DLL_DuelIsHuman)
     turn: int
     turn_player: int
     phase: int
@@ -79,7 +80,10 @@ class Offsets:
     buildid: str = ""
     verified: bool = False  # flag semantics checked against the screen in a Solo duel
     # read off the screen, not derived: "faceup" mask of a slot's face byte, "defense" mask of its turn byte,
-    # "locked" mask of the slot byte at "locked_byte" (summoned, Set or repositioned this turn)
+    # "locked" mask of the slot byte at "locked_byte" (summoned, Set or repositioned this turn),
+    # "cpu_type" the player type of the computer opponent in a Solo duel, "turn_base" what to add to the turn
+    # counter to get the turn number on screen, "normal_summons" the u32 in the player block counting this turn's
+    # Normal Summons
     semantics: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
@@ -263,6 +267,11 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
     _, phase = single_field("DLL_DuelGetCurrentPhase")
     key_ptr, my_player = single_field("DLL_DuelGetMyPlayerNum")
 
+    human = _until_ret(code.fn("DLL_DuelIsHuman", 0x40))
+    if _rip_loads(human, image_base)[:1] != [key_ptr]:
+        raise OffsetError("DLL_DuelIsHuman: expected a load of the key struct pointer")
+    player_type = int(_find(human, r"cmp\s+dword ptr \[\w+\+\w+\*4" + disp, "player type").group(1), 16)
+
     lp_body = _until_ret(code.fn("DLL_DuelGetLP", 0x40))
     if set(_rip_loads(lp_body, image_base)) != {state_ptr, key_ptr}:
         raise OffsetError("DLL_DuelGetLP: expected loads of the state and key pointers")
@@ -341,7 +350,7 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
     search = code.fn("DLL_DuelSearchCardByUniqueID", 0x100)
     effect_uid = int(_find(search, r"cmp\s+dword ptr \[\w+\+\w+\*8" + disp, "node uid").group(1), 16) - effect_table
 
-    return Offsets(state_ptr=state_ptr, key_ptr=key_ptr, my_player=my_player, turn=turn, turn_player=turn_player,
+    return Offsets(state_ptr=state_ptr, key_ptr=key_ptr, my_player=my_player, player_type=player_type, turn=turn, turn_player=turn_player,
                    phase=phase, player_stride=player_stride, lp=lp, count=counts, pile=pile, pile_stride=pile_stride,
                    slot_base=slot_base, slot_stride=slot_stride, slot_uid=slot_uid, slot_turn=slot_turn,
                    slot_face=slot_face, slot_chain=slot_chain, removed_face=removed_face,
