@@ -392,3 +392,39 @@ def test_expectation_checks_the_policys_action_against_memory():
     battle = Expectation(SimpleNamespace(kind="battle_phase", card=None), before, "main1")
     assert "phase" in check_expectation(battle, before, PASSWORDS)
     assert check_expectation(battle, replace(before, phase=3), PASSWORDS) is None
+
+
+def test_read_request_locates_the_candidates_through_their_uid():
+    from ygorl.md.request import read_request
+
+    mem = build_memory()
+    raw = read_duel(mem, BASE, OFF)
+    me = raw.players[raw.me]
+    zeus, bewd = me.slots[5], me.piles["hand"][0]  # a card on the field and one in hand
+    lst = 0x30000000
+    tail = bytearray(0x200)  # S + 0x3c40 .. : the input state and the dialog block
+    struct.pack_into("<I", tail, OFF.input_mode - 0x3C40, 8)  # select_card
+    struct.pack_into("<I", tail, OFF.input_accepting - 0x3C40, 1)
+    struct.pack_into("<I", tail, OFF.input_player - 0x3C40, 0)
+    head = bytearray(0x600)
+    head[OFF.list_max] = 1
+    struct.pack_into("<HhH", head, OFF.list_type, 6, 0, 0)
+    struct.pack_into("<h", head, OFF.list_count, 2)
+    struct.pack_into("<H", head, OFF.list_marker, 0x12E5)
+    for i, c in enumerate((zeus, bewd)):
+        struct.pack_into("<HH", head, OFF.list_item_cid + 4 * i, c.cid, uid_word(c.uid))
+        struct.pack_into("<H", head, OFF.list_item_from + 4 * i, 14 << 1)  # not the location for this list kind
+    mem.regions.update({STATE + 0x3C40: bytes(tail), BASE + OFF.list_ptr: struct.pack("<Q", lst), lst: bytes(head)})
+    req = read_request(mem, BASE, OFF, raw)
+    assert (req.kind, req.accepting, req.player, req.min, req.max) == ("select_card", True, 0, 1, 1)
+    assert [(c.cid, c.location, c.sequence, c.player) for c in req.candidates] == [
+        (ZEUS, "mzone", 5, 0),
+        (BEWD, "hand", 0, 0),
+    ]
+    assert req.for_client(raw.me)
+    # a position dialog: its choices are the position mask
+    struct.pack_into("<I", tail, OFF.input_mode - 0x3C40, 7)
+    struct.pack_into("<I", tail, OFF.dialog_choices - 0x3C40, 0x7F)
+    mem.regions[STATE + 0x3C40] = bytes(tail)
+    pos = read_request(mem, BASE, OFF, raw)
+    assert (pos.kind, pos.candidates, pos.choices) == ("position", (), (0x7F,))
