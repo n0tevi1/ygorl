@@ -11,6 +11,10 @@ Kinds (``Request.kind``) seen in Solo duels on DLL 97bd4d13 (input mode -> kind)
 1 draw (MD waits for a click to go on), 2 idle (Main Phase command), 3 battle (Battle Phase command),
 4 open (an activate-or-pass prompt at an open timing), 5 chain (activate-or-pass in a chain), 6 summon_pick
 (which monster to summon), 7 position, 8 select_card. Unknown modes come back as ``"mode<N>"``.
+
+Prompts (4, 5) list the cards that can be activated, like a card choice. The list keeps its last items after a
+selection ends, so candidates are only read while a selection kind is pending. The dialog's "mix" entries are
+typed parameters of the message shown (kind 1 message id, kind 5 a card id such as the card being resolved).
 """
 
 from __future__ import annotations
@@ -47,6 +51,8 @@ class Request:
     list_marker: int = 0
     dialog_type: int = 0
     choices: tuple[int, ...] = ()  # dialog choices: raw u32 (enabled << 31 | default << 30 | text id)
+    params: tuple[tuple[int, int], ...] = ()  # dialog mix entries (kind, value): 1 message id, 5 card id, 2/8 numbers
+    source_cid: int = 0  # the card the selection is for (the list marker unless it is 0xfffa / 0xfffb), 0 unknown
     raw: dict = field(default_factory=dict, compare=False)
 
     def for_client(self, me: int) -> bool:
@@ -85,7 +91,7 @@ def read_request(mem: Memory, base: int, off: Offsets, raw: RawDuel) -> Request:
     marker = struct.unpack_from("<H", head, off.list_marker)[0]
     most = head[off.list_max]
     candidates = []
-    if kind in ("select_card", "summon_pick") and count:
+    if kind in ("select_card", "summon_pick", "open", "chain") and count:  # the list is stale otherwise
         items = mem.read(lst + off.list_item_cid, 4 * count)
         sources = mem.read(lst + off.list_item_from, 4 * count)
         for i in range(count):
@@ -100,10 +106,13 @@ def read_request(mem: Memory, base: int, off: Offsets, raw: RawDuel) -> Request:
     choices = tuple(u32(state + off.dialog_choices + 4 * i) for i in range(n_choices))
     if kind == "position" and not choices:
         choices = (u32(state + off.dialog_choices),)  # the position mask (DLL_DuelDlgGetPosMaskOfThisSummon)
+    n_mix = min(u32(state + off.dialog_mix_count), 8)
+    params = tuple((v >> 28, v & 0xFFFFFFF) for v in (u32(state + off.dialog_mix + 4 * i) for i in range(n_mix)))
     least = 0 if list_type <= 5 else 1
     return Request(kind=kind, mode=mode, accepting=bool(accepting), player=player & 1, candidates=tuple(candidates),
                    min=least if candidates else 0, max=min(most, count) if candidates else 0, list_type=list_type,
-                   list_marker=marker, dialog_type=dialog_type, choices=choices,
+                   list_marker=marker, dialog_type=dialog_type, choices=choices, params=params,
+                   source_cid=marker if candidates and marker not in (0xFFFA, 0xFFFB) else 0,
                    raw={"list_count": count, "list_max": most})  # fmt: skip
 
 
