@@ -73,13 +73,14 @@ def near(found, want, tol=8) -> bool:
 
 
 # --- phase menu ---------------------------------------------------------------------------------------------------
-def test_phase_menu_that_never_opens_is_retried_once_then_stuck():
+def test_phase_menu_that_never_opens_is_retried_then_stuck():
     ui, mouse, sleeps = make_ui(board(30))
     with pytest.raises(Stuck, match="did not open"):
         ui.phase("battle")
-    assert mouse.clicks == [L.PHASE_BADGE, L.PHASE_BADGE]  # never the End button's spot (the Graveyard)
-    assert sleeps == [1.2] + [0.3] * 16 + [1.2] + [0.3] * 16  # polled while the menu could still fade in
-    assert [c["why"] for c in ui.take_clicks()] == ["phase menu", "phase menu (again)"] and ui.clicks == []
+    assert mouse.clicks == [L.PHASE_BADGE] * 3  # never the End button's spot (the Graveyard)
+    assert sleeps == ([1.2] + [0.3] * 16) * 3  # polled while the menu could still fade in
+    assert [c["why"] for c in ui.take_clicks()] == ["phase menu", "phase menu (attempt 2)", "phase menu (attempt 3)"]
+    assert ui.clicks == [] and len(ui.evidence) == 9  # the frames seen instead, for the stuck record
 
 
 def test_phase_menu_fading_in_is_waited_for():
