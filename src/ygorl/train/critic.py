@@ -62,6 +62,9 @@ class ValueHead(nn.Module):
 class CriticOutput(NamedTuple):
     q: Tensor  # [..., A], 0 on illegal candidates
     v: Tensor  # [...]
+    aux: Tensor | None = (
+        None  # [..., A, K] action-conditioned auxiliary predictions (train.aux), None without aux heads
+    )
 
 
 class Critic(nn.Module):
@@ -71,12 +74,15 @@ class Critic(nn.Module):
     """
 
     def __init__(self, history_dim: int, action_dim: int, privileged_dim: int = 0, hidden: int = 256,
-                 squash: bool = True) -> None:  # fmt: skip
+                 squash: bool = True, aux_dim: int = 0) -> None:  # fmt: skip
         super().__init__()
         self.privileged_dim = privileged_dim
         self.trunk = nn.Sequential(_mlp(history_dim + privileged_dim, hidden, hidden), nn.ReLU())
         self.q_head = CandidateQHead(hidden, action_dim, hidden, squash)
         self.v_head = ValueHead(hidden, hidden, squash)
+        # auxiliary heads (design R4 / #440): one unsquashed candidate head per target, predicting short-horizon
+        # observables of the taken action (train.aux.aux_targets); the actor never reads them
+        self.aux_heads = nn.ModuleList(CandidateQHead(hidden, action_dim, hidden, squash=False) for _ in range(aux_dim))
 
     def forward(self, history: Tensor, candidates: Tensor, action_mask: Tensor,
                 privileged: Tensor | None = None) -> CriticOutput:  # fmt: skip
@@ -85,7 +91,10 @@ class Critic(nn.Module):
                              f"privileged features {'missing' if privileged is None else 'unexpected'}")  # fmt: skip
         x = history if privileged is None else torch.cat([history, privileged.to(history)], -1)
         ctx = self.trunk(x)
-        return CriticOutput(self.q_head(ctx, candidates, action_mask), self.v_head(ctx))
+        aux = (
+            torch.stack([h(ctx, candidates, action_mask) for h in self.aux_heads], -1) if len(self.aux_heads) else None
+        )
+        return CriticOutput(self.q_head(ctx, candidates, action_mask), self.v_head(ctx), aux)
 
 
 def _masked_mean(x: Tensor, mask: Tensor | None) -> Tensor:
@@ -107,3 +116,11 @@ def q_loss(q: Tensor, actions: Tensor, targets: Tensor, mask: Tensor | None = No
 def v_loss(v: Tensor, targets: Tensor, mask: Tensor | None = None) -> Tensor:
     """``0.5 (V(s_t) - target_t)^2`` averaged over ``mask`` (bool, or float weights)."""
     return _masked_mean(0.5 * (v - targets.detach().to(v)) ** 2, mask)
+
+
+def aux_loss(aux: Tensor, actions: Tensor, targets: Tensor, valid: Tensor) -> Tensor:
+    """``0.5 |aux(s_t, a_t) - target_t|^2`` (summed over the K targets) on the taken candidate, averaged over the rows
+    whose targets were observable (``valid``, bool)."""
+    taken = aux.gather(-2, actions.long().view(-1, 1, 1).expand(-1, 1, aux.shape[-1])).squeeze(-2)
+    per_row = 0.5 * ((taken - targets.detach().to(taken)) ** 2).sum(-1)
+    return _masked_mean(per_row, valid)

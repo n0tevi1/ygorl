@@ -34,6 +34,7 @@ class ActorCriticOutput(NamedTuple):
     logits: Tensor  # [B, A] actor logits, illegal rows = MASKED_LOGIT
     q: Tensor  # [B, A] Q head, 0 on illegal rows
     v: Tensor  # [B] V head
+    aux: Tensor | None = None  # [B, A, K] auxiliary heads (train.aux), None without them
 
 
 class PrivilegedEncoder(nn.Module):
@@ -88,7 +89,7 @@ def collate_privileged(privileged: Sequence[Mapping[str, np.ndarray] | None],
 class ActorCritic(nn.Module):
     def __init__(self, cfg: NetConfig, text: TextFeatures | None = None, *, privileged: bool = True,
                  privileged_dim: int = 64, critic_hidden: int = 128, shared_backbone: bool = True,
-                 deck_order: bool = False) -> None:  # fmt: skip
+                 deck_order: bool = False, aux_dim: int = 0) -> None:  # fmt: skip
         super().__init__()
         self.cfg = cfg
         self.actor = PolicyNet(cfg, text)
@@ -100,7 +101,7 @@ class ActorCritic(nn.Module):
         )
         d = cfg.d_model
         self.critic = Critic(history_dim=d, action_dim=d, privileged_dim=privileged_dim if privileged else 0,
-                             hidden=critic_hidden)  # fmt: skip
+                             hidden=critic_hidden, aux_dim=aux_dim)  # fmt: skip
 
     collate = staticmethod(collate)
     collate_privileged = staticmethod(collate_privileged)
@@ -114,7 +115,8 @@ class ActorCritic(nn.Module):
         width = obs["action_mask"].shape[1]
         obs = trim_padding(obs)
         out = self._forward(obs, privileged)
-        return ActorCriticOutput(_pad_to(out.logits, width, value=MASKED_LOGIT), _pad_to(out.q, width), out.v)
+        return ActorCriticOutput(_pad_to(out.logits, width, value=MASKED_LOGIT), _pad_to(out.q, width), out.v,
+                                 None if out.aux is None else _pad_to(out.aux, width))  # fmt: skip
 
     def _forward(self, obs: Batch, privileged: Mapping[str, Tensor] | None) -> ActorCriticOutput:
         # forward() already removed padding. The public features() entry point scans the masks again,
@@ -129,7 +131,7 @@ class ActorCritic(nn.Module):
                                  "(EncodedVecEnv(privileged=True))")  # fmt: skip
             priv = self.privileged(privileged)
         crit = self.critic(cf.context, cf.actions, cf.action_mask, priv)
-        return ActorCriticOutput(logits, crit.q, crit.v)
+        return ActorCriticOutput(logits, crit.q, crit.v, crit.aux)
 
 
 __all__ = ["ActorCritic", "ActorCriticOutput", "PrivilegedEncoder", "collate_privileged"]

@@ -92,6 +92,8 @@ class TrainConfig:
     critic_hidden: int = 128
     shared_backbone: bool = True
     critic_deck_order: bool = False  # the privileged critic also reads both players' next draws (docs/encoding.md)
+    # auxiliary critic heads (#440, design R4): 0 = none, else len(train.aux.AUX_TARGETS); trained with ppo.aux_coef
+    critic_aux: int = 0
     ppo: PPOConfig = field(default_factory=PPOConfig)
     selfplay_fraction: float = 0.75  # deals against the current policy; the rest against pool snapshots
     pool_size: int = 8

@@ -35,7 +35,8 @@ from torch import Tensor, nn
 from ygorl.nets.batch import policy_logits
 from ygorl.nets.policy import trim_padding
 from ygorl.train.advantages import ESTIMATORS, NORMALIZE_MODES, VRPO_MODES, Estimate, estimate, terminal_returns
-from ygorl.train.critic import q_loss, v_loss
+from ygorl.train.aux import aux_targets
+from ygorl.train.critic import aux_loss, q_loss, v_loss
 from ygorl.train.rollout import Rollout
 
 
@@ -81,6 +82,7 @@ class PPOConfig:
     # windows, responses, selections inside the opponent's effects). 1 = unchanged. Diagnostic for whether those
     # decisions lack gradient rather than signal (docs/spikes/rl-methodology-review-2026-10-20.md §7.2)
     response_weight: float = 1.0
+    aux_coef: float = 0.0  # weight of the critic's auxiliary-head loss (#440); needs a model built with aux heads
 
     def __post_init__(self) -> None:
         if self.critic_target not in ("lambda", "terminal"):
@@ -109,6 +111,8 @@ class PPOConfig:
             raise ValueError("adv_keep_mode must be rows or policy")
         if not self.response_weight > 0:
             raise ValueError("response_weight must be positive")
+        if self.aux_coef < 0:
+            raise ValueError("aux_coef must be nonnegative")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -363,6 +367,10 @@ class PPOLearner:
         obs = trim_padding(ro.obs)
         mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]].to(dev)
         n = actions.shape[0]
+        aux_t = aux_v = None
+        if cfg.aux_coef > 0:
+            at, av = aux_targets(ro.obs, ro.players, ro.dones)
+            aux_t, aux_v = at.reshape(n, -1).to(dev), av.reshape(n).to(dev)
         # advantage filtering: the rows the minibatches draw from (all of them with adv_keep = 0 or in a critic warm-up)
         if policy and cfg.adv_keep > 0:
             keep = adv.abs() >= torch.quantile(adv.abs(), cfg.adv_keep)
@@ -406,9 +414,14 @@ class PPOLearner:
                 loss = loss + cfg.kl_ref_coef * kl_ref + cfg.kl_prior_coef * kl_prior
                 ql = q_loss(out.q.float(), actions[idx], q_targets[idx])
                 vl = v_loss(out.v.float(), v_targets[idx])
-                loss = loss + cfg.q_coef * ql + cfg.v_coef * vl
+                al = torch.zeros((), device=dev)
+                if aux_t is not None:
+                    if out.aux is None:
+                        raise ValueError("aux_coef > 0 needs a model with auxiliary critic heads (critic_aux)")
+                    al = aux_loss(out.aux.float(), actions[idx], aux_t[idx], aux_v[idx])
+                loss = loss + cfg.q_coef * ql + cfg.v_coef * vl + cfg.aux_coef * al
                 if not policy:
-                    loss = cfg.q_coef * ql + cfg.v_coef * vl
+                    loss = cfg.q_coef * ql + cfg.v_coef * vl + cfg.aux_coef * al
                 laps.lap("forward")
                 kl_now = extra.get("approx_kl")
                 rejected = (
@@ -429,7 +442,8 @@ class PPOLearner:
                     steps += 1
                 # Forward diagnostics include a rejected batch; grad_norm counts only applied steps.
                 for key, val in (("loss", loss), ("policy_loss", policy_loss), ("entropy", ent), ("kl_ref", kl_ref),
-                                 ("kl_prior", kl_prior), ("q_loss", ql), ("v_loss", vl), *extra.items()):  # fmt: skip
+                                 ("kl_prior", kl_prior), ("q_loss", ql), ("v_loss", vl), ("aux_loss", al),
+                                 *extra.items()):  # fmt: skip
                     sums[key] += float(val.detach()) if isinstance(val, Tensor) else float(val)
                 checked += 1
                 laps.lap("bookkeeping")
@@ -452,6 +466,8 @@ class PPOLearner:
             stats["v_terminal_mse"] = float((ro.values.reshape(-1) - z).square().mean())
         stats["adv_mean"], stats["adv_std"] = float(adv.mean()), float(adv.std(correction=0))
         stats["rows"], stats["kept_rows"] = n, n_kept
+        if aux_v is not None:
+            stats["aux_valid_rows"] = int(aux_v.sum())
         stats["minibatches"], stats["early_stop"] = steps, int(stopped)
         stats["evaluated_minibatches"], stats["stop_approx_kl"] = checked, stop_kl
         stats["critic_warmup"] = int(not policy)

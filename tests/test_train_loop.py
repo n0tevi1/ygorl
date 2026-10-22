@@ -968,3 +968,14 @@ def test_freeze_id_embedding_keeps_the_table_and_trains_the_rest(tmp_path):
     assert not torch.equal(trainer.model.actor.context[0].weight, other)
     with pytest.raises(ValueError):
         Trainer(replace(cfg, net={**TINY, "id_embedding": False}), tmp_path / "x", log=None)
+
+
+def test_aux_heads_train_on_real_duels(tmp_path):
+    cfg = TrainConfig(decks=PAIR, num_envs=2, env_threads=1, steps=24, event_length=16, net=TINY, privileged_dim=8,
+                      critic_hidden=16, critic_aux=3, max_decisions=60, ppo=PPOConfig(epochs=1, minibatch_size=16,
+                      aux_coef=0.1), snapshot_every=0, checkpoint_every=0, eval_every=0, torch_threads=1,
+                      collect_threads=1, seed=5)  # fmt: skip
+    trainer = Trainer(cfg, tmp_path, log=None)
+    stats = trainer.step()
+    assert stats["aux_valid_rows"] >= 0 and torch.isfinite(torch.tensor(stats["aux_loss"]))
+    assert trainer.model.critic.aux_heads and len(trainer.model.critic.aux_heads) == 3
