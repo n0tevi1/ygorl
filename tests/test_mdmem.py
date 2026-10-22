@@ -312,3 +312,20 @@ def test_client_area_and_reference_frame():
     assert ref.shape == (1184, 2054, 3)
     cx, cy, _, _ = REF_CLIENT
     assert ref[cy + 532, cx + 1576].tolist() == [255, 255, 255]
+
+
+def test_find_icons_on_a_drawn_board():
+    """Two command icons (dark discs with a glyph) above a hand card; a dark square card art is not an icon."""
+    from ygorl.advisor.mdlayout import find_icons
+
+    img = np.full((1184, 2054, 3), 180, np.uint8)
+    yy, xx = np.mgrid[0:1184, 0:2054]
+    for cx, cy, glyph in ((668, 886, 0.3), (842, 890, 0.85)):  # glyph: share of the radius filled by the glyph
+        d = np.hypot(xx - cx, yy - cy)
+        img[d <= 44] = (15, 20, 25)
+        img[d <= 44 * glyph] = (36, 128, 251)
+    img[700:780, 600:680] = (20, 20, 20)  # dark card art
+    found = find_icons(img, 360, 790, 1120, 975)
+    assert len(found) == 2  # within a few pixels of the centres: well inside the 44 px icon
+    assert all(abs(fx - x) <= 8 and abs(fy - y) <= 8 for (fx, fy), (x, y) in zip(found, [(668, 886), (842, 890)]))
+    assert find_icons(img, 520, 640, 780, 840) == []

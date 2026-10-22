@@ -96,4 +96,50 @@ def hand_order(cids: Sequence[int], passwords: Callable[[int], int], cards: Call
     return sorted(range(len(cids)), key=lambda i: _sort_key(cards(passwords(cids[i])), cids[i]))
 
 
-__all__ = ["REF_CLIENT", "command_button", "hand_card", "hand_order", "my_zone", "reference_image", "to_client"]
+__all__ = [
+    "REF_CLIENT",
+    "command_button",
+    "find_icons",
+    "hand_card",
+    "hand_order",
+    "my_zone",
+    "reference_image",
+    "to_client",
+]
+
+
+def find_icons(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
+    """Centres of MD's round command icons (Summon / Set / Activate / Attack / Confirm ...) inside a box.
+
+    Each icon is a disc of radius 40-48 reference pixels with a near-black rim at least ~8 pixels wide; the glyph
+    inside varies (it fills almost the whole Activate icon). A centre scores the share of 48 directions with a
+    dark pixel in the rim band [r-8, r] and a light one at r+10, best over the radii (a small circle Hough
+    test); local maxima of at least 0.7 are returned, left to right.
+    """
+    from scipy import ndimage
+
+    box = img[y0:y1, x0:x1].astype(int)
+    dark = box.max(axis=2) < 62
+    h, w = dark.shape
+    reach = 60
+    ys, xs = np.mgrid[reach : h - reach : 2, reach : w - reach : 2]
+    if ys.size == 0:
+        return []
+    ang = np.linspace(0, 2 * np.pi, 48, endpoint=False)
+    best = np.zeros(ys.shape)
+    for r in (40, 44, 48):
+        score = np.zeros(ys.shape)
+        for t in ang:
+            si, co = np.sin(t), np.cos(t)
+            band = np.zeros(ys.shape, dtype=bool)
+            for rr in (r - 8, r - 5, r - 2):
+                band |= dark[ys + round(rr * si), xs + round(rr * co)]
+            score += band & ~dark[ys + round((r + 10) * si), xs + round((r + 10) * co)]
+        best = np.maximum(best, score / len(ang))
+    peaks = (best >= 0.7) & (best == ndimage.maximum_filter(best, size=21))
+    out: list[tuple[int, int]] = []
+    for i, j in sorted(zip(*np.nonzero(peaks), strict=True), key=lambda ij: -best[ij]):
+        cx, cy = x0 + int(xs[i, j]), y0 + int(ys[i, j])
+        if all(abs(cx - px) > 44 or abs(cy - py) > 44 for px, py in out):
+            out.append((cx, cy))
+    return sorted(out)

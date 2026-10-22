@@ -164,9 +164,20 @@ class Player:
         order = L.hand_order(hand, lambda c: self.passwords.get(c, 0), self.cards.get)
         return L.hand_card(order.index(hand.index(cid)), len(hand))
 
-    def buttons(self, card_xy: tuple[int, int], n: int) -> list[tuple[int, int]]:
-        x, y = card_xy
-        return [(round(x + 10 + (i - (n - 1) / 2) * 170), y - 220) for i in range(n)]
+    def icons_above(self, xy: tuple[int, int], *, hand: bool = False) -> list[tuple[int, int]]:
+        """Command icons MD shows after a card is clicked: a row above a hand card, one icon above a field card."""
+        x, y = xy
+        img = capture(self.mouse.window)
+        if hand:
+            return L.find_icons(img, max(x - 380, 0), 790, min(x + 380, L.REF_W), 975)
+        return L.find_icons(img, max(x - 130, 0), max(y - 260, 0), min(x + 130, L.REF_W), y - 60)
+
+    def click_icon_above(self, xy: tuple[int, int], why: str, pause: float = 1.8) -> bool:
+        icons = self.icons_above(xy)
+        if not icons:
+            return False
+        self.click(*min(icons, key=lambda p: abs(p[0] - xy[0])), why, pause)
+        return True
 
     def free_zone(self, raw: RawDuel, location: str) -> tuple[int, int]:
         slots = raw.players[raw.me].slots
@@ -218,7 +229,14 @@ class Player:
             order = [k for k in ("activate", "sset") if k in options]
         if best.kind not in order:
             raise Stuck(f"{best.kind} not among the buttons {order}")
-        self.click(*self.buttons(xy, len(order))[order.index(best.kind)], best.kind, 1.5)
+        icons = self.icons_above(xy, hand=True)
+        if len(icons) == len(order):
+            target = icons[order.index(best.kind)]
+        elif len(icons) == 1 and best.kind in ("mset", "sset") and order[-1] == best.kind:
+            target = icons[0]  # MD offers only Set here although the reconstruction also allowed more
+        else:
+            raise Stuck(f"{len(icons)} command icons for {self.name(cid)}, expected {order}")
+        self.click(*target, best.kind, 1.5)
         location = "mzone" if card.is_monster else "szone"
         self.click(*self.free_zone(raw, location), f"zone for {best.kind}", 2.5)
         before = sum(c.cid == cid for c in raw.players[raw.me].piles["hand"])
@@ -262,7 +280,8 @@ class Player:
         x, y = my_monster_xy(slot)
         lp_before = opp.lp
         self.click(x, y, f"attacker {self.name(card.cid)}", 1.2)
-        self.click(x, y - 160, "attack", 1.8)
+        if not self.click_icon_above((x, y), "attack"):
+            return  # no Attack command: this monster cannot attack now (Gate of Darkness, already attacked)
         inp = self.input()
         if targets:
             if inp.mode != FIELD_PICK:
@@ -270,7 +289,8 @@ class Player:
             _, s = max(beatable)
             tx, ty = opp_monster_xy(s)
             self.click(tx, ty, f"target {s}", 1.2)
-            self.click(tx, ty - 160, "confirm target", 2.0)
+            if not self.click_icon_above((tx, ty), "confirm target", 2.0):
+                raise Stuck("no Confirm icon above the attack target")
         self.context = f"attack lp {lp_before}"
 
     def prompt(self, raw: RawDuel, inp: Input) -> None:
@@ -309,7 +329,8 @@ class Player:
             raise Stuck("a field selection with no highlighted card found")
         x, y = lit[0]
         self.click(x, y, "highlighted card", 1.2)
-        self.click(x, max(y - 150, 220), "confirm", 1.8)
+        if not self.click_icon_above((x, y), "confirm"):
+            raise Stuck("no Confirm icon above the selected card")
 
     # --- loop -----------------------------------------------------------------------------------------------
     def record_stuck(self, why: str) -> Path:
