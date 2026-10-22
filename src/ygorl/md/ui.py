@@ -211,9 +211,18 @@ class UI:
             nth = "first" if i == 0 else f"#{i + 1}"
             self.click(*cards[i], f"{nth} of {len(cards)} cards in the list", 0.8)
         self.click(*LIST_SELECT, "select", 1.0)
-        if screen_dialog(self.capture()) == "list":
+        if self._list_open(4.0):  # MD can take seconds to act on Select; clicking again would undo the tick
             self.click(*LIST_SELECT_TWO_BUTTONS, "select (two-button list)", 1.5)
+            self._list_open(3.0)
         return cards
+
+    def _list_open(self, seconds: float) -> bool:
+        """Whether the card-list panel is still up after waiting up to ``seconds`` for it to close."""
+        for _ in range(max(1, round(seconds / 0.4))):
+            if screen_dialog(self.capture()) != "list":
+                return False
+            self.sleep(0.4)
+        return True
 
     def respond_prompt(self, activate: bool) -> None:
         """A chain / open-timing prompt: tick the first offered card and Activate, or Cancel."""

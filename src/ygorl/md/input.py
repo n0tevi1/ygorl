@@ -93,8 +93,11 @@ class WindowPointer:
         self._send(MOTION, x, y)
 
     def click(self, x: int, y: int, *, hold: float = 0.06) -> None:
+        # hover first: Unity reacted unreliably to a press right after the pointer arrived (list cards, Select)
         self.move(x, y)
-        time.sleep(0.05)
+        time.sleep(0.1)
+        self.move(x, y)
+        time.sleep(0.15)
         self._send(PRESS, x, y, button=1)
         time.sleep(hold)
         self._send(RELEASE, x, y, state=BUTTON1_MASK, button=1)

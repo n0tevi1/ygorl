@@ -35,6 +35,8 @@ from ygorl.md.input import GatedMouse
 from ygorl.md.memory import PHASES, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
 from ygorl.md.screen import capture as capture_client
 from ygorl.md.ui import UI, Stuck, command_order, my_monster_xy, opp_monster_xy
+from ygorl.md.request import read_request
+from ygorl.selfplay.observe import ShadowObserver
 from ygorl.selfplay.trace import Trace
 
 # --- input state (S + ...): written by duel.dll's command layer, read by DLL_DuelComGetCommandMask --------------
@@ -155,6 +157,7 @@ class Player:
         self.prior = OpponentPrior.from_environment(self.env)
         self.out.mkdir(parents=True, exist_ok=True)
         self.trace = Trace(self.out, screen_every=self.screen_every)
+        self.observer = ShadowObserver(self.env.rule_flags, self.cards, self.prior)  # observe only (design 10)
         self.state_base = struct.unpack("<Q", self.game.memory.read(self.game.module.base + self.game.offsets.state_ptr, 8))[0]  # fmt: skip
         self.attacked: set[int] = set()  # uids that attacked (or could not) in this Battle Phase
         self.turn_seen = -1
@@ -284,6 +287,7 @@ class Player:
         name = self.cards[top.action.card.code].name if top.action.card else ""
         print(f"policy ({snap.phase}): {top.action.kind} {name} p={top.prob:.2f}", flush=True)
         self.trace.policy(top.action, top.prob, snap.phase, allowed)
+        self.trace.observe(shadow_build=self.observer.decided(top.action, snap, deck))
         self.expect = Expectation(top.action, raw, snap.phase)
         return top.action, allowed
 
@@ -401,6 +405,19 @@ class Player:
             raw, inp, dialog = self.wait_turn()
             solo_gate(raw)
             self.trace.begin(step, raw, inp, dialog)
+            if inp.accepting and inp.player == raw.me:
+                req = read_request(self.game.memory, self.game.module.base, self.game.offsets, raw)
+                self.trace.observe(md_request={"kind": req.kind, "candidates": [[c.cid, c.location, c.sequence, c.player]
+                                                                                for c in req.candidates],
+                                               "params": req.params, "min": req.min, "max": req.max})  # fmt: skip
+                compared = self.observer.request(req, raw.me, self.passwords)
+                if compared is not None:
+                    self.trace.observe(shadow_vs_md=compared)
+                    print(
+                        f"  shadow vs MD: {compared.get('md')} / {compared.get('ygo', {}).get('decision')} "
+                        f"consistent={compared.get('consistent')}",
+                        flush=True,
+                    )
             if self.trace.wants_screen(step):
                 self.trace.save_screen(self.ui.capture())
             if dialog == "over":

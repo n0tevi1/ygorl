@@ -217,3 +217,22 @@ def test_place_options_and_commands_by_card():
     assert al.consistent and [idle.actions[i].kind for i in al.pairs[0][1]] == ["summon", "mset"]
     assert find(idle, Option(JACK, "hand"), "mset") == 1
     assert [idle.actions[i].kind for i in al.controls] == ["battle_phase", "end_phase"]
+
+
+def test_md_requests_map_to_bridge_requests():
+    from ygorl.md.request import Candidate
+    from ygorl.md.request import Request as MDRequest
+    from ygorl.selfplay.observe import POSITION_DIALOG, to_bridge
+
+    pw = {5558: 64788463, 5559: 90876561}
+    req = MDRequest(kind="select_card", mode=8, accepting=True, player=0, min=1, max=1,
+                    candidates=(Candidate(5558, 32, 0, "mzone", 0), Candidate(5559, 12, 1, "hand", 2)))  # fmt: skip
+    ask = to_bridge(req, 0, pw)
+    assert ask.kind == "select_card" and (ask.min, ask.max) == (1, 1)
+    assert [(o.password, o.location, o.sequence, o.controller) for o in ask.options] == [
+        (64788463, "mzone", 0, 0), (90876561, "hand", 2, 1)]  # fmt: skip
+    assert to_bridge(MDRequest(kind="chain", mode=5, accepting=True, player=0), 0, pw).kind == "chain"
+    assert to_bridge(MDRequest(kind="position", mode=7, accepting=True, player=0, dialog_type=POSITION_DIALOG),
+                     0, pw).kind == "position"  # fmt: skip
+    assert to_bridge(MDRequest(kind="position", mode=7, accepting=True, player=0), 0, pw).kind == "place"
+    assert to_bridge(MDRequest(kind="draw", mode=1, accepting=True, player=0), 0, pw) is None
