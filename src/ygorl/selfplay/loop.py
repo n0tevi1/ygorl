@@ -24,6 +24,7 @@ import argparse
 import json
 import random
 import struct
+import subprocess
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ from ygorl.engine import constants as C
 from ygorl.md import layout as L
 from ygorl.md.input import GatedMouse
 from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
+from ygorl.md.screen import ScreenError
 from ygorl.md.screen import capture as capture_client
 from ygorl.md.ui import PHASE_MENU_CANCEL, UI, Stuck, command_order, my_monster_xy, opp_monster_xy
 from ygorl.md.panel import PanelBook, panel_kind
@@ -168,7 +170,7 @@ class Player:
         from ygorl.engine.duel import default_cards
 
         self.mouse = GatedMouse()
-        self.ui = UI(self.mouse, lambda: capture(self.mouse.window))
+        self.ui = UI(self.mouse, self._capture)
         self.game = self.mouse.game
         self.cards = default_cards()
         self.passwords = load_md_cid(self.env.artifact_path("md_cid.json"))
@@ -182,6 +184,13 @@ class Player:
         self.context = ""  # what the last action was, for sub-prompts
 
     # --- reading --------------------------------------------------------------------------------------------
+    def _capture(self) -> np.ndarray:
+        try:
+            return capture(self.mouse.window)
+        except (subprocess.CalledProcessError, ScreenError):  # the window moved or was re-created
+            self.mouse.refresh_window()
+            return capture(self.mouse.window)
+
     @property
     def state_base(self) -> int:
         """The duel state S: re-read every time, a new duel (Retry) allocates a new one."""
@@ -620,6 +629,7 @@ class Player:
     def _run(self, max_steps: int) -> int:
         for step in range(max_steps):
             self.trace.end_step(self.ui.take_clicks())  # the previous step, with its clicks
+            self.mouse.refresh_window()
             try:
                 raw, inp, dialog = self.wait_turn()
             except Stuck as exc:  # nothing to do for a long time: MD may wait for a click we do not see

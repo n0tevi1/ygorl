@@ -108,8 +108,17 @@ class GatedMouse:
 
     def __init__(self, window: Window | None = None, *, shared_pointer: bool = False) -> None:
         self.game = attach()
+        self.shared_pointer = shared_pointer
         self.window = window or find_window()
         self.pointer = Pointer() if shared_pointer else WindowPointer(self.window.area)
+
+    def refresh_window(self) -> None:
+        """Find the game window again: it can be moved or re-created (a new client child id) while playing."""
+        window = find_window()
+        if window != self.window:
+            self.window = window
+            if not self.shared_pointer:
+                self.pointer = WindowPointer(window.area)
 
     def _check(self, x: int, y: int) -> tuple[int, int]:
         """Reference-frame point -> absolute screen point inside the game's client area (after the Solo gate)."""
