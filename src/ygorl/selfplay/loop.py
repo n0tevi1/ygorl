@@ -592,7 +592,9 @@ class Player:
         """Tributes: the policy's picks through the shadow; without a shadow, highlighted monsters of the advisor's,
         lowest ATK first. Each is confirmed, until none is left highlighted."""
         me = raw.players[raw.me]
-        for _ in range(3):
+        for n in range(3):
+            if n and self.input().mode != FIELD_PICK:
+                return  # MD took the tributes: the summoned monster glowing in their zone is not another pick
             lit = set(self.ui.highlighted())
             mine = [(s, c) for s, c in enumerate(me.slots[:7]) if c and my_monster_xy(s) in lit]
             if not mine:
@@ -730,7 +732,8 @@ class Player:
                     if len(lit) > alt:
                         self.ui.card_command(lit[alt], "recover: another highlighted card", "confirm")
                 elif mine and inp.mode in (MAIN, BATTLE):
-                    self.ui.phase("end")
+                    # the failed action is masked: decide again rather than give up the phase (that comes at 4)
+                    self.ui.click(*NEUTRAL_SPOT, "recover: click an empty spot, decide again", 1.0)
                 else:
                     self.ui.click(*NEUTRAL_SPOT, "recover: click an empty spot", 1.0)
                     self.ui.continue_draw()
