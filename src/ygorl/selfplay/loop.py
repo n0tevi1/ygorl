@@ -589,28 +589,29 @@ class Player:
         return xy
 
     def summon_pick(self, raw: RawDuel) -> None:
-        """Mode 6 (MD's "summon a monster", e.g. an effect granting a Summon): one of the listed hand monsters,
-        opened in the hand and summoned with its Summon icon. The policy picks through the shadow; without one, the
-        highest ATK. The zone and any further dialog are the loop's next steps."""
-        req = self.request_now(raw)
-        hand = [i for i, c in enumerate(req.candidates) if c.location == "hand" and c.player == raw.me]
-        if not hand:
-            raise Stuck(f"a summon pick with no hand candidate ({len(req.candidates)} candidates)")
-        pick = self.lockstep("list", raw, req)
-        if pick not in hand:
+        """Mode 6 (MD's "summon a monster": an effect or a Tribute Summon asking for the monster): a hand monster,
+        opened in the hand and summoned with its Summon icon. MD keeps no list for it (the list in memory is a stale
+        one), so the candidates are the hand's monsters, strongest first; MD shows a Summon icon only on those it
+        offers. The zone, tributes and any further dialog are the loop's next steps."""
+        me = raw.players[raw.me]
 
-            def atk(i):
-                k = self.cards.get(self.passwords.get(req.candidates[i].cid))
-                return k.attack if k is not None else 0
+        def strength(cid):
+            k = self.cards.get(self.passwords.get(cid))
+            if k is None or not k.is_monster:
+                return None
+            return k.attack if k.attack >= 0 else 1000 * k.level  # "?" ATK: count the level
 
-            pick = max(hand, key=atk)
-            self.trace.rule("summon-pick-strongest")
-        cid = req.candidates[pick].cid
-        xy = self.hand_xy(raw, cid)
-        icons = self.verify_hand_card(raw, cid, xy, self.ui.open_hand_card(xy, f"hand {self.name(cid)} to summon"))
-        if self.ui.choose_command(icons, "summon", ["summon", "mset"], self.name(cid)) is None:
-            raise Stuck(f"no Summon icon on {self.name(cid)} for the summon pick")
-        self.context = "summon"
+        monsters = sorted({c.cid for c in me.piles["hand"] if strength(c.cid) is not None}, key=strength, reverse=True)
+        self.trace.rule("summon-pick-strongest", candidates=monsters)
+        for cid in monsters:
+            raw = self.game.read()
+            xy = self.hand_xy(raw, cid)
+            icons = self.verify_hand_card(raw, cid, xy, self.ui.open_hand_card(xy, f"hand {self.name(cid)} to summon"))
+            if self.ui.choose_command(icons, "summon", ["summon", "mset"], self.name(cid)) is not None:
+                self.context = "summon"
+                return
+            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+        raise Stuck(f"no hand monster shows a Summon icon for the summon pick ({len(monsters)} tried)")
 
     def pick_tributes(self, raw: RawDuel) -> None:
         """Tributes: the policy's picks through the shadow; without a shadow, highlighted monsters of the advisor's,

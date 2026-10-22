@@ -10,7 +10,7 @@ Read-only, and only what is offered to the client: the list never holds the oppo
 Kinds (``Request.kind``) seen in Solo duels on DLL 97bd4d13 (input mode -> kind):
 1 draw (MD waits for a click to go on), 2 idle (Main Phase command), 3 battle (Battle Phase command),
 4 open (an activate-or-pass prompt at an open timing), 5 chain (activate-or-pass in a chain), 6 summon_pick
-(which monster to summon), 7 position, 8 select_card. Unknown modes come back as ``"mode<N>"``.
+(which monster to summon: MD keeps no list for it, the list in memory is stale), 7 position, 8 select_card. Unknown modes come back as ``"mode<N>"``.
 
 Prompts (4, 5) list the cards that can be activated, like a card choice. The list keeps its last items after a
 selection ends, so candidates are only read while a selection kind is pending. The dialog's "mix" entries are
