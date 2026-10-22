@@ -25,7 +25,11 @@ OFF = Offsets(state_ptr=0x11F9C50, key_ptr=0x11F9C48, my_player=0x4, player_type
               pile={"hand": 0x1E4, "extra": 0x5A4, "deck": 0x3C4, "grave": 0x7FC, "removed": 0xA54}, pile_stride=4,
               slot_base=0x5C, slot_stride=0x1C, slot_uid=0x2, slot_turn=0x6, slot_face=0x7, slot_chain=0xA,
               removed_face=0xCAC, removed_facedown=0x80, uid_table=0x1BEC, uid_mask=0x1FF, effect_table=0x2BEC, effect_stride=0x10, effect_kind=0x2,
-              effect_uid=0x4, effect_next=0xC, overlay_code=0x3FB, overlay_kind=0x5)  # fmt: skip
+              effect_uid=0x4, effect_next=0xC, overlay_code=0x3FB, overlay_kind=0x5,
+              input_mode=0x3CD0, input_accepting=0x3CDC, input_player=0x3D00, list_ptr=0x11F9C30, list_max=0x1,
+              list_type=0x2, list_count=0xA, list_marker=0xC, list_item_cid=0x18, list_item_from=0x4C8,
+              dialog_type=0x3C94, dialog_mix_count=0x3CA0, dialog_mix=0x3CA4, dialog_choice_count=0x3CB4,
+              dialog_choices=0x3CB8)  # fmt: skip
 # read off the screen in a Solo duel on this build (design 10)
 SEM = {
     "faceup": 0x01,

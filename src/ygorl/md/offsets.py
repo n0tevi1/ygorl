@@ -77,6 +77,22 @@ class Offsets:
     effect_next: int
     overlay_code: int
     overlay_kind: int
+    # what MD is asking (ygorl.md.request): the engine's input state in S, the selection list, the dialog
+    input_mode: int  # u32 in S: which input the engine waits for (DLL_DuelComGetCommandMask)
+    input_accepting: int  # u32 in S: non-zero while it accepts input
+    input_player: int  # u32 in S: the player it waits for
+    list_ptr: int  # RVA of the pointer to the selection list L (DLL_DuelList*)
+    list_max: int  # u8 in L: most cards to pick
+    list_type: int  # u16 in L: list kind (min picks > 0 when > 5; several picks when 7..0x26)
+    list_count: int  # i16 in L: number of items
+    list_marker: int  # u16 in L: 0xfffb text options, 0xfffa targets (DLL_DuelListGetItemMsg / TargetUniqueID)
+    list_item_cid: int  # u16 per item (stride 4) in L: MD card id
+    list_item_from: int  # u16 per item (stride 4) in L: (location << 1) | controller
+    dialog_type: int  # u32 in S (DLL_DuelDlgCanYesNoSkip)
+    dialog_mix_count: int  # u32 in S; entries follow as u32: kind << 28 | value (DLL_DuelDlgGetMixNum / Data)
+    dialog_mix: int
+    dialog_choice_count: int  # u32 in S; choices follow as u32: enabled << 31 | default << 30 | text id
+    dialog_choices: int
     # filled by callers, not derived
     dll_sha256: str = ""
     buildid: str = ""
@@ -354,6 +370,36 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
     if not any(i.op in ("add", "shl") for i in ov):
         raise OffsetError("DLL_DuelGetThisCardOverlayNum: node indexing changed")
 
+    # --- what MD is asking ---
+    mask = code.fn("DLL_DuelComGetCommandMask", 0x60)
+    input_accepting = int(_find(mask, r"cmp\s+dword ptr \[\w+" + disp + r",0x0", "accepting").group(1), 16)
+    input_mode = int(_find(mask, r"mov\s+\w+,dword ptr \[\w+" + disp, "input mode").group(1), 16)
+    movable = _until_ret(code.fn("DLL_DuelComGetMovablePhase", 0x80))
+    input_player = int(_find(movable, r"mov\s+\w+,dword ptr \[\w+\+0x(3d[0-9a-f]{2})\]", "input player").group(1), 16)
+
+    def list_field(name: str, pattern: str, what: str, length: int = 0x40) -> tuple[int, int]:
+        body = _until_ret(code.fn(name, length))
+        ptr = _rip_loads(body, image_base)[:1]
+        if not ptr:
+            raise OffsetError(f"{name}: no global load")
+        return ptr[0], int(_find(body, pattern, what).group(1), 16)
+
+    list_ptr, list_count = list_field("DLL_DuelListGetItemMax", r"movsx\s+\w+,word ptr \[\w+" + disp, "list count")
+    _, list_max = list_field("DLL_DuelListGetSelectMax", r"movzx\s+\w+,byte ptr \[\w+" + disp, "list max")
+    _, list_type = list_field("DLL_DuelListGetSelectMin", r"movzx\s+\w+,word ptr \[\w+" + disp, "list type")
+    _, list_marker = list_field("DLL_DuelListGetItemTargetUniqueID", r"movzx\s+\w+,word ptr \[\w+" + disp, "marker")
+    _, list_item_from = list_field("DLL_DuelListGetItemFrom", r"word ptr \[\w+\+\w+\*4" + disp, "item from")
+    attr = code.fn("DLL_DuelListGetItemAttribute", 0x80)
+    list_item_cid = int(_find(attr, r"lea\s+\w+,\[\w+" + disp, "item card id").group(1), 16)
+    yesno = _until_ret(code.fn("DLL_DuelDlgCanYesNoSkip", 0x40))
+    dialog_type = int(_find(yesno, r"cmp\s+dword ptr \[\w+" + disp, "dialog type").group(1), 16)
+    _, dialog_mix_count = single_field("DLL_DuelDlgGetMixNum")
+    mix = _until_ret(code.fn("DLL_DuelDlgGetMixData", 0x40))
+    dialog_mix = int(_find(mix, r"dword ptr \[\w+\+\w+\*4" + disp, "mix data").group(1), 16)
+    _, dialog_choice_count = single_field("DLL_DuelDlgGetSelectItemNum")
+    choice = _until_ret(code.fn("DLL_DuelDlgGetSelectItemStr", 0x40))
+    dialog_choices = int(_find(choice, r"dword ptr \[\w+\+\w+\*4" + disp, "dialog choices").group(1), 16)
+
     search = code.fn("DLL_DuelSearchCardByUniqueID", 0x100)
     effect_uid = int(_find(search, r"cmp\s+dword ptr \[\w+\+\w+\*8" + disp, "node uid").group(1), 16) - effect_table
 
@@ -365,7 +411,12 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
                    removed_facedown=removed_facedown, uid_table=uid_table, uid_mask=uid_mask,
                    effect_table=effect_table, effect_stride=16, effect_kind=kind_at - effect_table,
                    effect_uid=effect_uid, effect_next=effect_next - effect_table, overlay_code=overlay_code,
-                   overlay_kind=overlay_kind, dll_sha256=hashlib.sha256(data).hexdigest())  # fmt: skip
+                   overlay_kind=overlay_kind, input_mode=input_mode, input_accepting=input_accepting,
+                   input_player=input_player, list_ptr=list_ptr, list_max=list_max, list_type=list_type,
+                   list_count=list_count, list_marker=list_marker, list_item_cid=list_item_cid,
+                   list_item_from=list_item_from, dialog_type=dialog_type, dialog_mix_count=dialog_mix_count,
+                   dialog_mix=dialog_mix, dialog_choice_count=dialog_choice_count, dialog_choices=dialog_choices,
+                   dll_sha256=hashlib.sha256(data).hexdigest())  # fmt: skip
 
 
 def offsets_file(sha256: str) -> Path:
