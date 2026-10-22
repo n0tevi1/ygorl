@@ -234,8 +234,17 @@ class Player:
         time.sleep(pause)
 
     def phase(self, which: str) -> None:
-        self.click(*L.PHASE_BADGE, "phase menu", 1.2)
-        self.click(*L.PHASE_MENU[which], which, 2.0)
+        """Open the phase menu and pick ``which``. The menu must be seen open first: its End button sits where the
+        Graveyard pile is, so a click on a menu that did not open browses the Graveyard instead."""
+        for attempt in range(2):  # a first click can just close a card left open
+            self.click(*L.PHASE_BADGE, "phase menu" if not attempt else "phase menu (again)", 1.2)
+            img = capture(self.mouse.window)
+            if L.menu_button(img, *L.PHASE_MENU["end"]):
+                if not L.menu_button(img, *L.PHASE_MENU[which]):
+                    raise Stuck(f"the phase menu offers no {which}")
+                self.click(*L.PHASE_MENU[which], which, 2.0)
+                return
+        raise Stuck("the phase menu did not open")
 
     def hand_xy(self, raw: RawDuel, cid: int) -> tuple[int, int]:
         """Screen position of the hand card with MD id ``cid`` (MD sorts the hand on screen)."""
@@ -346,7 +355,6 @@ class Player:
                          "problem": f"MD refused: {why}"})  # fmt: skip
         print(f"  check {action.kind}: MD refused ({why}); masked for this phase", flush=True)
         self.expect = None
-        self.click(*L.PHASE_BADGE_SAFE, "close the card", 0.8)
 
     def decide(self, raw: RawDuel):
         """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""

@@ -36,8 +36,19 @@ COMMAND_DY = -220  # first command button, relative to the clicked hand card
 MY_MZONE_Y, MY_SZONE_Y = 740, 930
 ZONE_X = (650, 844, 1038, 1232, 1426)  # columns 1-5 from the advisor's left
 PHASE_BADGE = (1580, 560)
-PHASE_BADGE_SAFE = (1400, 470)  # an empty spot of the board: clicking it closes an opened card
-PHASE_MENU = {"battle": (1145, 855), "main2": (1380, 855), "end": (1615, 855)}
+PHASE_MENU = {"battle": (1144, 861), "main2": (1379, 861), "end": (1613, 861)}
+
+
+def menu_button(img: np.ndarray, x: int, y: int, radius: int = 90) -> bool:
+    """A phase-menu button is drawn at (x, y): a light (or, for the current phase, yellow-green) ring of radius 90.
+
+    Measured on the open menu: 1.0 of 72 directions hit the ring at r 90 for every available button, 0 off-menu."""
+    ang = np.linspace(0, 2 * np.pi, 72, endpoint=False)
+    px = np.array([img[y + round(radius * np.sin(t)), x + round(radius * np.cos(t))] for t in ang]).astype(int)
+    ring = (px.min(axis=1) > 120) | ((px[:, 1] > 180) & (px[:, 2] < 100))
+    return bool(ring.mean() > 0.8)
+
+
 FIELD_COMMAND_DY = -145
 PROMPT_CARD = (1026, 934)  # the first card of a response prompt
 PROMPT_CANCEL, PROMPT_ACTIVATE = (870, 1117), (1180, 1117)
