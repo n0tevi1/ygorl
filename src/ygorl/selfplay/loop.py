@@ -32,7 +32,7 @@ import numpy as np
 
 from ygorl.md import layout as L
 from ygorl.md.input import GatedMouse
-from ygorl.md.memory import PHASES, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
+from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
 from ygorl.md.screen import capture as capture_client
 from ygorl.md.ui import UI, Stuck, command_order, my_monster_xy, opp_monster_xy
 from ygorl.md.request import read_request
@@ -159,12 +159,16 @@ class Player:
         self.out.mkdir(parents=True, exist_ok=True)
         self.trace = Trace(self.out, screen_every=self.screen_every)
         self.observer = ShadowObserver(self.env.rule_flags, self.cards, self.prior)  # observe only (design 10)
-        self.state_base = struct.unpack("<Q", self.game.memory.read(self.game.module.base + self.game.offsets.state_ptr, 8))[0]  # fmt: skip
         self.attacked: set[int] = set()  # uids that attacked (or could not) in this Battle Phase
         self.turn_seen = -1
         self.context = ""  # what the last action was, for sub-prompts
 
     # --- reading --------------------------------------------------------------------------------------------
+    @property
+    def state_base(self) -> int:
+        """The duel state S: re-read every time, a new duel (Retry) allocates a new one."""
+        return struct.unpack("<Q", self.game.memory.read(self.game.module.base + self.game.offsets.state_ptr, 8))[0]
+
     def input(self) -> Input:
         b = self.game.memory.read(self.state_base + INPUT_MODE, 0x40)
         return Input(struct.unpack_from("<I", b, 0)[0], bool(struct.unpack_from("<I", b, INPUT_ACCEPT - INPUT_MODE)[0]),
@@ -181,7 +185,11 @@ class Player:
         """Wait until the client must act: an engine input addressed to it, or one of MD's dialogs (stable ~1 s)."""
         end, stable, last = time.time() + timeout, 0, None
         while time.time() < end:
-            raw, inp = self.game.read(), self.input()
+            try:
+                raw, inp = self.game.read(), self.input()
+            except MemoryReadError:  # between duels (loading) the state can be gone for a moment
+                time.sleep(1.0)
+                continue
             if raw.finished:  # the engine's own flag: LP reads can catch the obfuscated value mid-update
                 return raw, inp, "over"
             mine = inp.accepting and inp.player == raw.me
