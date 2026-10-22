@@ -507,7 +507,9 @@ class Player:
                 elif inp.mode == FIELD_PICK:
                     self.field_pick(raw)
                 elif inp.mode == 1:
-                    time.sleep(1.0)
+                    # Draw Phase: MD sometimes waits for a click to go on (seen with the Graveyard viewer open);
+                    # the phase badge is harmless here
+                    self.click(*L.PHASE_BADGE, "continue the Draw Phase", 1.5)
                 else:
                     raise Stuck(f"unknown input mode {inp.mode}")
             except Stuck as exc:
