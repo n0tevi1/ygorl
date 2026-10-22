@@ -164,16 +164,19 @@ class Player:
         order = L.hand_order(hand, lambda c: self.passwords.get(c, 0), self.cards.get)
         return L.hand_card(order.index(hand.index(cid)), len(hand))
 
-    def icons_above(self, xy: tuple[int, int], *, hand: bool = False) -> list[tuple[int, int]]:
-        """Command icons MD shows after a card is clicked: a row above a hand card, one icon above a field card."""
+    def open_card(self, xy: tuple[int, int], why: str, *, hand: bool = False) -> list[tuple[int, int]]:
+        """Click a card and return the command icons that click opened: a row above a hand card, an icon above a
+        field card (compared with a capture from just before, so card art is never taken for an icon)."""
         x, y = xy
-        img = capture(self.mouse.window)
+        before = capture(self.mouse.window)
+        self.click(x, y, why, 1.2)
+        after = capture(self.mouse.window)
         if hand:
-            return L.find_icons(img, max(x - 380, 0), 790, min(x + 380, L.REF_W), 975)
-        return L.find_icons(img, max(x - 130, 0), max(y - 260, 0), min(x + 130, L.REF_W), y - 60)
+            return L.new_icons(before, after, max(x - 380, 0), 790, min(x + 380, L.REF_W), 975)
+        return L.new_icons(before, after, max(x - 130, 0), max(y - 260, 0), min(x + 130, L.REF_W), y - 60)
 
-    def click_icon_above(self, xy: tuple[int, int], why: str, pause: float = 1.8) -> bool:
-        icons = self.icons_above(xy)
+    def open_and_click_icon(self, xy: tuple[int, int], why_card: str, why: str, pause: float = 1.8) -> bool:
+        icons = self.open_card(xy, why_card)
         if not icons:
             return False
         self.click(*min(icons, key=lambda p: abs(p[0] - xy[0])), why, pause)
@@ -220,7 +223,7 @@ class Player:
         if where.location != C.LOCATION_HAND:
             raise Stuck(f"no click script for {best.kind} from location {where.location}")
         xy = self.hand_xy(raw, cid)
-        self.click(*xy, f"hand {self.name(cid)}", 1.2)
+        icons = self.open_card(xy, f"hand {self.name(cid)}", hand=True)
         card = self.cards[best.card.code]
         options = kinds.get(best.card.code, set())
         if card.is_monster:
@@ -229,7 +232,6 @@ class Player:
             order = [k for k in ("activate", "sset") if k in options]
         if best.kind not in order:
             raise Stuck(f"{best.kind} not among the buttons {order}")
-        icons = self.icons_above(xy, hand=True)
         if len(icons) == len(order):
             target = icons[order.index(best.kind)]
         elif len(icons) == 1 and best.kind in ("mset", "sset") and order[-1] == best.kind:
@@ -279,8 +281,7 @@ class Player:
         self.attacked.add(card.uid)
         x, y = my_monster_xy(slot)
         lp_before = opp.lp
-        self.click(x, y, f"attacker {self.name(card.cid)}", 1.2)
-        if not self.click_icon_above((x, y), "attack"):
+        if not self.open_and_click_icon((x, y), f"attacker {self.name(card.cid)}", "attack"):
             return  # no Attack command: this monster cannot attack now (Gate of Darkness, already attacked)
         inp = self.input()
         if targets:
@@ -288,8 +289,7 @@ class Player:
                 return  # the attack was not possible (Gate of Darkness, already attacked): try the next monster
             _, s = max(beatable)
             tx, ty = opp_monster_xy(s)
-            self.click(tx, ty, f"target {s}", 1.2)
-            if not self.click_icon_above((tx, ty), "confirm target", 2.0):
+            if not self.open_and_click_icon((tx, ty), f"target {s}", "confirm target", 2.0):
                 raise Stuck("no Confirm icon above the attack target")
         self.context = f"attack lp {lp_before}"
 
@@ -328,8 +328,7 @@ class Player:
         if not lit:
             raise Stuck("a field selection with no highlighted card found")
         x, y = lit[0]
-        self.click(x, y, "highlighted card", 1.2)
-        if not self.click_icon_above((x, y), "confirm"):
+        if not self.open_and_click_icon((x, y), "highlighted card", "confirm"):
             raise Stuck("no Confirm icon above the selected card")
 
     # --- loop -----------------------------------------------------------------------------------------------

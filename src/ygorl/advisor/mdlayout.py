@@ -100,6 +100,7 @@ __all__ = [
     "REF_CLIENT",
     "command_button",
     "find_icons",
+    "new_icons",
     "hand_card",
     "hand_order",
     "my_zone",
@@ -113,8 +114,9 @@ def find_icons(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> list[tupl
 
     Each icon is a disc of radius 40-48 reference pixels with a near-black rim at least ~8 pixels wide; the glyph
     inside varies (it fills almost the whole Activate icon). A centre scores the share of 48 directions with a
-    dark pixel in the rim band [r-8, r] and a light one at r+10, best over the radii (a small circle Hough
-    test); local maxima of at least 0.7 are returned, left to right.
+    dark pixel in the rim band [r-8, r] and light ones at r+6 and r+12, best over the radii (a small circle Hough
+    test); local maxima of at least 0.7 are returned, left to right. Dark card art can pass too: compare with a
+    capture from before the click (:func:`new_icons`).
     """
     from scipy import ndimage
 
@@ -134,12 +136,29 @@ def find_icons(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> list[tupl
             band = np.zeros(ys.shape, dtype=bool)
             for rr in (r - 8, r - 5, r - 2):
                 band |= dark[ys + round(rr * si), xs + round(rr * co)]
-            score += band & ~dark[ys + round((r + 10) * si), xs + round((r + 10) * co)]
+            out1 = dark[ys + round((r + 6) * si), xs + round((r + 6) * co)]
+            out2 = dark[ys + round((r + 12) * si), xs + round((r + 12) * co)]
+            score += band & ~out1 & ~out2
         best = np.maximum(best, score / len(ang))
     peaks = (best >= 0.7) & (best == ndimage.maximum_filter(best, size=21))
     out: list[tuple[int, int]] = []
     for i, j in sorted(zip(*np.nonzero(peaks), strict=True), key=lambda ij: -best[ij]):
         cx, cy = x0 + int(xs[i, j]), y0 + int(ys[i, j])
-        if all(abs(cx - px) > 44 or abs(cy - py) > 44 for px, py in out):
+        if all(abs(cx - qx) > 44 or abs(cy - qy) > 44 for qx, qy in out):
             out.append((cx, cy))
     return sorted(out)
+
+
+def new_icons(before: np.ndarray, after: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
+    """Icons in ``after`` that were not there in ``before`` (the commands a click just opened).
+
+    Shape alone does not separate the icons from dark card art, but the art does not change when a card is
+    clicked: a candidate counts only if its disc changed by a mean of at least 25 per channel.
+    """
+    out = []
+    for x, y in find_icons(after, x0, y0, x1, y1):
+        a = after[y - 40 : y + 40, x - 40 : x + 40].astype(int)
+        b = before[y - 40 : y + 40, x - 40 : x + 40].astype(int)
+        if np.abs(a - b).mean() >= 25:
+            out.append((x, y))
+    return out

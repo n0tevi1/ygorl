@@ -324,8 +324,18 @@ def test_find_icons_on_a_drawn_board():
         d = np.hypot(xx - cx, yy - cy)
         img[d <= 44] = (15, 20, 25)
         img[d <= 44 * glyph] = (36, 128, 251)
-    img[700:780, 600:680] = (20, 20, 20)  # dark card art
     found = find_icons(img, 360, 790, 1120, 975)
     assert len(found) == 2  # within a few pixels of the centres: well inside the 44 px icon
     assert all(abs(fx - x) <= 8 and abs(fy - y) <= 8 for (fx, fy), (x, y) in zip(found, [(668, 886), (842, 890)]))
-    assert find_icons(img, 520, 640, 780, 840) == []
+
+
+def test_new_icons_ignore_card_art_that_was_already_there():
+    from ygorl.advisor.mdlayout import new_icons
+
+    before = np.full((1184, 2054, 3), 180, np.uint8)
+    before[700:780, 600:680] = (20, 20, 20)  # dark card art: looks like an icon to the shape test
+    after = before.copy()
+    yy, xx = np.mgrid[0:1184, 0:2054]
+    after[np.hypot(xx - 840, yy - 600) <= 44] = (15, 20, 25)  # the icon the click opened
+    found = new_icons(before, after, 520, 500, 980, 840)
+    assert len(found) == 1 and abs(found[0][0] - 840) <= 8 and abs(found[0][1] - 600) <= 8
