@@ -138,6 +138,13 @@ def _action_key(action) -> tuple:
     return (action.kind, card.code if card else 0, card.loc.location if card else 0, card.loc.sequence if card else 0)
 
 
+def _own_cards(raw: RawDuel) -> tuple:
+    """Our field (with chain marks) and hand: what an activation of ours would change."""
+    me = raw.players[raw.me]
+    return (tuple((c.cid, c.face, c.sideways, c.flags) if c else None for c in me.slots),
+            tuple(c.cid for c in me.piles["hand"]))  # fmt: skip
+
+
 def _board_key(me, op) -> tuple:
     return (tuple((c.cid, c.face, c.sideways) if c else None for c in me.slots),
             tuple(c.cid for c in me.piles["hand"]), tuple(c.cid for c in me.piles["grave"]),
@@ -184,6 +191,7 @@ class Player:
         self.attacked: set[int] = set()  # uids that attacked (or could not) in this Battle Phase
         self.turn_seen = -1
         self.context = ""  # what the last action was, for sub-prompts
+        self.responded = None  # the prompt state last answered with an activation
 
     # --- reading --------------------------------------------------------------------------------------------
     def _capture(self) -> np.ndarray:
@@ -463,6 +471,13 @@ class Player:
         phase = PHASES[raw.phase] if raw.phase < len(PHASES) else ""
         theirs = raw.turn_player != raw.me
         respond = (theirs and phase == "battle") or (not theirs and phase == "end")
+        # the same prompt again with nothing of ours changed: the activation did not happen (MD can offer a card it
+        # then greys the Activate button for), so pass instead of ticking it forever
+        seen = (raw.turn, raw.phase, inp.mode, _own_cards(raw))
+        if respond and seen == self.responded:
+            respond = False
+            self.trace.observe(prompt="the response did not take: passing")
+        self.responded = seen if respond else None
         self.trace.rule("prompt-respond" if respond else "prompt-pass")
         self.ui.respond_prompt(respond)
         if respond:
@@ -615,13 +630,13 @@ class Player:
                 self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=10.0)
             elif n == 2 or n == 3:
                 alt = n - 1  # the 1st / 2nd alternative
-                if dialog == "list":
+                if mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT):  # its panel looks like a list: pass first
+                    self.ui.respond_prompt(False)
+                elif dialog == "list":
                     cards = self.ui.pick_list_cards([alt])
                     self.trace.rule(f"recover-list-#{alt + 1}", cards=len(cards))
                 elif dialog == "yesno":
                     self.ui.yesno(alt == 1, "recover: the other answer")
-                elif mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT):
-                    self.ui.respond_prompt(False)
                 elif dialog == "banner" or (mine and inp.mode == FIELD_PICK):
                     lit = self.ui.highlighted()
                     if len(lit) > alt:
@@ -645,6 +660,7 @@ class Player:
         self.attacked, self.forbidden, self.recent, self.last_zone = set(), set(), [], None
         self.recoveries, self.recovery_count = {}, 0
         self.turn_seen, self.phase_seen, self.expect, self.context = -1, (-1, -1), None, ""
+        self.responded = None
 
     def _run(self, max_steps: int) -> int:
         for step in range(max_steps):

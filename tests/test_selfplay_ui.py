@@ -226,12 +226,30 @@ def test_player_decisions_drive_the_ui(tmp_path):
     player = Player.__new__(Player)
     player.ui, mouse, sleeps = make_ui(board())
     player.trace = T.Trace(tmp_path)
-    player.context = ""
+    player.context, player.responded = "", None
     player.trace.begin(0, raw, SimpleNamespace(mode=4, accepting=1, player=0), "position")
     player.dialog(raw, "position")
     player.prompt(raw, SimpleNamespace(mode=4, accepting=1, player=0))  # own Main Phase 1: pass
     assert mouse.clicks == [(940, 956), L.my_zone("mzone", 0), L.PROMPT_CANCEL] and sleeps == [1.5, 2.5, 1.5]
     assert player.trace.rec["decision"] == {"by": "rule", "rule": "prompt-pass"}
+
+
+def test_end_phase_prompt_passes_when_the_response_did_not_take(tmp_path):
+    """Our End Phase: respond to a chain prompt once; the same prompt again with nothing of ours changed (MD greyed
+    the Activate button) is passed."""
+    from ygorl.selfplay.loop import PHASES, Player
+
+    raw = read_duel(build_memory(), BASE, replace(OFF, verified=True, semantics=SEM))
+    raw = replace(raw, phase=PHASES.index("end"), turn_player=raw.me)
+    player = Player.__new__(Player)
+    player.ui, mouse, _ = make_ui(board())
+    player.trace = T.Trace(tmp_path)
+    player.context, player.responded = "", None
+    inp = SimpleNamespace(mode=5, accepting=1, player=0)
+    player.trace.begin(0, raw, inp, None)
+    player.prompt(raw, inp)
+    player.prompt(raw, inp)
+    assert mouse.clicks == [L.PROMPT_CARD, L.PROMPT_ACTIVATE, L.PROMPT_CANCEL]
 
 
 # --- trace --------------------------------------------------------------------------------------------------------
