@@ -40,6 +40,20 @@ YESNO_NO, YESNO_YES = (866, 658), (1186, 658)
 PHASE_MENU_CANCEL = (1026, 1035)
 MY_DECK = (1625, 985)  # the advisor's Deck pile, bottom right
 LIST_SELECT, LIST_SELECT_TWO_BUTTONS = (1026, 1116), (1180, 1117)
+LIST_SELECT_TEXT = (963, 1099, 1093, 1139)  # the one-button list's Select label: x0, y0, x1, y1
+
+
+def list_select_state(img: np.ndarray) -> str:
+    """The one-button card list's Select: "enabled" (bright yellow-green label, measured 0.075 of the box),
+    "disabled" (dim olive label, nothing ticked yet: 0.05 dim, 0 bright), "" (no such label: another layout)."""
+    x0, y0, x1, y1 = LIST_SELECT_TEXT
+    r = img[y0:y1, x0:x1].reshape(-1, 3).astype(int)
+    if ((r[:, 1] > 150) & (r[:, 2] < 90)).mean() > 0.03:
+        return "enabled"
+    if ((r[:, 1] >= 85) & (r[:, 2] < 40) & (r[:, 1] > r[:, 0])).mean() > 0.02:
+        return "disabled"
+    return ""
+
 
 # screen centres of field cards; the opponent's row is mirrored
 MY_MZONE_Y, MY_EMZ_Y, OPP_MZONE_Y = 750, 540, 380
@@ -276,9 +290,19 @@ class UI:
         bad = [i for i in indices if not 0 <= i < len(cards)]
         if bad or not indices:
             raise Stuck(f"list entries {list(indices)} asked for, {len(cards)} cards in the list")
-        for i in indices:
-            nth = "first" if i == 0 else f"#{i + 1}"
-            self.click(*cards[i], f"{nth} of {len(cards)} cards in the list", 0.8)
+        for again in ("", " (again: the tick did not register)"):
+            for i in indices:
+                nth = "first" if i == 0 else f"#{i + 1}"
+                self.click(*cards[i], f"{nth} of {len(cards)} cards in the list{again}", 0.8)
+            # Select lights up once MD has the tick; pressing it before then does nothing, and the next tick of the
+            # same card would undo this one
+            for _ in range(8):
+                if list_select_state(self.capture()) != "disabled":
+                    break
+                self.sleep(0.3)
+            else:
+                continue
+            break
         self.click(*LIST_SELECT, "select", 1.0)
         if self._list_open(4.0):  # MD can take seconds to act on Select; clicking again would undo the tick
             self.click(*LIST_SELECT_TWO_BUTTONS, "select (two-button list)", 1.5)

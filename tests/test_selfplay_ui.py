@@ -386,3 +386,15 @@ def test_panel_book_learns_names_and_digits_then_tells_cards_apart():
     assert book.identify(b, [1, 2, 3], stats) == (2, "stats")
     closed = board()
     assert book.identify(closed, [1, 2], stats) == (None, "closed")
+
+
+def test_list_select_state_reads_the_label_colour():
+    from ygorl.md.ui import LIST_SELECT_TEXT, list_select_state
+
+    img = np.zeros((L.REF_H, L.REF_W, 3), np.uint8)
+    assert list_select_state(img) == ""
+    x0, y0, x1, y1 = LIST_SELECT_TEXT
+    img[y0 + 10 : y0 + 20, x0 + 30 : x1 - 30] = (82, 102, 0)  # nothing ticked: dim olive label
+    assert list_select_state(img) == "disabled"
+    img[y0 + 10 : y0 + 20, x0 + 30 : x1 - 30] = (203, 255, 0)  # ticked: bright label
+    assert list_select_state(img) == "enabled"
