@@ -571,6 +571,30 @@ def test_a_warm_start_keeps_its_event_window_unless_one_is_set(run, tmp_path):
         Trainer(pinned, tmp_path / "d", log=None)
 
 
+def test_separate_critic_warm_start_copies_the_actor_trunk(run, vocab, tmp_path):
+    """A separate critic on a warm start (critic_init="actor", the default) starts from the actor's trunk; from a PPO
+    checkpoint its heads load too. critic_init="fresh" leaves the new critic at its random initialization."""
+    trainer, out = run
+    ppo_ckpt = out / "checkpoints" / "latest.pt"
+    logs = []
+    t = Trainer(_small_cfg(init_from=str(ppo_ckpt), shared_backbone=False), tmp_path / "actor", log=logs.append)
+    actor, trunk = t.model.actor.state_dict(), t.model.critic_trunk.state_dict()
+    assert actor.keys() == trunk.keys()
+    assert all(torch.equal(actor[k], trunk[k]) for k in actor)
+    source = trainer.model.critic.state_dict()
+    for k, v in t.model.critic.state_dict().items():
+        assert torch.equal(v, source[k]), k
+    assert any("heads load from the checkpoint" in line for line in logs)
+    assert all(p.requires_grad for p in t.model.critic_trunk.parameters())
+
+    f = Trainer(_small_cfg(init_from=str(ppo_ckpt), shared_backbone=False, critic_init="fresh"), tmp_path / "fresh",
+                log=None)  # fmt: skip
+    fresh = f.model.critic_trunk.state_dict()
+    assert not all(torch.equal(fresh[k], actor[k]) for k in actor)
+    with pytest.raises(ValueError, match="critic_init"):
+        Trainer(_small_cfg(init_from=str(ppo_ckpt), shared_backbone=False, critic_init="x"), tmp_path / "x", log=None)
+
+
 def test_init_from_rejects_a_different_network_or_vocab(run, vocab, tmp_path):
     from dataclasses import replace as dc_replace
 

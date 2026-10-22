@@ -93,6 +93,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--no-text", ("net.card_text", "net.effect_text"), "ignore the text tables in --text-dir", negate=True),
         _f("--id-dropout", "net.id_dropout", "training: drop each card's ID embedding"),
         _f("--separate-critic", "shared_backbone", "critic gets its own trunk", negate=True),
+        _f("--critic-init", "critic_init", "separate critic on a warm start: actor (trunk copied from the actor, heads "
+           "from a PPO checkpoint; #434) or fresh"),
         _f("--critic-aux", "critic_aux", "auxiliary critic heads: 0 = none, 3 = train.aux.AUX_TARGETS (#440)"),
         _f("--critic-deck-order", "critic_deck_order",
            "the privileged critic also sees both players' next 10 draws (docs/encoding.md)"),

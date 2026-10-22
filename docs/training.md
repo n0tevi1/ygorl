@@ -322,6 +322,12 @@ loss = L_policy                                    （可插拔，默认 ppo_cli
 - 预热的更新也计入更新数与数据量。结束时的更新数记在 `counters["critic_warmup_done"]`，续训不会重新预热。
 - 每次更新的统计里有 `critic_warmup`（1 = 这次只训了 critic）。
 
+**独立 critic 的热启动**（`--separate-critic` 加 `--critic-init actor|fresh`，默认 `actor`）：critic 有自己的主干时，热启动
+把 actor 的主干整份拷进 critic 主干；来源是 PPO 检查点时还载入它的 critic 头（Q / V、特权编码器），检查点里没有的
+critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 的 G 配方（[复盘 §6.1](spikes/rl-methodology-review-2026-10-20.md)）：
+从 cold u512 续训 384–512 次更新面板到 0.90，两个种子复现，而从零初始化的独立 critic（F）先掉分；原配方要约 1,700 次更新。
+推荐搭配 `--critic-warmup 8` 和 `--bf16`。`fresh` 保留随机初始化，供对照。
+
 **按回合折扣**（`--turn-discount G`，默认 1.0 = 关闭；快赢压力 T6，与设计 C3 冲突，目前只作诊断臂，见 [spikes/reward-signal.md](spikes/reward-signal.md) R5）：
 - 分出胜负的对局，终局奖励从 ±1 改为 ±G^回合数：早赢奖励大、晚赢奖励小；输的一方拖得越久，负奖励的绝对值越小。截断局仍为 0。
 - 与「每过一回合折扣一次」只差按行所在回合 t 的系数 G^t。这个系数对同一局面的所有候选动作相同，不改变该局面上的梯度方向，只改变不同回合之间的权重。

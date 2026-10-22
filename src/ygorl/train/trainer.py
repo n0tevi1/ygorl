@@ -40,9 +40,11 @@ from ygorl.nets.config import NetConfig
 from ygorl.nets.gemm import use_split_k
 from ygorl.nets.text import TextFeatures
 from ygorl.train.checkpoint import (
+    FORMAT,
     CriticConfig,
     Signature,
     build_actor_critic,
+    checkpoint_format,
     load_actor,
     load_checkpoint,
     save_checkpoint,
@@ -91,6 +93,11 @@ class TrainConfig:
     privileged_dim: int = 64
     critic_hidden: int = 128
     shared_backbone: bool = True
+    # separate critic on a warm start (shared_backbone=False with init_from): "actor" copies the actor's trunk into the
+    # critic trunk and, when init_from is a PPO checkpoint, loads its critic heads too (the arm-G recipe, #434: a
+    # critic that starts from the shared trunk reaches 0.90 in 384 updates where a fresh one dips first); "fresh" keeps
+    # the new critic's random initialization
+    critic_init: str = "actor"
     critic_deck_order: bool = False  # the privileged critic also reads both players' next draws (docs/encoding.md)
     # auxiliary critic heads (#440, design R4): 0 = none, else len(train.aux.AUX_TARGETS); trained with ppo.aux_coef
     critic_aux: int = 0
@@ -234,7 +241,10 @@ class Trainer:
         if init is not None:
             added = warm_start(self.model.actor, init)
             added = f"; new input features start fresh: {added}" if added else ""
-            self.log(f"initialized the actor from {cfg.init_from} (the critic starts fresh{added})")
+            critic = (
+                self._init_separate_critic(cfg) if self.model.critic_trunk is not None else "the critic starts fresh"
+            )
+            self.log(f"initialized the actor from {cfg.init_from} ({critic}{added})")
         if cfg.freeze_id_embedding:
             emb = self.model.actor.identity.id_embedding
             if emb is None:
@@ -291,6 +301,24 @@ class Trainer:
             self._restore(state)
         self._acting_update = self.learner.updates
         (self.run_dir / "config.json").write_text(json.dumps(cfg.to_dict(), indent=2) + "\n")
+
+    def _init_separate_critic(self, cfg: "TrainConfig") -> str:
+        """Initialize a separate critic on a warm start per ``cfg.critic_init``; returns a log phrase."""
+        if cfg.critic_init == "fresh":
+            return "the critic starts fresh"
+        if cfg.critic_init != "actor":
+            raise ValueError(f"critic_init must be 'actor' or 'fresh', not {cfg.critic_init!r}")
+        self.model.critic_trunk.load_state_dict(self.model.actor.state_dict())
+        if checkpoint_format(cfg.init_from) != FORMAT:
+            return "the critic trunk copies the actor; its heads start fresh"
+        source = load_checkpoint(cfg.init_from)["learner"]["model"]
+        heads = {k: v for k, v in source.items() if not k.startswith(("actor.", "critic_trunk."))}
+        missing, unexpected = self.model.load_state_dict(heads, strict=False)
+        fresh = sorted(k for k in missing if not k.startswith(("actor.", "critic_trunk.")))
+        note = f"; critic parameters not in the checkpoint start fresh: {fresh}" if fresh else ""
+        if unexpected:
+            raise ValueError(f"{cfg.init_from}: unexpected critic parameters {unexpected}")
+        return f"the critic trunk copies the actor and its heads load from the checkpoint{note}"
 
     def _event_length(self, cfg: TrainConfig, init) -> TrainConfig:
         """``cfg`` with its event window settled: a warm start keeps the window its network was trained with (like
