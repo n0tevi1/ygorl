@@ -178,19 +178,23 @@ def new_icons(before: np.ndarray, after: np.ndarray, x0: int, y0: int, x1: int, 
 
 
 TRAY_RGB, CARD_STEP = (37, 66, 143), 158  # MD's card-list tray colour and card pitch (reference pixels)
+TRAY_RGBS = (TRAY_RGB, (163, 26, 25))  # blue: own cards; red: the opponent's (a Monster Reborn target in their GY)
 LIST_CARD_Y = 905  # the middle of a listed card's art: y 960, near its lower edge, did not always register a tick
 
 
 def list_cards(img: np.ndarray) -> list[tuple[int, int]]:
     """Centres of the cards shown in MD's card-list panel, left to right.
 
-    The cards sit on flat blue trays whose strip just below them (y ~1030-1060) is unbroken; a tray is
+    The cards sit on flat trays (blue for own cards, red for the opponent's) whose strip just below them (y ~1030-1060) is unbroken; a tray is
     ``158 * n - 20`` wide for n cards (lists of 2, 3, 4 and 6 cards measured), and its cards are spread evenly over
     it. Cards from different places (the field, the Deck: Fusion Materials) sit on separate trays 20 px apart.
     """
     best: list[tuple[int, int]] = []  # (left, width) of the trays on the row that shows the most tray
     for y in range(1030, 1062, 2):
-        tray = (np.abs(img[y].astype(int) - np.array(TRAY_RGB)) < 22).all(axis=1)
+        row = img[y].astype(int)
+        tray = np.zeros(len(row), bool)
+        for rgb in TRAY_RGBS:
+            tray |= (np.abs(row - np.array(rgb)) < 22).all(axis=1)
         padded = np.concatenate([[False], tray, [False]])
         edges = np.flatnonzero(padded[1:] != padded[:-1])
         runs = [(int(a), int(b - a)) for a, b in zip(edges[::2], edges[1::2], strict=True) if b - a >= CARD_STEP - 40]
