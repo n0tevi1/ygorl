@@ -255,7 +255,9 @@ class Player:
             self.pick_tributes(raw)
             return
         location = "mzone" if card.is_monster else "szone"
-        self.ui.pick_zone(location, self.free_zone(raw, location), f"zone for {best.kind}")
+        zone = self.free_zone(raw, location)
+        self.ui.pick_zone(location, zone, f"zone for {best.kind}")
+        self._placed(location, zone)
         before = sum(c.cid == cid for c in raw.players[raw.me].piles["hand"])
         for _ in range(10):
             after = self.game.read()
@@ -341,7 +343,9 @@ class Player:
         if kind == "position":
             self.trace.rule("position-faceup-attack")
             self.ui.pick_position("faceup_attack")
-            self.ui.pick_zone("mzone", self.free_zone(raw, "mzone"), "zone for the summon")
+            zone = self.free_zone(raw, "mzone")
+            self.ui.pick_zone("mzone", zone, "zone for the summon")
+            self._placed("mzone", zone)
         elif kind == "yesno":
             self.trace.rule("yesno-no")
             self.ui.yesno(False)
@@ -442,6 +446,11 @@ class Player:
             time.sleep(1.0)
         raise Stuck("the duel did not restart after Retry")
 
+    def _placed(self, location: str, zone: int) -> None:
+        observer = getattr(self, "observer", None)  # observe only; tests build players without one
+        if observer is not None:
+            self.trace.observe(shadow_place=observer.placed(location, zone))
+
     def reset_game_state(self) -> None:
         self.attacked, self.forbidden, self.recent = set(), set(), []
         self.turn_seen, self.phase_seen, self.expect, self.context = -1, (-1, -1), None, ""
@@ -499,7 +508,9 @@ class Player:
                 elif dialog == "banner" and mine and inp.mode == PLACE:
                     # where to put a monster (after a Tribute Summon: message 327, the free zones highlighted)
                     self.trace.rule("zone-first-free")
-                    self.ui.pick_zone("mzone", self.free_zone(raw, "mzone"), "zone for the summon")
+                    zone = self.free_zone(raw, "mzone")
+                    self.ui.pick_zone("mzone", zone, "zone for the summon")
+                    self._placed("mzone", zone)
                 elif dialog == "banner" and mine and inp.mode == FIELD_PICK:
                     self.field_pick(raw)  # the banner states what to pick on the field (tributes, targets)
                 elif dialog:

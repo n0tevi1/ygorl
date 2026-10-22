@@ -72,6 +72,27 @@ class ShadowObserver:
         except Exception as exc:  # observe only: never break the player
             return {"shadow_error": f"{type(exc).__name__}: {exc}", "where": traceback.format_exc(limit=3)}
 
+    def placed(self, location: str, sequence: int) -> dict | None:
+        """The player picked zone ``sequence`` of ``location`` as part of its action: the shadow picks it too
+        (its own SelectPlace), so the next comparison is with the question after the zone."""
+        shadow = self.shadow
+        if shadow is None or shadow.point is None or type(shadow.point.decision).__name__ != "SelectPlace":
+            return None
+        try:
+            from ygorl.engine import constants as C
+
+            loc = {"mzone": C.LOCATION_MZONE, "szone": C.LOCATION_SZONE}[location]
+            want = loc << 8 | sequence  # a place action's value: controller << 16 | location << 8 | sequence
+            index = next((i for i, a in enumerate(shadow.point.actions)
+                          if a.kind == "place" and a.value & 0xFFFF == want and a.value >> 16 == 0), None)  # fmt: skip
+            if index is None:
+                return {"placed": f"the shadow has no {location} {sequence}"}
+            self.auto += [_auto(s) for s in shadow.step(index)]
+            return {"placed": f"{location} {sequence}"}
+        except Exception as exc:
+            self.shadow = None
+            return {"shadow_error": f"{type(exc).__name__}: {exc}"}
+
     def request(self, req: MDRequest, me: int, passwords: Mapping[int, int]) -> dict | None:
         """MD's first request after the action: align it with the shadow's next decision (once)."""
         if self.shadow is None:
