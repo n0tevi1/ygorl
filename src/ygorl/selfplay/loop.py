@@ -55,6 +55,7 @@ def option_tab(index: int, count: int) -> tuple[int, int]:
     return round(520 + (index + 0.5) * 1020 / count), 418
 
 
+RESULT_WIN = 1  # DLL_DuelGetDuelResult for the client: 1 won (VICTORY, only Confirm), 2 lost (Retry offered)
 NEUTRAL_SPOT = (1300, 640)  # empty board between the rows: clicking it closes a card left open
 RESULT_RETRY = (743, 1093)  # MD's result screen: Retry (left) and OK (right)
 MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, PLACE, FIELD_PICK = 2, 3, 4, 5, 6, 7, 8  # observed modes
@@ -748,6 +749,13 @@ class Player:
             print(f"=== game {g + 1} summary {summary}", flush=True)
             if code != 0:
                 return code
+            if result == RESULT_WIN:
+                # a won Solo duel offers no Retry: Confirm leads to the stage menu, which is outside the duel and so
+                # outside what the player may click (design 10). The series ends here.
+                print(
+                    "=== won: MD returns to the Solo menu after a win; the next duel is started from there", flush=True
+                )
+                return 0
             if g + 1 < games:
                 self.restart_duel()
         return 0
