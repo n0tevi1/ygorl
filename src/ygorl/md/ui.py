@@ -79,6 +79,7 @@ def box_mean(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
 
 RADIO_X = (540, 590)  # the yellow radio rings of MD's "pick one" dialog (e.g. banish 3 or 6 cards), left of the rows
 RADIO_ROW_X, RADIO_CONFIRM = 1027, (1026, 840)
+RADIO_CONFIRM_TEXT = (995, 826, 1060, 856)  # its 确认 label (measured 1005-1047 x 831-850)
 
 
 def radio_rows(img: np.ndarray) -> list[int]:
@@ -101,8 +102,8 @@ def screen_dialog(img: np.ndarray) -> str | None:
     """MD UI dialogs that are not engine input states (measured on the 2054x1184 window)."""
     if L.menu_button(img, *L.PHASE_MENU["end"]):
         return "phase_menu"  # MD's phase menu (left open by an interrupted phase change)
-    if len(radio_rows(img)) >= 2:
-        return "radio"  # its dark panel would otherwise read as a yes / no dialog
+    if len(radio_rows(img)) >= 2 and list_select_state(img, RADIO_CONFIRM_TEXT) != "":
+        return "radio"  # its dark panel would otherwise read as a yes / no dialog (rings alone: an animation)
     pos_l, pos_r = box_mean(img, 925, 940, 955, 970), box_mean(img, 1100, 940, 1130, 970)
     above = box_mean(img, 700, 760, 1350, 790)  # the board around the position dialog, a prompt panel's title row
     if pos_l[0] < 30 and pos_l[1] < 60 and pos_r[0] < 30 and pos_r[1] < 70 and above.mean() > 100:

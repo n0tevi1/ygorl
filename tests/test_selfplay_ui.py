@@ -409,6 +409,8 @@ def test_radio_dialog_rows_and_pick():
     for cy in (413, 489):
         img[cy - 21 : cy + 22, 545:585] = (230, 220, 60)
     assert radio_rows(img) == [413, 489]
+    assert screen_dialog(img) != "radio"  # rings without the dialog's Confirm label: a passing animation
+    img[832:850, 1005:1047] = (82, 102, 0)  # 确认, dim until a row is picked
     assert screen_dialog(img) == "radio"
     ui, mouse, _ = make_ui(img)
     assert ui.pick_radio(0) == 2
