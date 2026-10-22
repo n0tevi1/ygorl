@@ -187,8 +187,8 @@ def list_panel(n: int) -> tuple[np.ndarray, list[int]]:
 def test_list_selection_by_index():
     panel, centres = list_panel(3)
     ui, mouse, sleeps = make_ui(panel, board())  # the panel closes after Select
-    assert ui.pick_list_cards([1]) == [(x, 960) for x in centres]
-    assert mouse.clicks == [(centres[1], 960), (1026, 1116)] and sleeps == [0.8, 1.0]
+    assert ui.pick_list_cards([1]) == [(x, 905) for x in centres]
+    assert mouse.clicks == [(centres[1], 905), (1026, 1116)] and sleeps == [0.8, 1.0]
     assert ui.clicks[0]["why"] == "#2 of 3 cards in the list"
 
 
@@ -196,7 +196,7 @@ def test_list_with_two_buttons_and_empty_list():
     panel, centres = list_panel(2)
     ui, mouse, _ = make_ui(panel)  # still a list after Select: the right button
     ui.pick_list_cards([0])
-    assert mouse.clicks == [(centres[0], 960), (1026, 1116), (1180, 1117)]
+    assert mouse.clicks == [(centres[0], 905), (1026, 1116), (1180, 1117)]
     ui, _, _ = make_ui(board())
     with pytest.raises(Stuck, match="no card found"):
         ui.pick_list_cards([0])

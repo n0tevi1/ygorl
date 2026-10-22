@@ -178,6 +178,7 @@ def new_icons(before: np.ndarray, after: np.ndarray, x0: int, y0: int, x1: int, 
 
 
 TRAY_RGB, CARD_STEP = (37, 66, 143), 158  # MD's card-list tray colour and card pitch (reference pixels)
+LIST_CARD_Y = 905  # the middle of a listed card's art: y 960, near its lower edge, did not always register a tick
 
 
 def list_cards(img: np.ndarray) -> list[tuple[int, int]]:
@@ -198,4 +199,4 @@ def list_cards(img: np.ndarray) -> list[tuple[int, int]]:
     if n < 1:
         return []
     first = best_left + (best_run - (n - 1) * CARD_STEP) / 2
-    return [(round(first + i * CARD_STEP), 960) for i in range(n)]
+    return [(round(first + i * CARD_STEP), LIST_CARD_Y) for i in range(n)]

@@ -361,7 +361,7 @@ def test_list_cards_from_the_tray_width(n):
     for x in centres:
         img[890:1030, x - 60 : x + 60] = (200, 160, 90)  # card art, with some tray-blue in it
         img[930:950, x - 10 : x + 10] = TRAY_RGB
-    assert list_cards(img) == [(x, 960) for x in centres]
+    assert list_cards(img) == [(x, 905) for x in centres]
 
 
 def test_expectation_checks_the_policys_action_against_memory():
