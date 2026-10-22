@@ -11,8 +11,10 @@ Layout found in build 23020425 (``S`` = ``*(duel.dll + state_ptr)``, ``p`` = pla
     S + p*player_stride + lp            LP, XOR the u16 at *(duel.dll + key_ptr)
     S + p*player_stride + count[zone]   u32 card counts (hand, deck, extra, grave, removed)
     S + p*player_stride + slot_base + i*slot_stride   field slot i (0-6 Monster Zones, 7-11 S/T, 12 Field)
-        +0 u16 card id, +2 u16 uid word, +slot_turn u8, +slot_face u8, +slot_chain u16 effect-list head
+        +0 u16 card id, +2 u16 uid word, +slot_turn u8 (sideways = Defense Position), +slot_face u8 (face-up),
+        +slot_chain u16 effect-list head
     S + p*player_stride + zone_base[zone] + i*4       pile entry: u16 card id, u16 uid word
+    S + p*player_stride + removed_face + i*2          banished entry i: bit removed_facedown set = face-down
     S + uid_table + uid*8                             u16 card id of a unique id (uid < 512)
     S + effect_table + n*16                           effect-list node: u16 code, u8 kind, u32 uid, ..., u16 next
 
@@ -35,7 +37,7 @@ from pathlib import Path
 OFFSETS_DIR = Path(__file__).with_name("offsets")
 PILES = ("hand", "extra", "deck", "grave", "removed")  # MD locate 13..17, in this order
 FIELD_SLOTS = 13
-SEMANTICS = {"faceup", "defense", "pile_facedown"}
+SEMANTICS = {"faceup", "defense"}
 
 
 class OffsetError(RuntimeError):
@@ -58,9 +60,11 @@ class Offsets:
     slot_base: int
     slot_stride: int
     slot_uid: int
-    slot_turn: int
+    slot_turn: int  # DLL_DuelGetCardTurn: the card is turned sideways (Defense Position), not a turn number
     slot_face: int
     slot_chain: int
+    removed_face: int  # per banished card, 2 bytes each
+    removed_facedown: int  # bit mask in that byte
     uid_table: int
     uid_mask: int
     effect_table: int
@@ -74,8 +78,7 @@ class Offsets:
     dll_sha256: str = ""
     buildid: str = ""
     verified: bool = False  # flag semantics checked against the screen in a Solo duel
-    # bit masks read off the screen, not the code: "faceup" / "defense" in a slot's face byte,
-    # "pile_facedown" in a pile entry's flags (face-down banished)
+    # bit masks read off the screen, not the code: "faceup" in a slot's face byte, "defense" in its turn byte
     semantics: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
 
@@ -224,16 +227,16 @@ def _rip_loads(insns: list[Insn], base: int) -> list[int]:
 
 
 def _locate_chain(insns: list[Insn]) -> dict[int, int]:
-    """The ``locate`` switch: ``sub edx,0xd; je A; sub edx,1; je B; ...; cmp edx,1; je E`` -> {13: A, 14: B, ...}."""
+    """The ``locate`` switch: ``sub edx,0xd; je A; sub edx,1; je B; ...; cmp edx,1; je E`` -> {13: A, 14: B, ...}
+    (the last case may be ``cmp edx,1; jne default`` falling through)."""
     out: dict[int, int] = {}
     value = 0
-    for a, b in zip(insns, insns[1:], strict=False):
+    for a, b, c in zip(insns, insns[1:], insns[2:], strict=False):
         m = re.fullmatch(r"(\w+),(0x[0-9a-f]+)", a.args)
         if not m or a.op not in ("sub", "cmp") or b.op not in ("je", "jne") or b.target is None:
             continue
         value += int(m.group(2), 16)
-        if b.op == "je":
-            out[value] = b.target
+        out[value] = b.target if b.op == "je" else c.addr  # `cmp edx,1; jne default` falls through to the case
         if a.op == "cmp":
             break
     return out
@@ -306,6 +309,15 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
 
     slot_turn, slot_face = slot_byte("DLL_DuelGetCardTurn"), slot_byte("DLL_DuelGetCardFace")
 
+    # DLL_DuelGetCardFace(p, 17, i): banished cards keep their face in a separate 2-byte-per-card array
+    face_fn = code.fn("DLL_DuelGetCardFace", 0x200)
+    removed_va = _locate_chain(face_fn).get(17)
+    if removed_va is None:
+        raise OffsetError("DLL_DuelGetCardFace: no banished-card case")
+    body = _until_ret(code.at(removed_va, 0x80))
+    removed_face = int(_find(body, r"byte ptr \[\w+\+\w+\*2" + disp, "banished face array").group(1), 16)
+    removed_facedown = 1 << int(_find(body, r"shr\s+\w+," + _HEX + "$", "banished face bit").group(1), 16)
+
     ids = _until_ret(code.fn("DLL_DuelGetCardIDByUniqueID2", 0x80))
     uid_mask = int(_find(ids, r"and\s+\w+," + _HEX, "uid mask").group(1), 16)
     # two u16 loads per entry: the card id and (at +4) an alias index; the card id comes first in the entry
@@ -331,7 +343,8 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
     return Offsets(state_ptr=state_ptr, key_ptr=key_ptr, my_player=my_player, turn=turn, turn_player=turn_player,
                    phase=phase, player_stride=player_stride, lp=lp, count=counts, pile=pile, pile_stride=pile_stride,
                    slot_base=slot_base, slot_stride=slot_stride, slot_uid=slot_uid, slot_turn=slot_turn,
-                   slot_face=slot_face, slot_chain=slot_chain, uid_table=uid_table, uid_mask=uid_mask,
+                   slot_face=slot_face, slot_chain=slot_chain, removed_face=removed_face,
+                   removed_facedown=removed_facedown, uid_table=uid_table, uid_mask=uid_mask,
                    effect_table=effect_table, effect_stride=16, effect_kind=kind_at - effect_table,
                    effect_uid=effect_uid, effect_next=effect_next - effect_table, overlay_code=overlay_code,
                    overlay_kind=overlay_kind, dll_sha256=hashlib.sha256(data).hexdigest())  # fmt: skip

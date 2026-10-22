@@ -124,8 +124,9 @@ M4 待议的消融（不改变主线设计，结果先入 `docs/experiments/`）
 - **T7.1–T7.4**（[design/10](design/10-master-duel.md)、[benchmarks.md](benchmarks.md)「MD 建议器：重建保真」）：`ydke://` 读写；环境 `match` 段；`BoardSnapshot` 与重建（`Debug.AddCard` 脚本放卡，含超量素材 / 指示物）；`ygorl advise`。
   自博弈 327 个决策点上合法动作 Jaccard 0.91、策略 top-1 一致 78%，差异主要来自本回合已用的效果。
 - **T7.5**（design/10「探路结论」）：可行。`duel.dll` 的查询函数直接读一块全局对局状态（回合、阶段、LP 与各区卡片的偏移已从反汇编得到，buildid 23020425）。
-- **T7.6**（进行中）：读取器、从 `duel.dll` 自动推导偏移（游戏更新后不需要人工 rebase）、`md_cid.json`、`ygorl advise --attach [--raw]` 已完成；
-  剩下在单人模式对局中核对标志位含义（design/10「仍需在游戏运行时核对」），需要有人启动游戏。
+- **T7.6**：读取器、从 `duel.dll` 自动推导偏移（游戏更新后不需要人工 rebase）、`md_cid.json`、`ygorl advise --attach [--raw]`；
+  2026-10-21 在单人模式对局中核对了表侧 / 守备表示与格子编号，实机读取 → 快照 → 重建 → 合法动作与画面一致（design/10「运行时核对」）。
+  后续：解读格子状态字（本回合已召唤 / 改变表示形式）、从自己的卡组区直接读卡组构成以省掉 `--deck`。
 - **`.yrpX` 导出**（T1.8 补充）：现按 EDOPro 方式 LZMA 压缩（1–3 MB → 10–20 KB）；T1.8 的人工回看需确认压缩文件在客户端里能打开（`--yrpx-uncompressed` 可对照）。
 
 ### M6 元游戏闭环与 off-meta 报告

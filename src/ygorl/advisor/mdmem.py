@@ -155,8 +155,9 @@ class RawCard:
     cid: int  # MD card id (= Konami database id)
     uid: int  # unique id of this card in the duel
     flags: int  # low byte of the uid word without the uid bit
-    face: int = 0  # field slots only: the DLL_DuelGetCardFace byte
-    turn: int = 0  # field slots only: the DLL_DuelGetCardTurn byte
+    face: int = 0  # field slots only: the DLL_DuelGetCardFace byte (face-up)
+    sideways: int = 0  # field slots only: the DLL_DuelGetCardTurn byte (turned sideways = Defense Position)
+    facedown: bool = False  # banished cards only
     materials: tuple[int, ...] = ()  # Xyz materials, MD card ids
 
 
@@ -225,14 +226,15 @@ def read_duel(mem: Memory, base: int, off: Offsets) -> RawDuel:
                 continue
             w = _u16(s, at + off.slot_uid)
             slots.append(RawCard(cid=cid, uid=decode_uid(w), flags=w & 0xFE, face=s[at + off.slot_face],
-                                 turn=s[at + off.slot_turn], materials=materials(_u16(s, at + off.slot_chain))))  # fmt: skip
+                                 sideways=s[at + off.slot_turn], materials=materials(_u16(s, at + off.slot_chain))))  # fmt: skip
         counts = {z: _u32(s, blk + off.count[z]) for z in PILES}
         piles = {}
         for z in PILES:
             n = min(counts[z], 255)
             entries = [blk + off.pile[z] + i * off.pile_stride for i in range(n)]
-            piles[z] = tuple(RawCard(cid=_u16(s, e), uid=decode_uid(_u16(s, e + 2)), flags=_u16(s, e + 2) & 0xFE)
-                             for e in entries)  # fmt: skip
+            piles[z] = tuple(RawCard(cid=_u16(s, e), uid=decode_uid(_u16(s, e + 2)), flags=_u16(s, e + 2) & 0xFE,
+                                     facedown=z == "removed" and bool(s[blk + off.removed_face + 2 * i] & off.removed_facedown))
+                             for i, e in enumerate(entries))  # fmt: skip
         lp = (_u32(s, blk + off.lp) ^ xor_key) & 0xFFFFFFFF
         players.append(RawPlayer(lp=lp, slots=tuple(slots), piles=piles, counts=counts))
     return RawDuel(turn=_u32(s, off.turn), phase=_u32(s, off.phase), turn_player=_u32(s, off.turn_player) & 1,
@@ -283,7 +285,7 @@ def format_raw(raw: RawDuel, names: Mapping[int, str] | None = None) -> str:
         for i, c in enumerate(pl.slots):
             if c is not None:
                 hide = not mine
-                extra = f" face={c.face:#04x} turn={c.turn}"
+                extra = f" face={c.face:#04x} sideways={c.sideways}"
                 mats = f" materials={len(c.materials)}" if c.materials else ""
                 lines.append(f"  {SLOT_NAMES[i]:6} {label(c, hide)}{extra if not hide else ''}{mats}")
         for z in ("hand", "grave", "removed") if mine else ("grave",):
@@ -316,7 +318,7 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int]) -> BoardSnapshot:
             loc, seq = ("mzone", i) if i < 7 else ("szone", i - 7)
             faceup = bool(c.face & off.semantics["faceup"])
             if loc == "mzone":
-                defense = bool(c.face & off.semantics["defense"])
+                defense = bool(c.sideways & off.semantics["defense"])
                 pos = ("faceup_" if faceup else "facedown_") + ("defense" if defense else "attack")
             else:
                 pos = "faceup" if faceup else "facedown"
@@ -326,7 +328,7 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int]) -> BoardSnapshot:
                                       materials=tuple(pw(m) for m in c.materials) if known else ()))  # fmt: skip
         cards += [SnapshotCard("grave", pw(c.cid)) for c in pl.piles["grave"]]
         for c in pl.piles["removed"]:
-            down = bool(c.flags & off.semantics["pile_facedown"])
+            down = c.facedown
             cards.append(SnapshotCard("removed", pw(c.cid) if mine or not down else UNKNOWN,
                                       position="facedown" if down else ""))  # fmt: skip
         if mine:
@@ -337,7 +339,7 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int]) -> BoardSnapshot:
                                   extra_count=pl.counts["extra"]))  # fmt: skip
     went_first = (raw.turn % 2 == 1) == (raw.turn_player == raw.me)
     return BoardSnapshot(turn=raw.turn, phase=PHASES[raw.phase], sides=(sides[0], sides[1]), turn_player=0,
-                         went_first=went_first, source=f"mdmem:{off.buildid or off.dll_sha256[:16]}").check()  # fmt: skip
+                         went_first=went_first, source=f"mdmem:{off.dll_sha256[:16]}").check()  # fmt: skip
 
 
 __all__ = ["Attached", "BufferMemory", "Memory", "MemoryReadError", "Module", "ProcessMemory", "RawCard", "RawDuel",

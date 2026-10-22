@@ -23,10 +23,10 @@ OFF = Offsets(state_ptr=0x11F9C50, key_ptr=0x11F9C48, my_player=0x4, turn=0x3C14
               count={"hand": 0xC, "extra": 0x18, "deck": 0x10, "grave": 0x14, "removed": 0x1C},
               pile={"hand": 0x1E4, "extra": 0x5A4, "deck": 0x3C4, "grave": 0x7FC, "removed": 0xA54}, pile_stride=4,
               slot_base=0x5C, slot_stride=0x1C, slot_uid=0x2, slot_turn=0x6, slot_face=0x7, slot_chain=0xA,
-              uid_table=0x1BEC, uid_mask=0x1FF, effect_table=0x2BEC, effect_stride=0x10, effect_kind=0x2,
+              removed_face=0xCAC, removed_facedown=0x80, uid_table=0x1BEC, uid_mask=0x1FF, effect_table=0x2BEC, effect_stride=0x10, effect_kind=0x2,
               effect_uid=0x4, effect_next=0xC, overlay_code=0x3FB, overlay_kind=0x5)  # fmt: skip
-# made-up flag bits for the synthetic board (the real ones are read off the screen)
-SEM = {"faceup": 0x01, "defense": 0x02, "pile_facedown": 0x40}
+# read off the screen in a Solo duel on this build (design 10)
+SEM = {"faceup": 0x01, "defense": 0x01}
 
 BEWD, DM, ASH, ZEUS, MAT = 4007, 4041, 13587, 16210, 4844  # MD card ids
 PASSWORDS = {BEWD: 89631139, DM: 46986414, ASH: 14558127, ZEUS: 90448279, MAT: 70095154}
@@ -51,6 +51,15 @@ def test_offsets_json_round_trip_and_verified_needs_semantics():
     assert Offsets.from_json(off.to_json()) == off
     with pytest.raises(OffsetError, match="semantics"):
         Offsets.from_json({**off.to_json(), "semantics": {"faceup": "0x1"}})
+
+
+def test_recorded_offsets_match_the_derivation():
+    """The committed file for build 23020425 is the derivation plus the screen-checked semantics."""
+    from ygorl.advisor.mdoffsets import offsets_file
+
+    rec = Offsets.from_json(__import__("json").loads(offsets_file(BUILD_23020425).read_text()))
+    assert rec.verified and rec.semantics == SEM
+    assert replace(rec, dll_sha256="", buildid="", verified=False, semantics={}, notes=[]) == OFF
 
 
 @pytest.mark.skipif(not INSTALLED.is_file(), reason="Master Duel is not installed")
@@ -89,18 +98,20 @@ def build_memory(*, me=0, turn=3, turn_player=0, phase=2):
         struct.pack_into("<H", s, OFF.uid_table + uid * 8, cid)
         return uid
 
-    def slot(p, i, cid, face, chain=0):
+    def slot(p, i, cid, face, sideways=0, chain=0):
         at = p * OFF.player_stride + OFF.slot_base + i * OFF.slot_stride
         struct.pack_into("<HH", s, at, cid, uid_word(put_uid(cid)))
         s[at + OFF.slot_face] = face
-        s[at + OFF.slot_turn] = 1
+        s[at + OFF.slot_turn] = sideways
         struct.pack_into("<H", s, at + OFF.slot_chain, chain)
 
     def pile(p, zone, cards):
         blk = p * OFF.player_stride
         struct.pack_into("<I", s, blk + OFF.count[zone], len(cards))
-        for i, (cid, flags) in enumerate(cards):
-            struct.pack_into("<HH", s, blk + OFF.pile[zone] + 4 * i, cid, uid_word(put_uid(cid), flags))
+        for i, (cid, facedown) in enumerate(cards):
+            struct.pack_into("<HH", s, blk + OFF.pile[zone] + 4 * i, cid, uid_word(put_uid(cid)))
+            if facedown:
+                s[blk + OFF.removed_face + 2 * i] = OFF.removed_facedown
 
     def node(n, code, kind, uid, nxt):
         at = OFF.effect_table + n * OFF.effect_stride
@@ -123,12 +134,12 @@ def build_memory(*, me=0, turn=3, turn_player=0, phase=2):
     pile(adv, "extra", [(ZEUS, 0)] * 14)
     # opponent: face-up attack Blue-Eyes, face-down defense monster, Set S/T, 4 hand cards whose ids are present
     slot(opp, 0, BEWD, SEM["faceup"])
-    slot(opp, 1, DM, SEM["defense"])
+    slot(opp, 1, DM, 0, sideways=1)
     slot(opp, 8, ASH, 0)
     pile(opp, "hand", [(DM, 0)] * 4)
     pile(opp, "deck", [(BEWD, 0)] * 28)
     pile(opp, "grave", [(ASH, 0)])
-    pile(opp, "removed", [(BEWD, 0), (DM, SEM["pile_facedown"])])
+    pile(opp, "removed", [(BEWD, False), (DM, True)])
     key = struct.pack("<HHI", XOR, 0, me)
     regions = {BASE + OFF.state_ptr: struct.pack("<Q", STATE), BASE + OFF.key_ptr: struct.pack("<Q", KEY),
                STATE: bytes(s), KEY: key}  # fmt: skip
@@ -144,7 +155,7 @@ def test_read_duel(me):
     assert mine.slots[5].cid == ZEUS and mine.slots[5].materials == (MAT,)
     assert [c.cid for c in mine.piles["hand"]] == [BEWD, ASH]
     assert theirs.counts == {"hand": 4, "extra": 0, "deck": 28, "grave": 1, "removed": 2}
-    assert theirs.piles["removed"][1].flags == SEM["pile_facedown"]
+    assert [c.facedown for c in theirs.piles["removed"]] == [False, True]
 
 
 def test_to_snapshot_needs_verified_offsets():
@@ -155,10 +166,10 @@ def test_to_snapshot_needs_verified_offsets():
 
 @pytest.mark.parametrize("me", [0, 1])
 def test_to_snapshot_shows_only_what_the_advisor_can_see(me):
-    off = replace(OFF, verified=True, semantics=SEM, buildid="23020425")
+    off = replace(OFF, verified=True, semantics=SEM, dll_sha256="ab" * 32)
     raw = read_duel(build_memory(me=me, turn_player=me), BASE, off)
     snap = to_snapshot(raw, PASSWORDS)
-    assert snap.turn_player == 0 and snap.phase == "main1" and snap.source == "mdmem:23020425"
+    assert snap.turn_player == 0 and snap.phase == "main1" and snap.source == "mdmem:" + "ab" * 8
     assert snap.went_first is True  # turn 3 is the first player's
     adv, opp = snap.sides
     assert (adv.lp, opp.lp) == (8000, 6100)

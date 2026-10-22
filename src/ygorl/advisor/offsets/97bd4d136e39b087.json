@@ -1,0 +1,55 @@
+{
+ "state_ptr": "0x11f9c50",
+ "key_ptr": "0x11f9c48",
+ "my_player": "0x4",
+ "turn": "0x3c14",
+ "turn_player": "0x3c08",
+ "phase": "0x3c1c",
+ "player_stride": "0xddc",
+ "lp": "0x0",
+ "count": {
+  "hand": "0xc",
+  "extra": "0x18",
+  "deck": "0x10",
+  "grave": "0x14",
+  "removed": "0x1c"
+ },
+ "pile": {
+  "hand": "0x1e4",
+  "extra": "0x5a4",
+  "deck": "0x3c4",
+  "grave": "0x7fc",
+  "removed": "0xa54"
+ },
+ "pile_stride": "0x4",
+ "slot_base": "0x5c",
+ "slot_stride": "0x1c",
+ "slot_uid": "0x2",
+ "slot_turn": "0x6",
+ "slot_face": "0x7",
+ "slot_chain": "0xa",
+ "removed_face": "0xcac",
+ "removed_facedown": "0x80",
+ "uid_table": "0x1bec",
+ "uid_mask": "0x1ff",
+ "effect_table": "0x2bec",
+ "effect_stride": "0x10",
+ "effect_kind": "0x2",
+ "effect_uid": "0x4",
+ "effect_next": "0xc",
+ "overlay_code": "0x3fb",
+ "overlay_kind": "0x5",
+ "dll_sha256": "97bd4d136e39b0872e4a8a9171632f1f0bd9bb04d69af08e836c56e684d43c44",
+ "buildid": "23020425, 24462996",
+ "verified": true,
+ "semantics": {
+  "faceup": "0x1",
+  "defense": "0x1"
+ },
+ "notes": [
+  "2026-10-21 Solo duel: Field Spell face-up face=0x01, Set S/T face=0x00; Set monster face=0x00 turn=0x01, after Flip Summon face=0x01 turn=0x00 (DLL_DuelGetCardTurn = sideways, i.e. Defense Position)",
+  "slots are in the owner's frame (M1 = owner's leftmost), mirrored on the opponent's side of the screen as in ygopro-core",
+  "banished face-down bit derived from DLL_DuelGetCardFace, not yet seen in a duel",
+  "Extra Monster Zone left/right (slots 5/6) not yet seen in a duel"
+ ]
+}
