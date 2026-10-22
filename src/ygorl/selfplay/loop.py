@@ -504,6 +504,9 @@ class Player:
             self.trace.rule("yesno-no")
             self.ui.yesno(False)
         elif kind == "list":
+            if not L.list_cards(self.ui.capture()):  # a passing frame (a turn change) looked like a list
+                self.trace.observe(list="gone before the pick")
+                return
             self.trace.rule("list-first")
             self.trace.observe(list_cards=self.ui.pick_list_cards([0]))
             self.context = "list"
@@ -705,7 +708,9 @@ class Player:
             me, op = raw.players[raw.me], raw.players[1 - raw.me]
             state = (inp.mode, dialog, raw.phase, _board_key(me, op), len(self.forbidden))  # a refusal is progress
             self.recent = (self.recent + [state])[-3:]
-            if len(self.recent) == 3 and len(set(self.recent)) == 1:
+            # the Draw Phase takes a few clicks (badge, Deck) by design: it has its own budget of attempts
+            in_draw = inp.mode == 1 and dialog is None and self.draw_attempts < 6
+            if len(self.recent) == 3 and len(set(self.recent)) == 1 and not in_draw:
                 if not self.recover("the same state three steps in a row", raw, inp, dialog, state):
                     return 3
                 continue
