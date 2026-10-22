@@ -469,7 +469,7 @@ class Player:
             if raw.turn != self.turn_seen:
                 self.turn_seen, self.attacked = raw.turn, set()
             me, op = raw.players[raw.me], raw.players[1 - raw.me]
-            state = (inp.mode, dialog, raw.phase, _board_key(me, op))
+            state = (inp.mode, dialog, raw.phase, _board_key(me, op), len(self.forbidden))  # a refusal is progress
             self.recent = (self.recent + [state])[-3:]
             if len(self.recent) == 3 and len(set(self.recent)) == 1:
                 print(f"STUCK: no progress -> {self.record_stuck('the same state three steps in a row')}", flush=True)
