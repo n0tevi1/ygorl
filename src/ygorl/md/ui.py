@@ -70,8 +70,8 @@ def screen_dialog(img: np.ndarray) -> str | None:
     band, mid = box_mean(img, 620, 520, 1430, 560), box_mean(img, 900, 560, 1150, 600)
     if band.mean() < 100 and mid.mean() < 120:
         return "yesno"
-    if box_mean(img, 950, 1100, 1100, 1130).max() < 30:
-        return "list"
+    if box_mean(img, 950, 1100, 1100, 1130).max() < 30 and L.list_cards(img):
+        return "list"  # the dark strip alone also shows during a turn change: the list's blue tray must be up too
     banner = box_mean(img, 900, 270, 1150, 300)
     if banner[0] < 60 and banner[2] < 110 and banner.mean() < 80:
         return "banner"
