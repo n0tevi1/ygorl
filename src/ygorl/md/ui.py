@@ -287,9 +287,18 @@ class UI:
         """Open the phase menu and pick ``which`` (battle / main2 / end). The menu must be seen open first: its End
         button sits where the Graveyard pile is, so a click on a menu that did not open browses the Graveyard."""
         for attempt in range(2):  # a first click can just close a card left open
-            self.click(*L.PHASE_BADGE, "phase menu" if not attempt else "phase menu (again)", 1.2)
-            img = self.capture()
-            if L.menu_button(img, *L.PHASE_MENU["end"]):
+            if L.menu_button(self.capture(), *L.PHASE_MENU["end"]):
+                img = self.capture()  # already open (an earlier click): do not toggle it shut
+            else:
+                self.click(*L.PHASE_BADGE, "phase menu" if not attempt else "phase menu (again)", 1.2)
+                img = None
+                for _ in range(8):  # the menu fades in over about a second
+                    shot = self.capture()
+                    if L.menu_button(shot, *L.PHASE_MENU["end"]):
+                        img = shot
+                        break
+                    self.sleep(0.3)
+            if img is not None:
                 if not L.menu_button(img, *L.PHASE_MENU[which]):
                     raise Stuck(f"the phase menu offers no {which}")
                 self.click(*L.PHASE_MENU[which], which, 2.0)

@@ -72,19 +72,26 @@ def test_phase_menu_that_never_opens_is_retried_once_then_stuck():
     with pytest.raises(Stuck, match="did not open"):
         ui.phase("battle")
     assert mouse.clicks == [L.PHASE_BADGE, L.PHASE_BADGE]  # never the End button's spot (the Graveyard)
-    assert sleeps == [1.2, 1.2]
+    assert sleeps == [1.2] + [0.3] * 8 + [1.2] + [0.3] * 8  # polled while the menu could still fade in
     assert [c["why"] for c in ui.take_clicks()] == ["phase menu", "phase menu (again)"] and ui.clicks == []
 
 
-def test_phase_menu_opening_on_the_second_try():
-    ui, mouse, sleeps = make_ui(board(30), with_menu(board(30), ["battle", "main2", "end"]))
+def test_phase_menu_fading_in_is_waited_for():
+    """The menu shows a few captures after the badge click: no second click (that would toggle it shut)."""
+    menu = with_menu(board(30), ["battle", "main2", "end"])
+    ui, mouse, sleeps = make_ui(board(30), board(30), board(30), menu)
     ui.phase("main2")
-    assert mouse.clicks == [L.PHASE_BADGE, L.PHASE_BADGE, L.PHASE_MENU["main2"]]
-    assert sleeps == [1.2, 1.2, 2.0]
+    assert mouse.clicks == [L.PHASE_BADGE, L.PHASE_MENU["main2"]]
+
+
+def test_phase_menu_already_open_is_used_as_it_is():
+    ui, mouse, _ = make_ui(with_menu(board(30), ["battle", "main2", "end"]))
+    ui.phase("end")
+    assert mouse.clicks == [L.PHASE_MENU["end"]]
 
 
 def test_phase_menu_without_the_wanted_button():
-    ui, mouse, _ = make_ui(with_menu(board(30), ["main2", "end"]))
+    ui, mouse, _ = make_ui(board(30), with_menu(board(30), ["main2", "end"]))
     with pytest.raises(Stuck, match="no battle"):
         ui.phase("battle")
     assert mouse.clicks == [L.PHASE_BADGE]
