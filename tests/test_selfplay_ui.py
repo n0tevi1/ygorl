@@ -344,11 +344,11 @@ def test_recovery_escalates_per_state_and_gives_up(tmp_path):
     player.trace = type("T", (), {"observe": lambda self, **k: None, "rule": lambda self, *a, **k: None})()
     raw = read_duel(build_memory(), BASE, OFF)
     inp = Input(0, False, 0)
-    state = (0, "list", raw.phase, "board", 0)
+    state = (raw.turn, 0, "list", raw.phase, "board", 0)
     assert player.recover("first", raw, inp, "list", state)
     assert mouse.clicks[0] == NEUTRAL_SPOT
-    assert player.recover("second", raw, inp, "list", state[:4] + (1,))  # same state despite a new refusal
-    assert player.recoveries[state[:4]] == 2
+    assert player.recover("second", raw, inp, "list", state[:-1] + (1,))  # same state despite a new refusal
+    assert player.recoveries[state[:-1]] == 2
     for _ in range(2):
         assert player.recover("again", raw, inp, "list", state)
     assert not player.recover("too many", raw, inp, "list", state)

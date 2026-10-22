@@ -795,7 +795,7 @@ class Player:
         """Self-recovery after a failure (design 10): record it, then escalate per state — (1) mask the action that
         led here, close what may be open, let the screen settle and decide again; (2) answer the shown dialog
         differently; (3) move on to the next phase. False (give up) after too many attempts."""
-        key = state[:4] if isinstance(state, tuple) and len(state) > 4 else state  # not the refusal count
+        key = state[:-1] if isinstance(state, tuple) and len(state) > 4 else state  # not the refusal count
         self.recoveries[key] = n = self.recoveries.get(key, 0) + 1
         self.recovery_count += 1
         record = self.record_stuck(why)
@@ -894,7 +894,8 @@ class Player:
             if raw.turn != self.turn_seen:
                 self.turn_seen, self.attacked = raw.turn, set()
             me, op = raw.players[raw.me], raw.players[1 - raw.me]
-            state = (inp.mode, dialog, raw.phase, _board_key(me, op), len(self.forbidden))  # a refusal is progress
+            # the turn too: the same prompt in two End Phases is not a loop; the last entry (refusals) is progress
+            state = (raw.turn, inp.mode, dialog, raw.phase, _board_key(me, op), len(self.forbidden))
             self.recent = (self.recent + [state])[-8:]
             # the Draw Phase takes a few clicks (badge, Deck) by design: it has its own budget of attempts
             in_draw = inp.mode == 1 and dialog is None and self.draw_attempts < 6
