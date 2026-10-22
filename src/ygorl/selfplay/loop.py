@@ -522,6 +522,8 @@ class Player:
                 mine = inp.accepting and inp.player == raw.me
                 if mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT) and dialog in (None, "list"):
                     self.prompt(raw, inp)  # an activate-or-pass prompt panel looks like a list
+                elif dialog == "banner" and mine and inp.mode == FIELD_PICK:
+                    self.field_pick(raw)  # the banner states what to pick on the field (tributes, targets)
                 elif dialog:
                     self.dialog(raw, dialog)
                 elif inp.mode == MAIN:
