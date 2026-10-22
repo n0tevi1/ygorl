@@ -36,6 +36,7 @@ COMMAND_DY = -220  # first command button, relative to the clicked hand card
 MY_MZONE_Y, MY_SZONE_Y = 740, 930
 ZONE_X = (650, 844, 1038, 1232, 1426)  # columns 1-5 from the advisor's left
 PHASE_BADGE = (1580, 560)
+PHASE_BADGE_SAFE = (1400, 470)  # an empty spot of the board: clicking it closes an opened card
 PHASE_MENU = {"battle": (1145, 855), "main2": (1380, 855), "end": (1615, 855)}
 FIELD_COMMAND_DY = -145
 PROMPT_CARD = (1026, 934)  # the first card of a response prompt

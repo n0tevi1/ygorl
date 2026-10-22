@@ -155,6 +155,11 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
     return None  # reposition and others: not checked yet
 
 
+def _action_key(action) -> tuple:
+    card = action.card
+    return (action.kind, card.code if card else 0, card.loc.location if card else 0, card.loc.sequence if card else 0)
+
+
 def _board_key(me, op) -> tuple:
     return (tuple((c.cid, c.face, c.sideways) if c else None for c in me.slots),
             tuple(c.cid for c in me.piles["hand"]), tuple(c.cid for c in me.piles["grave"]),
@@ -174,6 +179,7 @@ class Player:
     expect: Expectation | None = None
     recent: list = field(default_factory=list)  # the last states seen, to stop instead of looping
     phase_seen: tuple = (-1, -1)
+    forbidden: set = field(default_factory=set)  # ((turn, phase), action key) MD refused this phase
 
     def __post_init__(self) -> None:
         from ygorl.advisor.reconstruct import OpponentPrior
@@ -316,6 +322,8 @@ class Player:
         elif len(icons) == 1 and best.kind in ("mset", "sset") and order[-1] == best.kind:
             target = icons[0]  # MD offers only Set here although the reconstruction also allowed more
         else:
+            if not icons:
+                return self.refused(raw, best, f"{self.name(cid)} shows no command")
             raise Stuck(f"{len(icons)} command icons for {self.name(cid)}, expected {order}")
         self.click(*target, best.kind, 1.5)
         if card.is_monster and best.kind == "activate":
@@ -330,6 +338,16 @@ class Player:
             time.sleep(0.5)
         raise Stuck(f"{best.kind} {self.name(cid)}: the card is still in hand after the clicks")
 
+    def refused(self, raw: RawDuel, action, why: str) -> None:
+        """MD shows no command for an action the reconstruction allows: a state the snapshot does not carry
+        (a turn-long restriction, a once-per-turn already used). Masked for this phase; the policy decides again."""
+        self.forbidden.add(((raw.turn, raw.phase), _action_key(action)))
+        self.log.append({"check": action.kind, "card": action.card.code if action.card else 0, "ok": False,
+                         "problem": f"MD refused: {why}"})  # fmt: skip
+        print(f"  check {action.kind}: MD refused ({why}); masked for this phase", flush=True)
+        self.expect = None
+        self.click(*L.PHASE_BADGE_SAFE, "close the card", 0.8)
+
     def decide(self, raw: RawDuel):
         """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""
         from ygorl.advisor.advise import advise
@@ -338,15 +356,17 @@ class Player:
         deck = own_deck(raw, self.passwords, self.cards)
         advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
                         samples=self.samples, seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip
-        if not advice.suggestions:
-            raise Stuck(f"no legal action in the {snap.phase} reconstruction")
-        top = advice.suggestions[0]
+        key = (raw.turn, raw.phase)
+        allowed = [g for g in advice.suggestions if (key, _action_key(g.action)) not in self.forbidden]
+        if not allowed:
+            raise Stuck(f"no legal action left in the {snap.phase} reconstruction (MD refused the rest)")
+        top = allowed[0]
         name = self.cards[top.action.card.code].name if top.action.card else ""
         print(f"policy ({snap.phase}): {top.action.kind} {name} p={top.prob:.2f}", flush=True)
         self.log.append({"decide": top.action.kind, "card": top.action.card.code if top.action.card else 0,
                          "p": top.prob, "phase": snap.phase})  # fmt: skip
         self.expect = Expectation(top.action, raw, snap.phase)
-        return top.action, advice.suggestions
+        return top.action, allowed
 
     def battle(self, raw: RawDuel) -> None:
         """The policy chooses: attack with which monster, Main Phase 2 or End Phase. The target is a rule: the most
@@ -376,12 +396,7 @@ class Player:
             targets.append((value < power, value if value < power else -value, s))
         x, y = my_monster_xy(slot)
         if not self.open_and_click_icon((x, y), f"attacker {self.name(card.cid)}", "attack"):
-            # MD offers no Attack command (Gate of Darkness, already attacked): a rule the reconstruction does not
-            # know, not a click bug; the monster is marked and the policy is asked again
-            self.log.append({"check": "attack", "card": best.card.code, "ok": False, "problem": "MD refused"})
-            print(f"  check attack: MD offers no Attack for {self.name(card.cid)}", flush=True)
-            self.expect = None
-            return
+            return self.refused(raw, best, f"no Attack for {self.name(card.cid)}")
         if targets and self.input().mode == FIELD_PICK:
             _, _, s = max(targets)
             if not self.open_and_click_icon(opp_monster_xy(s), f"target {s}", "confirm target", 2.0):
