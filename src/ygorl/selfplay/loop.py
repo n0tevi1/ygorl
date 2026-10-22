@@ -513,6 +513,35 @@ class Player:
             print(f"  shadow: {record.get('desync') or record.get('shadow_error')} ({record.get('ygo')})", flush=True)
         return pick
 
+    def _memory_key(self) -> tuple:
+        """What counts as MD moving on: the input state, the dialog and the board."""
+        raw = self.game.read()
+        req = self.request_now(raw)
+        me, op = raw.players[raw.me], raw.players[1 - raw.me]
+        return req.mode, req.accepting, req.dialog_type, req.raw.get("list_count", 0), _board_key(me, op)
+
+    def explore(self, why: str, choice: int = 0, decline: bool = False) -> None:
+        """A screen without a script (or one that stays stuck): let the explorer find what to click from the
+        screen's affordances and the learned playbook (design 10 「边角情况由 player 自己学会」)."""
+        from ygorl.md.explore import Explorer, Playbook
+
+        if getattr(self, "explorer", None) is None:
+            self.explorer = Explorer(self.ui, Playbook(self.out / "playbook.json"))
+
+        def memory():
+            r = self.request_now(self.game.read())
+            return {"mode": r.mode, "accepting": r.accepting, "dialog_type": r.dialog_type,
+                    "list_type": r.list_type, "list_count": r.raw.get("list_count", 0), "choices": len(r.choices)}  # fmt: skip
+
+        before = self._memory_key()
+        result = self.explorer.run(memory=memory, progress=lambda: self._memory_key() != before, choice=choice,
+                                   decline=decline)  # fmt: skip
+        self.trace.observe(explore={"why": why, **result.to_json()})
+        print(f"  explore ({why}): {'ok' if result.ok else 'nothing worked'} via {result.source} "
+              f"{result.recipe} [{result.signature}]", flush=True)  # fmt: skip
+        if not result.ok:
+            raise Stuck(f"exploration found nothing that works ({why})")
+
     def request_now(self, raw: RawDuel, list_shown: bool = False):
         return read_request(self.game.memory, self.game.module.base, self.game.offsets, raw, list_shown=list_shown)
 
@@ -574,7 +603,7 @@ class Player:
                                list_candidates=[[c.cid, c.location, c.sequence] for c in req.candidates])  # fmt: skip
             self.context = "list"
         else:
-            raise Stuck(f"no script for the {kind} screen (context {self.context!r})")
+            self.explore(f"no script for the {kind} screen")
 
     def field_target(self, raw: RawDuel, lit) -> tuple[int, int] | None:
         """The field card the policy picks through the shadow for MD's field selection (tributes, targets), if the
@@ -755,6 +784,8 @@ class Player:
             if n == 1:
                 self.ui.click(*NEUTRAL_SPOT, "recover: click an empty spot", 1.0)
                 self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=10.0)
+            elif n == 3 and (dialog not in (None, "phase_menu") or (mine and inp.mode not in (MAIN, BATTLE, 1))):
+                self.explore(f"recovery: {why}", choice=1)  # the scripted alternatives did not help: explore
             elif n == 2 or n == 3:
                 alt = n - 1  # the 1st / 2nd alternative
                 if mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT):  # its panel looks like a list: pass first
@@ -900,7 +931,7 @@ class Player:
                     self.trace.rule("draw-continue", attempt=self.draw_attempts)
                     self.ui.continue_draw(self.draw_attempts)
                 else:
-                    raise Stuck(f"unknown input mode {inp.mode}")
+                    self.explore(f"unknown input mode {inp.mode}")
             except Exception as exc:  # Stuck, or anything unexpected inside a step: recover, do not die
                 why = str(exc) if isinstance(exc, Stuck) else f"{type(exc).__name__}: {exc}"
                 if not isinstance(exc, (Stuck, MemoryReadError)):
