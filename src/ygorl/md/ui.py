@@ -38,6 +38,7 @@ class Mouse(Protocol):
 POSITION_FACEUP_ATTACK = (940, 956)  # the left button of the summon-position dialog
 YESNO_NO, YESNO_YES = (866, 658), (1186, 658)
 PHASE_MENU_CANCEL = (1026, 1035)
+MY_DECK = (1625, 985)  # the advisor's Deck pile, bottom right
 LIST_SELECT, LIST_SELECT_TWO_BUTTONS = (1026, 1116), (1180, 1117)
 
 # screen centres of field cards; the opponent's row is mirrored
@@ -323,10 +324,13 @@ class UI:
                 return
         raise Stuck("the phase menu did not open")
 
-    def continue_draw(self) -> None:
-        """Draw Phase: MD sometimes waits for a click to go on (seen with the Graveyard viewer open); the phase
-        badge is harmless here."""
-        self.click(*L.PHASE_BADGE, "continue the Draw Phase", 1.5)
+    def continue_draw(self, attempt: int = 0) -> None:
+        """Draw Phase: MD sometimes waits for a click to go on. The phase badge did it once (Graveyard viewer open);
+        when the badge shows only the turn, a click on the Deck did. Alternate between the two."""
+        if attempt % 2 == 0:
+            self.click(*L.PHASE_BADGE, "continue the Draw Phase", 1.5)
+        else:
+            self.click(*MY_DECK, "continue the Draw Phase: the Deck", 1.5)
 
     def attack(self, attacker_xy: XY, why: str) -> bool:
         """Open an own monster and press its Attack icon; False when MD shows no Attack for it."""

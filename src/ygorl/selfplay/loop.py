@@ -158,6 +158,8 @@ class Player:
 
     expect: Expectation | None = None
     recent: list = field(default_factory=list)  # the last states seen, to stop instead of looping
+    draw_attempts: int = 0
+    draw_seen: tuple = (-1, -1)
     last_zone: tuple | None = None  # (location, sequence) of the zone picked for our last own action
     pending_panel: tuple | None = None  # (capture, card id) of the last opened hand card, learned once confirmed
     recoveries: dict = field(default_factory=dict)  # state -> self-recovery attempts this duel
@@ -731,8 +733,10 @@ class Player:
                 elif inp.mode == FIELD_PICK:
                     self.field_pick(raw)
                 elif inp.mode == 1:
-                    self.trace.rule("draw-continue")
-                    self.ui.continue_draw()
+                    self.draw_attempts = self.draw_attempts + 1 if self.phase_seen == self.draw_seen else 0
+                    self.draw_seen = self.phase_seen
+                    self.trace.rule("draw-continue", attempt=self.draw_attempts)
+                    self.ui.continue_draw(self.draw_attempts)
                 else:
                     raise Stuck(f"unknown input mode {inp.mode}")
             except Exception as exc:  # Stuck, or anything unexpected inside a step: recover, do not die
