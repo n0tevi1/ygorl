@@ -36,7 +36,7 @@ from ygorl.md import layout as L
 from ygorl.md.input import GatedMouse
 from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
 from ygorl.md.screen import capture as capture_client
-from ygorl.md.ui import UI, Stuck, command_order, my_monster_xy, opp_monster_xy
+from ygorl.md.ui import PHASE_MENU_CANCEL, UI, Stuck, command_order, my_monster_xy, opp_monster_xy
 from ygorl.md.panel import PanelBook, panel_kind
 from ygorl.md.request import read_request
 from ygorl.selfplay.observe import ShadowObserver
@@ -437,6 +437,9 @@ class Player:
             zone = self.free_zone(raw, "mzone")
             self.ui.pick_zone("mzone", zone, "zone for the summon")
             self._placed("mzone", zone)
+        elif kind == "phase_menu":
+            self.trace.rule("phase-menu-cancel")
+            self.ui.click(*PHASE_MENU_CANCEL, "close the phase menu", 1.2)
         elif kind == "yesno":
             self.trace.rule("yesno-no")
             self.ui.yesno(False)

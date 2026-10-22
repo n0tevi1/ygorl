@@ -37,6 +37,7 @@ class Mouse(Protocol):
 # --- fixed positions (reference frame, measured on the 2054x1184 window) ---------------------------------------
 POSITION_FACEUP_ATTACK = (940, 956)  # the left button of the summon-position dialog
 YESNO_NO, YESNO_YES = (866, 658), (1186, 658)
+PHASE_MENU_CANCEL = (1026, 1035)
 LIST_SELECT, LIST_SELECT_TWO_BUTTONS = (1026, 1116), (1180, 1117)
 
 # screen centres of field cards; the opponent's row is mirrored
@@ -59,6 +60,8 @@ def box_mean(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> np.ndarray:
 
 def screen_dialog(img: np.ndarray) -> str | None:
     """MD UI dialogs that are not engine input states (measured on the 2054x1184 window)."""
+    if L.menu_button(img, *L.PHASE_MENU["end"]):
+        return "phase_menu"  # MD's phase menu (left open by an interrupted phase change)
     pos_l, pos_r = box_mean(img, 925, 940, 955, 970), box_mean(img, 1100, 940, 1130, 970)
     above = box_mean(img, 700, 760, 1350, 790)  # the board around the position dialog, a prompt panel's title row
     if pos_l[0] < 30 and pos_l[1] < 60 and pos_r[0] < 30 and pos_r[1] < 70 and above.mean() > 100:
