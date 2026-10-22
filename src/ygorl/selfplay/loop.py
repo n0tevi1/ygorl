@@ -185,11 +185,22 @@ class Player:
 
     # --- reading --------------------------------------------------------------------------------------------
     def _capture(self) -> np.ndarray:
-        try:
-            return capture(self.mouse.window)
-        except (subprocess.CalledProcessError, ScreenError):  # the window moved or was re-created
-            self.mouse.refresh_window()
-            return capture(self.mouse.window)
+        """A capture of the game; while the screen cannot be read at all (locked or blanked: XWayland refuses every
+        GetImage, even of the root window) the player pauses and waits instead of acting blind."""
+        waited = 0.0
+        while True:
+            try:
+                return capture(self.mouse.window)
+            except (subprocess.CalledProcessError, ScreenError):
+                try:  # the window may have moved or been re-created
+                    self.mouse.refresh_window()
+                    return capture(self.mouse.window)
+                except (subprocess.CalledProcessError, ScreenError):
+                    pass
+            if waited % 300 == 0:
+                print(f"PAUSED: the screen cannot be captured (locked or blanked?), waited {waited:.0f} s", flush=True)
+            time.sleep(10.0)
+            waited += 10.0
 
     @property
     def state_base(self) -> int:
