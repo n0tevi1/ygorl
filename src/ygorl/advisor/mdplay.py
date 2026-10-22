@@ -138,7 +138,7 @@ class Player:
             if raw.finished:  # the engine's own flag: LP reads can catch the obfuscated value mid-update
                 return raw, inp, "over"
             mine = inp.accepting and inp.player == raw.me
-            dialog = screen_dialog(capture(self.mouse.window)) if not mine else None
+            dialog = screen_dialog(capture(self.mouse.window))  # MD's own dialog wins over the engine mode
             key = (inp.mode, mine, dialog, raw.turn, raw.phase)
             stable = stable + 1 if key == last and (mine or dialog) else 0
             last = key
@@ -326,7 +326,10 @@ class Player:
         elif kind == "yesno":
             self.click(866, 658, "no", 1.5)
         elif kind == "list":
-            self.click(1026, 960, "first card of the list", 0.8)
+            cards = L.list_cards(capture(self.mouse.window))
+            if not cards:
+                raise Stuck("a card list with no card found")
+            self.click(*cards[0], f"first of {len(cards)} cards in the list", 0.8)
             self.click(1026, 1116, "select", 1.0)
             if screen_dialog(capture(self.mouse.window)) == "list":
                 self.click(1180, 1117, "select (two-button list)", 1.5)

@@ -162,3 +162,27 @@ def new_icons(before: np.ndarray, after: np.ndarray, x0: int, y0: int, x1: int, 
         if np.abs(a - b).mean() >= 25:
             out.append((x, y))
     return out
+
+
+TRAY_RGB, CARD_STEP = (37, 66, 143), 158  # MD's card-list tray colour and card pitch (reference pixels)
+
+
+def list_cards(img: np.ndarray) -> list[tuple[int, int]]:
+    """Centres of the cards shown in MD's card-list panel, left to right.
+
+    The cards sit on a flat blue tray whose strip just below them (y ~1030-1060) is unbroken; its width is
+    ``158 * n - 20`` for n cards (lists of 2, 3, 4 and 6 cards measured), and the cards are spread evenly over it.
+    """
+    best_run, best_left = 0, 0
+    for y in range(1030, 1062, 2):
+        tray = (np.abs(img[y].astype(int) - np.array(TRAY_RGB)) < 22).all(axis=1)
+        padded = np.concatenate([[False], tray, [False]])
+        edges = np.flatnonzero(padded[1:] != padded[:-1])
+        for a, b in zip(edges[::2], edges[1::2], strict=True):
+            if b - a > best_run:
+                best_run, best_left = b - a, a
+    n = round((best_run + 20) / CARD_STEP)
+    if n < 1:
+        return []
+    first = best_left + (best_run - (n - 1) * CARD_STEP) / 2
+    return [(round(first + i * CARD_STEP), 960) for i in range(n)]

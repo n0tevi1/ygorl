@@ -342,3 +342,18 @@ def test_new_icons_ignore_card_art_that_was_already_there():
     after[np.hypot(xx - 840, yy - 600) <= 44] = (15, 20, 25)  # the icon the click opened
     found = new_icons(before, after, 520, 500, 980, 840)
     assert len(found) == 1 and abs(found[0][0] - 840) <= 8 and abs(found[0][1] - 600) <= 8
+
+
+@pytest.mark.parametrize("n", [1, 2, 3, 6])
+def test_list_cards_from_the_tray_width(n):
+    from ygorl.advisor.mdlayout import CARD_STEP, TRAY_RGB, list_cards
+
+    img = np.full((1184, 2054, 3), 15, np.uint8)  # the panel's dark background
+    width = CARD_STEP * n - 20
+    left = 1026 - width // 2
+    img[820:1060, left : left + width] = TRAY_RGB
+    centres = [round(left + (width - (n - 1) * CARD_STEP) / 2 + i * CARD_STEP) for i in range(n)]
+    for x in centres:
+        img[890:1030, x - 60 : x + 60] = (200, 160, 90)  # card art, with some tray-blue in it
+        img[930:950, x - 10 : x + 10] = TRAY_RGB
+    assert list_cards(img) == [(x, 960) for x in centres]
