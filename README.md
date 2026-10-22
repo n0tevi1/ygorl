@@ -231,7 +231,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── paths.py             # 子模块数据路径（cards.cdb、脚本目录、禁限表）与环境根目录
 │   ├── commands/            # 各子命令一个模块：duel / replay / branch / arena / matrix / env / advise；__init__.py 放共用选项（牌组、环境、agent）
 │   ├── advisor/             # MD 建议器（design/10）：盘面快照（snapshot.py）、核心重建与暗牌采样（reconstruct.py）、多样本平均的策略建议（advise.py）；不向游戏发送任何输入
-│   ├── md/                  # Master Duel 集成（design/10）：只读内存读取（memory.py）与从 duel.dll 推导偏移（offsets.py，按 DLL 记录的标志位含义在 offsets_data/）、客户区截图（screen.py）、参考坐标与识别（layout.py）、只对单人模式电脑对手放行的鼠标输入（input.py）、点击脚本（ui.py，不做决策）
+│   ├── md/                  # Master Duel 集成（design/10）：只读内存读取（memory.py）与从 duel.dll 推导偏移（offsets.py，按 DLL 记录的标志位含义在 offsets_data/）、客户区截图（screen.py）、参考坐标与识别（layout.py）、只对单人模式电脑对手放行的鼠标输入（input.py）、点击脚本（ui.py，不做决策）、可点元素 / 屏幕签名 / 操作手册与探索（explore.py）
 │   ├── selfplay/            # 单人模式自博弈（显式开启，design/10「自博弈的架构」）：loop.py（循环与决策）、trace.py（每步 JSONL 记录与 SUMMARY 汇总）、shadow.py（ygopro 影子对局：按选择推进，自动回答 MD 不问的决策）、bridge.py（MD 请求与 ygopro 决策点的选项对齐）
 │   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；checkpoint.py（policy:<checkpoint> agent，锁步 C++ 主机）；registry.py（按规格构造 agent 与可 pickle 的 factory，供 CLI）
 │   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、Yugipedia 关系边（relations）、引擎包枚举（packages）、基因型与算子（genotype）、代理模型（surrogate）与真实对局标签（labels）、漏斗第一层起手分析（funnel）与真实首回合验证（first_turn）、调卡组（tuner）、进化的逐卡信号（diagnose、signals）、评估预算（selection：前二 Thompson 采样与序贯复核）与 critic 控制变量（control）、一组改动的部分析因评估（factorial）、进化步骤（evolve：一轮进化、谱系与续跑）、档案精英交叉子代（crossover）、语料关联规则候选（rules）、引擎成员与加入池（deck_engine）、掩码卡组模型与学习的子代（deck_model、learned）、改动价值模型与它的标签（value_model、edit_labels）、与 RL 的共同进化循环（coevolve）、信号库热启动（warmstart）与 MAP-Elites 档案（archive）
