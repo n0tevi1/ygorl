@@ -1,0 +1,96 @@
+{
+ "turn": 3,
+ "phase": "main1",
+ "turn_player": 0,
+ "went_first": true,
+ "normal_summoned": false,
+ "sides": [
+  {
+   "lp": 8000,
+   "deck_count": 34,
+   "extra_count": 15,
+   "cards": [
+    {
+     "location": "hand",
+     "password": 82782870,
+     "position": "facedown"
+    },
+    {
+     "location": "hand",
+     "password": 34022970,
+     "position": "facedown"
+    },
+    {
+     "location": "hand",
+     "password": 19899073,
+     "position": "facedown"
+    },
+    {
+     "location": "hand",
+     "password": 81560239,
+     "position": "facedown"
+    },
+    {
+     "location": "mzone",
+     "password": 40543231,
+     "sequence": 2,
+     "position": "faceup_attack"
+    },
+    {
+     "location": "szone",
+     "password": 17954937,
+     "sequence": 2,
+     "position": "facedown"
+    },
+    {
+     "location": "removed",
+     "password": 40366667,
+     "position": "faceup"
+    }
+   ]
+  },
+  {
+   "lp": 7700,
+   "deck_count": 35,
+   "extra_count": 14,
+   "cards": [
+    {
+     "location": "hand",
+     "position": "facedown"
+    },
+    {
+     "location": "mzone",
+     "password": 24842059,
+     "sequence": 6,
+     "position": "faceup_attack"
+    },
+    {
+     "location": "grave",
+     "password": 91800273,
+     "position": "faceup"
+    },
+    {
+     "location": "grave",
+     "password": 23434538,
+     "position": "faceup"
+    },
+    {
+     "location": "removed",
+     "password": 14558127,
+     "position": "faceup"
+    },
+    {
+     "location": "removed",
+     "password": 5318639,
+     "position": "faceup"
+    },
+    {
+     "location": "removed",
+     "password": 67115133,
+     "position": "faceup"
+    }
+   ]
+  }
+ ],
+ "source": "selfplay"
+}

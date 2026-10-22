@@ -12,6 +12,7 @@ from ygorl.commands import (
     add_env_option,
     add_max_turns_option,
     agents_help,
+    deck_arg,
     duel_config,
     load_decks,
     load_env,
@@ -28,7 +29,7 @@ def add_parser(subparsers) -> None:
         "meta game: Nash mixture and alpha-rank. With --env and no DECK the environment's meta decks are used and "
         "the result is written to environments/<version>/artifacts/matrix/NAME.json (see docs/cli.md).",
     )
-    p.add_argument("decks", type=Path, nargs="*", metavar="DECK",
+    p.add_argument("decks", type=deck_arg, nargs="*", metavar="DECK",
                    help=".ydk file or directory of .ydk files (default: the meta decks of --env)")  # fmt: skip
     p.add_argument("--agent", default="greedy", metavar="AGENT", help=f"agent piloting every deck: {agents_help()}")
     p.add_argument("--games", type=int, default=20, metavar="N",

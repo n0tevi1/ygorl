@@ -1,6 +1,6 @@
-"""Parser and writer for ``.ydk`` deck files (YGOPro / EDOPro / Master Duel exports).
+"""Parser and writer for ``.ydk`` deck files (YGOPro / EDOPro / Master Duel exports) and ``ydke://`` links.
 
-Format::
+``.ydk`` format::
 
     #created by ...        comment
     #main
@@ -9,16 +9,24 @@ Format::
     ...
     !side
     ...
+
+``ydke://`` link (the deck-sharing URL of EDOPro, YGOPRODECK and the deck-transfer tools): ``ydke://``
+followed by three ``!``-terminated base64 sections, main / extra / side, each the section's passwords as
+little-endian 32-bit integers.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
+import struct
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 
 MAX_PASSWORD = 99_999_999  # card passwords have at most 8 digits
+YDKE_PREFIX = "ydke://"
 
 
 class YdkError(ValueError):
@@ -55,6 +63,12 @@ class Deck:
         ]
         return "\n".join(lines) + "\n"
 
+    def to_ydke(self) -> str:
+        def section(passwords: tuple[int, ...]) -> str:
+            return base64.b64encode(struct.pack(f"<{len(passwords)}I", *passwords)).decode("ascii")
+
+        return YDKE_PREFIX + "".join(section(s) + "!" for s in (self.main, self.extra, self.side))
+
 
 def parse_ydk(text: str, name: str = "", source: str = "<string>") -> Deck:
     sections: dict[str, list[int]] = {"main": [], "extra": [], "side": []}
@@ -79,6 +93,33 @@ def parse_ydk(text: str, name: str = "", source: str = "<string>") -> Deck:
             raise YdkError(f"{source}:{lineno}: invalid card password {password} (expected 1 to {MAX_PASSWORD})")
         sections[current].append(password)
     return Deck(tuple(sections["main"]), tuple(sections["extra"]), tuple(sections["side"]), name=name)
+
+
+def is_ydke(text: str) -> bool:
+    return text.startswith(YDKE_PREFIX)
+
+
+def parse_ydke(url: str, name: str = "ydke") -> Deck:
+    """A deck from a ``ydke://`` link (a missing side or extra section is empty)."""
+    if not is_ydke(url):
+        raise YdkError(f"not a ydke:// link: {url[:40]!r}")
+    parts = url[len(YDKE_PREFIX) :].strip().split("!")
+    if len(parts) > 4 or (len(parts) == 4 and parts[3]):
+        raise YdkError("ydke:// link has more than three sections (main!extra!side!)")
+    sections: list[tuple[int, ...]] = []
+    for label, part in zip(("main", "extra", "side"), [*parts, "", ""][:3]):
+        try:
+            raw = base64.b64decode(part, validate=True)
+        except binascii.Error as exc:
+            raise YdkError(f"ydke:// {label} section is not valid base64 ({exc})") from None
+        if len(raw) % 4:
+            raise YdkError(f"ydke:// {label} section has {len(raw)} bytes, not a multiple of 4")
+        passwords = struct.unpack(f"<{len(raw) // 4}I", raw)
+        bad = [p for p in passwords if not valid_password(p)]
+        if bad:
+            raise YdkError(f"ydke:// {label} section has invalid card password {bad[0]} (expected 1 to {MAX_PASSWORD})")
+        sections.append(passwords)
+    return Deck(sections[0], sections[1], sections[2], name=name)
 
 
 def load_ydk(path: str | Path) -> Deck:

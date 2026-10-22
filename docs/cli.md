@@ -13,10 +13,11 @@
 | `ygorl matrix` | 牌组两两对局的胜率矩阵 + Nash 混合 + alpha-rank | `build_matrix`、`analyze`、`MetaGame.save` |
 | `ygorl strength` | agent 两两对局的策略对局矩阵，按 alpha-rank / Nash 排出强度 | `build_agent_matrix`、`AgentMatrix.save`（[evaluation.md](evaluation.md)） |
 | `ygorl env` | `build`：抓取数据并生成 MD 环境；`check`：校验环境并打印摘要 | `ygorl.data.build.build`、`load_environment`（[data.md](data.md)） |
+| `ygorl advise` | MD 只读建议器：重建盘面快照，输出策略的动作概率（不给策略时列出合法动作） | `ygorl.advisor`（[design/09](design/10-master-duel.md)） |
 
 ## 通用约定
 
-- **牌组**：`.ydk` 文件，或目录（取其中全部 `*.ydk`，按文件名排序）。牌组名是文件名去掉扩展名，卡片以 8 位 `password` 标识
+- **牌组**：`.ydk` 文件、目录（取其中全部 `*.ydk`，按文件名排序）或 `ydke://` 链接（按出现顺序命名为 `ydke1`、`ydke2` ……）。文件牌组名是文件名去掉扩展名，卡片以 8 位 `password` 标识
   （`.ydk` 里的 `password` 必须是 1 到 99999999 的整数，文件必须是 UTF-8，否则报错并指出文件与行号）。
 - **牌组合法性检查**（`duel` / `arena` / `matrix` / `strength`）：开局前检查每套牌，任何一套不合法就一局不打，退出码 2，
   打印 `ygorl <命令>: error: <文件>: deck '<名字>' is illegal ...` 并逐条列出违反的规则（`ygorl.cards.legality.validate_deck`）。
@@ -212,6 +213,35 @@ meta        20 decks, share 71.7%, all legal
     ...
 ```
 
+## `ygorl advise`
+
+```
+ygorl advise SNAPSHOT.json --deck DECK --env PATH|VERSION [--policy CHECKPOINT] [--samples N] [--seed S] [--top K]
+```
+
+Master Duel 只读建议器（[design/09](design/10-master-duel.md)）：读盘面快照（JSON，格式见 `ygorl.advisor.snapshot`），把它重建进核心
+（建议方的卡组 = `--deck` 减去已见的卡；对手的暗牌从环境里与其公开卡相容的 meta 卡组按份额采样），在建议方的空闲决策点上：
+
+- 给 `--policy`（PPO 或 BC 检查点，需要 `train` 可选依赖）时，输出 `N` 个样本平均后的动作概率与样本间标准差，按概率从高到低列前 `K` 个；
+- 不给时列出重建后的合法动作及其在几个样本里合法，用来检查快照。
+
+快照里的 `normal_summoned`、卡片的 `position_locked` 与主要阶段 2 在结果上遮住核心不知道的动作（通常召唤、改变表示形式、进入战斗阶段）。
+重建没有事件历史，也不知道一回合一次的效果用过没有，输出末尾会注明。只支持建议方自己回合的主要阶段。**不向任何游戏客户端发送输入。**
+`--env` 必填；快照格式错误、描述不可能的盘面或无法重建时退出码 2。
+
+```
+$ uv run ygorl advise tests/data/advisor_snapshot.json --deck environments/md-2026-09/meta/ryzeal-mitsurugi.ydk \
+      --env md-2026-09 --policy out/gpu/GF/best.pt
+turn 3 main1, LP 8000 vs 7700, 8 samples (8 with a consistent opponent deck)
+opponent deck samples: Maliss 8
+  prob     ±  action
+ 0.210 0.000  spsummon 34022970 Ext Ryzeal @hand
+ 0.199 0.000  summon 82782870 Mitsurugi no Mikoto, Kusa...
+ ...
+```
+
+对手的暗牌在观测里只是「未知」，所以样本间的概率只在暗牌改变合法动作时才有差别（± 列）；样本数对以后的搜索（PIMC）更重要。
+
 ## 训练工具的参数
 
 `tools/train_ppo.py`、`tools/bench_train.py` 不是 `ygorl` 子命令，但它们的训练参数由训练配置本身生成（`ygorl.train.cli`）：
@@ -226,3 +256,5 @@ meta        20 decks, share 71.7%, all legal
 - `tests/test_data_sources.py`：`ygorl env build --offline`（小型原始文件）与 `ygorl env check`，以及用法错误（非 `md-` 版本、`--offline` 与 `--refresh` 同用）。
 - `tests/test_readme.py`：逐行执行 README「快速开始」里以 `uv run ygorl` 开头的示例（在临时目录中，`tests/decks` 与 `environments` 链接到仓库，`--games` 上限 2、`--rollouts` 上限 1），
   全部退出码 0，且每个子命令至少有一个示例。
+- `tests/test_advisor.py`：快照 JSON 往返与不可能盘面的报错、按公开卡过滤 meta 卡组、暗牌采样、自博弈盘面导出 → 重建 → 再导出一致、超量素材 / 场地区 / 双方 LP、
+  第 1 回合之后允许战斗、遮罩（通常召唤已用、表示形式锁定、主要阶段 2）、不给策略与给策略两种输出。

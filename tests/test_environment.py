@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from ygorl.cards.ydk import Deck
 from ygorl.data import EnvironmentConfigError, EnvironmentFileMissing, load_environment
 from ygorl.engine import constants as C
 
@@ -173,6 +174,9 @@ def test_invalid_pool_and_version(tmp_path):
         ({"deck": {"max_copies": 0}}, "max_copies must be at least 1"),
         ({"description": 5}, "key 'description' has wrong type int"),
         ({"banlist_name": 5}, "key 'banlist_name' has wrong type int"),
+        ({"match": {"best_of": 2}}, "best_of must be 1 or 3"),
+        ({"match": {"timer_initial_s": -1}}, "non-negative integer"),
+        ({"match": {"clock": 300}}, "unknown keys"),
     ],
 )
 def test_degenerate_manifest(tmp_path, manifest, msg):
@@ -257,3 +261,21 @@ def test_meta_decks_are_validated_with_a_card_table(tmp_path):
     assert "forbidden" in text and "banlist allows 1" in text
     (d / "banlist.lflist.conf").write_text("!test\n")
     assert load_environment(d, cards=cards).meta_decks[0].name == "Alpha"
+
+
+def test_match_rules(tmp_path):
+    env = load_environment(make_env(tmp_path))
+    assert (env.match.best_of, env.match.timer_initial_s, env.match.timer_per_turn_s) == (1, 0, 0)
+    match = {"best_of": 1, "timer_initial_s": 300, "timer_per_turn_s": 90}
+    env = load_environment(make_env(tmp_path / "md", manifest={"match": match}))
+    assert (env.match.timer_initial_s, env.match.timer_per_turn_s) == (300, 90)
+
+
+def test_no_side_deck_rule_rejects_a_side_deck(tmp_path):
+    d = make_env(tmp_path, manifest={"deck": {"side_max": 0}})
+    env = load_environment(d)
+    cards = fake_cards(env)
+    main = tuple(range(2000, 2034)) + tuple(range(2000, 2006))  # 40 cards from the fixture pool
+    assert env.validate_deck(Deck(main), cards) == []
+    violations = env.validate_deck(Deck(main, side=(2010,)), cards)
+    assert [v.code for v in violations] == ["side_too_large"]

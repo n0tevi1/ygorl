@@ -78,20 +78,30 @@ def make_factory(spec: str):
         raise CommandError(str(exc)) from None
 
 
-def load_decks(paths: list[Path], env=None) -> list:
-    """Decks from ``.ydk`` files and directories (every ``*.ydk`` inside, sorted by name), named by file stem.
+def deck_arg(text: str) -> Path | str:
+    """argparse ``type`` of deck arguments: a ``ydke://`` link stays a string (``Path`` would fold its ``//``)."""
+    from ygorl.cards.ydk import is_ydke
+
+    return text if is_ydke(text) else Path(text)
+
+
+def load_decks(paths: list[Path | str], env=None) -> list:
+    """Decks from ``.ydk`` files, directories (every ``*.ydk`` inside, sorted by name) and ``ydke://`` links
+    (from :func:`deck_arg`). File decks are named by file stem, links ``ydke1``, ``ydke2``, ...
 
     Every deck must be legal: under ``env`` against its pool, banlist and deck rules, without one against
     the structural rules (known passwords, deck sections, sizes, at most 3 copies). The library API
     (:class:`ygorl.engine.duel.Duel` without ``validate=True``) still plays any deck.
     """
     from ygorl.cards.legality import validate_deck
-    from ygorl.cards.ydk import YdkError, load_ydk
+    from ygorl.cards.ydk import YdkError, load_ydk, parse_ydke
     from ygorl.engine.duel import default_cards
 
-    files: list[Path] = []
+    files: list[Path | str] = []
     for path in paths:
-        if path.is_dir():
+        if isinstance(path, str):
+            files.append(path)
+        elif path.is_dir():
             found = sorted(path.glob("*.ydk"))
             if not found:
                 raise CommandError(f"no .ydk files in {path}")
@@ -101,7 +111,8 @@ def load_decks(paths: list[Path], env=None) -> list:
         else:
             raise CommandError(f"deck file not found: {path}")
     try:
-        decks = [load_ydk(f) for f in files]
+        links = iter(range(1, len(files) + 1))
+        decks = [parse_ydke(f, f"ydke{next(links)}") if isinstance(f, str) else load_ydk(f) for f in files]
     except (YdkError, OSError, UnicodeDecodeError) as exc:
         raise CommandError(str(exc)) from None
     cards = default_cards()
@@ -114,7 +125,8 @@ def load_decks(paths: list[Path], env=None) -> list:
             where = "(no environment: structural rules only)"
         if violations:
             lines = "\n".join(f"  - {v.message}" for v in violations)
-            raise CommandError(f"{path}: deck {deck.name!r} is illegal {where}:\n{lines}")
+            raise CommandError(f"{deck.name if isinstance(path, str) else path}: deck {deck.name!r} is illegal "
+                               f"{where}:\n{lines}")  # fmt: skip
     return decks
 
 

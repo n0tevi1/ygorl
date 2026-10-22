@@ -88,7 +88,7 @@ uv run python -c "import ygorl._core"     # 冒烟测试
 uv run pytest                             # 跑单测
 ```
 
-命令行 `ygorl`：单局、回放、分叉探索、Arena、对局矩阵（全部参数与输出说明见 [docs/cli.md](docs/cli.md)，`uv run ygorl <命令> --help` 查看帮助）。
+命令行 `ygorl`：单局、回放、分叉探索、Arena、对局矩阵、MD 建议器（全部参数与输出说明见 [docs/cli.md](docs/cli.md)，`uv run ygorl <命令> --help` 查看帮助）。
 在仓库根目录依次运行，产物写到 git 已忽略的 `out/`；`tests/test_readme.py` 会逐行执行下面的示例（局数调小）：
 
 ```bash
@@ -107,6 +107,8 @@ uv run ygorl matrix tests/decks/snake_eye.ydk tests/decks/kashtira.ydk tests/dec
 uv run ygorl strength random greedy --decks tests/decks/snake_eye.ydk tests/decks/kashtira.ydk tests/decks/yubel.ydk --pairings 4 --workers 2 --out out/strength.json
 # 环境：校验仓库里的 Master Duel 快照（卡池、禁限表、meta 卡组合法性），打印卡池大小、禁限张数与 meta 份额
 uv run ygorl env check md-2026-09
+# MD 只读建议器：把盘面快照重建进核心（对手暗牌按 meta 采样），列出合法动作；加 --policy <checkpoint> 输出策略的动作概率
+uv run ygorl advise tests/data/advisor_snapshot.json --deck environments/md-2026-09/meta/ryzeal-mitsurugi.ydk --env md-2026-09 --samples 2
 ```
 
 加 `--env <版本或目录>` 即按该环境的规则对局，产物绑定环境版本；`ygorl matrix --env <版本>` 不给牌组时用环境的 meta 卡组，
@@ -225,7 +227,8 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 ├── src/ygorl/               # Python 包
 │   ├── cli.py               # 命令行入口 `ygorl`（argparse 子命令）
 │   ├── paths.py             # 子模块数据路径（cards.cdb、脚本目录、禁限表）与环境根目录
-│   ├── commands/            # 各子命令一个模块：duel / replay / branch / arena / matrix / env；__init__.py 放共用选项（牌组、环境、agent）
+│   ├── commands/            # 各子命令一个模块：duel / replay / branch / arena / matrix / env / advise；__init__.py 放共用选项（牌组、环境、agent）
+│   ├── advisor/             # MD 只读建议器（design/10）：盘面快照（snapshot.py）、核心重建与暗牌采样（reconstruct.py）、多样本平均的策略建议（advise.py）；不向游戏发送任何输入
 │   ├── agents/              # Agent 协议、RandomAgent、GreedyAgent、PolicyAgent；checkpoint.py（policy:<checkpoint> agent，锁步 C++ 主机）；registry.py（按规格构造 agent 与可 pickle 的 factory，供 CLI）
 │   ├── build/               # 组牌：Lua 脚本读取器、过滤条件 IR、脚本挖掘协同图（synergy_graph）、Yugipedia 关系边（relations）、引擎包枚举（packages）、基因型与算子（genotype）、代理模型（surrogate）与真实对局标签（labels）、漏斗第一层起手分析（funnel）与真实首回合验证（first_turn）、调卡组（tuner）、进化的逐卡信号（diagnose、signals）、评估预算（selection：前二 Thompson 采样与序贯复核）与 critic 控制变量（control）、一组改动的部分析因评估（factorial）、进化步骤（evolve：一轮进化、谱系与续跑）、档案精英交叉子代（crossover）、语料关联规则候选（rules）、引擎成员与加入池（deck_engine）、掩码卡组模型与学习的子代（deck_model、learned）、改动价值模型与它的标签（value_model、edit_labels）、与 RL 的共同进化循环（coevolve）、信号库热启动（warmstart）与 MAP-Elites 档案（archive）
 │   ├── cards/               # cards.cdb、禁限表（.lflist.conf）、牌组（.ydk）、合法性校验
@@ -237,7 +240,7 @@ uv sync --reinstall-package ygorl                        # 更新 ygopro-core �
 │   ├── solver/              # combo 求解器封装（combo_solver.py）、目标场面（targets.py）、线的重放验证与示范集格式（demo.py）、起手批量求解（batch.py）
 │   └── train/               # 策略训练（需 train 可选依赖）：advantages.py（GAE / Expected-SARSA(λ) / VRPO 优势）、critic.py（特权 Q 头 + V 头与损失）、rollout.py（EncodedVecEnv 上的 rollout 收集）、ppo.py（PPO 更新与可插拔策略目标）、selfplay.py（快照池 + keep-best、牌组池、配对发局）、league.py（联赛账目：池局结果、入池门槛、keep-best、进化牌组得分）、trainer.py（训练循环、评估、续训、日志）、cli.py（训练配置的命令行：每个字段一个参数）、checkpoint.py、toy.py（玩具博弈 Nim）、bc.py（求解器示范的行为克隆预热与评估）、heuristic_demos.py（启发式 agent 第 2 回合起的决策 → BC 样本）
 ├── tools/                   # 开发脚本：提交前检查（presubmit.sh：ruff 格式化 + lint）、PPO 自博弈训练（train_ppo.py）、combo 求解器构建（build_combo_solver.sh）、起手批量求解（solve_openings.py）、任意牌组的阻断场面示范（solve_blocking.py）与示范集复验（verify_demos.py）、常量生成、测试牌组 / 代理引擎包生成、meta 引擎包推导（make_meta_packages.py）、协同图构建、引擎包列表、基因型采样与合法性检查、代理模型实验（surrogate_experiment：标注 + 留出集误差）、漏斗第一层评估与验收实验（funnel_eval.py、validate_funnel.py）、预算研究（funnel_budget.py）、压力测试、确定性扫描、YGOPRODECK 核对、MD 禁限表交叉核对（crosscheck_banlist.py）、arena 基准（ygorl arena 的包装）、信念基线表、信念头实验（train_beliefs.py）、行为克隆训练与评估（train_bc.py）、Greedy 示范录制（greedy_demos.py）、BC 对 Random 失败的根因诊断（diagnose_bc.py）、吞吐基准、课程模式检查、快照检查、线程池与逐局比对（check_pool.py）、C++ 编码 / 事件流交叉校验、组牌进化的先行测量与评估器对照（deckevo_*.py：M1–M5、每接受一次改动的对局数与被接受改动的重验、析因评估与逐个筛的对照）、组牌进化的一轮（evolve_decks.py）、牌组数据集构建（build_deck_dataset.py：masterduelmeta 全部历史卡表 → out/deck_dataset/<版本>/）、掩码卡组模型的训练与评估（train_deck_model.py → out/deckmodel/）、改动价值模型的拟合与留一牌组交叉验证（fit_value_model.py → out/valuemodel/）、共同进化循环（coevolve.py）；critic_continuation/ 为128→512更新的封存续训/配对评估/独立审计驱动（执行前见对应spike协议）；tsan/ 为 ThreadSanitizer 检查
-├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组及其求解目标（solver_targets.json），data/ 放测试数据（含代理引擎包、泛用卡池）
+├── tests/                   # pytest 单测（test_readme.py 执行 README 的命令行示例）；decks/ 放 10 套测试牌组及其求解目标（solver_targets.json），data/ 放测试数据（含代理引擎包、泛用卡池、建议器盘面快照）
 ├── docs/
 │   ├── design/              # 设计文档（按主题拆分）
 │   ├── glossary.md          # 术语表（标识符与中文术语对照）

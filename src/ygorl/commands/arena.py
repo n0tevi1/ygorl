@@ -12,6 +12,7 @@ from ygorl.commands import (
     add_env_option,
     add_max_turns_option,
     agents_help,
+    deck_arg,
     duel_config,
     load_decks,
     load_env,
@@ -27,9 +28,11 @@ def add_parser(subparsers) -> None:
         "agent b the --vs decks. --games is spread evenly over the pairings, rounded to whole pairs (two games per "
         "seed, first player swapped). Prints agent a's win rate with its Wilson interval (see docs/cli.md).",
     )
-    p.add_argument("decks", type=Path, nargs="+", metavar="DECK", help=".ydk file or directory of .ydk files")
     p.add_argument(
-        "--vs", type=Path, nargs="+", default=None, metavar="DECK", help="decks of agent b (default: DECK...)"
+        "decks", type=deck_arg, nargs="+", metavar="DECK", help=".ydk file, directory of .ydk files or ydke:// link"
+    )
+    p.add_argument(
+        "--vs", type=deck_arg, nargs="+", default=None, metavar="DECK", help="decks of agent b (default: DECK...)"
     )
     p.add_argument("--agent-a", default="greedy", metavar="AGENT", help=f"agent a (default greedy): {agents_help()}")
     p.add_argument("--agent-b", default="random", metavar="AGENT", help="agent b (default random)")

@@ -10,6 +10,7 @@ from ygorl.commands import (
     add_env_option,
     add_max_turns_option,
     agents_help,
+    deck_arg,
     describe_result,
     duel_config,
     load_decks,
@@ -24,8 +25,8 @@ def add_parser(subparsers) -> None:
         description="Play one game: agent a pilots deck A, agent b pilots deck B. Agent a is seeded with SEED "
         "and agent b with SEED + 1, so the same arguments replay the same game (see docs/cli.md).",
     )
-    p.add_argument("deck_a", type=Path, metavar="A.ydk", help="deck of side a")
-    p.add_argument("deck_b", type=Path, metavar="B.ydk", help="deck of side b")
+    p.add_argument("deck_a", type=deck_arg, metavar="A.ydk", help="deck of side a (.ydk file or ydke:// link)")
+    p.add_argument("deck_b", type=deck_arg, metavar="B.ydk", help="deck of side b (.ydk file or ydke:// link)")
     p.add_argument("--seed", type=int, default=0, help="duel seed (default 0)")
     p.add_argument("--first", choices=("a", "b"), default="a", help="side that moves first (default a)")
     p.add_argument("--agent-a", default="random", metavar="AGENT", help=f"agent of side a: {agents_help()}")

@@ -69,6 +69,18 @@ class PlayerRules:
 
 
 @dataclass(frozen=True)
+class MatchRules:
+    """How a match is played: best of 1 or 3, and the chess-clock timer in seconds (0: no timer).
+
+    Metadata only (the engine has no clock); time budgets such as the MD advisor's read it.
+    """
+
+    best_of: int = 1
+    timer_initial_s: int = 0  # at the start of the duel
+    timer_per_turn_s: int = 0  # added at the start of each turn
+
+
+@dataclass(frozen=True)
 class MetaDeck:
     name: str
     share: float
@@ -86,6 +98,7 @@ class Environment:
     meta_decks: tuple[MetaDeck, ...]
     player: PlayerRules = PlayerRules()
     deck_rules: DeckRules = DeckRules()
+    match: MatchRules = MatchRules()
     description: str = ""
     root: Path | None = None
     fingerprint: str = ""
@@ -351,6 +364,9 @@ def _load_dir(root: Path) -> Environment:
     player = _dataclass_from(PlayerRules, _object(manifest, "player", where), f"{where}: player")
     deck_rules = _dataclass_from(DeckRules, _object(manifest, "deck", where), f"{where}: deck")
     _check_rules(player, deck_rules, where)
+    match = _dataclass_from(MatchRules, _object(manifest, "match", where), f"{where}: match")
+    if match.best_of not in (1, 3):
+        raise EnvironmentConfigError(f"{where}: match.best_of must be 1 or 3, not {match.best_of}")
     description = _optional(manifest, "description", str, "", where)
     banlist_name = _optional(manifest, "banlist_name", str, None, where)
 
@@ -369,6 +385,7 @@ def _load_dir(root: Path) -> Environment:
         meta_decks=meta_decks,
         player=player,
         deck_rules=deck_rules,
+        match=match,
         description=description,
         root=root,
         fingerprint=_fingerprint(root, meta_decks),

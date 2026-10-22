@@ -121,6 +121,10 @@ M4 待议的消融（不改变主线设计，结果先入 `docs/experiments/`）
 - **T4b.5 输入**（bc.md「补救实验」，10 套牌、每臂 200 次更新、单种子、小网络）：bc12 热启动与从零相同（对 Random 0.515）；全局 BC 先验锁死「不攻击」（0.305）；b2 热启动 → 对 Random 0.925、对 Greedy 0.635，但第 1 回合展开 37→18；第 1 回合先验 2.0 保住展开（31）、对 Greedy 0.485。已知问题：一次熵崩塌（自博弈陷入循环，未查）；成对发局间快照被逐出导致的 KeyError 已修（`SelfPlaySchedule.opponent`）。
 - **T4b.5 / T4b.6 进展**（[scaling.md](scaling.md)、[benchmarks.md](benchmarks.md)「PPO 步长」「BC 热启动 + PPO」）：从零 PPO 在 4 核 CPU 上 3 小时对 Greedy 只到约 0.15——规模比 ygo-agent（约 100M 局、相当于 32 块 4090 训 5 天）少约 5 个数量级；重建的 b2s 热启动后 PPO（旧步长 P4o）对 Random 0.895、对 Greedy 0.490（b2s 本身 0.735 / 0.400）；新步长从热启动出发走太远（P4n 0.845 / 0.415，进战斗率 69%）；`--target-kl 0.01`（K）0.910 / 0.550，已设为默认。熵 0.01（KE）显著变差、固定 b2s 对手（KP）无帮助、按动作类型的优势（D0）未证实卡组耗尽假设，余下消融与 GRPO / DPO 见 #61。
 - **T4e.1 阶段 A**（[benchmarks.md](benchmarks.md)「致死搜索原型」）：`lethal:<agent>` 包在 K 外面对 Random 0.910 → 0.925、对 Greedy 0.550 → 0.555，在噪声以内；K 的负局不是因为漏斩杀，只为斩杀做阶段 B 不值得，阶段 B 并入 C（PIMC）再议，见 #62。
+- **T7.1–T7.4**（[design/10](design/10-master-duel.md)、[benchmarks.md](benchmarks.md)「MD 建议器：重建保真」）：`ydke://` 读写；环境 `match` 段；`BoardSnapshot` 与重建（`Debug.AddCard` 脚本放卡，含超量素材 / 指示物）；`ygorl advise`。
+  自博弈 327 个决策点上合法动作 Jaccard 0.91、策略 top-1 一致 78%，差异主要来自本回合已用的效果。
+- **T7.5**（design/10「探路结论」）：可行。`duel.dll` 的查询函数直接读一块全局对局状态（回合、阶段、LP 与各区卡片的偏移已从反汇编得到，buildid 23020425）；
+  T7.6 需要在游戏运行时核对。
 - **`.yrpX` 导出**（T1.8 补充）：现按 EDOPro 方式 LZMA 压缩（1–3 MB → 10–20 KB）；T1.8 的人工回看需确认压缩文件在客户端里能打开（`--yrpx-uncompressed` 可对照）。
 
 ### M6 元游戏闭环与 off-meta 报告
@@ -132,6 +136,19 @@ M4 待议的消融（不改变主线设计，结果先入 `docs/experiments/`）
 | T6.3 | 环境版本升级流程：新禁限表 → 新版本 → 热启动权重/信念头/代理/档案；文档化 | T5.1, T4c.1, T5.7 | 热启动首轮评估用时显著低于冷启动 | [#50](https://github.com/n0tevi1/ygorl/issues/50) |
 | T6.4 | 报告生成：对局矩阵、Nash 混合、精英档案、off-meta 三元组榜单（EV > 50% ∧ Nash 权重 > 0 ∧ meta 距离靠前），附展开线 | T6.1 | 至少一套 rogue 牌通过三元组；报告可读 | [#51](https://github.com/n0tevi1/ygorl/issues/51) |
 
+### M7 Master Duel 只读建议器（首期后扩展）
+
+设计见 [design/10-master-duel.md](design/10-master-duel.md)。建议器只读，不向游戏发送任何输入。
+
+| ID | 任务 | 依赖 | 验收标准 | Issue |
+|----|------|------|---------|-------|
+| T7.1 | `ydke://` 读写；卡组参数通吃 `.ydk` 与 `ydke://` | T0.4 | `.ydk` ↔ `ydke` 往返一致 | |
+| T7.2 | 环境清单新增可选 `match` 段（Bo1/Bo3、计时）；`ygorl env build` 从下一版起写入 `side_max: 0` 与 MD 计时；`md-2026-09` 不改 | T5.1 | 旧环境指纹不变；新字段有校验 | |
+| T7.3 | `BoardSnapshot`（JSON）与重建：逐张放卡、分别设定双方 LP、按 meta 采样暗牌、改写回合数 | T2.2, T5.1 | 重建保真：自博弈决策点上合法动作集合的重合率达到报告水平 | |
+| T7.4 | `ygorl advise`：多样本平均后输出 top-k 建议，BC 与 PPO 检查点都能读 | T7.3, T4a.2 | 同一批决策点上，重建局面与原局面的 top-1 一致率达到报告水平 | |
+| T7.5 | 探路：用 Il2CppDumper 处理 MD 当前版本，定位对局状态与 `md_cid` 映射；给出继续或放弃的结论 | — | 结论写入 design/10 | |
+| T7.6 | `ygorl advise --attach`：用 `process_vm_readv` 只读取内存 → 快照 → 建议；偏移按 `buildid` 存放 | T7.4, T7.5 | 单人模式对局中快照与画面人工核对一致 | |
+
 ## 3. 推进顺序
 
 1. **第一阶段（M0–M1）**：单人串行，T0.1 → T0.2 → T0.3 / T0.4 → T1.1 → T1.2 / T1.4 → T1.3 → T1.5 → T1.6 → T1.8；T1.7 spike 与 T1.4 并行。
@@ -140,7 +157,7 @@ M4 待议的消融（不改变主线设计，结果先入 `docs/experiments/`）
 4. **并行支线（M5 数据）**：T5.1–T5.4 在 M1 完成后即可开工，不阻塞主线；T5.5 之后依赖 M4 的策略。
 5. **第四阶段（M5 后半 + M6）**。
 
-不在首期范围：人类/EDOPro 客户端联机、决策时 PIMC 搜索、多机 actor/learner、Rush/Speed 格式实测。
+不在首期范围：人类/EDOPro 客户端联机（MD 只读建议器见 M7）、决策时 PIMC 搜索、多机 actor/learner、Rush/Speed 格式实测。
 
 **2026-09-25 优先级调整（设计方确认）**：M4 的 P0 是**对局强度**（agent 打得聪明），见 [#83](https://github.com/n0tevi1/ygorl/issues/83)：
 策略对局矩阵作强度尺子 → 更新阶段提速（#72–#77）→ 更大网络与长训练 → 可恢复的多机执行。新卡泛化不是 P0：约 1.5 万张卡的卡池可以全部学到，

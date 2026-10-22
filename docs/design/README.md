@@ -16,5 +16,6 @@
 | [07-building-blocks.md](07-building-blocks.md) | §4.1 | 引擎、脚本、数据库、API、求解器等可复用资源清单 |
 | [08-risks.md](08-risks.md) | §8 | 风险与备选 |
 | [09-activation-health.md](09-activation-health.md) | 补充 | 发动与结算的合法性、脚本故障边界、监控接手 |
+| [10-master-duel.md](10-master-duel.md) | — | MD 数据对齐与只读建议器（首期后扩展，草案） |
 
 阅读顺序建议：00 → 01 → 02 → 06，再按兴趣读 03 / 04 / 05。

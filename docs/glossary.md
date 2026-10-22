@@ -156,3 +156,13 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `action_filter` / `masker` | 动作风险过滤器 | 对合法候选作局部风险评分；学习分数不等同规则合法性 |
 | `risk_logit` | 局部风险 logit | 由已核验偏好训练，未经独立校准不解释为错误概率 |
 | `supported` | 过滤支持范围 | 调用方显式指定；范围外动作不施加惩罚 |
+
+## Master Duel 建议器
+
+| 标识符 | 中文 | 说明 |
+|--------|------|------|
+| `ydke` | ydke 链接 | `ydke://` 后接 `main!extra!side` 三段 base64（小端 u32 密码），与 `.ydk` 等价（`ygorl.cards.ydk`） |
+| `advisor` | 建议器 | 只读：读取局面并输出候选动作与概率，绝不向游戏发送输入（[design/10](design/10-master-duel.md)） |
+| `BoardSnapshot` / board snapshot | 盘面快照 | 建议方可见的局面（公开信息 + 自己手牌），卡片用密码标识；与 arena 的 `snapshot`（核心内存拷贝）无关 |
+| `reconstruct` | 重建 | 把盘面快照放进核心、补全暗牌样本，得到可查询的 `DecisionPoint` |
+| `md_cid` | MD 内部卡 id | MD 客户端内部的卡片编号，与密码不同；映射表是环境产物 `artifacts/md_cid.json` |

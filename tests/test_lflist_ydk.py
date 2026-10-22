@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from ygorl.cards.lflist import LflistError, load_lflist, parse_lflist, select
-from ygorl.cards.ydk import YdkError, load_ydk, parse_ydk
+from ygorl.cards.ydk import Deck, YdkError, load_ydk, parse_ydk, parse_ydke
 
 LFLISTS = Path(__file__).resolve().parents[1] / "third_party" / "LFLists"
 
@@ -91,3 +91,33 @@ def test_non_utf8_files_are_format_errors(tmp_path):
     conf.write_bytes(b"!x\n1 1 --caf\xe9\n")
     with pytest.raises(LflistError, match="x.lflist.conf: not valid UTF-8"):
         load_lflist(conf)
+
+
+# main: Blue-Eyes x2 + Ash Blossom, extra: Stardust Dragon, side: empty
+YDKE = "ydke://o6lXBaOpVwWvI94A!viOnAg==!!"
+
+
+def test_parse_ydke():
+    deck = parse_ydke(YDKE)
+    assert deck.main == (89631139, 89631139, 14558127)
+    assert deck.extra == (44508094,)
+    assert deck.side == ()
+
+
+def test_ydke_roundtrip():
+    deck = Deck((89631139, 14558127), (44508094,), (14558127,))
+    assert parse_ydke(deck.to_ydke()) == Deck(deck.main, deck.extra, deck.side, name="ydke")
+    assert parse_ydke(parse_ydk(deck.to_ydk()).to_ydke()).main == deck.main
+    assert Deck().to_ydke() == "ydke://!!!"
+
+
+def test_ydke_missing_sections_are_empty():
+    deck = parse_ydke("ydke://o6lXBQ==")
+    assert deck.main == (89631139,) and deck.extra == () and deck.side == ()
+
+
+@pytest.mark.parametrize("url", ["o6lXBQ==!!!", "ydke://o6lXBQ=!!!", "ydke://o6lX!!!", "ydke://!!!AAAA",
+                                 "ydke://AAAAAA==!!!"])  # fmt: skip
+def test_ydke_errors(url):
+    with pytest.raises(YdkError):
+        parse_ydke(url)

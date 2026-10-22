@@ -636,3 +636,13 @@ def test_illegal_decks_still_play_through_the_library():
         RandomAgent(0), RandomAgent(1)
     )
     assert result.reason in ("turn_limit", "win")
+
+
+def test_decks_can_be_ydke_links(capsys):
+    link = load_ydk(DECKS / "snake_eye.ydk").to_ydke()
+    code = main(["duel", link, str(DECKS / "tearlaments.ydk"), "--seed", "3", "--max-turns", "2"])
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "ydke1" in fields(out)["duel"]
+    assert main(["duel", "ydke://!!!", str(DECKS / "tearlaments.ydk")]) == 2
+    assert "Main Deck has 0 cards" in capsys.readouterr().err

@@ -47,7 +47,8 @@ MD 环境由 `ygorl env build md-YYYY-MM` 一键生成（抓取、解析、校�
   "description": "Master Duel, 2026-10 banlist",
   "rules": { "mode": "MR5", "extra_flags": [] },
   "player": { "starting_lp": 8000, "starting_hand": 5, "draw_per_turn": 1 },
-  "deck": { "main_min": 40, "main_max": 60, "extra_max": 15, "side_max": 15, "max_copies": 3 },
+  "deck": { "main_min": 40, "main_max": 60, "extra_max": 15, "side_max": 0, "max_copies": 3 },
+  "match": { "best_of": 1, "timer_initial_s": 300, "timer_per_turn_s": 90 },
   "banlist_name": "2026.10 MD",
   "sources": { "pool": "YGOPRODECK API, retrieved 2026-10-01" },
   "review": { "banlist": { "status": "pending" } }
@@ -61,7 +62,8 @@ MD 环境由 `ygorl env build md-YYYY-MM` 一键生成（抓取、解析、校�
 | `rules.mode` | 否，默认 `MR5` | 核心规则预设：`MR1`–`MR5`、`SPEED`、`RUSH`、`GOAT`，对应 `DUEL_MODE_*` |
 | `rules.extra_flags` | 否 | 追加的核心 flag 名，去掉 `DUEL_` 前缀，如 `TCG_SEGOC_NONPUBLIC` |
 | `player` | 否 | 起始 LP、起手张数、每回合抽卡数；默认 8000 / 5 / 1 |
-| `deck` | 否 | 构筑规则：主卡组 40–60、额外 ≤ 15、副卡组 ≤ 15、同名 ≤ 3 |
+| `deck` | 否 | 构筑规则：主卡组 40–60、额外 ≤ 15、副卡组 ≤ 15、同名 ≤ 3（括号内为缺省值；MD 没有副卡组，`ygorl env build` 从 `md-2026-10` 起写 `side_max: 0`） |
+| `match` | 否 | 对局形式：`best_of`（1 或 3，默认 1）、计时 `timer_initial_s` / `timer_per_turn_s`（秒，默认 0 = 不计时）。只作元数据，核心没有计时；MD 为 Bo1、300 秒 + 每回合 90 秒（[design/10](design/10-master-duel.md)） |
 | `banlist_name` | 否 | 禁限表文件含多张表时选择哪一张（`!name`）；缺省取第一张 |
 | `description`、`sources` | 否 | 说明与数据来源，原样保留在 `Environment.manifest`；`ygorl env build` 在 `sources` 里记原始文件出处（`raw`）、禁限更新公告、meta 窗口与构建参数（`build`） |
 | `review` | 否 | 人工校对状态，如 `{"banlist": {"status": "pending" \| "reviewed", "by", "date"}}`（[data.md](data.md)） |
@@ -72,9 +74,10 @@ flag 数值来自 `ygorl.engine.constants`，该模块由 `tools/gen_constants.p
 
 加载时的校验（违反任何一条都抛 `EnvironmentConfigError`，命令行显示为退出码 2 的错误，不会带着不合理的规则开局）：
 
-- 类型：清单必须是 JSON 对象；`rules`、`player`、`deck` 缺省或为对象；`rules.mode` 是上表中的字符串；
+- 类型：清单必须是 JSON 对象；`rules`、`player`、`deck`、`match` 缺省或为对象；`rules.mode` 是上表中的字符串；
   `rules.extra_flags` 是 flag 名字符串的**列表**（写成单个字符串会报 `rules.extra_flags must be a list`）；
-  `description`、`banlist_name` 若给出必须是字符串；`player` / `deck` 只允许上表的键，值是非负整数且不超过 2^31−1。
+  `description`、`banlist_name` 若给出必须是字符串；`player` / `deck` / `match` 只允许上表的键，值是非负整数且不超过 2^31−1；
+  `match.best_of` 只能是 1 或 3。
 - `player.starting_lp` ≥ 1（为 0 时开局即平局）。
 - `player.starting_hand` ≤ `deck.main_min`，`player.draw_per_turn` ≤ `deck.main_min`：合法牌组至少有 `main_min` 张，
   起手或单次抽卡超过它会让双方在第一回合就抽空卡组。两者可以为 0。

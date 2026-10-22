@@ -13,9 +13,9 @@ import argparse
 import sys
 
 from ygorl import __version__
-from ygorl.commands import CommandError, arena, branch, duel, env, matrix, replay, strength
+from ygorl.commands import CommandError, advise, arena, branch, duel, env, matrix, replay, strength
 
-COMMANDS = (duel, arena, matrix, strength, replay, branch, env)
+COMMANDS = (duel, arena, matrix, strength, replay, branch, env, advise)
 
 
 def build_parser() -> argparse.ArgumentParser:
