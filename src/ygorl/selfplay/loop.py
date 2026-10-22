@@ -264,8 +264,13 @@ class Player:
             self.click(x, y, why if not attempt else f"{why} (again)", 1.2)
             after = capture(self.mouse.window)
             icons = L.new_icons(before, after, *box)
-            if icons or not hand:
+            if icons:
                 return icons
+            if not hand:
+                # the icon can come late, or already be up (the card was selected before): accept one straight
+                # above the card on a fresh capture
+                time.sleep(1.0)
+                return [p for p in L.find_icons(capture(self.mouse.window), *box) if abs(p[0] - x) <= 40]
             time.sleep(1.5)
         # a hand card left open by an earlier stop stays open when clicked again: its icons were already there;
         # in the hand band only command icons sit above y 940 (the lifted card's art starts lower)
