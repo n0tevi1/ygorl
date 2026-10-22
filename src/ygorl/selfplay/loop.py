@@ -31,12 +31,13 @@ from pathlib import Path
 
 import numpy as np
 
+from ygorl.engine import constants as C
 from ygorl.md import layout as L
 from ygorl.md.input import GatedMouse
 from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
 from ygorl.md.screen import capture as capture_client
 from ygorl.md.ui import UI, Stuck, command_order, my_monster_xy, opp_monster_xy
-from ygorl.md.panel import PanelBook
+from ygorl.md.panel import PanelBook, panel_kind
 from ygorl.md.request import read_request
 from ygorl.selfplay.observe import ShadowObserver
 from ygorl.selfplay.trace import Trace
@@ -146,6 +147,7 @@ class Player:
 
     expect: Expectation | None = None
     recent: list = field(default_factory=list)  # the last states seen, to stop instead of looping
+    last_zone: tuple | None = None  # (location, sequence) of the zone picked for our last own action
     pending_panel: tuple | None = None  # (capture, card id) of the last opened hand card, learned once confirmed
     recoveries: dict = field(default_factory=dict)  # state -> self-recovery attempts this duel
     recovery_count: int = 0
@@ -209,6 +211,33 @@ class Player:
             time.sleep(0.35)
         raise Stuck(f"nothing to do for {timeout:.0f} s")
 
+    def learn_panel(self, raw: RawDuel) -> None:
+        """The card that actually left the hand since the panel was captured is the card the panel showed —
+        whether or not it was the one intended — so the panel is labelled with it (mistakes teach too)."""
+        if self.pending_panel is None:
+            return
+        img, before = self.pending_panel
+        self.pending_panel = None
+        from collections import Counter
+
+        gone = Counter(c.cid for c in before.players[before.me].piles["hand"]) - Counter(
+            c.cid for c in raw.players[raw.me].piles["hand"])  # fmt: skip
+        if sum(gone.values()) == 1:
+            (cid,) = gone
+            self.panel.learn(img, cid, self.card_stats(cid))
+            self.panel.save()
+            self.trace.observe(panel_learned=cid)
+
+    def card_kind(self, cid: int) -> str:
+        """The panel kind (:func:`ygorl.md.panel.panel_kind`) of a hand card."""
+        k = self.cards.get(self.passwords.get(cid))
+        if k is None:
+            return ""
+        return "monster" if k.is_monster else "spell" if k.type & C.TYPE_SPELL else "purple"
+
+    def _only_one_of_kind(self, hand, kind: str) -> bool:
+        return len({c for c in hand if self.card_kind(c) == kind}) == 1
+
     def card_stats(self, cid: int) -> tuple[int, int, int] | None:
         k = self.cards.get(self.passwords.get(cid))
         if k is None or not k.is_monster:
@@ -223,11 +252,15 @@ class Player:
         stats = {c: self.card_stats(c) for c in hand}
         img = self.ui.capture()
         got, how = self.panel.identify(img, hand, stats)
-        self.trace.observe(panel={"want": cid, "got": got, "how": how})
-        if got is None or got == cid:
-            self.pending_panel = (img, cid)
+        kind, want_kind = panel_kind(img), self.card_kind(cid)
+        self.trace.observe(panel={"want": cid, "got": got, "how": how, "kind": kind, "want_kind": want_kind})
+        if got == cid or (got is None and (not kind or kind == want_kind)):
+            self.pending_panel = (img, raw)
             return icons
-        print(f"  panel shows {self.name(got)} ({how}), not {self.name(cid)}: searching the hand", flush=True)
+        if got is None:
+            how = f"a {kind} panel"
+        shown = self.name(got) if got is not None else how
+        print(f"  panel shows {shown}, not {self.name(cid)}: searching the hand", flush=True)
         for i in range(len(hand)):
             pos = L.hand_card(i, len(hand))
             if pos == xy:
@@ -235,9 +268,10 @@ class Player:
             found = self.ui.open_hand_card(pos, f"hand #{i + 1}: looking for {self.name(cid)}")
             img = self.ui.capture()
             seen, how = self.panel.identify(img, hand, stats)
-            if seen == cid:
-                self.trace.observe(panel={"want": cid, "found_at": i, "how": how})
-                self.pending_panel = (img, cid)
+            kind = panel_kind(img)
+            if seen == cid or (seen is None and kind == want_kind and self._only_one_of_kind(hand, want_kind)):
+                self.trace.observe(panel={"want": cid, "found_at": i, "how": how or kind})
+                self.pending_panel = (img, raw)
                 return found
         raise Stuck(f"{self.name(cid)} not found in the hand by its information panel")
 
@@ -273,7 +307,6 @@ class Player:
             raise Stuck(f"no click script for {best.kind}")
         cid = next((c for c, p in self.passwords.items() if p == best.card.code), None)
         where = best.card.loc
-        from ygorl.engine import constants as C
 
         if where.location in (C.LOCATION_MZONE, C.LOCATION_SZONE) and best.kind == "activate":
             if where.location == C.LOCATION_MZONE:
@@ -314,6 +347,7 @@ class Player:
         location = "mzone" if card.is_monster else "szone"
         zone = self.free_zone(raw, location)
         self.ui.pick_zone(location, zone, f"zone for {best.kind}")
+        self.last_zone = (location, zone)
         self._placed(location, zone)
         before = sum(c.cid == cid for c in raw.players[raw.me].piles["hand"])
         for _ in range(10):
@@ -560,7 +594,7 @@ class Player:
         return True
 
     def reset_game_state(self) -> None:
-        self.attacked, self.forbidden, self.recent = set(), set(), []
+        self.attacked, self.forbidden, self.recent, self.last_zone = set(), set(), [], None
         self.recoveries, self.recovery_count = {}, 0
         self.turn_seen, self.phase_seen, self.expect, self.context = -1, (-1, -1), None, ""
 
@@ -615,11 +649,7 @@ class Player:
                 if self.expect is not None and not dialog and inp.mode in (MAIN, BATTLE):
                     problem = check_expectation(self.expect, raw, self.passwords)
                     self.trace.check(self.expect.action, problem)
-                    if problem is None and self.pending_panel is not None:
-                        img, pcid = self.pending_panel  # the panel showed pcid: confirmed by memory, learn it
-                        self.panel.learn(img, pcid, self.card_stats(pcid))
-                        self.panel.save()
-                    self.pending_panel = None
+                    self.learn_panel(raw)
                     print(f"  check {self.expect.action.kind}: {'ok' if problem is None else problem}", flush=True)
                     self.expect = None
                     if problem is not None:
@@ -633,6 +663,12 @@ class Player:
                     zone = self.free_zone(raw, "mzone")
                     self.ui.pick_zone("mzone", zone, "zone for the summon")
                     self._placed("mzone", zone)
+                elif dialog == "banner" and mine and inp.mode == MAIN and self.last_zone is not None:
+                    # MD still asks for the zone of our own Summon / Set (the click came while the banner animated in)
+                    self.trace.rule("zone-again")
+                    self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+                    self.ui.pick_zone(*self.last_zone, "zone again")
+                    self.last_zone = None
                 elif dialog == "banner" and mine and inp.mode == FIELD_PICK:
                     self.field_pick(raw)  # the banner states what to pick on the field (tributes, targets)
                 elif dialog:

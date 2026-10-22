@@ -42,6 +42,24 @@ def panel_open(img: np.ndarray) -> bool:
     return bool(img[y0:y1, x0:x1].astype(int).mean() < 45 and _white(img, NAME_BAND).mean() > 0.02)
 
 
+HEADER = (380, 175, 440, 192)  # the name bar's colour, right of the name
+
+
+def panel_kind(img: np.ndarray) -> str:
+    """The card kind the panel's header colour shows: "spell" (teal, measured 44 96 90), "monster" (orange / yellow:
+    104 77 58 effect, 104 91 65 normal), "purple" (a Trap, or an Extra Deck monster such as Fusion: 100 58 94), "" else.
+    A hand card is never an Extra Deck monster, so "purple" there means a Trap."""
+    x0, y0, x1, y1 = HEADER
+    r, g, b = img[y0:y1, x0:x1].reshape(-1, 3).astype(int).mean(axis=0)
+    if g > r + 25 and b > r + 20:
+        return "spell"
+    if r > b + 20 and g > b + 10:
+        return "monster"
+    if r > g + 20 and b > g + 15:
+        return "purple"
+    return ""
+
+
 def name_signature(img: np.ndarray) -> np.ndarray:
     return _white(img, NAME_BAND)
 
@@ -161,4 +179,4 @@ class PanelBook:
                 self.digits.setdefault(ch, []).append(g)
 
 
-__all__ = ["PanelBook", "digit_glyphs", "name_signature", "panel_open", "same_name"]
+__all__ = ["PanelBook", "digit_glyphs", "name_signature", "panel_kind", "panel_open", "same_name"]
