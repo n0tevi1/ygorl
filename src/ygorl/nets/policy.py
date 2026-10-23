@@ -117,16 +117,22 @@ def trim_padding(obs):
     rows (other models' observations, e.g. the Nim test env) pass through untouched, and so does everything while
     :func:`padding_trimmed` is off. Callers cut where it saves the most: the PPO update once per rollout, the
     actor-critic per minibatch, BC per batch of samples, :class:`PolicyNet` on its own input.
+
+    A :class:`~ygorl.nets.batch.Batch` carries the widths from the host side (``lengths``) and is cut without
+    reading the device tensors back; a plain dict is scanned (three device reads for a device batch). The result
+    is a ``Batch`` with the same widths, so cutting it again costs nothing.
     """
     if not _TRIM or "cards" not in obs or "actions" not in obs:
         return obs
-    out = dict(obs)
-    n_cards = _prefix_length(obs["cards"][..., 0] > 0)
+    lengths = getattr(obs, "lengths", None)
+    if lengths is None:
+        n_events = _prefix_length(obs["event_mask"]) if obs.get("events") is not None and "event_mask" in obs else None
+        lengths = (_prefix_length(obs["cards"][..., 0] > 0), _prefix_length(obs["action_mask"]), n_events)
+    n_cards, n_actions, n_events = lengths
+    out = Batch(obs, lengths=lengths)
     out["cards"] = obs["cards"][:, :n_cards]
-    n_actions = _prefix_length(obs["action_mask"])
     out["actions"], out["action_mask"] = obs["actions"][:, :n_actions], obs["action_mask"][:, :n_actions]
-    if obs.get("events") is not None and "event_mask" in obs:
-        n_events = _prefix_length(obs["event_mask"])
+    if n_events is not None:
         out["events"], out["event_mask"] = obs["events"][:, :n_events], obs["event_mask"][:, :n_events]
     return out
 

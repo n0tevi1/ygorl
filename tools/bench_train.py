@@ -83,6 +83,14 @@ def main() -> None:
         "--no-target-kl", action="store_true", help="always run every epoch (fixed update cost); = --target-kl 0"
     )
     p.add_argument("--label", default="", help="free-form tag stored in the JSON line")
+    p.add_argument(
+        "--bench-pool",
+        type=int,
+        default=0,
+        metavar="N",
+        help="pre-fill the snapshot pool with N frozen copies of the initial model, so --selfplay-fraction "
+        "of the deals are pool games played by snapshot opponents (production: 8 snapshots)",
+    )
     p.add_argument("--json", type=Path, default=None, help="append the summary as one JSON line")
     cli.add_arguments(p, base)
     args = p.parse_args()
@@ -96,6 +104,8 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         trainer = Trainer(cfg, tmp, log=None)
         trainer.learner.timing = args.profile  # time/<section> of each update (#72), separate from throughput
+        for _ in range(args.bench_pool):  # distinct snapshot modules: the opponents' forwards are grouped per module
+            trainer.pool.add(trainer.model, update=0)
         for i in range(args.updates):
             if i == 1:
                 busy.start()  # after the warm-up step
@@ -115,6 +125,8 @@ def main() -> None:
     summary = {"label": args.label, "device": cfg.device, "envs": cfg.num_envs, "steps": cfg.steps,
                "min_batch": cfg.min_batch, "env_threads": cfg.env_threads, "collect_threads": cfg.collect_threads,
                "torch_threads": cfg.torch_threads, "overlap": cfg.overlap_collect, "bf16": cfg.bf16,
+               "shared_backbone": cfg.shared_backbone, "bench_pool": args.bench_pool,
+               "selfplay_fraction": cfg.selfplay_fraction, "load_avg": round(os.getloadavg()[0], 1),
                "learner_precision": cfg.learner_precision,
                "d_model": args.d_model, "layers": args.layers, "epochs": cfg.ppo.epochs,
                "minibatch": cfg.ppo.minibatch_size, "rows": kept[0]["rows"],

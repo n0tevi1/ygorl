@@ -21,7 +21,7 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 
-from ygorl.nets.batch import Batch, collate
+from ygorl.nets.batch import Batch, collate, stack_arrays
 from ygorl.nets.config import NetConfig
 from ygorl.nets.heads import MASKED_LOGIT
 from ygorl.nets.policy import PolicyNet, _pad_to, trim_padding
@@ -83,7 +83,7 @@ def collate_privileged(privileged: Sequence[Mapping[str, np.ndarray] | None],
     if not privileged or any(p is None for p in privileged):
         return None
     keys = [k for k in PRIVILEGED_KEYS if k not in P_ORDER or k in privileged[0]]
-    return {k: torch.as_tensor(np.stack([p[k] for p in privileged])).long().to(device) for k in keys}
+    return {k: t.long() for k, t in stack_arrays(privileged, keys, device)[1].items()}  # one upload
 
 
 class ActorCritic(nn.Module):

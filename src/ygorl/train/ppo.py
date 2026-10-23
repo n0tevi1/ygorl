@@ -465,13 +465,14 @@ class PPOLearner:
                     grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
                     self.optimizer.step()
                     laps.lap("optimizer")
-                    grad_sum += float(grad_norm)
+                    grad_sum = grad_sum + grad_norm.double()  # read once after the loop, not per minibatch
                     steps += 1
                 # Forward diagnostics include a rejected batch; grad_norm counts only applied steps.
                 for key, val in (("loss", loss), ("policy_loss", policy_loss), ("entropy", ent), ("kl_ref", kl_ref),
                                  ("kl_prior", kl_prior), ("q_loss", ql), ("v_loss", vl), ("aux_loss", al),
                                  *extra.items()):  # fmt: skip
-                    sums[key] += float(val.detach()) if isinstance(val, Tensor) else float(val)
+                    # device sums in float64: the same values as summing the floats one by one, without a wait
+                    sums[key] += val.detach().double() if isinstance(val, Tensor) else float(val)
                 checked += 1
                 laps.lap("bookkeeping")
                 if rejected:
@@ -480,8 +481,8 @@ class PPOLearner:
         self.updates += 1
         self.update_reference()
         laps.lap("ema")
-        stats = {k: v / checked for k, v in sums.items()}
-        stats["grad_norm"] = grad_sum / steps if steps else 0.0
+        stats = {k: float(v) / checked for k, v in sums.items()}
+        stats["grad_norm"] = float(grad_sum) / steps if steps else 0.0
         taken_q = ro.q.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1).reshape(-1)
         stats["q_explained_var"] = _explained_variance(taken_q, q_targets)
         if ro.complete_games:

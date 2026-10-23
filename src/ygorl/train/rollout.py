@@ -241,11 +241,10 @@ class RolloutCollector:
                     opponent_decisions += 1
                 else:
                     others[id(slot.opponent)].append(ev)
+            pending = self._forward_opponents(others)  # queued on the device before the learner's wait
             if learner:
                 self._act_learner(learner, cols)
-            for evs in others.values():
-                self._act_opponent(self._slots[evs[0].env_id].opponent, evs)
-                opponent_decisions += len(evs)
+            opponent_decisions += self._step_opponents(pending)
             if len(self._held) == B:
                 break
             ready = self._recv(min(self.min_batch, B - len(self._held)))
@@ -285,11 +284,10 @@ class RolloutCollector:
                     opponent_decisions += 1
                 else:
                     others[id(slot.opponent)].append(ev)
+            pending = self._forward_opponents(others)
             if learner:
                 self._act_learner(learner, cols)
-            for evs in others.values():
-                self._act_opponent(self._slots[evs[0].env_id].opponent, evs)
-                opponent_decisions += len(evs)
+            opponent_decisions += self._step_opponents(pending)
         self._held.clear()
         rows = [row for col in cols for row in col]
         if not rows:
@@ -352,10 +350,13 @@ class RolloutCollector:
         priv = model.collate_privileged([ev.privileged for ev in events], self.device)
         out = model(batch, priv)
         logp = torch.log_softmax(out.logits.float(), -1)
-        probs = logp.exp().cpu()
+        width = logp.shape[1]
+        # everything the rows keep (probabilities, log-probabilities, Q, V) in one device-to-host copy
+        packed = torch.cat([logp.exp(), logp, out.q.float(), out.v.float().unsqueeze(1)], 1).cpu()
+        probs, logp = packed[:, :width].contiguous(), packed[:, width : 2 * width]
+        q, v = packed[:, 2 * width : 3 * width], packed[:, 3 * width]
         actions = torch.multinomial(probs, 1, generator=self.generator).squeeze(-1)
-        chosen = logp.cpu().gather(1, actions.unsqueeze(1)).squeeze(1)
-        q, v = out.q.float().cpu(), out.v.float().cpu()
+        chosen = logp.gather(1, actions.unsqueeze(1)).squeeze(1)
         for i, ev in enumerate(events):
             a = int(actions[i])
             slot = self._slots[ev.env_id]
@@ -385,12 +386,33 @@ class RolloutCollector:
         self.env.step(ev.env_id, row)
         return True
 
-    def _act_opponent(self, module: nn.Module, events: list) -> None:
-        batch = self.model.collate([ev.obs for ev in events], self.device)
-        probs = torch.softmax(policy_logits(module, batch).float(), -1).cpu()
-        actions = torch.multinomial(probs, 1, generator=self.generator).squeeze(-1)
-        for ev, a in zip(events, actions.tolist()):
+    def _forward_opponents(self, groups: Mapping[int, list]) -> list[tuple[list, Tensor]]:
+        """Queue one forward per snapshot module (``groups``: the ready decisions of each) and return the candidate
+        probabilities on the device, without waiting for them (:meth:`_step_opponents` samples)."""
+        pending = []
+        for evs in groups.values():
+            module = self._slots[evs[0].env_id].opponent
+            batch = self.model.collate([ev.obs for ev in evs], self.device)
+            pending.append((evs, torch.softmax(policy_logits(module, batch).float(), -1)))
+        return pending
+
+    def _step_opponents(self, pending: list[tuple[list, Tensor]]) -> int:
+        """Sample and step the opponents' decisions of :meth:`_forward_opponents`: one device-to-host copy and one
+        sampling call over all groups (``torch.multinomial`` draws row by row, so the draws are those of one call per
+        group, in group order); the number of decisions stepped."""
+        if not pending:
+            return 0
+        probs = torch.cat([p for _, p in pending]).cpu() if len(pending) > 1 else pending[0][1].cpu()
+        actions = torch.multinomial(probs, 1, generator=self.generator).squeeze(-1).tolist()
+        events = [ev for evs, _ in pending for ev in evs]
+        for ev, a in zip(events, actions):
             self.env.step(ev.env_id, int(a))
+        return len(events)
+
+    def _act_opponent(self, module: nn.Module, events: list) -> None:
+        """One snapshot's decisions, forwarded, sampled and stepped at once (the two-phase methods above are what the
+        collection loop uses)."""
+        self._step_opponents(self._forward_opponents({id(module): events}))
 
     # -- assembly ---------------------------------------------------------------------------------
     def _assemble(
@@ -421,8 +443,12 @@ class RolloutCollector:
             boot = model(boot_batch, boot_priv)
             boot_player = torch.tensor([int(ev.player) for ev in held])
             boot_mask = boot_batch["action_mask"].cpu()
-            boot_probs, boot_q = torch.softmax(boot.logits.float(), -1).cpu(), boot.q.float().cpu()
-            boot_value = boot.v.float().cpu()
+            width = boot.logits.shape[1]
+            packed = torch.cat(
+                [torch.softmax(boot.logits.float(), -1), boot.q.float(), boot.v.float()[:, None]], 1
+            ).cpu()
+            boot_probs, boot_q = packed[:, :width].contiguous(), packed[:, width : 2 * width].contiguous()
+            boot_value = packed[:, 2 * width].contiguous()
         return Rollout(
             obs=obs, privileged=priv,
             players=grid([r.player for r in rows], torch.long), actions=grid([r.action for r in rows], torch.long),
