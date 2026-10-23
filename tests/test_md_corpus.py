@@ -57,8 +57,9 @@ EXPECTED: dict[str, set[str | None]] = {
     "banner": {"banner"},
     "phase_menu": {"phase_menu"},
     "minimised": {"minimised"},
+    "declare": {"declare"},
 }
-NAMELESS = {None, "panel"}  # declare / result / menu / other
+NAMELESS = {None, "panel"}  # result / menu / other
 
 
 @dataclass
