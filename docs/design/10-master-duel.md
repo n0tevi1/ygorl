@@ -74,6 +74,64 @@ ygopro 让「小丑骑士」攻击，MD 不给攻击命令（多半是「王牌�
 「太阳神之翼神龙」通常召唤后「支付基本分到剩 100」的诱发在 MD 里是一张只含神龙本身的列表，读出的候选正确；
 规则代点是因为影子对局在上级召唤的祭品选择时已经失步（祭品由规则点，影子没有跟上），不是读请求的问题。
 
+**客户端的命令掩码（2026-10-23 逆向，build 23020425，`ygorl.md.client`）。** 原则：能从内存读的都从内存读，画面只给点击位置。
+以前「MD 允不允许召唤 / 盖放 / 发动 / 攻击 / 改变表示形式」靠找命令图标，误拒过合法动作、点过熔岩的黄光；连锁询问里的
+多张卡逐个位置盲勾。逆向结论：
+
+- `duel.dll` **不存**命令掩码。`DLL_DuelComGetCommandMask`（`0x1805a5970`，按 `S + 0x3cd0` 模式减 1 查 RVA `0x5a6048` 的跳转表）
+  每次现算：空闲 / 战斗模式下手牌走 `0x1805a3d00`、怪兽区 `0x1805a4240`、魔陷区 `0x1805a45e0`、牌堆 `0x1805a4930 | 0x1805a4a30`；
+  开放时点 / 连锁（模式 4 / 5）走 `0x1805a4bb0`，取连锁顶（`*(dll + 0x11f9c58) + 0x700 + (n − 1) * 0x38`，n 在 `+0xa84`）
+  再调「能否发动」（场上 `0x180219830`、手牌 `0x180219fa0`），后者组出临时的发动上下文、执行卡片自己的条件代码。
+  唯一的副作用是把理由码写进 `S + 0x3d14`。重新实现等于重写全部卡片程序，不可行。
+- 结果在 **C# 客户端（IL2CPP 堆）** 里，三处可读：
+  1. **打开的卡**：`YgomGame.Duel.CommandOperation`（`RunEffectWorker.<commandOperation>` 持有的唯一实例）：玩家 / 位置 / 序号、
+     卡 id、精确的 `commandMask` 与按图标顺序排列的 `commandList`（命令编号）。卡关上后玩家为 −1。实测：手牌怪兽 `0x50`
+     [4, 6]（召唤、盖放怪兽）、魔法 `0x88` [3, 7]（发动、盖放）、只能盖放的魔陷 `0x80` [7]、攻击中的怪兽 `0x1` [0]。
+  2. **全场高亮**（点之前就有）：每张卡的视图 `CardRoot`（team / position / index / cardId / uniqueId）→ `CardPlane`：
+     `highlightEff` 非空即 MD 正在高亮它，此时 `auraEffType` 才有意义（不亮时保留旧值）。`CardPlace.GetActivateAura` 用
+     `ComGetCommandMask & 0x7fd`（`EffectTaskWaitInput.cmdBitHighlight`，除「查看」与投降以上的所有命令）决定亮不亮，
+     光效编号说明掩码里有哪一组命令（见下表）。开放时点 / 连锁询问里只有可发动的卡亮。高亮在模式变化后 0.2–2 s
+     （客户端的 WaitInput 任务开始时）才设好。
+  3. **连锁 / 开放时点的卡片列表**：`CardSelectionList`（`CreateActivableList` 对手牌、场上、墓地、卡组逐张调
+     `ComGetCommandMask`，有发动位的生成一个 `ListCardData`）：`m_ListType` 6 = 连锁（模式 5）、7 = 时点（模式 4），
+     `m_GroupedDataList` 按列表顺序（可能分组嵌套）存 `ListCardData`：`cardid` 与 `cardstatus`。`cardstatus` 是
+     BitVector32 的五个区段描述（i16 掩码、i16 位移：玩家、位置、序号、表示、回合）加数据 `bitVec`，按描述解码即得
+     （玩家, 位置, 序号），再用局面读出 uid。实测两次单张询问都是魔陷区 7 的那张，而同一时刻 `duel.dll` 的请求没有候选。
+     列表在询问结束后保留旧内容，只在请求种类是 open / chain 时有效。
+
+命令位（客户端枚举 `CommandBit`，第 n 位 = 命令编号 n）与光效组（`CardPlace.commandPowerList`，实测各格相同）：
+
+| 位 | 命令 | 种类 | 组 |
+|----|------|------|----|
+| `0x1` | Attack | attack | 2 |
+| `0x2` | Look（查看） | — | 不亮 |
+| `0x4` | SummonSp（卡片自身程序的特殊召唤） | spsummon | 3 |
+| `0x8` | Action（发动） | activate | 3 |
+| `0x10` | Summon（通常 / 上级召唤） | summon | 2 |
+| `0x20` | Reverse（反转召唤） | flip | 2 |
+| `0x40` | SetMonst（盖放怪兽） | mset | 2 |
+| `0x80` | Set（盖放魔陷） | sset | 1 |
+| `0x100` | Pendulum（作为灵摆刻度发动） | activate | 3 |
+| `0x200` / `0x400` | TurnAtk / TurnDef（改变表示形式） | reposition | 1 |
+| `0x800` / `0x1000` / `0x2000` | Surrender / Decide（模式 8 的选卡） / Draw | — | 不亮 |
+
+光效编号（`CardPlane.ReqHighlight` 的映射，`+1` 表示这张卡正打开着）：`0x7c` / `0x7d` 只有组 1；`0x18` / `0x19` 有组 2
+（可能带组 1）；`0x7e` / `0x7f` / `0x88` / `0x89` 有组 3（可能带组 1）；`0xed` / `0xee` 组 2 与组 3 都有。所以高亮只给
+「可能的种类」的上界，精确的掩码要打开那张卡读 `CommandOperation`。实测空闲时只能改变表示形式的怪兽是 `0x7c`，
+没有任何命令的手牌不亮，每张亮着的卡打开后的掩码都落在它的组里。
+
+**偏移在运行时推导。** 托管字段的偏移不写死：类名在映射进进程的 `global-metadata.dat`（版本 31）的字符串表里，扫可写内存
+找 `+0x10` 指向类名、`+0x18` 指向命名空间的 `Il2CppClass`，从它 `+0x80` 的 `FieldInfo` 数组（每项 0x20：名字、类型、所属类、
+偏移）按名字取字段偏移；实例按类指针扫描，再用引用的对象核对（`CommandOperation.worker` 是 `RunEffectWorker`、
+`CardSelectionList.m_DuelClient` 是 `DuelClient`、`CardRoot` 的 `cardPlane` 是 `CardPlane`），核对失败（新对局、对象释放）就重扫。
+写死的只有 IL2CPP 运行时结构本身（对象头 0x10、`List<T>` 的 `_items` / `_size`、数组数据 `+0x20`）。找类约 2 s，之后每次读几微秒。
+卡的视图有对象池（位置 18 = 未用），新卡上场可能新建视图：自己的手牌 / 场上有卡没找到视图时重扫（至多每 5 s 一次）。
+对手的卡一律不返回（打开的是对手的卡时不给卡 id）。
+
+**待核对。** 多张卡的询问里列表顺序是否就是画面上的顺序（只见过单张）；墓地 / 除外的卡出现在询问列表与 `CommandOperation`
+里的样子（墓地查看器打开的卡是否同样写入 `CommandOperation`）；`m_ListType` 之外是否需要再用打开标志判断列表正在显示。
+接入（取代 `ygorl.md.ui` 的图标判断与 `ygorl.md.request` 的盲勾）另行进行。
+
 **组件。**
 
 ```
