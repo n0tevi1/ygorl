@@ -111,9 +111,49 @@ def parse_xwd(data: bytes) -> np.ndarray:
     return np.ascontiguousarray(px[:, :, :3])
 
 
+def wayland_socket() -> str | None:
+    """The socket of the wlroots compositor the game's display belongs to (``YGORL_MD_WAYLAND``, else the name
+    ``tools/md_display.sh`` leaves in ``$XDG_RUNTIME_DIR/ygorl-md-wayland``), or None (capture with ``xwd``)."""
+    if os.environ.get("YGORL_MD_WAYLAND"):
+        return os.environ["YGORL_MD_WAYLAND"]
+    if display() == ":0":
+        return None
+    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid()), "ygorl-md-wayland")
+    try:
+        with open(path) as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def parse_ppm(data: bytes) -> np.ndarray:
+    """RGB ``uint8`` array of a binary (P6, 8-bit) PPM."""
+    magic, size, depth, pixels = data.split(b"\n", 3)
+    if magic != b"P6" or depth != b"255":
+        raise ScreenError(f"unsupported ppm: {magic!r} depth {depth!r}")
+    w, h = map(int, size.split())
+    return np.frombuffer(pixels, dtype=np.uint8, count=w * h * 3).reshape(h, w, 3)
+
+
+def _grim(window: Window, socket: str) -> np.ndarray:
+    """The window's area as the compositor shows it (wlroots screencopy). ``xwd`` reads the X window's own pixmap,
+    which a fullscreen game no longer draws into (Xwayland flips its buffers to the compositor): its captures lagged
+    a second or more behind, and the player clicked on screens that were gone."""
+    exe = shutil.which("grim")
+    if exe is None:
+        raise ScreenError("grim is required with a wlroots display (sudo apt install grim)")
+    geometry = f"{window.x},{window.y} {window.width}x{window.height}"
+    env = {**os.environ, "WAYLAND_DISPLAY": socket}
+    out = subprocess.run([exe, "-g", geometry, "-t", "ppm", "-"], capture_output=True, check=True, env=env).stdout
+    return parse_ppm(out)
+
+
 def capture(window: Window | None = None) -> np.ndarray:
     """The game's pixels (the client area, without Wine's title bar and border), at the window's own size."""
     window = (window or find_window()).area
+    socket = wayland_socket()
+    if socket:
+        return _grim(window, socket)
     exe = shutil.which("xwd")
     if exe is None:
         raise ScreenError("xwd is required (sudo apt install x11-apps)")
@@ -122,4 +162,14 @@ def capture(window: Window | None = None) -> np.ndarray:
     return parse_xwd(out)
 
 
-__all__ = ["ScreenError", "Window", "capture", "find_window", "parse_children", "parse_tree", "parse_xwd"]
+__all__ = [
+    "ScreenError",
+    "Window",
+    "capture",
+    "find_window",
+    "parse_children",
+    "parse_ppm",
+    "parse_tree",
+    "parse_xwd",
+    "wayland_socket",
+]

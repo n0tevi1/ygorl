@@ -223,6 +223,9 @@ trace ◄── 每一步：MD 请求、ygopro 选项、选择、点击、之后
   X 显示器上，截图与输入按 `YGORL_MD_DISPLAY` 指向它（缺省 `:0`）。做法见 `tools/md_display.sh`：sway 跑在
   wlroots 的 headless 后端上，只有一个 2048×1152 输出，Xwayland 在 `:2`（Steam 启动项 `DISPLAY=:2 %command%`），
   游戏按窗口类名全屏、无边框；wayvnc 推送这个输出供人观看（`vncviewer localhost:5900`，只绑定 127.0.0.1）。
+  截图走合成器（`grim`，wlroots screencopy），不用 `xwd`：全屏的游戏窗口由 Xwayland 直接把缓冲区翻给合成器，X 窗口自己的
+  像素不再更新，`xwd` 截到的画面落后一秒以上，玩家会点在已经消失的界面上。游戏窗口还必须拿着 sway 座位的焦点，否则
+  Wine 丢掉合成的点击。
   试过而不可用的：Xvfb 没有 DRI3，DXVK 只能退到 wined3d CPU 渲染；weston 只开 vnc 后端时也没有 DRI3，开
   headless + vnc 两个输出时游戏落在 headless 那个上（kiosk 的 app-ids 对 Xwayland 窗口无效），VNC 看到全黑；
   x11vnc 在 Xwayland 上只能整窗轮询，很卡。游戏内分辨率要设为 2048×1152：窗口被裁掉一部分时 `xwd` 只截到可见

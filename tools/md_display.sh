@@ -5,7 +5,8 @@
 # (:2 when only the desktop's are taken); Steam's launch option for the game is `DISPLAY=:2 %command%`, and the
 # player runs with YGORL_MD_DISPLAY=:2.
 #
-# The game window must have the (headless) seat's focus: Wine drops the synthetic clicks otherwise.
+# The game window must have the (headless) seat's focus: Wine drops the synthetic clicks otherwise. Captures go
+# through the compositor (grim; sway writes its socket name to $XDG_RUNTIME_DIR/ygorl-md-wayland): xwd lagged.
 #
 # Watch with any VNC viewer: `vncviewer localhost:5900` (bound to 127.0.0.1 only, no password).
 set -euo pipefail
@@ -20,6 +21,7 @@ focus_on_window_activation none
 for_window [class="steam_app_1449850"] fullscreen enable, focus
 xwayland force
 exec wayvnc -o HEADLESS-1 127.0.0.1 ${PORT:-5900}
+exec sh -c 'echo "\$WAYLAND_DISPLAY" > "\$XDG_RUNTIME_DIR/ygorl-md-wayland"'
 EOF
 env -u WAYLAND_DISPLAY -u DISPLAY WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
   setsid nohup sway -c "$dir/sway.conf" >/tmp/sway-md.log 2>&1 &

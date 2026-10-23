@@ -361,6 +361,12 @@ def test_parse_tree_and_xwd():
     assert parse_xwd(data).tolist() == [[[255, 0, 0], [0, 0, 255]]]
 
 
+def test_parse_ppm():
+    from ygorl.md.screen import parse_ppm
+
+    assert parse_ppm(b"P6\n2 1\n255\n" + bytes([255, 0, 0, 0, 0, 255])).tolist() == [[[255, 0, 0], [0, 0, 255]]]
+
+
 def test_normal_summoned_from_the_counter():
     off = replace(OFF, verified=True, semantics=SEM)
     assert not to_snapshot(read_duel(build_memory(), BASE, off), PASSWORDS).normal_summoned
