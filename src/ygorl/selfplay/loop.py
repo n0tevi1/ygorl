@@ -1189,8 +1189,8 @@ class Player:
                 req = self.request_now(raw, list_shown=True)
             stale = len(req.candidates) < shown
             if stale:
-                # (Apprentice Illusion Magician's discard: one candidate, the opponent's card, against 5 on screen;
-                # the shadow took it for a forced pick)
+                # (a choice without a list whose check is not modelled, e.g. Millennium Revelation's hand card;
+                # Apprentice Illusion Magician's discard read a stale list until its check was, design 10)
                 self.trace.observe(list_request={"stale": [[c.cid, c.location, c.sequence] for c in req.candidates],
                                                  "shown": shown})  # fmt: skip
             self.listed = (self.expect, tuple(c.cid for c in req.candidates))  # names a monster summoned next

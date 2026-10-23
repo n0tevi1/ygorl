@@ -51,6 +51,16 @@ TURN_SEMANTICS = {
     "summon_flip",  # Flip Summoned this turn
     "special_summons",  # u32 in the player block: this turn's Special Summons (normal_summons counts every summon)
 }
+# a card choice MD asks without a selection list (input mode 8 with a check function, design 10 「请求的读取」),
+# decoded from the disassembly and recorded duels; optional: without them such a choice reads with no candidates
+REQUEST_SEMANTICS = {
+    "select_check",  # u64 in S: the check function DLL_DuelComGetCommandMask calls per card in mode 8
+    "select_source_cid",  # u32 in S: MD card id of the card the choice is for (whose procedure / effect asks)
+    "select_source_location",  # u32 in S: its MD location (0-12 field slot, 13 hand)
+    "select_source_index",  # u32 in S: its index in that location
+    "check_hand_but_source",  # RVA in duel.dll of the check "a card in the asking player's hand but the source"
+    "check_hand_filtered",  # RVA of the check "a hand card passing the asking card's filter" (not modelled)
+}
 
 
 class OffsetError(RuntimeError):
@@ -134,10 +144,9 @@ class Offsets:
 
         out = {k: ({kk: num(vv) for kk, vv in v.items()} if isinstance(v, dict) else num(v)) for k, v in data.items()}
         offsets = cls(**out)
-        if offsets.verified and not SEMANTICS <= set(offsets.semantics) <= SEMANTICS | TURN_SEMANTICS:
-            raise OffsetError(
-                f"verified offsets need semantics {sorted(SEMANTICS)} (optional: {sorted(TURN_SEMANTICS)})"
-            )
+        optional = TURN_SEMANTICS | REQUEST_SEMANTICS
+        if offsets.verified and not SEMANTICS <= set(offsets.semantics) <= SEMANTICS | optional:
+            raise OffsetError(f"verified offsets need semantics {sorted(SEMANTICS)} (optional: {sorted(optional)})")
         return offsets
 
 
@@ -458,5 +467,5 @@ def load_or_derive(dll: str | Path) -> Offsets:
     return derive(dll)
 
 
-__all__ = ["FIELD_SLOTS", "OFFSETS_DIR", "OffsetError", "Offsets", "PILES", "SEMANTICS", "TURN_SEMANTICS", "derive",
-           "load_or_derive", "offsets_file", "parse_objdump", "pe_exports"]  # fmt: skip
+__all__ = ["FIELD_SLOTS", "OFFSETS_DIR", "OffsetError", "Offsets", "PILES", "REQUEST_SEMANTICS", "SEMANTICS",
+           "TURN_SEMANTICS", "derive", "load_or_derive","offsets_file", "parse_objdump", "pe_exports"]  # fmt: skip

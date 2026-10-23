@@ -48,7 +48,16 @@ SEM = {
     "summon_special": 0x4,
     "summon_flip": 0xA,
     "special_summons": 0x34,
+    # a card choice without a list (input mode 8), from the disassembly and the recorded duels of 2026-10-22/23
+    "select_check": 0x3D18,
+    "select_source_cid": 0x3CF0,
+    "select_source_location": 0x3D08,
+    "select_source_index": 0x3D0C,
+    "check_hand_but_source": 0x5FCA40,
+    "check_hand_filtered": 0x2AD0C0,
 }
+REQUEST_KEYS = ("select_check", "select_source_cid", "select_source_location", "select_source_index",
+                "check_hand_but_source", "check_hand_filtered")  # fmt: skip
 
 BEWD, DM, ASH, ZEUS, MAT = 4007, 4041, 13587, 16210, 4844  # MD card ids
 PASSWORDS = {BEWD: 89631139, DM: 46986414, ASH: 14558127, ZEUS: 90448279, MAT: 70095154}
@@ -570,6 +579,48 @@ def test_read_request_locates_the_candidates_through_their_uid():
     mem.regions[STATE + 0x3C40] = bytes(tail)
     pos = read_request(mem, BASE, OFF, raw)
     assert (pos.kind, pos.candidates, pos.choices) == ("position", (), (0x7F,))
+
+
+def test_a_choice_without_a_list_offers_the_hand_but_the_asking_card():
+    """design 10 「请求的读取」: Apprentice Illusion Magician's discard (input mode 8) has no list; MD offers what the
+    check function at S + select_check accepts. For the check "a hand card but the asking one" the candidates are
+    the hand but the card at (select_source_location, select_source_index); the list in memory is an earlier one."""
+    from ygorl.md.request import read_request
+
+    off = replace(OFF, semantics=SEM)
+    mem = build_memory()
+    raw = read_duel(mem, BASE, off)
+    bewd, ash = raw.players[0].piles["hand"]  # Ash Blossom plays the asking card, at hand index 1
+    lst = 0x30000000
+    head = bytearray(0x600)  # an earlier list: one card of the Deck
+    head[OFF.list_max] = 1
+    struct.pack_into("<HhH", head, OFF.list_type, 6, 0, 0)
+    struct.pack_into("<h", head, OFF.list_count, 1)
+    struct.pack_into("<HH", head, OFF.list_item_cid, DM, uid_word(raw.players[0].piles["deck"][0].uid))
+
+    def request(check=BASE + 0x5FCA40, location=13, index=1, source=ASH, semantics=off):
+        tail = bytearray(0x200)
+        for at, v in ((OFF.input_mode, 8), (OFF.input_accepting, 1), (OFF.input_player, 0), (0x3CF0, source),
+                      (0x3D08, location), (0x3D0C, index)):  # fmt: skip
+            struct.pack_into("<I", tail, at - 0x3C40, v)
+        struct.pack_into("<Q", tail, 0x3D18 - 0x3C40, check)
+        mem.regions.update({STATE + 0x3C40: bytes(tail), BASE + OFF.list_ptr: struct.pack("<Q", lst), lst: bytes(head)})
+        return read_request(mem, BASE, semantics, raw)
+
+    req = request()
+    assert [(c.cid, c.uid, c.location, c.sequence, c.player) for c in req.candidates] == [
+        (BEWD, bewd.uid, "hand", 0, 0)
+    ]
+    assert (req.kind, req.min, req.max, req.source_cid, req.raw["check"]) == ("select_card", 1, 1, ASH, 0x5FCA40)
+    # the asking card is not where MD says: nothing is known (rather than the earlier list)
+    assert request(index=0).candidates == () and request(location=7).candidates == ()
+    assert request(source=DM).candidates == ()
+    # a hand card passing the asking card's filter: not modelled, and the list is not this choice's
+    assert request(check=BASE + 0x2AD0C0).candidates == ()
+    # any other check (a Tribute pick), or a build without the recorded semantics: the list as before
+    assert [c.cid for c in request(check=BASE + 0x5A5140).candidates] == [DM]
+    older = {k: v for k, v in SEM.items() if k not in REQUEST_KEYS}
+    assert [c.cid for c in request(semantics=replace(off, semantics=older)).candidates] == [DM]
 
 
 def test_recording_keeps_only_the_clients_own_effect_nodes():

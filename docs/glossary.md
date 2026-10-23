@@ -169,6 +169,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `rebuild` decision | 重建决策 | 影子对局不在或对不上时，从 MD 此刻的局面重新建一个对局、把核心带到问同一问题的决策点再由策略打分（攻击对象、表示形式、发动询问；`ygorl.selfplay.decide`），trace 记 `"by": "rebuild"` |
 | `md_cid` | MD 内部卡 id | MD 客户端内部的卡片编号，与密码不同；映射表是环境产物 `artifacts/md_cid.json` |
 | `mdmem` | 内存读取器 | 从运行中的 MD 客户端只读读取 `duel.dll` 的对局状态并转成盘面快照（`ygorl.md.memory`） |
+| `select check` | 选卡检查函数 | MD 输入模式 8 的选卡没有列表时，`S + 0x3d18` 处的函数逐张判断哪些卡可选；`check_hand_but_source` 等按 build 记在偏移文件 `semantics`（`ygorl.md.request`） |
 | `turn flags` | 本回合标志 | MD 格子 `+0x14` 的 u32：本回合怎么上场、是否已攻击、是否发动过效果 / 发动过这张魔陷；回合开始时清零 |
 | `effect list` | 效果链表 | `duel.dll` 的效果表（`S + 0x2bec`，每节点 16 字节）上的单向链表；卡片的链表挂超量素材等，玩家的链表（玩家块 `+0x1d0`）挂作用于玩家的效果，节点代码是来源卡的 MD 卡 id |
 | `once per turn` | 一回合一次 | 卡的发动或效果每回合限一次；ygopro 用效果的次数限制（`SetCountLimit`）表示，重建用 `Effect.UseCountLimit` 把已用的记上 |

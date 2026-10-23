@@ -76,7 +76,13 @@
   "summon_normal": "0x1",
   "summon_special": "0x4",
   "summon_flip": "0xa",
-  "special_summons": "0x34"
+  "special_summons": "0x34",
+  "select_check": "0x3d18",
+  "select_source_cid": "0x3cf0",
+  "select_source_location": "0x3d08",
+  "select_source_index": "0x3d0c",
+  "check_hand_but_source": "0x5fca40",
+  "check_hand_filtered": "0x2ad0c0"
  },
  "notes": [
   "2026-10-21 Solo duel: Field Spell face-up face=0x01, Set S/T face=0x00; Set monster face=0x00 turn=0x01, after Flip Summon face=0x01 turn=0x00 (DLL_DuelGetCardTurn = sideways, i.e. Defense Position)",
@@ -90,6 +96,7 @@
   "slot byte +0x14 low bits, all cards seen 2026-10-21: 0x50 monster Set this turn, 0x41 Normal Summoned, 0x44 Special Summoned, 0x4a Flip Summoned, 0x10 Trap Set this turn, 0x00 the same cards a turn later: 0x10 = Set this turn, 0x40 = position locked",
   "2026-10-22 per-turn slot flags, from every recorded own step of 16 Solo runs (out/mdplay/*-memory, the u32 at slot +0x14 before / after each executed decision): every attack (25) sets 0x80 (and 0x40 on a monster not yet locked); every activation of an effect of a card on the field (7) sets 0x80000, a Spell / Trap activated to stay on the field arrives with 0x81000, a summon whose own trigger was used with 0x0c0041; all of them are 0 on the next turn. The 9 recorded activations of Millennium Seeker's field effect with 0x80000 set were all refused by MD (once per turn); with it clear 6 were accepted and 10 refused (7 of them on a Seeker summoned in an earlier turn: a condition this flag does not explain)",
   "2026-10-22 player block +0x34 counts this turn's Special Summons and +0x30 every summon: steps with only a Special Summoned monster show +0x30 = +0x34 = 1, so Normal Summons = +0x30 - +0x34 (before, +0x30 > 0 alone masked the Normal Summon after any Special Summon)",
-  "2026-10-22 from the disassembly (not in the recordings, which blank the effect table): each player has an effect list whose u16 head is at player block +0x1d0 (DLL_DuelGetAttachedEffectList, also the summon permission check 0x1800c6238); nodes are coded by MD card id, e.g. 0x2ca1 Card Advance and 0x3be5 Ancient Chant (value 0) grant the additional Tribute Summon, a node counts while its kind & 0xf < 6"
+  "2026-10-22 from the disassembly (not in the recordings, which blank the effect table): each player has an effect list whose u16 head is at player block +0x1d0 (DLL_DuelGetAttachedEffectList, also the summon permission check 0x1800c6238); nodes are coded by MD card id, e.g. 0x2ca1 Card Advance and 0x3be5 Ancient Chant (value 0) grant the additional Tribute Summon, a node counts while its kind & 0xf < 6",
+  "2026-10-23 input mode 8 has no selection list: DLL_DuelComGetCommandMask (0x1805a5970) answers each (player, location, index) by calling the u64 check function at S+0x3d18, a card is offered when it returns 0x1000. Card procedures name their check in a 32-byte table in .rdata (u16 card id, u16, u32, then condition / check / operation pointers). Check 0x1805fca40 = a card in the hand of the player at *(dll+0x11f9c38)+2 whose uid is not the one at +0xc; it is the check of The Tricky, Apprentice Illusion Magician, Nightmare Apprentice, Dark Magician Girl the Magician's Apprentice and Gustav Rocket (discard 1 other card to Special Summon). In all 18 recorded Apprentice Illusion Magician discards (11 Solo runs of 2026-10-22/23) the list read count 0 or a stale list, S+0x3cf0 was 0x3211 (the Magician), S+0x3d08 13 (hand) and S+0x3d0c the Magician's hand index, MD showed hand count - 1 cards and the card that left the hand was another one. S+0x3cf0 / 0x3d08 / 0x3d0c also named the asking card in the other mode-8 steps where that card was still in the named own slot or hand (Tribute picks, Millennium Revelation in slot 7); Red-Eyes Tribute / Fusion picks named an empty own slot (not resolved). Check 0x1802ad0c0 (348 lea references: a hand card of the player passing the filter of the card id at *(*(dll+0x11f9c58)+0xa98), e.g. Millennium Revelation) is not modelled; in its 7 recorded steps the list read was empty or held Deck / GY cards of an earlier search (MD showed 1 or 3 hand cards), so it now reads with no candidates"
  ]
 }

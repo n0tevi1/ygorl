@@ -12,6 +12,11 @@ Kinds (``Request.kind``) seen in Solo duels on DLL 97bd4d13 (input mode -> kind)
 4 open (an activate-or-pass prompt at an open timing), 5 chain (activate-or-pass in a chain), 6 summon_pick
 (which monster to summon: MD keeps no list for it, the list in memory is stale), 7 position, 8 select_card. Unknown modes come back as ``"mode<N>"``.
 
+Some card choices (mode 8) have no list at all: MD offers each card for which the choice's check function (a u64 in
+S, called by ``DLL_DuelComGetCommandMask``) answers "select". Only the check "a card in the asking player's hand but
+the asking card" (the discard of Apprentice Illusion Magician's Special Summon) is modelled, from the build's recorded
+:data:`ygorl.md.offsets.REQUEST_SEMANTICS`; any other check keeps what the list holds.
+
 Prompts (4, 5) list the cards that can be activated, like a card choice. The list keeps its last items after a
 selection ends, so candidates are only read while a selection kind is pending. The dialog's "mix" entries are
 typed parameters of the message shown (kind 1 message id, kind 5 a card id such as the card being resolved).
@@ -27,6 +32,7 @@ from ygorl.md.offsets import Offsets
 
 KINDS = {1: "draw", 2: "idle", 3: "battle", 4: "open", 5: "chain", 6: "summon_pick", 7: "position", 8: "select_card"}
 MAX_ITEMS = 300  # the list holds at most 0x12c items (DLL_DuelListGetItemID checks it)
+HAND_LOCATION = 13  # MD locations: 0-12 field slots, then PILES from 13 (the hand)
 
 
 @dataclass(frozen=True)
@@ -71,6 +77,24 @@ def _locate(raw: RawDuel, uid: int) -> tuple[int, str, int | None]:
     return -1, "", None
 
 
+def _check(mem: Memory, state: int, base: int, off: Offsets) -> int:
+    """RVA in duel.dll of the check function of a choice without a list (input mode 8), 0 if unknown / none."""
+    at = off.semantics.get("select_check")
+    if at is None:
+        return 0
+    ptr = struct.unpack("<Q", mem.read(state + at, 8))[0]
+    return ptr - base if ptr > base else 0
+
+
+def _hand_but_source(raw: RawDuel, player: int, source: int, location: int, index: int) -> list[Candidate]:
+    """The cards of ``player``'s hand but the asking one (MD location 13, the hand, at ``index``); none when the
+    asking card is not where MD says (then nothing is known)."""
+    hand = raw.players[player].piles["hand"]
+    if location != HAND_LOCATION or not 0 <= index < len(hand) or hand[index].cid != source:
+        return []
+    return [Candidate(c.cid, c.uid, player, "hand", k) for k, c in enumerate(hand) if k != index]
+
+
 def read_request(mem: Memory, base: int, off: Offsets, raw: RawDuel, *, list_shown: bool = False) -> Request:
     """MD's pending request; ``raw`` is a board read at the same moment (to locate the candidates). ``list_shown``:
     a card list is on screen, so the list is current even with the engine's input closed (MD's own dialogs)."""
@@ -109,12 +133,23 @@ def read_request(mem: Memory, base: int, off: Offsets, raw: RawDuel, *, list_sho
         choices = (u32(state + off.dialog_choices),)  # the position mask (DLL_DuelDlgGetPosMaskOfThisSummon)
     n_mix = min(u32(state + off.dialog_mix_count), 8)
     params = tuple((v >> 28, v & 0xFFFFFFF) for v in (u32(state + off.dialog_mix + 4 * i) for i in range(n_mix)))
-    least = 0 if list_type <= 5 else 1
+    least, picks = (0 if list_type <= 5 else 1), min(most, count)
+    source = marker if candidates and marker not in (0xFFFA, 0xFFFB) else 0
+    check = _check(mem, state, base, off) if kind == "select_card" else 0
+    if check and check == off.semantics.get("check_hand_but_source"):
+        # a choice without a list (the one in memory is an earlier choice's): 1 card of the hand but the asking one
+        source = u32(state + off.semantics["select_source_cid"]) & 0xFFFF
+        candidates = _hand_but_source(raw, player & 1, source, u32(state + off.semantics["select_source_location"]),
+                                      u32(state + off.semantics["select_source_index"]))  # fmt: skip
+        least = picks = 1
+        source = source if candidates else 0
+    elif check and check == off.semantics.get("check_hand_filtered"):
+        # a hand card passing the asking card's own filter: not modelled, and the list is an earlier choice's
+        candidates, source = [], 0
     return Request(kind=kind, mode=mode, accepting=bool(accepting), player=player & 1, candidates=tuple(candidates),
-                   min=least if candidates else 0, max=min(most, count) if candidates else 0, list_type=list_type,
-                   list_marker=marker, dialog_type=dialog_type, choices=choices, params=params,
-                   source_cid=marker if candidates and marker not in (0xFFFA, 0xFFFB) else 0,
-                   raw={"list_count": count, "list_max": most})  # fmt: skip
+                   min=least if candidates else 0, max=picks if candidates else 0, list_type=list_type,
+                   list_marker=marker, dialog_type=dialog_type, choices=choices, params=params, source_cid=source,
+                   raw={"list_count": count, "list_max": most, "check": check})  # fmt: skip
 
 
 __all__ = ["KINDS", "Candidate", "Request", "read_request"]
