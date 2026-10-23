@@ -8,6 +8,7 @@ expected; the board state itself always comes from memory (:mod:`ygorl.md.memory
 from __future__ import annotations
 
 import re
+import os
 import shutil
 import struct
 import subprocess
@@ -69,13 +70,24 @@ def parse_children(text: str) -> Window | None:
     return max(found, key=lambda w: w.width * w.height) if found else None
 
 
+def display() -> str:
+    """The X display the game runs on: ``YGORL_MD_DISPLAY`` (a separate, invisible display such as gamescope's
+    headless one or Xvfb, so the player never takes the user's desktop focus), else ``:0``."""
+    return os.environ.get("YGORL_MD_DISPLAY", ":0")
+
+
+def _display_args() -> list[str]:
+    return ["-display", display()]
+
+
 def find_window() -> Window:
     exe = shutil.which("xwininfo")
     if exe is None:
         raise ScreenError("xwininfo is required (sudo apt install x11-utils)")
-    out = subprocess.run([exe, "-root", "-tree"], capture_output=True, text=True, check=True).stdout
+    out = subprocess.run([exe, *_display_args(), "-root", "-tree"], capture_output=True, text=True, check=True).stdout
     top = parse_tree(out)
-    kids = subprocess.run([exe, "-id", hex(top.id), "-children"], capture_output=True, text=True, check=True).stdout
+    kids = subprocess.run([exe, *_display_args(), "-id", hex(top.id), "-children"], capture_output=True, text=True,
+                          check=True).stdout  # fmt: skip
     return Window(top.id, top.x, top.y, top.width, top.height, parse_children(kids))
 
 
@@ -104,7 +116,8 @@ def capture(window: Window | None = None) -> np.ndarray:
     exe = shutil.which("xwd")
     if exe is None:
         raise ScreenError("xwd is required (sudo apt install x11-apps)")
-    out = subprocess.run([exe, "-silent", "-id", hex(window.id)], capture_output=True, check=True).stdout
+    out = subprocess.run([exe, *_display_args(), "-silent", "-id", hex(window.id)], capture_output=True,
+                         check=True).stdout  # fmt: skip
     return parse_xwd(out)
 
 

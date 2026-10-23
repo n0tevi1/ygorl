@@ -22,6 +22,7 @@ import time
 from ygorl.md.memory import attach, solo_gate
 from ygorl.md.layout import to_client
 from ygorl.md.screen import Window, find_window
+from ygorl.md.screen import display as md_display
 
 
 class InputError(RuntimeError):
@@ -29,7 +30,8 @@ class InputError(RuntimeError):
 
 
 class Pointer:
-    def __init__(self, display: bytes = b":0") -> None:
+    def __init__(self, display: bytes | None = None) -> None:
+        display = display or md_display().encode()
         self.x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
         self.xtst = ctypes.CDLL(ctypes.util.find_library("Xtst") or "libXtst.so.6")
         self.x11.XOpenDisplay.restype = ctypes.c_void_p
@@ -71,7 +73,8 @@ BUTTON1_MASK = 1 << 8
 class WindowPointer:
     """Events delivered to one window with XSendEvent: the user's pointer never moves."""
 
-    def __init__(self, window: Window, display: bytes = b":0") -> None:
+    def __init__(self, window: Window, display: bytes | None = None) -> None:
+        display = display or md_display().encode()
         self.x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
         self.x11.XOpenDisplay.restype = ctypes.c_void_p
         self.x11.XDefaultRootWindow.restype = ctypes.c_ulong
