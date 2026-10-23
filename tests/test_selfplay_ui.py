@@ -837,3 +837,18 @@ def test_prompt_ticks_each_offered_card_until_memory_names_the_one_meant():
     assert player.tick_prompt_card(222) == 222 and state["open"] == 2
     state["open"], clicks[:] = None, []
     assert player.tick_prompt_card(333) == 111 and state["open"] == 1  # none meant: the first card, ticked again
+
+
+def test_ra_pays_lp_only_when_it_can_attack():
+    """Ra's optional pay-LP trigger (a one-card list of Ra in the monster zone) is taken only in our Main Phase 1
+    after the duel's first turn; any other list is not this rule's."""
+    from ygorl.selfplay.loop import RA, Player
+
+    player = Player.__new__(Player)
+    player.passwords = {7: RA, 8: 1}
+    ra = SimpleNamespace(candidates=[SimpleNamespace(cid=7, location="mzone")])
+    raw = SimpleNamespace(turn=0, phase=2, turn_player=0, me=0)  # PHASES[2] == "main1"
+    assert player.ra_pays_lp(raw, ra) is False  # the first turn: Ra cannot attack
+    assert player.ra_pays_lp(SimpleNamespace(**{**vars(raw), "turn": 3}), ra)
+    other = SimpleNamespace(candidates=[SimpleNamespace(cid=8, location="mzone")])
+    assert player.ra_pays_lp(raw, other) is None

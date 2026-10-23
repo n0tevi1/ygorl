@@ -391,7 +391,9 @@ class UI:
         field card (compared with a capture from just before, so card art is never taken for an icon)."""
         x, y = xy
         box = ((max(x - 380, 0), 790, min(x + 380, L.REF_W), 975) if hand
-               else (max(x - 130, 0), max(y - 260, 0), min(x + 130, L.REF_W), y - 60))  # fmt: skip
+               else (max(x - 230, 0), max(y - 260, 0), min(x + 230, L.REF_W), y - 60))  # fmt: skip
+        # (a field card's two icons sit about 86 px either side of it, Millennium Seeker's Activate and Change
+        # Position: a box of x +- 130 searched centres within +- 70 only, and both were refused as not shown)
         if not hand:
             before = self.capture()
             self.click(x, y, why, 1.2)
@@ -408,7 +410,7 @@ class UI:
                 # yellow-green Activate icons glow to their rim: the rim test misses them (a Set Raigeki was refused
                 # twice with its Activate icon on screen)
                 found = [p for p in L.find_icons(img, *box) or L.blue_icons(img, *box) or L.green_icons(img, *box)
-                         if abs(p[0] - x) <= 40]  # fmt: skip
+                         if abs(p[0] - x) <= 130]  # fmt: skip
                 if found:
                     return found
                 self.sleep(0.3)

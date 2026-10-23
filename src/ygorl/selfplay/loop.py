@@ -47,6 +47,7 @@ from ygorl.md.ui import (
     UI,
     Stuck,
     command_order,
+    icon_kind,
     is_command_icon,
     my_monster_xy,
     notice_button,
@@ -71,6 +72,7 @@ OPTION_OK = (1024, 788)
 
 
 LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
+RA = 10000010  # The Winged Dragon of Ra
 LIST_PAGES = 6  # the arrow scrolls less than a page: 3-4 turns for 9-11 cards
 
 
@@ -730,6 +732,10 @@ class Player:
             # a monster's change-of-position icon: only taken when it is the card's single icon (no glyph measured)
             xy = my_monster_xy(where.sequence)
             icons = self.ui.open_card(xy, f"field {self.name(cid)}")
+            if len(icons) > 1:
+                # beside an Activate icon (Millennium Seeker): the one that is not Activate
+                img = self.ui.capture()
+                icons = [p for p in icons if icon_kind(img, *p) != "activate"]
             if len(icons) != 1:
                 self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
                 return self.refused(
@@ -982,7 +988,7 @@ class Player:
             # Force answer)
             got_pw = self.tick_prompt_card(want)
             if got_pw is not None and got_pw != want:
-                print(f"  prompt: MD offers {self.name(got[0])}, the policy meant another card: pass", flush=True)
+                print(f"  prompt: MD offers {got_pw}, the policy meant another card: pass", flush=True)
                 self.ui.respond_prompt(False)
                 self.responded = None
                 return
@@ -1311,6 +1317,16 @@ class Player:
                 self.context = "list"
                 return
             pick = None if stale else self.lockstep("list", raw, req)
+            if pick is None and self.ra_pays_lp(raw, req) is False:
+                # The Winged Dragon of Ra's optional "pay LP so that you have 100" trigger (a one-card list of Ra
+                # itself, Cancel on the left): taken by "first on screen", it paid 8000 -> 100 on turn 1, when Ra
+                # cannot attack, and the duel was lost next turn. Declined unless Ra can attack this turn
+                self.trace.rule("ra-pay-lp-declined")
+                self.ui.click(*L.PROMPT_CANCEL, "cancel: keep the LP", 1.5)
+                self.context = "list"
+                return
+            if pick is None and self.ra_pays_lp(raw, req):
+                self.trace.rule("ra-pay-lp-taken")
             deck = [i for i, c in enumerate(req.candidates) if c.location == "deck"]
             if pick is None and deck and len({self.passwords.get(c.cid) for c in req.candidates}) == 1:
                 # copies of one card in different places (Mahad: the hand's Dark Magician or the Deck's): the
@@ -1334,6 +1350,16 @@ class Player:
                 self.trace.observe(dialog=f"{kind} gone after the screen settled")
                 return
             self.explore(f"no script for the {kind} screen")
+
+    def ra_pays_lp(self, raw: RawDuel, req) -> bool | None:
+        """For the one-card list of The Winged Dragon of Ra's pay-LP trigger: whether to pay (Ra can attack this
+        turn: our Main Phase 1, not the duel's first turn); None for any other list."""
+        if len(req.candidates) != 1 or req.candidates[0].location != "mzone":
+            return None
+        if self.passwords.get(req.candidates[0].cid) != RA:
+            return None
+        phase = PHASES[raw.phase] if raw.phase < len(PHASES) else ""
+        return raw.turn_player == raw.me and phase == "main1" and raw.turn > 0
 
     def field_target(self, raw: RawDuel, lit) -> tuple[int, int] | None:
         """The field card the policy picks through the shadow for MD's field selection (tributes, targets), if the
