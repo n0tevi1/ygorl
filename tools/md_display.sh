@@ -5,6 +5,8 @@
 # (:2 when only the desktop's are taken); Steam's launch option for the game is `DISPLAY=:2 %command%`, and the
 # player runs with YGORL_MD_DISPLAY=:2.
 #
+# The game window must have the (headless) seat's focus: Wine drops the synthetic clicks otherwise.
+#
 # Watch with any VNC viewer: `vncviewer localhost:5900` (bound to 127.0.0.1 only, no password).
 set -euo pipefail
 
@@ -15,7 +17,7 @@ output HEADLESS-1 resolution 2048x1152 position 0 0
 default_border none
 default_floating_border none
 focus_on_window_activation none
-for_window [class="steam_app_1449850"] fullscreen enable
+for_window [class="steam_app_1449850"] fullscreen enable, focus
 xwayland force
 exec wayvnc -o HEADLESS-1 127.0.0.1 ${PORT:-5900}
 EOF
