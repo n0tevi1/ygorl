@@ -194,6 +194,23 @@ def blue_icons(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> list[tupl
     return sorted(out)
 
 
+def green_icons(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
+    """MD's yellow-green command icons (Special Summon, Activate) inside a box, found by colour: their glow reaches
+    the rim, so the dark-rim test of :func:`find_icons` misses them. Measured on Apprentice Illusion Magician's
+    Special Summon: a 67x65 glyph blob, 0.6 of its box filled."""
+    from scipy import ndimage
+
+    box = img[y0:y1, x0:x1].astype(int)
+    green = (box[:, :, 0] > 140) & (box[:, :, 1] > 170) & (box[:, :, 2] < 120)
+    labels, _ = ndimage.label(green)
+    out = []
+    for i, sl in enumerate(ndimage.find_objects(labels), start=1):
+        h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
+        if 45 <= w <= 90 and 45 <= h <= 90 and (labels[sl] == i).mean() >= 0.35:
+            out.append((x0 + (sl[1].start + sl[1].stop) // 2, y0 + (sl[0].start + sl[0].stop) // 2))
+    return sorted(out)
+
+
 def appeared_discs(before: np.ndarray, after: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
     """Icon-sized patches that appeared with the click: the fallback of :func:`new_icons` on a dark board (the lava
     stage), where the icon's dark rim has no light ground around it for :func:`find_icons`."""

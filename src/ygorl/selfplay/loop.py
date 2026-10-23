@@ -1292,17 +1292,24 @@ class Player:
         """Tributes: the policy's picks through the shadow; without a shadow, highlighted monsters of the advisor's,
         lowest ATK first. Each is confirmed, until none is left highlighted."""
         me = raw.players[raw.me]
+        taken: set = set()  # slots picked already: they stay framed, and a click would take the pick back
         for n in range(3):
-            if n and self.input().mode != FIELD_PICK:
-                return  # MD took the tributes: the summoned monster glowing in their zone is not another pick
+            if n:
+                for _ in range(8):  # the input mode flickers while a pick animates (a third Tribute for Ra was lost)
+                    if self.input().mode == FIELD_PICK:
+                        break
+                    time.sleep(0.25)
+                else:
+                    return  # MD took the tributes: the summoned monster glowing in their zone is not another pick
             lit = set(self.ui.highlighted())
-            mine = [(s, c) for s, c in enumerate(me.slots[:7]) if c and my_monster_xy(s) in lit]
+            mine = [(s, c) for s, c in enumerate(me.slots[:7]) if c and my_monster_xy(s) in lit and s not in taken]
             if not mine:
                 return
-            xy = self.field_target(self.game.read(), lit)
+            xy = self.field_target(self.game.read(), {my_monster_xy(s) for s, _ in mine})
             if xy is not None:
                 if not self.ui.card_command(xy, "tribute (policy)", "confirm tribute", 2.0):
                     raise Stuck("no Confirm icon above the tribute")
+                taken |= {s for s, _ in mine if my_monster_xy(s) == xy}
                 continue
             self.trace.rule("tribute-lowest-atk")
 
@@ -1313,6 +1320,7 @@ class Player:
             s, c = min(mine, key=lambda t: atk(t[1]))
             if not self.ui.card_command(my_monster_xy(s), f"tribute {self.name(c.cid)}", "confirm tribute", 2.0):
                 raise Stuck("no Confirm icon above the tribute")
+            taken.add(s)
 
     @staticmethod
     def occupied(raw: RawDuel, spots) -> list:
@@ -1345,11 +1353,11 @@ class Player:
         picked = self.field_picked[1]
         near = lambda a, b: abs(a[0] - b[0]) + abs(a[1] - b[1]) < 40  # noqa: E731
         lit = self.occupied(raw, self.ui.highlighted())
-        # memory first: MD's request names the cards it offers; their slots are clicked whether or not a frame is
-        # seen (the opponent's gold-framed back row hid the yellow frames of a Tribute for Ra - Sphere Mode)
-        for xy in self.offered_field_cards(raw):
-            if not any(near(xy, q) for q in lit):
-                lit.append(xy)
+        # no frame seen at all: the slots of the monsters MD's request offers (the opponent's gold-framed back row
+        # hid the yellow frames of a Tribute for Ra - Sphere Mode). Only then: the request can be stale (it named an
+        # opponent's monster during our own three-Tribute summon, and the click found no Confirm five times)
+        if not [xy for xy in lit if not any(near(xy, p) for p in picked)]:
+            lit = lit + [xy for xy in self.offered_field_cards(raw) if not any(near(xy, q) for q in lit)]
         # cards picked earlier in this selection stay framed: clicking one again would take it back (a three-
         # Tribute summon picked its first Tribute over and over)
         fresh = [xy for xy in lit if not any(near(xy, p) for p in picked)]

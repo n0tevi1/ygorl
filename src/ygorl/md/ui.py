@@ -411,11 +411,13 @@ class UI:
             icons = [p for p in icons if is_command_icon(after, *p)]
             # the circle test misses some icons (a Set icon next to Activate, The True Name): add the blue
             # glyphs found by colour, wherever no icon is known yet
-            extra = [p for p in L.blue_icons(after, *box) if p[1] < 940 and is_command_icon(after, *p)
-                     and all(abs(p[0] - q[0]) > 60 for q in icons)]  # fmt: skip
-            # only the row above this card: icons left by another card (opened before, slower to fade out
-            # than this one's are to fade in) were taken for this card's
-            return [p for p in sorted(icons + extra) if abs(p[0] - x) <= 220]
+            extra = []
+            for p in L.blue_icons(after, *box) + L.green_icons(after, *box):  # the rim test misses these
+                if p[1] < 940 and is_command_icon(after, *p) and all(abs(p[0] - q[0]) > 60 for q in icons + extra):
+                    extra.append(p)
+            # only the row above this card: icons left by another card (opened before, slower to fade out than this
+            # one's are to fade in) were taken for this card's. A row of three spans 2 x 172 px around the card
+            return [p for p in sorted(icons + extra) if abs(p[0] - x) <= 260]
 
         for attempt in range(2):  # the first click can land while an animation still covers the hand
             before = self.capture()
