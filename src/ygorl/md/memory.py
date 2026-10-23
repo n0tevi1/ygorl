@@ -352,7 +352,9 @@ def normal_summons(raw: RawDuel) -> int:
     off, me = raw.offsets, raw.players[raw.me]
     total = _u32(me.header, off.semantics["normal_summons"])
     special = off.semantics.get("special_summons")
-    return max(0, total - _u32(me.header, special)) if special is not None else total
+    if special is None or len(me.header) < special + 4:  # an older recording without the counter
+        return total
+    return max(0, total - _u32(me.header, special))
 
 
 def extra_tribute_summons(raw: RawDuel) -> int:
