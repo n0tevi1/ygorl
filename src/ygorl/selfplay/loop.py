@@ -55,6 +55,7 @@ from ygorl.md.ui import (
     zone_outlined,
 )
 from ygorl.md.panel import PanelBook, name_fits, name_signature, name_words, panel_kind
+from ygorl.md.explore import find_buttons
 from ygorl.md.request import read_request
 from ygorl.md.selection import for_process as selection_for
 from ygorl.selfplay.decide import Decider, policy_scorer
@@ -67,9 +68,26 @@ OPTION_DIALOG = 6  # the dialog type of MD's "which effect?" choice (DLL_DuelDlg
 OPTION_OK = (1024, 788)
 
 
-def option_tab(index: int, count: int) -> tuple[int, int]:
-    """The tab of choice ``index`` among ``count`` in the effect-choice dialog (tabs span x 520-1540 at y 418)."""
-    return round(520 + (index + 0.5) * 1020 / count), 418
+def option_tab(index: int, count: int, y: int = 446) -> tuple[int, int]:
+    """The tab of choice ``index`` among ``count`` in the effect-choice dialog (tabs span x 520-1540; row ``y``)."""
+    return round(520 + (index + 0.5) * 1020 / count), y
+
+
+def option_tabs(img: np.ndarray, count: int) -> tuple[int, int | None]:
+    """The effect-choice dialog's tab row (y) and which tab is selected (the lime one), read from the screen. The
+    row was once taken as y 418, the dialog's title: tab clicks did nothing and OK took the preselected effect
+    (Millennium Revelation's first effect instead of the second)."""
+    rows: dict[int, list[int]] = {}
+    for y in range(400, 540, 2):
+        for i in range(count):
+            x = option_tab(i, count)[0]
+            r = img[y, x - 60 : x + 60].astype(int)
+            if ((r[:, 1] > 160) & (r[:, 0] > 110) & (r[:, 2] < 60)).mean() > 0.6:
+                rows.setdefault(i, []).append(y)
+    if not rows:
+        return 446, None
+    i = max(rows, key=lambda k: len(rows[k]))
+    return (min(rows[i]) + max(rows[i])) // 2, i  # the middle of the lime tab
 
 
 RESULT_WIN = 1  # DLL_DuelGetDuelResult for the client: 1 won (VICTORY, Confirm -> menus), 2 lost (Retry offered)
@@ -709,7 +727,16 @@ class Player:
         card = self.cards[best.card.code]
         order = command_order(card.is_monster, kinds.get(best.card.code, set()))
         if self.ui.choose_command(icons, best.kind, order, self.name(cid)) is None:
-            return self.refused(raw, best, f"{self.name(cid)} shows no command")
+            # an effect's resolve glow can pass for the only icon (Millennium Seeker's Summon refused while The True
+            # Name glowed): let the board settle, open the card again and look once more before refusing
+            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+            self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+            icons = self.ui.open_hand_card(xy, f"hand {self.name(cid)} (again, after the board settled)")
+            sel = self.selection.read(self.game.read()) if getattr(self, "selection", None) else None
+            if (sel is not None and sel[0] != cid) or self.ui.choose_command(
+                icons, best.kind, order, self.name(cid)
+            ) is None:
+                return self.refused(raw, best, f"{self.name(cid)} shows no command")
         if card.is_monster and best.kind == "activate":
             return  # a hand effect: no zone, the card may stay in hand; its prompts are handled by the loop
         self.summon_level = card.level if best.kind in ("summon", "mset") else 0
@@ -842,6 +869,7 @@ class Player:
         phase = PHASES[raw.phase] if raw.phase < len(PHASES) else ""
         theirs = raw.turn_player != raw.me
         respond = (theirs and phase == "battle") or (not theirs and phase == "end")
+        self.respond_card = None  # set by a rebuild below, not left over from an earlier one
         pick = None if theirs else self.lockstep("prompt", raw, lambda: self.request_now(raw))
         if pick is None:
             pick = self.rebuilt("respond", raw)
@@ -856,6 +884,24 @@ class Player:
         self.responded = seen if respond else None
         if pick is None:
             self.trace.rule("prompt-respond" if respond else "prompt-pass")
+        want = getattr(self, "respond_card", None) if pick is not None else None
+        self.respond_card = None
+        if respond and want is not None:
+            # the rebuild's answer is for the window, not for the card MD offers here: tick it, read which card
+            # it is from memory, and pass when it is another one (Ultimate Divine-Beast was flipped for a Mirror
+            # Force answer)
+            self.ui.click(*L.PROMPT_CARD, "tick the offered card", 0.8)
+            got = self.selection.read(self.game.read()) if getattr(self, "selection", None) else None
+            got_pw = self.passwords.get(got[0]) if got else None
+            self.trace.observe(prompt_card={"want": want, "got": got_pw})
+            if got_pw is not None and got_pw != want:
+                print(f"  prompt: MD offers {self.name(got[0])}, the policy meant another card: pass", flush=True)
+                self.ui.respond_prompt(False)
+                self.responded = None
+                return
+            self.ui.click(*L.PROMPT_ACTIVATE, "activate", 2.0)
+            self.context = "respond"
+            return
         self.ui.respond_prompt(respond)
         if respond:
             self.context = "respond"
@@ -885,6 +931,7 @@ class Player:
                                       listed[1] if listed[0] is self.expect else ())  # fmt: skip
         else:
             choice = decider.respond(raw, self.request_now(raw))
+            self.respond_card = choice.detail.get("card")  # the card the policy would activate (a password)
         record = choice.record()
         if choice.pick is None:
             self.trace.observe(rebuild=record)
@@ -1068,8 +1115,16 @@ class Player:
                 pick = next((i for i, c in enumerate(req.choices) if c >> 31), 0)  # the first enabled effect
                 self.trace.rule("option-first-enabled", choices=[hex(c) for c in req.choices], pick=pick)
             self.trace.observe(option_choices=[hex(c) for c in req.choices])
-            self.ui.click(*option_tab(pick, n), f"effect {pick + 1} of {n}", 0.8)
-            self.ui.click(*OPTION_OK, "ok", 1.5)
+            y, _ = option_tabs(self.ui.capture(), n)
+            for attempt in range(3):
+                self.ui.click(*option_tab(pick, n, y), f"effect {pick + 1} of {n}", 0.8)
+                y, selected = option_tabs(self.ui.capture(), n)
+                if selected == pick:
+                    break
+            else:
+                raise Stuck(f"effect tab {pick + 1} of {n} does not stay selected")
+            ok = [b.centre for b in find_buttons(self.ui.capture()) if b.label == "enabled" and b.centre[1] > y + 200]
+            self.ui.click(*(min(ok, key=lambda c: abs(c[0] - 1026)) if ok else OPTION_OK), "ok", 1.5)
         elif kind == "radio":
             rows = len(radio_rows(self.ui.capture()))
             if not rows:  # a passing frame looked like the radio dialog
@@ -1110,6 +1165,11 @@ class Player:
             if pick is None and self.context == "summon":
                 pick = 0  # our own summon asks to confirm the Tribute Summon (message 335): the tributes come next
                 self.trace.rule("yesno-yes-tribute")
+            elif pick is None and self.context in ("activate", "spsummon", "respond"):
+                # our own card asks about an optional part of the effect we chose to activate ("add the designated
+                # card from the Deck to your hand?" of The True Name): take it
+                pick = 0
+                self.trace.rule("yesno-yes-own-effect")
             elif pick is None:
                 self.trace.rule("yesno-no")
             self.ui.yesno(pick == 0)
@@ -1176,11 +1236,13 @@ class Player:
             xy = my_monster_xy(c.sequence) if c.player == raw.me else opp_monster_xy(c.sequence)
         elif c.location == "szone" and c.player == raw.me and c.sequence is not None and c.sequence < 5:
             xy = L.my_zone("szone", c.sequence)
-        if xy is None or xy not in set(lit):
+        # frames are found a little off the slot's measured point ((1219, 740) for (1232, 750)): near is enough
+        near = [q for q in lit if xy is not None and abs(q[0] - xy[0]) + abs(q[1] - xy[1]) < 60]
+        if not near:
             self.observer.shadow = None  # it took a pick MD will not see: rebuild at the next command point
             self.trace.observe(lockstep_field=f"no highlighted card at {xy} for candidate {pick}")
             return None
-        return xy
+        return near[0]
 
     def summon_pick(self, raw: RawDuel) -> None:
         """Mode 6 (MD's "summon a monster": an effect or a Tribute Summon asking for the monster): MD keeps no list
