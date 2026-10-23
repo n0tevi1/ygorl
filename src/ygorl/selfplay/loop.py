@@ -69,6 +69,15 @@ OPTION_DIALOG = 6  # the dialog type of MD's "which effect?" choice (DLL_DuelDlg
 OPTION_OK = (1024, 788)
 
 
+LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
+
+
+def list_more(img: np.ndarray) -> bool:
+    """The card list's ">" arrow is lit: more cards to the right (0.37 of its box white measured, 0 when off)."""
+    x, y = LIST_NEXT
+    return bool((img[y - 20 : y + 20, x - 20 : x + 20].min(axis=2) > 200).mean() > 0.15)
+
+
 def option_tab(index: int, count: int, y: int = 446) -> tuple[int, int]:
     """The tab of choice ``index`` among ``count`` in the effect-choice dialog (tabs span x 520-1540; row ``y``)."""
     return round(520 + (index + 0.5) * 1020 / count), y
@@ -182,9 +191,11 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
         ok = left_hand and count(me1, "szone", face=0) > count(me0, "szone", face=0)
         return None if ok else "sset: no new face-down Spell/Trap from the hand"
     if kind == "attack":
-        changed = (op1.lp, me1.lp, len(_cards(op1, "mzone")), len(_cards(me1, "mzone"))) != (
-            op0.lp, me0.lp, len(_cards(op0, "mzone")), len(_cards(me0, "mzone")))  # fmt: skip
-        return None if changed else "attack: nothing changed (no damage, no monster left the field)"
+        # an attack on a face-down monster with equal DEF only flips it: that counts (a false alarm once)
+        up = lambda pl: sum(1 for c in _cards(pl, "mzone") if c.face)  # noqa: E731
+        changed = (op1.lp, me1.lp, len(_cards(op1, "mzone")), len(_cards(me1, "mzone")), up(op1)) != (
+            op0.lp, me0.lp, len(_cards(op0, "mzone")), len(_cards(me0, "mzone")), up(op0))  # fmt: skip
+        return None if changed else "attack: nothing changed (no damage, no monster left the field or turned up)"
     if kind in ("activate", "spsummon"):
         if _board_key(me0, op0) == _board_key(me1, op1):
             return f"{kind}: nothing changed on the board"
@@ -481,6 +492,9 @@ class Player:
         if self.pending_list is None:
             return
         img, req = self.pending_list
+        if img is None:
+            self.pending_list = None
+            return
         from ygorl.md.request import _locate
 
         moved = {c.cid for c in req.candidates if c.uid and _locate(raw, c.uid)[1:] != (c.location, c.sequence)}
@@ -892,7 +906,12 @@ class Player:
             value = (k.defense if c.sideways else k.attack) if k is not None else 1500  # face-down: average guess
             targets.append((value < power, value if value < power else -value, s))
         if not self.ui.attack(my_monster_xy(slot), f"attacker {self.name(card.cid)}"):
-            return self.refused(raw, best, f"no Attack for {self.name(card.cid)}")
+            # the previous battle can still be animating (a second Ra's Disciple was refused while it glowed ready
+            # to attack): let the board settle and try once more
+            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+            self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+            if not self.ui.attack(my_monster_xy(slot), f"attacker {self.name(card.cid)} (again)"):
+                return self.refused(raw, best, f"no Attack for {self.name(card.cid)}")
         if targets and self.input().mode == FIELD_PICK:
             s = self.rebuilt("target", raw, slot, frozenset(self.attacked - {card.uid}))
             if s not in {t[2] for t in targets}:
@@ -925,6 +944,21 @@ class Player:
             respond = False
             self.trace.observe(prompt="the response did not take: passing")
         self.responded = seen if respond else None
+        calibrated = getattr(getattr(self, "selection", None), "address", None) is not None
+        if (pick is None and not respond and inp.mode == OPEN_PROMPT and calibrated
+                and getattr(self, "hand_trigger", None) != seen):  # fmt: skip
+            # an optional trigger of a card in our hand (Millennium Seeker's "You have received damage. Activate?"
+            # in the opponent's turn: a free Special Summon was passed): tick it, read it from memory, take it when
+            # it is a hand card (not a Set Trap, which the open timing would waste)
+            self.ui.click(*L.PROMPT_CARD, "tick the offered card", 0.8)
+            now = self.game.read()
+            got = self.selection.read(now)
+            hand = {c.uid for c in now.players[now.me].piles["hand"]}
+            if got is not None and got[1] in hand:
+                self.trace.rule("prompt-respond-hand-trigger", card=got[0])
+                self.ui.click(*L.PROMPT_ACTIVATE, "activate", 2.0)
+                self.context, self.hand_trigger = "respond", seen  # the same prompt again: it did not take, pass
+                return
         if pick is None:
             self.trace.rule("prompt-respond" if respond else "prompt-pass")
         want = getattr(self, "respond_card", None) if pick is not None else None
@@ -1353,11 +1387,13 @@ class Player:
     def find_in_list(self, req, pick: int) -> tuple[int, bool]:
         """The screen position of candidate ``pick`` in MD's card list, and whether it is ticked already.
 
-        MD's list is not memory's: the order differs (an audit found 4 of 4 picks off) and identical copies are
-        listed once (14 candidates in memory, 6 cards on screen). So the screen cards are identified on the
-        information panel (tick, read, untick) and matched to the wanted card by password, not by position; by
-        elimination when the panel names every other distinct card. A pick that cannot be confirmed is recorded
-        as unverified. The panel of the card finally picked is kept to be learned once memory shows what moved."""
+        MD's list is not memory's: the order differs, identical copies are listed once, and a long list scrolls
+        (the cards past the sixth behind a ">" arrow). So each screen card is ticked and identified: from memory
+        first (ticking writes the card into the open-card object, :mod:`ygorl.md.selection`; a read counts only
+        when the object changed with the click, so a stale value never names a card), else on the information
+        panel, which cannot name Spells / Traps or tell monsters with equal stats apart (an audit found 6 picks
+        of 7 guessed wrong). Pages are turned with the arrow until the wanted card is found. A pick that cannot be
+        confirmed is recorded as unverified."""
         cards = L.list_cards(self.ui.capture())
         cands = [c.cid for c in req.candidates]
         n = len(cards)
@@ -1368,30 +1404,57 @@ class Player:
         if n <= 1 or len({pw(c) for c in cands}) <= 1:
             return 0, False  # one card, or only copies of one card: any position is the wanted card
         stats = {c: self.card_stats(c) for c in set(cands)}
-        seen: dict[int, int | None] = {}
+        seen: dict = {}
         panels = {}
-        for i in range(n):
-            self.ui.click(*cards[i], f"#{i + 1} of {n}: which card?", 0.9)
-            img = self.ui.capture()
-            got, how = self.panel.identify(img, list(dict.fromkeys(cands)), stats)
-            seen[i], panels[i] = got, img
-            if got is not None and pw(got) == pw(want):
-                self.trace.observe(list_check={"want": want, "seen": seen, "by": how})
-                self.pending_list = (img, req)
-                return i, True
-            self.ui.click(*cards[i], f"untick #{i + 1}", 0.6)
-        unknown = [i for i, got in seen.items() if got is None]
+        selection = getattr(self, "selection", None)
+
+        def read_open():
+            if selection is None or selection.address is None:
+                return None
+            try:
+                return selection.memory.read(selection.address, 8)
+            except Exception:  # noqa: BLE001
+                return None
+
+        for page in range(4):
+            for i in range(n):
+                prev = read_open()
+                self.ui.click(*cards[i], f"#{i + 1} of {n}: which card?", 0.9)
+                img = self.ui.capture()
+                now = read_open()
+                got, how = None, ""
+                if now is not None and now != prev:
+                    cid = struct.unpack("<I", now[:4])[0]
+                    if cid in set(cands):
+                        got, how = cid, "memory"
+                if got is None:
+                    got, how = self.panel.identify(img, list(dict.fromkeys(cands)), stats)
+                seen[(page, i)], panels[(page, i)] = got, img
+                if got is not None and pw(got) == pw(want):
+                    self.trace.observe(list_check={"want": want, "seen": {f"{k[0]}:{k[1]}": v for k, v in
+                                                                          seen.items()}, "by": how})  # fmt: skip
+                    self.pending_list = (img, req)
+                    return i, True
+                self.ui.click(*cards[i], f"untick #{i + 1}", 0.6)
+            if not list_more(self.ui.capture()):
+                break
+            self.ui.click(*LIST_NEXT, "next cards of the list", 1.2)
+            cards = L.list_cards(self.ui.capture())
+            n = len(cards)
+        last = max(k[0] for k in seen)  # the page on screen now
+        unknown = [k for k, got in seen.items() if got is None]
         named = {pw(got) for got in seen.values() if got is not None}
-        if len(unknown) == 1 and {pw(c) for c in cands} - named == {pw(want)}:
-            i = unknown[0]  # every other distinct card was named: the one the panel could not name is it
-            self.trace.observe(list_check={"want": want, "seen": seen, "by": "elimination"})
-            self.pending_list = (panels[i], req)
-            return i, False
-        i = unknown[0] if unknown else 0
-        self.trace.observe(list_check={"want": want, "seen": seen, "unverified": True})
-        print(f"  list: {self.name(want)} not found on the panel; position {i + 1} is a guess", flush=True)
-        self.pending_list = (panels[i], req)
-        return i, False
+        here = [k for k in unknown if k[0] == last]
+        if len(unknown) == 1 and here and {pw(c) for c in cands} - named == {pw(want)}:
+            k = unknown[0]  # every other distinct card was named: the one nobody could name is it
+            self.trace.observe(list_check={"want": want, "by": "elimination"})
+            self.pending_list = (panels[k], req)
+            return k[1], False
+        k = here[0] if here else (last, 0)
+        self.trace.observe(list_check={"want": want, "unverified": True})
+        print(f"  list: {self.name(want)} not identified; position {k[1] + 1} is a guess", flush=True)
+        self.pending_list = (panels.get(k), req)
+        return k[1], False
 
     def pick_tributes(self, raw: RawDuel) -> None:
         """Tributes: the policy's picks through the shadow; without a shadow, highlighted monsters of the advisor's,
