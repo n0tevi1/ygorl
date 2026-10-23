@@ -158,7 +158,9 @@ class PanelBook:
             return fitting[0], "stats"
         if not fitting:
             return None, "unknown"
-        return (fitting[0], "stats") if len(fitting) == 1 else (None, "ambiguous")
+        # digits that could not be read match anything: one fitting card is a guess, not an identification (two
+        # positions of one list both "matched" Ra this way)
+        return None, "ambiguous" if len(fitting) > 1 else "partial"
 
     # --- learning ---
     def learn(self, img: np.ndarray, cid: int, stats: tuple[int, int, int] | None) -> None:

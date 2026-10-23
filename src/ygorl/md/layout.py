@@ -174,7 +174,40 @@ def new_icons(before: np.ndarray, after: np.ndarray, x0: int, y0: int, x1: int, 
         b = before[y - 40 : y + 40, x - 40 : x + 40].astype(int)
         if np.abs(a - b).mean() >= 25:
             out.append((x, y))
-    return out
+    return out or appeared_discs(before, after, x0, y0, x1, y1)
+
+
+def blue_icons(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
+    """MD's blue Confirm icons (a blue ring and check on a dark disc) inside a box, found by colour: on a dark board
+    (the lava stage) the rim test of :func:`find_icons` fails and the board can shift between two captures. Measured:
+    a 70x52 blue blob, a quarter of its box filled."""
+    from scipy import ndimage
+
+    box = img[y0:y1, x0:x1].astype(int)
+    blue = (box[:, :, 2] > 170) & (box[:, :, 0] < 90)
+    labels, _ = ndimage.label(blue)
+    out = []
+    for i, sl in enumerate(ndimage.find_objects(labels), start=1):
+        h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
+        if 45 <= w <= 110 and 40 <= h <= 110 and 0.12 <= (labels[sl] == i).mean() <= 0.6:
+            out.append((x0 + (sl[1].start + sl[1].stop) // 2, y0 + (sl[0].start + sl[0].stop) // 2))
+    return sorted(out)
+
+
+def appeared_discs(before: np.ndarray, after: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> list[tuple[int, int]]:
+    """Icon-sized patches that appeared with the click: the fallback of :func:`new_icons` on a dark board (the lava
+    stage), where the icon's dark rim has no light ground around it for :func:`find_icons`."""
+    from scipy import ndimage
+
+    diff = np.abs(after[y0:y1, x0:x1].astype(int) - before[y0:y1, x0:x1].astype(int)).sum(axis=2) > 90
+    labels, n = ndimage.label(diff)
+    out = []
+    for i, sl in enumerate(ndimage.find_objects(labels), start=1):
+        h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
+        fill = (labels[sl] == i).mean()
+        if 60 <= w <= 120 and 60 <= h <= 120 and abs(w - h) < 25 and fill > 0.45:  # a disc of radius 40-48
+            out.append((x0 + (sl[1].start + sl[1].stop) // 2, y0 + (sl[0].start + sl[0].stop) // 2))
+    return sorted(out)
 
 
 TRAY_RGB, CARD_STEP = (37, 66, 143), 158  # MD's card-list tray colour and card pitch (reference pixels)

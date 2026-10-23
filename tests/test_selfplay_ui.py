@@ -427,4 +427,156 @@ def test_yesno_needs_its_button_labels():
     assert screen_dialog(img) == "panel"
     for x, y in (YESNO_NO, YESNO_YES):
         img[y - 8 : y + 8, x - 30 : x + 30] = (203, 255, 0)
+    img[640:676, 840:900] = (203, 255, 0)  # zone outlines: lime around the spots, no black pill
+    assert screen_dialog(img) == "panel"  # lime spots that are no buttons: zone outlines on a dark board
+    for x, y in (YESNO_NO, YESNO_YES):  # the buttons: black pills (measured 300x58) with the lime labels
+        img[y - 29 : y + 29, x - 150 : x + 150] = 0
+        img[y - 7 : y + 8, x - 16 : x + 17] = (203, 255, 0)
     assert screen_dialog(img) == "yesno"
+
+
+def test_zone_outlined_finds_the_offered_spell_zone():
+    from ygorl.md.ui import zone_outlined
+
+    img = np.full((L.REF_H, L.REF_W, 3), 40, np.uint8)
+    x, y = L.my_zone("szone", 2)
+    assert not zone_outlined(img, x, y)
+    img[y - 85 : y + 85, x - 95 : x + 95] = (130, 140, 40)  # the dim yellow-green outline (and fill)
+    img[y - 70 : y + 70, x - 80 : x + 80] = 40
+    assert zone_outlined(img, x, y) and not zone_outlined(img, *L.my_zone("szone", 0))
+
+
+def test_new_icons_fall_back_to_what_appeared_on_a_dark_board():
+    """On the dark lava board the Confirm icon's rim has no light ground around it: the circle test misses it, the
+    patch that appeared with the click is taken instead."""
+    before = np.full((L.REF_H, L.REF_W, 3), 30, np.uint8)
+    after = before.copy()
+    yy, xx = np.mgrid[-44:45, -44:45]
+    disc = yy**2 + xx**2 <= 44**2
+    after[250 - 44 : 250 + 45, 1030 - 44 : 1030 + 45][disc] = (40, 120, 230)
+    assert L.find_icons(after, 600, 100, 1500, 500) == []
+    assert L.new_icons(before, after, 600, 100, 1500, 500) == [(1030, 250)]
+
+
+def test_blue_confirm_icon_found_by_colour():
+    img = np.full((L.REF_H, L.REF_W, 3), 20, np.uint8)
+    yy, xx = np.mgrid[-36:37, -36:37]
+    ring = (yy**2 + xx**2 <= 36**2) & (yy**2 + xx**2 >= 28**2)
+    img[221 - 36 : 221 + 37, 1027 - 36 : 1027 + 37][ring] = (40, 120, 230)
+    assert L.blue_icons(img, 908, 125, 1168, 325) == [(1027, 221)]
+
+
+def test_special_summon_icon_is_the_one_matching_no_other_command():
+    """Apprentice Illusion Magician offered only Special Summon, whose glyph reads as Activate; Activate is not one
+    of its legal commands, so that icon is taken."""
+    icons = [(1020, 878)]
+    img = with_icons(board(), icons, ["activate"])
+    ui, mouse, _ = make_ui(img)
+    assert ui.choose_command(icons, "spsummon", ["spsummon", "mset"], "Apprentice") == icons[0]
+    ui, mouse, _ = make_ui(img)
+    with pytest.raises(Stuck):
+        ui.choose_command(icons, "spsummon", ["spsummon", "activate"], "x")  # could be either
+
+
+def test_unknown_panel_is_not_taken_for_one_of_two_unlearned_spells():
+    """Fist of Fate was Set for Millennium Revelation: both spells, neither learned. An unknown panel then names
+    neither, and with two unknown positions elimination cannot decide either: the player declines (Stuck)."""
+    from ygorl.selfplay.loop import Player
+
+    raw = read_duel(build_memory(), BASE, replace(OFF, verified=True, semantics=SEM))
+    hand = [c.cid for c in raw.players[raw.me].piles["hand"]]
+    player = Player.__new__(Player)
+    player.ui, mouse, _ = make_ui(board())
+    player.ui.open_hand_card = lambda xy, why: [(xy[0], 880)]
+    player.trace = type("T", (), {"observe": lambda self, **k: None})()
+    player.panel = type("P", (), {"names": {}, "identify": lambda self, img, h, s: (None, "unknown")})()
+    player.card_stats = lambda c: None
+    player.card_kind = lambda c: "spell"
+    player.name = str
+    with pytest.raises(Stuck, match="not found"):
+        player.verify_hand_card(raw, hand[0], L.hand_card(0, len(hand)), [(0, 0)])
+
+
+def test_list_pick_is_checked_on_the_panel():
+    """MD's on-screen list order is not memory's (reversed here): the guessed position is ticked, the panel names
+    another candidate, so it is unticked and the next position tried until the panel shows the wanted card."""
+    from ygorl.md.request import Candidate
+    from ygorl.md.request import Request as MDRequest
+    from ygorl.selfplay.loop import Player
+
+    img, centres = list_panel(3)
+    player = Player.__new__(Player)
+    player.ui, mouse, _ = make_ui(img)
+    player.trace = type("T", (), {"observe": lambda self, **k: None})()
+    player.card_stats = lambda c: None
+    player.name = str
+    player.passwords = {}
+    cands = [11, 22, 33]
+    screen = [33, 22, 11]  # what each position really holds
+
+    def identify(_img, candidates, stats):
+        x = mouse.clicks[-1][0]
+        return screen[centres.index(x)], "stats"
+
+    player.panel = type("P", (), {"identify": lambda self, img, c, s: identify(img, c, s)})()
+    req = MDRequest(kind="mode0", mode=0, accepting=False, player=0,
+                    candidates=tuple(Candidate(c, i, 0, "grave", i) for i, c in enumerate(cands)))  # fmt: skip
+    index, ticked = player.find_in_list(req, 0)  # wants 11: the screen shows it last
+    assert (index, ticked) == (2, True)
+    y = L.LIST_CARD_Y
+    assert mouse.clicks == [(centres[0], y), (centres[0], y), (centres[1], y), (centres[1], y), (centres[2], y)]
+
+
+def test_classify_is_memory_first():
+    """design 10 「识别与执行的系统化」: who holds the input and MD's request decide; the screen only fills in."""
+    from ygorl.selfplay.loop import classify
+
+    def k(**kw):
+        base = dict(mine=True, ours=True, accepting=True, mode=2, dialog_type=0, choices=0, screen=None)
+        return classify(**{**base, **kw})
+
+    assert k() == "idle" and k(mode=3) == "battle" and k(mode=1) == "draw"
+    assert k(ours=False, mine=False, screen="position") == "wait"  # the opponent's summon: never ours
+    assert k(ours=False, mine=False, screen="notice") == "notice"  # nobody's: always answered
+    assert k(screen="panel", dialog_type=6, choices=3, mine=False, accepting=False, mode=0) == "option"
+    assert k(screen="panel", mine=False, accepting=False, mode=0) == "explore"  # a dimmed board, no request
+    assert k(mode=7, dialog_type=10) == "position"  # position by memory, wherever MD draws it
+    assert k(mode=7, screen="banner") == "place"
+    assert k(mode=9, screen="banner") == "field_pick" and k(mode=9, context="tribute") == "tributes"
+    assert k(mode=9, screen="radio") == "field_pick"
+    assert (
+        k(screen="radio") == "idle"
+        and k(screen="radio", mine=False, accepting=False, mode=0, dialog_type=13) == "radio"
+    )  # selection frames read as radio rings: memory wins
+    assert k(mode=5, screen="list") == "prompt" and k(mode=0, mine=False, accepting=False, screen="list") == "list"
+    assert k(mode=0, mine=False, accepting=False, screen="banner") == "settle"
+    assert k(screen="phase_menu") == "idle"
+    assert (
+        k(screen="banner") == "idle" and k(screen="banner", zone_pending=True) == "zone_again"
+    )  # a phase change under way: the decision uses the open menu
+
+
+def test_list_pick_by_elimination():
+    """The panel names every other distinct card but cannot name the wanted one (not learned): it is the one left;
+    MD lists identical copies once, so the memory list can be longer than the screen's."""
+    from ygorl.md.request import Candidate
+    from ygorl.md.request import Request as MDRequest
+    from ygorl.selfplay.loop import Player
+
+    img, centres = list_panel(3)
+    player = Player.__new__(Player)
+    player.ui, mouse, _ = make_ui(img)
+    player.trace = type("T", (), {"observe": lambda self, **k: None})()
+    player.card_stats = lambda c: None
+    player.name = str
+    player.passwords = {}
+    screen = [33, None, 22]  # position 1 shows the wanted card, which the panel cannot name
+
+    def identify(_img, candidates, stats):
+        got = screen[centres.index(mouse.clicks[-1][0])]
+        return got, "name" if got else "unknown"
+
+    player.panel = type("P", (), {"identify": lambda self, img, c, s: identify(img, c, s)})()
+    req = MDRequest(kind="mode0", mode=0, accepting=False, player=0,
+                    candidates=tuple(Candidate(c, i, 0, "grave", i) for i, c in enumerate([11, 22, 33, 22])))  # fmt: skip
+    assert player.find_in_list(req, 0) == (1, False)

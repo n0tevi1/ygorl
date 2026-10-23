@@ -21,9 +21,11 @@ human client, computer opponent) before each event.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import random
 import struct
+from collections import Counter
 import subprocess
 import time
 import traceback
@@ -38,7 +40,19 @@ from ygorl.md.input import GatedMouse
 from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, load_md_cid, own_deck, solo_gate, to_snapshot
 from ygorl.md.screen import ScreenError
 from ygorl.md.screen import capture as capture_client
-from ygorl.md.ui import PHASE_MENU_CANCEL, UI, Stuck, command_order, my_monster_xy, opp_monster_xy, radio_rows
+from ygorl.md.ui import (
+    MINIMISED_RESTORE,
+    PHASE_MENU_CANCEL,
+    UI,
+    Stuck,
+    command_order,
+    my_monster_xy,
+    notice_button,
+    opp_monster_xy,
+    radio_rows,
+    yellow_highlight,
+    zone_outlined,
+)
 from ygorl.md.panel import PanelBook, panel_kind
 from ygorl.md.request import read_request
 from ygorl.selfplay.observe import ShadowObserver
@@ -55,10 +69,11 @@ def option_tab(index: int, count: int) -> tuple[int, int]:
     return round(520 + (index + 0.5) * 1020 / count), 418
 
 
-RESULT_WIN = 1  # DLL_DuelGetDuelResult for the client: 1 won (VICTORY, only Confirm), 2 lost (Retry offered)
+RESULT_WIN = 1  # DLL_DuelGetDuelResult for the client: 1 won (VICTORY, Confirm -> menus), 2 lost (Retry offered)
 NEUTRAL_SPOT = (1300, 640)  # empty board between the rows: clicking it closes a card left open
 RESULT_RETRY = (743, 1093)  # MD's result screen: Retry (left) and OK (right)
 MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, PLACE, FIELD_PICK = 2, 3, 4, 5, 6, 7, 8  # observed modes
+FIELD_PICK_TRIBUTE = 9  # "choose a monster to Tribute" (an effect's tribute: the explorer learned pick + Confirm)
 
 
 def capture(window) -> np.ndarray:
@@ -130,8 +145,95 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
     if kind in ("activate", "spsummon"):
         if _board_key(me0, op0) == _board_key(me1, op1):
             return f"{kind}: nothing changed on the board"
+        loc = act.card.loc if act.card is not None else None
+        if kind == "activate" and loc is not None and loc.location == C.LOCATION_MZONE:
+            s0, s1 = me0.slots[loc.sequence], me1.slots[loc.sequence]
+            turned = s0 is not None and s1 is not None and s0.cid == s1.cid and s0.sideways != s1.sideways
+            rest0 = _board_key(me0, op0)[1:]
+            rest1 = _board_key(me1, op1)[1:]
+            if turned and rest0 == rest1 and [c for i, c in enumerate(me0.slots) if i != loc.sequence] == [
+                    c for i, c in enumerate(me1.slots) if i != loc.sequence]:  # fmt: skip
+                return "activate: only the monster's position changed (the Change Position icon was clicked)"
         return None
     return None  # reposition and others: not checked yet
+
+
+EFFECT_LIST_END = 0x3C80  # S + uid_table (0x1bec) .. here: the uid table and the effect list (S + 0x2bec)
+POSITION_DIALOG, RADIO_DIALOG = 10, 13  # DLL_DuelDlg* dialog types (6 is OPTION_DIALOG)
+NEUTRAL = ("notice", "minimised")  # screens that belong to nobody's input: always answered
+
+
+def classify(*, mine: bool, ours: bool, accepting: bool, mode: int, dialog_type: int, choices: int,
+             screen: str | None, context: str = "", zone_pending: bool = False) -> str:  # fmt: skip
+    """What the step must answer (design 10 「识别与执行的系统化」): memory first (who holds the input, the input
+    mode, MD's dialog type), the screen class only where memory cannot tell (MD's own dialogs while the engine
+    input is closed) and as the locator. ``mine``: the engine waits for our input; ``ours``: the input (or MD's
+    dialog) is the client's, accepting or not. Returns a key of :data:`Player.HANDLERS`, "wait" or "over"."""
+    if screen == "over":
+        return "over"
+    if screen in NEUTRAL:
+        return screen
+    if not ours:
+        return "wait"  # the opponent holds the input: whatever is on screen is theirs
+    if screen == "phase_menu" and mine and mode in (MAIN, BATTLE):
+        screen = None  # a phase change under way: the command decision uses (or closes) the open menu
+    if screen == "panel":  # a dark band without yes / no labels: the effect choice when memory says so
+        screen = "option" if dialog_type == OPTION_DIALOG and choices >= 2 else None
+    if screen in ("yesno", "panel") and dialog_type == OPTION_DIALOG and choices >= 2:
+        screen = "option"
+    if screen == "radio" and dialog_type != RADIO_DIALOG:
+        screen = None  # rings without MD's radio dialog: selection frames or zone outlines (clicked a set card)
+    if mine and mode == SUMMON_PICK and screen in (None, "banner"):
+        return "summon_pick"
+    if mine and mode in (OPEN_PROMPT, CHAIN_PROMPT) and screen in (None, "list"):
+        return "prompt"  # an activate-or-pass prompt panel looks like a list
+    if mine and mode == PLACE and (screen == "position" or dialog_type == POSITION_DIALOG):
+        return "position"
+    if mine and mode == PLACE and screen == "banner":
+        return "place"
+    if mine and mode == MAIN and screen == "banner" and zone_pending:
+        return "zone_again"  # MD still asks for the zone of our own Summon / Set
+    if mine and mode in (MAIN, BATTLE) and screen == "banner":
+        screen = None  # the engine waits for a command: no banner question is pending (the opponent's ATK / DEF
+        # numbers on a dark board passed for a banner's text)
+    if mine and mode in (FIELD_PICK, FIELD_PICK_TRIBUTE) and context == "tribute":
+        return "tributes"
+    if mine and mode in (FIELD_PICK, FIELD_PICK_TRIBUTE) and screen not in ("list", "yesno", "option", "notice"):
+        return "field_pick"  # memory says a field pick; the selection frames can pass for other screens (radio)
+    if screen == "banner" and not accepting:
+        return "settle"  # MD's own text while the engine takes no input (a Summon animating)
+    if screen:
+        return screen  # MD's own dialogs: yesno, option, list, radio, position, phase_menu, declare, ...
+    if mode == MAIN:
+        return "idle"
+    if mode == BATTLE:
+        return "battle"
+    if mode == 1:
+        return "draw"
+    return "explore"
+
+
+@functools.cache
+def declares_a_card(password: int) -> bool:
+    """The card's script asks to declare a card name (``Duel.AnnounceCard``): MD's answer is a search box that needs
+    typed text, and window-only input cannot type (The True Name stalled the duel)."""
+    from ygorl import paths
+
+    for d in paths.script_directories():
+        f = Path(d) / f"c{password}.lua"
+        if f.is_file():
+            return "AnnounceCard" in f.read_text(errors="replace")
+    return False
+
+
+def clickable(action) -> bool:
+    """Whether the player can carry ``action`` out: not yet effects activated from the Graveyard or the banished
+    cards (MD opens them through the pile viewer), nor activations that declare a card name (typed text)."""
+    card = action.card
+    if action.kind == "activate" and card is not None:
+        if card.loc.location in (C.LOCATION_GRAVE, C.LOCATION_REMOVED) or declares_a_card(card.code):
+            return False
+    return True
 
 
 ATTACKS_MASKED = ("attack", "*")  # a forbidden entry masking every attack of a phase
@@ -150,10 +252,13 @@ def _own_cards(raw: RawDuel) -> tuple:
 
 
 def _board_key(me, op) -> tuple:
+    """Everything an action of ours can visibly change; the piles' counts too (a search moves a card from a Deck
+    to a hand without touching the field: Millennium Seeker's effect read as "nothing changed")."""
     return (tuple((c.cid, c.face, c.sideways) if c else None for c in me.slots),
             tuple(c.cid for c in me.piles["hand"]), tuple(c.cid for c in me.piles["grave"]),
             tuple((c.cid, c.face) if c else None for c in op.slots), op.lp, me.lp,
-            len(me.piles["removed"]), len(op.piles["grave"]))  # fmt: skip
+            len(me.piles["removed"]), len(op.piles["grave"]), tuple(sorted(me.counts.items())),
+            tuple(sorted(op.counts.items())))  # fmt: skip
 
 
 @dataclass
@@ -173,6 +278,9 @@ class Player:
     draw_seen: tuple = (-1, -1)
     last_zone: tuple | None = None  # (location, sequence) of the zone picked for our last own action
     pending_panel: tuple | None = None  # (capture, card id) of the last opened hand card, learned once confirmed
+    pending_list: tuple | None = None  # (panel capture, request) of the last list pick, learned once it resolves
+    summon_level: int = 0  # level of the monster our current Summon / Set is for (0: none under way)
+    field_picked: tuple = ((-1, -1), [])  # ((turn, phase), cards picked) of the field selection under way
     recoveries: dict = field(default_factory=dict)  # state -> self-recovery attempts this duel
     recovery_count: int = 0
     phase_seen: tuple = (-1, -1)
@@ -233,7 +341,7 @@ class Player:
         pw = self.passwords.get(cid)
         return self.cards[pw].name if pw in self.cards else str(cid)
 
-    def wait_turn(self, timeout: float = 240) -> tuple[RawDuel, Input, str | None]:
+    def wait_turn(self, timeout: float = 120) -> tuple[RawDuel, Input, str | None]:
         """Wait until the client must act: an engine input addressed to it, or one of MD's dialogs (stable ~1 s)."""
         end, stable, last = time.time() + timeout, 0, None
         while time.time() < end:
@@ -246,6 +354,10 @@ class Player:
                 return raw, inp, "over"
             mine = inp.accepting and inp.player == raw.me
             dialog = self.ui.dialog()  # MD's own dialog wins over the engine mode
+            if dialog == "panel" and not mine and self.read_dialog_type() != OPTION_DIALOG:
+                dialog = None  # a dimmed board while MD works: nothing for us yet
+            if dialog and dialog not in NEUTRAL and inp.player != raw.me:
+                dialog = None  # the opponent holds the input: their dialog, not ours to answer
             key = (inp.mode, mine, dialog, raw.turn, raw.phase)
             stable = stable + 1 if key == last and (mine or dialog) else 0
             last = key
@@ -261,8 +373,6 @@ class Player:
             return
         img, before = self.pending_panel
         self.pending_panel = None
-        from collections import Counter
-
         gone = Counter(c.cid for c in before.players[before.me].piles["hand"]) - Counter(
             c.cid for c in raw.players[raw.me].piles["hand"])  # fmt: skip
         if sum(gone.values()) == 1:
@@ -270,6 +380,22 @@ class Player:
             self.panel.learn(img, cid, self.card_stats(cid))
             self.panel.save()
             self.trace.observe(panel_learned=cid)
+
+    def learn_list(self, raw: RawDuel) -> None:
+        """The list candidate that left its place since the pick is the card that was picked: label the panel
+        captured on its position with it (right or wrong, so the next list of these cards can be read)."""
+        if self.pending_list is None:
+            return
+        img, req = self.pending_list
+        from ygorl.md.request import _locate
+
+        moved = {c.cid for c in req.candidates if c.uid and _locate(raw, c.uid)[1:] != (c.location, c.sequence)}
+        if len(moved) == 1:
+            self.pending_list = None
+            (cid,) = moved
+            self.panel.learn(img, cid, self.card_stats(cid))
+            self.panel.save()
+            self.trace.observe(panel_learned_from_list=cid)
 
     def card_kind(self, cid: int) -> str:
         """The panel kind (:func:`ygorl.md.panel.panel_kind`) of a hand card."""
@@ -296,26 +422,47 @@ class Player:
         img = self.ui.capture()
         got, how = self.panel.identify(img, hand, stats)
         kind, want_kind = panel_kind(img), self.card_kind(cid)
+        first_unknown = got is None and (not kind or kind == want_kind)
         self.trace.observe(panel={"want": cid, "got": got, "how": how, "kind": kind, "want_kind": want_kind})
-        if got == cid or (got is None and (not kind or kind == want_kind)):
+        # an unknown panel is the wanted card only when no other card of that kind in hand is unknown too (Fist of
+        # Fate was Set for Millennium Revelation: two spells, neither learned yet)
+        twins = [c for c in hand if c != cid and self.card_kind(c) == want_kind and c not in self.panel.names]
+        if got == cid or (first_unknown and not twins):
             self.pending_panel = (img, raw)
             return icons
         if got is None:
             how = f"a {kind} panel"
         shown = self.name(got) if got is not None else how
         print(f"  panel shows {shown}, not {self.name(cid)}: searching the hand", flush=True)
+        unknown = []  # positions whose panel is no card learned so far, of the kind wanted
+        last_opened = None
         for i in range(len(hand)):
             pos = L.hand_card(i, len(hand))
             if pos == xy:
                 continue
             found = self.ui.open_hand_card(pos, f"hand #{i + 1}: looking for {self.name(cid)}")
+            last_opened = i
             img = self.ui.capture()
             seen, how = self.panel.identify(img, hand, stats)
             kind = panel_kind(img)
-            if seen == cid or (seen is None and kind == want_kind and self._only_one_of_kind(hand, want_kind)):
+            if seen == cid or (seen is None and kind == want_kind and not twins):
                 self.trace.observe(panel={"want": cid, "found_at": i, "how": how or kind})
                 self.pending_panel = (img, raw)
                 return found
+            if seen is None and (not kind or kind == want_kind):
+                unknown.append((i, found, img))
+        if first_unknown:  # the first click's own panel is a candidate too: elimination needs it ruled out
+            unknown.append((-1, None, None))
+        if cid not in self.panel.names and len(unknown) == 1 and unknown[0][1] is not None:
+            # the wanted card was never learned, and every other position showed a card that is not it: by elimination
+            i, found, img = unknown[0]
+            if i != last_opened:  # open it again; a click on the card still open would close it
+                pos = L.hand_card(i, len(hand))
+                found = self.ui.open_hand_card(pos, f"hand #{i + 1}: {self.name(cid)} by elimination")
+                img = self.ui.capture()
+            self.trace.observe(panel={"want": cid, "found_at": i, "how": "elimination"})
+            self.pending_panel = (img, raw)
+            return found
         raise Stuck(f"{self.name(cid)} not found in the hand by its information panel")
 
     def hand_xy(self, raw: RawDuel, cid: int) -> tuple[int, int]:
@@ -323,6 +470,16 @@ class Player:
         hand = [c.cid for c in raw.players[raw.me].piles["hand"]]
         order = L.hand_order(hand, lambda c: self.passwords.get(c, 0), self.cards.get)
         return L.hand_card(order.index(hand.index(cid)), len(hand))
+
+    def outlined_zone(self, raw: RawDuel) -> tuple[str, int]:
+        """The first zone MD outlines for a placement (Monster Zones, then Spell & Trap Zones)."""
+        img = self.ui.capture()
+        for location in ("mzone", "szone"):
+            for zone in range(5):
+                xy = L.my_zone(location, zone)
+                if yellow_highlight(img, *xy) or zone_outlined(img, *xy):
+                    return location, zone
+        return "mzone", self.free_zone(raw, "mzone")
 
     def free_zone(self, raw: RawDuel, location: str) -> int:
         """The leftmost free zone (0-4) of ``location`` (mzone / szone): where a summon or Set is placed."""
@@ -364,8 +521,19 @@ class Player:
                 xy = L.my_zone("szone", where.sequence)
             else:
                 raise Stuck("no position measured for the Field Zone yet")
-            if not self.ui.card_command(xy, f"field {self.name(cid)}", "activate", 2.0):
+            if not self.ui.card_command(xy, f"field {self.name(cid)}", "activate", 2.0, kind="activate"):
                 return self.refused(raw, best, f"no Activate for {self.name(cid)} on the field")
+            return
+        if where.location == C.LOCATION_MZONE and best.kind == "reposition":
+            # a monster's change-of-position icon: only taken when it is the card's single icon (no glyph measured)
+            xy = my_monster_xy(where.sequence)
+            icons = self.ui.open_card(xy, f"field {self.name(cid)}")
+            if len(icons) != 1:
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                return self.refused(
+                    raw, best, f"{len(icons)} icons on {self.name(cid)}: cannot tell the position change"
+                )
+            self.ui.click(*icons[0], "change position", 1.5)
             return
         if where.location != C.LOCATION_HAND:
             raise Stuck(f"no click script for {best.kind} from location {where.location}")
@@ -380,7 +548,11 @@ class Player:
                 raise Stuck(f"{self.name(cid)} left the hand before it was used")
             xy = self.hand_xy(raw, cid)
             icons = self.ui.open_hand_card(xy, f"hand {self.name(cid)} (after the screen settled)")
-        icons = self.verify_hand_card(raw, cid, xy, icons)
+        try:
+            icons = self.verify_hand_card(raw, cid, xy, icons)
+        except Stuck as exc:  # the card cannot be told apart from another one not learned yet: decline, do not guess
+            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+            return self.refused(raw, best, str(exc))
         self.trace.observe(icons=icons)
         card = self.cards[best.card.code]
         order = command_order(card.is_monster, kinds.get(best.card.code, set()))
@@ -388,11 +560,15 @@ class Player:
             return self.refused(raw, best, f"{self.name(cid)} shows no command")
         if card.is_monster and best.kind == "activate":
             return  # a hand effect: no zone, the card may stay in hand; its prompts are handled by the loop
-        if best.kind in ("summon", "mset") and self.ui.dialog() == "yesno":
+        self.summon_level = card.level if best.kind in ("summon", "mset") else 0
+        if best.kind in ("summon", "mset") and card.level >= 5 and self.ui.dialog() == "yesno":
             # a Tribute Summon / Set asks to confirm first (message 335); the tributes are a field selection next
             self.ui.yesno(True, "yes: tribute")
             self.pick_tributes(raw)
             return
+        if best.kind in ("spsummon", "activate") and self.pending_question():
+            return  # MD asks first (a cost: Apprentice Illusion Magician's discard): the loop answers, then the zone
+            # (a Normal Summon / Set goes to its zone straight away: a passing state once skipped that zone)
         location = "mzone" if card.is_monster else "szone"
         zone = self.free_zone(raw, location)
         self.ui.pick_zone(location, zone, f"zone for {best.kind}")
@@ -404,7 +580,19 @@ class Player:
             if sum(c.cid == cid for c in after.players[after.me].piles["hand"]) < before:
                 return
             time.sleep(0.5)
+        if best.kind in ("spsummon", "activate") and self.pending_question():
+            return  # still resolving: a cost or a choice is asked first
         raise Stuck(f"{best.kind} {self.name(cid)}: the card is still in hand after the clicks")
+
+    def pending_question(self) -> bool:
+        """MD is asking something of ours right after a command (a list, a dialog, a field pick), not idle."""
+        time.sleep(0.8)
+        inp = self.input()
+        dialog = self.ui.dialog()
+        # not the zone banner / place mode: those are the zone of this very command, picked next
+        return dialog in ("list", "radio", "position", "yesno", "option", "notice") or (
+            inp.accepting and inp.mode not in (MAIN, BATTLE, PLACE)
+        )
 
     def refused(self, raw: RawDuel, action, why: str) -> None:
         """MD shows no command for an action the reconstruction allows: a state the snapshot does not carry
@@ -431,7 +619,7 @@ class Player:
         key = (raw.turn, raw.phase)
         no_attacks = (key, ATTACKS_MASKED) in self.forbidden
         allowed = [g for g in advice.suggestions if (key, _action_key(g.action)) not in self.forbidden
-                   and not (no_attacks and g.action.kind == "attack")]  # fmt: skip
+                   and not (no_attacks and g.action.kind == "attack") and clickable(g.action)]  # fmt: skip
         if not allowed:
             raise Stuck(f"no legal action left in the {snap.phase} reconstruction (MD refused the rest)")
         top = allowed[0]
@@ -554,8 +742,92 @@ class Player:
         if not result.ok:
             raise Stuck(f"exploration found nothing that works ({why})")
 
+    STATE_BLOCK = 0x4000  # the duel state struct S: fields up to S+0x3d18 are known
+
+    def save_memory_blocks(self) -> None:
+        """The raw duel state (S) and its key struct (K) of every step, for decoding once-per-turn usage and
+        turn-long effects offline; read-only, a failed read just skips the step."""
+        try:
+            mem, base, off = self.game.memory, self.game.module.base, self.game.offsets
+            key = struct.unpack("<Q", mem.read(base + off.key_ptr, 8))[0]
+            state = bytearray(mem.read(self.state_base, self.STATE_BLOCK))
+            me = self.game.read().me
+            # the opponent's hidden cards must never leave memory (design 10): blank their player block, the
+            # uid -> card id table and the effect list (it names the cards its effects belong to, face-down too)
+            opp = (1 - me) * off.player_stride
+            state[opp : opp + off.player_stride] = bytes(off.player_stride)
+            state[off.uid_table : EFFECT_LIST_END] = bytes(EFFECT_LIST_END - off.uid_table)
+            self.trace.save_memory({"S": bytes(state), "K": mem.read(key, 0x400)})
+        except Exception:  # noqa: BLE001 - diagnostics only
+            pass
+
+    def read_dialog_type(self) -> int:
+        try:
+            return struct.unpack("<I", self.game.memory.read(self.state_base + self.game.offsets.dialog_type, 4))[0]
+        except Exception:  # noqa: BLE001
+            return 0
+
     def request_now(self, raw: RawDuel, list_shown: bool = False):
         return read_request(self.game.memory, self.game.module.base, self.game.offsets, raw, list_shown=list_shown)
+
+    # kind (classify) -> method(raw, inp); kinds not listed are MD's own dialogs, answered by :meth:`dialog`
+    HANDLERS = {
+        "idle": "on_idle", "battle": "on_battle", "draw": "on_draw", "summon_pick": "on_summon_pick",
+        "prompt": "prompt", "place": "on_place", "zone_again": "on_zone_again", "tributes": "on_tributes",
+        "field_pick": "on_field_pick", "settle": "on_settle", "wait": "on_wait", "explore": "on_explore",
+        "position": "on_position",
+    }  # fmt: skip
+
+    def on_idle(self, raw: RawDuel, inp) -> None:
+        self.main_phase(raw)
+
+    def on_battle(self, raw: RawDuel, inp) -> None:
+        self.battle(raw)
+
+    def on_draw(self, raw: RawDuel, inp) -> None:
+        self.draw_attempts = self.draw_attempts + 1 if self.phase_seen == self.draw_seen else 0
+        self.draw_seen = self.phase_seen
+        self.trace.rule("draw-continue", attempt=self.draw_attempts)
+        self.ui.continue_draw(self.draw_attempts)
+
+    def on_summon_pick(self, raw: RawDuel, inp) -> None:
+        self.summon_pick(raw)
+
+    def on_place(self, raw: RawDuel, inp) -> None:
+        """Where to put a card (a summoned monster, or a Spell / Trap an effect places): MD outlines the zones it
+        allows; the first outlined one, Monster Zones first, else the first free monster zone."""
+        self.trace.rule("zone-first-free")
+        location, zone = self.outlined_zone(raw)
+        self.ui.pick_zone(location, zone, f"zone for the card ({location})")
+        self._placed(location, zone)
+
+    def on_zone_again(self, raw: RawDuel, inp) -> None:
+        self.trace.rule("zone-again")
+        self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+        self.ui.pick_zone(*self.last_zone, "zone again")
+        self.last_zone = None
+
+    def on_tributes(self, raw: RawDuel, inp) -> None:
+        self.pick_tributes(raw)  # all of them in one step: the board does not change in between
+        self.context = ""
+
+    def on_field_pick(self, raw: RawDuel, inp) -> None:
+        self.field_pick(raw)
+
+    def on_settle(self, raw: RawDuel, inp) -> None:
+        self.trace.rule("banner-wait")
+        self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+
+    def on_wait(self, raw: RawDuel, inp) -> None:
+        """The opponent holds the input: nothing on screen is ours to answer."""
+        self.trace.observe(wait="the opponent holds the input")
+        self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=4.0)
+
+    def on_explore(self, raw: RawDuel, inp) -> None:
+        self.explore(f"unknown input mode {inp.mode}")
+
+    def on_position(self, raw: RawDuel, inp) -> None:
+        self.dialog(raw, "position")
 
     def dialog(self, raw: RawDuel, kind: str) -> None:
         if kind == "position":
@@ -574,6 +846,8 @@ class Player:
             n = len(req.choices)
             pick = self.lockstep("option", raw, req)
             if pick is None:
+                pick = self.intended_option(req)
+            if pick is None:
                 pick = next((i for i, c in enumerate(req.choices) if c >> 31), 0)  # the first enabled effect
                 self.trace.rule("option-first-enabled", choices=[hex(c) for c in req.choices], pick=pick)
             self.trace.observe(option_choices=[hex(c) for c in req.choices])
@@ -588,11 +862,24 @@ class Player:
             if pick is None:
                 self.trace.rule("radio-first")  # e.g. Pot of Extravagance: banish 3 (the first row) rather than 6
             self.trace.observe(radio_rows=self.ui.pick_radio(pick or 0))
+        elif kind == "minimised":
+            self.trace.rule("restore-minimised")
+            self.ui.click(*MINIMISED_RESTORE, "restore the minimised panel", 1.5)
+        elif kind == "notice":
+            xy = notice_button(self.ui.capture())
+            if xy is None:
+                return  # gone already
+            self.trace.rule("notice-confirm")
+            self.ui.click(*xy, "confirm the notice", 1.2)
         elif kind == "phase_menu":
             self.trace.rule("phase-menu-cancel")
             self.ui.click(*PHASE_MENU_CANCEL, "close the phase menu", 1.2)
         elif kind == "yesno":
             pick = self.lockstep("yesno", raw)
+            if pick is None and self.context == "summon" and self.summon_level < 5:
+                # a Normal Summon / Set of Level <= 4 asks no Tribute question: this is no yes / no of ours
+                self.trace.observe(yesno="ignored: a Level <= 4 summon asks no Tribute question")
+                return
             if pick is None and self.context == "summon":
                 pick = 0  # our own summon asks to confirm the Tribute Summon (message 335): the tributes come next
                 self.trace.rule("yesno-yes-tribute")
@@ -614,8 +901,13 @@ class Player:
                 return
             pick = self.lockstep("list", raw, req)
             if pick is None:
-                self.trace.rule("list-first")
-            self.trace.observe(list_cards=self.ui.pick_list_cards([pick or 0]),
+                # a rule pick has no card in mind: the first card on screen (not memory's first candidate: the list
+                # can scroll and its order differs, an audit found Dark Magician sent for the "first" Ra)
+                self.trace.rule("list-first-on-screen")
+                index, ticked = 0, False
+            else:
+                index, ticked = self.find_in_list(req, pick)
+            self.trace.observe(list_cards=self.ui.pick_list_cards([index], ticked=ticked), list_index=index,
                                list_candidates=[[c.cid, c.location, c.sequence] for c in req.candidates])  # fmt: skip
             self.context = "list"
         else:
@@ -650,29 +942,91 @@ class Player:
         return xy
 
     def summon_pick(self, raw: RawDuel) -> None:
-        """Mode 6 (MD's "summon a monster": an effect or a Tribute Summon asking for the monster): a hand monster,
-        opened in the hand and summoned with its Summon icon. MD keeps no list for it (the list in memory is a stale
-        one), so the candidates are the hand's monsters, strongest first; MD shows a Summon icon only on those it
-        offers. The zone, tributes and any further dialog are the loop's next steps."""
+        """Mode 6 (MD's "summon a monster": an effect or a Tribute Summon asking for the monster): MD keeps no list
+        for it (the list in memory is stale) and shows a Summon icon only on the hand monsters it offers. So the
+        hand positions are opened one by one and the first that shows a Summon icon is summoned; which card that
+        was is read from memory afterwards (no need to tell the cards apart on the panel, which failed for cards not
+        learned yet: The Winged Dragon of Ra). Positions are tried strongest-guess first. The zone, tributes and any
+        further dialog are the loop's next steps."""
         me = raw.players[raw.me]
+        hand = [c.cid for c in me.piles["hand"]]
 
         def strength(cid):
             k = self.cards.get(self.passwords.get(cid))
             if k is None or not k.is_monster:
-                return None
+                return -1
             return k.attack if k.attack >= 0 else 1000 * k.level  # "?" ATK: count the level
 
-        monsters = sorted({c.cid for c in me.piles["hand"] if strength(c.cid) is not None}, key=strength, reverse=True)
-        self.trace.rule("summon-pick-strongest", candidates=monsters)
-        for cid in monsters:
-            raw = self.game.read()
-            xy = self.hand_xy(raw, cid)
-            icons = self.verify_hand_card(raw, cid, xy, self.ui.open_hand_card(xy, f"hand {self.name(cid)} to summon"))
-            if self.ui.choose_command(icons, "summon", ["summon", "mset"], self.name(cid)) is not None:
+        guessed = sorted(range(len(hand)), key=lambda i: strength(hand[i]), reverse=True)
+        order = list(dict.fromkeys([L.hand_card(L.hand_order(hand, lambda c: self.passwords.get(c, 0),
+                                                              self.cards.get).index(i), len(hand)) for i in guessed]
+                                   + [L.hand_card(i, len(hand)) for i in range(len(hand))]))  # fmt: skip
+        self.trace.rule("summon-pick-first-offered", hand=hand)
+        for n, xy in enumerate(order):
+            icons = self.ui.open_hand_card(xy, f"hand position {n + 1}: offered for the summon?")
+            if icons and self.ui.choose_command(icons, "summon", ["summon", "mset"], "the offered monster") is not None:
                 self.context = "summon"
+                self.summon_level = 5  # unknown until memory says: let MD's own Tribute question through
                 return
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
-        raise Stuck(f"no hand monster shows a Summon icon for the summon pick ({len(monsters)} tried)")
+        raise Stuck(f"no hand card shows a Summon icon for the summon pick ({len(order)} positions tried)")
+
+    def intended_option(self, req) -> int | None:
+        """The tab of the effect the policy activated: its action's description (password * 16 + effect index) is
+        the dialog choice's (:func:`ygorl.selfplay.observe.md_option_desc`). None when it names no tab."""
+        from ygorl.selfplay.observe import md_option_desc
+
+        action = self.expect.action if self.expect is not None else None
+        if action is None or action.kind != "activate" or not action.description:
+            return None
+        tabs = [i for i, c in enumerate(req.choices) if md_option_desc(c, self.passwords) == action.description]
+        if len(tabs) != 1:
+            return None
+        self.trace.rule("option-the-policy-activated", description=action.description, pick=tabs[0])
+        return tabs[0]
+
+    def find_in_list(self, req, pick: int) -> tuple[int, bool]:
+        """The screen position of candidate ``pick`` in MD's card list, and whether it is ticked already.
+
+        MD's list is not memory's: the order differs (an audit found 4 of 4 picks off) and identical copies are
+        listed once (14 candidates in memory, 6 cards on screen). So the screen cards are identified on the
+        information panel (tick, read, untick) and matched to the wanted card by password, not by position; by
+        elimination when the panel names every other distinct card. A pick that cannot be confirmed is recorded
+        as unverified. The panel of the card finally picked is kept to be learned once memory shows what moved."""
+        cards = L.list_cards(self.ui.capture())
+        cands = [c.cid for c in req.candidates]
+        n = len(cards)
+        if not cands or not 0 <= pick < len(cands):
+            return 0, False
+        pw = lambda cid: self.passwords.get(cid, cid)  # noqa: E731
+        want = cands[pick]
+        if n <= 1 or len({pw(c) for c in cands}) <= 1:
+            return 0, False  # one card, or only copies of one card: any position is the wanted card
+        stats = {c: self.card_stats(c) for c in set(cands)}
+        seen: dict[int, int | None] = {}
+        panels = {}
+        for i in range(n):
+            self.ui.click(*cards[i], f"#{i + 1} of {n}: which card?", 0.9)
+            img = self.ui.capture()
+            got, how = self.panel.identify(img, list(dict.fromkeys(cands)), stats)
+            seen[i], panels[i] = got, img
+            if got is not None and pw(got) == pw(want):
+                self.trace.observe(list_check={"want": want, "seen": seen, "by": how})
+                self.pending_list = (img, req)
+                return i, True
+            self.ui.click(*cards[i], f"untick #{i + 1}", 0.6)
+        unknown = [i for i, got in seen.items() if got is None]
+        named = {pw(got) for got in seen.values() if got is not None}
+        if len(unknown) == 1 and {pw(c) for c in cands} - named == {pw(want)}:
+            i = unknown[0]  # every other distinct card was named: the one the panel could not name is it
+            self.trace.observe(list_check={"want": want, "seen": seen, "by": "elimination"})
+            self.pending_list = (panels[i], req)
+            return i, False
+        i = unknown[0] if unknown else 0
+        self.trace.observe(list_check={"want": want, "seen": seen, "unverified": True})
+        print(f"  list: {self.name(want)} not found on the panel; position {i + 1} is a guess", flush=True)
+        self.pending_list = (panels[i], req)
+        return i, False
 
     def pick_tributes(self, raw: RawDuel) -> None:
         """Tributes: the policy's picks through the shadow; without a shadow, highlighted monsters of the advisor's,
@@ -700,18 +1054,38 @@ class Player:
             if not self.ui.card_command(my_monster_xy(s), f"tribute {self.name(c.cid)}", "confirm tribute", 2.0):
                 raise Stuck("no Confirm icon above the tribute")
 
+    @staticmethod
+    def occupied(raw: RawDuel, spots) -> list:
+        """The highlighted spots that hold a monster: lava glowing in an empty zone passed for a highlight."""
+        me, op = raw.players[raw.me], raw.players[1 - raw.me]
+        cards = [my_monster_xy(s) for s in range(7) if me.slots[s] is not None]
+        cards += [opp_monster_xy(s) for s in range(7) if op.slots[s] is not None]
+        return [xy for xy in spots if any(abs(xy[0] - c[0]) + abs(xy[1] - c[1]) < 80 for c in cards)]
+
     def field_pick(self, raw: RawDuel) -> None:
         """Mode 8 outside an attack: pick the highlighted cards one by one and confirm each."""
-        lit = self.ui.highlighted()
-        self.trace.observe(highlighted=lit)
-        if not lit:
-            raise Stuck("a field selection with no highlighted card found")
-        xy = self.field_target(raw, lit)
+        episode = (raw.turn, raw.phase)
+        if self.field_picked[0] != episode:
+            self.field_picked = (episode, [])
+        picked = self.field_picked[1]
+        near = lambda a, b: abs(a[0] - b[0]) + abs(a[1] - b[1]) < 40  # noqa: E731
+        lit = self.occupied(raw, self.ui.highlighted())
+        # cards picked earlier in this selection stay framed: clicking one again would take it back (a three-
+        # Tribute summon picked its first Tribute over and over)
+        fresh = [xy for xy in lit if not any(near(xy, p) for p in picked)]
+        self.trace.observe(highlighted=lit, picked_before=picked)
+        if not fresh:
+            raise Stuck("a field selection with no highlighted card left to pick")
+        xy = self.field_target(raw, fresh)
         if xy is None:
-            self.trace.rule("field-pick-first")
-            xy = lit[0]
+            # without the shadow: a target of the opponent's first (a destroy / target effect offering both sides
+            # must not hit our own card); tributes are picked by :meth:`pick_tributes`, not here
+            theirs = [p for p in fresh if p[1] < 640]
+            xy = (theirs or fresh)[0]
+            self.trace.rule("field-pick-opponent-first" if theirs else "field-pick-first")
         if not self.ui.card_command(xy, "highlighted card", "confirm"):
             raise Stuck("no Confirm icon above the selected card")
+        picked.append(xy)
 
     # --- loop -----------------------------------------------------------------------------------------------
     def record_stuck(self, why: str) -> Path:
@@ -738,32 +1112,85 @@ class Player:
     def run_games(self, games: int, max_steps: int) -> int:
         """Play ``games`` duels in a row: after each one, press Retry on MD's result screen (the same Solo duel
         again) and wait for the new duel. Stops at the first duel that does not finish on its own."""
+        try:
+            first = self.game.read()
+        except Exception:  # noqa: BLE001 - no duel state: the menus
+            first = None
+        if first is None or first.finished:  # started on a result screen or in the stage menu: get a duel first
+            won = first is not None and self._result() == RESULT_WIN
+            self.next_duel_from_menu() if first is None or won else self.restart_duel()
         for g in range(games):
             print(f"=== game {g + 1}/{games}", flush=True)
             code = self.run(max_steps)
             raw = self.game.read()
-            result = struct.unpack("<I", self.game.memory.read(self._key() + self.game.offsets.duel_result, 4))[0]
+            result = self._result()
+            for _ in range(20):  # MD sets the result a moment after the finish flag (0 read twice in a series)
+                if result in (1, 2) or code != 0:
+                    break
+                time.sleep(0.5)
+                result = self._result()
             summary = {"game": g + 1, "exit": code, "finished": raw.finished, "result": result,
                        "lp": [raw.players[raw.me].lp, raw.players[1 - raw.me].lp], "turn": raw.turn + 1}  # fmt: skip
             self.trace.game(**summary)
             print(f"=== game {g + 1} summary {summary}", flush=True)
             if code != 0:
                 return code
-            if result == RESULT_WIN:
-                # a won Solo duel offers no Retry: Confirm leads to the stage menu, which is outside the duel and so
-                # outside what the player may click (design 10). The series ends here.
-                print(
-                    "=== won: MD returns to the Solo menu after a win; the next duel is started from there", flush=True
-                )
-                return 0
             if g + 1 < games:
-                self.restart_duel()
+                for attempt in range(3):  # MD can be slow to answer Retry (7 clicks once) or to load the duel
+                    try:
+                        if result == RESULT_WIN and attempt == 0:
+                            self.next_duel_from_menu()  # a won Solo duel offers no Retry: through the stage menu
+                        elif self._new_duel():
+                            self.reset_game_state()
+                        else:
+                            self.restart_duel()
+                        break
+                    except Stuck as exc:
+                        print(f"  restart attempt {attempt + 1}: {exc}", flush=True)
+                else:
+                    raise Stuck("no new duel after three restart attempts")
         return 0
+
+    def _result(self) -> int:
+        return struct.unpack("<I", self.game.memory.read(self._key() + self.game.offsets.duel_result, 4))[0]
 
     def _key(self) -> int:
         return struct.unpack("<Q", self.game.memory.read(self.game.module.base + self.game.offsets.key_ptr, 8))[0]
 
-    def restart_duel(self, timeout: float = 150) -> None:
+    def park_pointer(self) -> None:
+        """Rest the (window-only) pointer on an empty spot of the board: left over a pile from the menus, its
+        tooltip stood over the opponent's turn and the duel waited for 240 s."""
+        try:
+            self.mouse.refresh_window()
+            self.mouse.move(*NEUTRAL_SPOT)
+        except Exception:  # noqa: BLE001 - cosmetic
+            pass
+
+    def _new_duel(self) -> bool:
+        try:
+            raw = self.game.read()
+        except Exception:  # noqa: BLE001 - the menus: no duel state
+            return False
+        return not raw.finished and raw.turn == 0
+
+    def next_duel_from_menu(self, timeout: float = 300) -> None:
+        """After a win: VICTORY's Confirm, the stage menu, the next stage (or the same one again) and Play, until a
+        new duel runs (:mod:`ygorl.md.menu`; the user allowed these clicks)."""
+        from ygorl.md.input import MenuMouse
+        from ygorl.md.menu import MenuWalker
+
+        time.sleep(6.0)  # the win animation
+        walker = MenuWalker(MenuMouse(self.game).click, self._capture, self._new_duel)
+        ok = walker.run(timeout)
+        self.trace.observe(menu=[[k, list(xy)] for k, xy in walker.log])
+        if not ok:
+            raise Stuck(f"no new duel after the menus ({len(walker.log)} clicks)")
+        self.mouse.refresh_window()
+        self.park_pointer()
+        self.reset_game_state()
+        time.sleep(3.0)
+
+    def restart_duel(self, timeout: float = 300) -> None:
         """MD's result screen: press Retry, then wait until a new duel is running (not finished, turn 1)."""
         time.sleep(6.0)  # the win / loss animation
         end = time.time() + timeout
@@ -774,13 +1201,23 @@ class Player:
             except Exception:
                 raw = None
             if raw is not None and not raw.finished and raw.turn == 0:
+                self.park_pointer()
                 self.reset_game_state()
                 time.sleep(3.0)
                 return
-            if raw is not None and raw.finished and time.time() - last_click > 8:
-                self.ui.click(*RESULT_RETRY, "retry the duel", 2.0)
-                self.ui.take_clicks()
-                last_click = time.time()
+            if time.time() - last_click > 8:
+                from ygorl.md import menu
+                from ygorl.md.input import MenuMouse
+
+                img = self._capture()
+                if menu.screen(img) == "turn_order":  # some stages ask who goes first before the duel again
+                    MenuMouse(self.game).click(*menu.target(img, "turn_order"))
+                    print("  menu: turn_order after Retry", flush=True)
+                    last_click = time.time()
+                elif raw is not None and raw.finished:
+                    self.ui.click(*RESULT_RETRY, "retry the duel", 2.0)
+                    self.ui.take_clicks()
+                    last_click = time.time()
             time.sleep(1.0)
         raise Stuck("the duel did not restart after Retry")
 
@@ -826,7 +1263,7 @@ class Player:
                 elif dialog == "yesno":
                     self.ui.yesno(alt == 1, "recover: the other answer")
                 elif dialog == "banner" or (mine and inp.mode == FIELD_PICK):
-                    lit = self.ui.highlighted()
+                    lit = self.occupied(raw, self.ui.highlighted())
                     if len(lit) > alt:
                         self.ui.card_command(lit[alt], "recover: another highlighted card", "confirm")
                 elif mine and inp.mode in (MAIN, BATTLE):
@@ -848,6 +1285,7 @@ class Player:
     def reset_game_state(self) -> None:
         self.attacked, self.forbidden, self.recent, self.last_zone = set(), set(), [], None
         self.recoveries, self.recovery_count = {}, 0
+        self.field_picked = ((-1, -1), [])
         self.turn_seen, self.phase_seen, self.expect, self.context = -1, (-1, -1), None, ""
         self.responded = None
 
@@ -865,10 +1303,8 @@ class Player:
             solo_gate(raw)
             self.trace.begin(step, raw, inp, dialog)
             req = read_request(self.game.memory, self.game.module.base, self.game.offsets, raw)
-            if dialog in ("yesno", "panel") and req.dialog_type == OPTION_DIALOG and len(req.choices) >= 2:
-                dialog = "option"  # an effect choice: a dark panel like yes / no on screen, told apart in memory
-            elif dialog == "panel":
-                dialog = None  # a dark band without buttons: a dimmed or dark board, nothing to answer
+            if dialog == "panel" and not (req.dialog_type == OPTION_DIALOG and len(req.choices) >= 2):
+                dialog = None  # a dark band without yes / no labels: a dimmed or dark board (classify maps the rest)
             if inp.accepting and inp.player == raw.me:
                 self.trace.observe(md_request={"kind": req.kind, "candidates": [[c.cid, c.location, c.sequence, c.player]
                                                                                 for c in req.candidates],
@@ -883,6 +1319,7 @@ class Player:
                     )
             if self.trace.wants_screen(step):
                 self.trace.save_screen(self.ui.capture())
+            self.save_memory_blocks()
             if dialog == "over":
                 print("duel over, LP", [p.lp for p in raw.players])
                 return 0
@@ -893,9 +1330,19 @@ class Player:
                 self.ui.wait_still()  # e.g. the drawn card flying to the hand: hand positions count it already
             if raw.turn != self.turn_seen:
                 self.turn_seen, self.attacked = raw.turn, set()
+            if inp.mode not in (FIELD_PICK, FIELD_PICK_TRIBUTE):
+                self.field_picked = ((-1, -1), [])  # the field selection is over: the next one starts fresh
             me, op = raw.players[raw.me], raw.players[1 - raw.me]
             # the turn too: the same prompt in two End Phases is not a loop; the last entry (refusals) is progress
-            state = (raw.turn, inp.mode, dialog, raw.phase, _board_key(me, op), len(self.forbidden))
+            state = (
+                raw.turn,
+                inp.mode,
+                dialog,
+                raw.phase,
+                _board_key(me, op),
+                req.params,  # successive "activate?" windows at different timings look alike otherwise
+                len(self.forbidden) + len(self.field_picked[1]),
+            )  # a pick of a multi-pick is progress too
             self.recent = (self.recent + [state])[-8:]
             # the Draw Phase takes a few clicks (badge, Deck) by design: it has its own budget of attempts
             in_draw = inp.mode == 1 and dialog is None and self.draw_attempts < 6
@@ -916,53 +1363,21 @@ class Player:
                     problem = check_expectation(self.expect, raw, self.passwords)
                     self.trace.check(self.expect.action, problem)
                     self.learn_panel(raw)
+                    self.learn_list(raw)
                     print(f"  check {self.expect.action.kind}: {'ok' if problem is None else problem}", flush=True)
                     self.expect = None
                     if problem is not None:
                         raise Stuck(f"the game does not show the policy's action: {problem}")
                 mine = inp.accepting and inp.player == raw.me
-                if dialog == "phase_menu" and mine and inp.mode in (MAIN, BATTLE):
-                    dialog = None  # a phase change under way: the decision below uses (or closes) the open menu
-                if mine and inp.mode == SUMMON_PICK and dialog in (None, "banner"):
-                    self.summon_pick(raw)  # the banner says "summon a monster"
-                elif mine and inp.mode in (OPEN_PROMPT, CHAIN_PROMPT) and dialog in (None, "list"):
-                    self.prompt(raw, inp)  # an activate-or-pass prompt panel looks like a list
-                elif dialog == "banner" and mine and inp.mode == PLACE:
-                    # where to put a monster (after a Tribute Summon: message 327, the free zones highlighted)
-                    self.trace.rule("zone-first-free")
-                    zone = self.free_zone(raw, "mzone")
-                    self.ui.pick_zone("mzone", zone, "zone for the summon")
-                    self._placed("mzone", zone)
-                elif dialog == "banner" and mine and inp.mode == MAIN and self.last_zone is not None:
-                    # MD still asks for the zone of our own Summon / Set (the click came while the banner animated in)
-                    self.trace.rule("zone-again")
-                    self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
-                    self.ui.pick_zone(*self.last_zone, "zone again")
-                    self.last_zone = None
-                elif mine and inp.mode == FIELD_PICK and self.context == "tribute":
-                    self.pick_tributes(raw)  # all of them in one step: the board does not change in between
-                    self.context = ""
-                elif dialog == "banner" and mine and inp.mode == FIELD_PICK:
-                    self.field_pick(raw)  # the banner states what to pick on the field (tributes, targets)
-                elif dialog == "banner" and not inp.accepting:
-                    # a banner while the engine takes no input is MD's own text (a Summon animating): let it pass
-                    self.trace.rule("banner-wait")
-                    self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
-                elif dialog:
-                    self.dialog(raw, dialog)
-                elif inp.mode == MAIN:
-                    self.main_phase(raw)
-                elif inp.mode == BATTLE:
-                    self.battle(raw)
-                elif inp.mode == FIELD_PICK:
-                    self.field_pick(raw)
-                elif inp.mode == 1:
-                    self.draw_attempts = self.draw_attempts + 1 if self.phase_seen == self.draw_seen else 0
-                    self.draw_seen = self.phase_seen
-                    self.trace.rule("draw-continue", attempt=self.draw_attempts)
-                    self.ui.continue_draw(self.draw_attempts)
+                kind = classify(mine=mine, ours=inp.player == raw.me, accepting=inp.accepting, mode=inp.mode,
+                                dialog_type=req.dialog_type, choices=len(req.choices), screen=dialog,
+                                context=self.context, zone_pending=self.last_zone is not None)  # fmt: skip
+                self.trace.observe(kind=kind)
+                handler = self.HANDLERS.get(kind)
+                if handler is None:
+                    self.dialog(raw, kind)  # MD's own dialogs (yesno, option, list, radio, phase_menu, ...)
                 else:
-                    self.explore(f"unknown input mode {inp.mode}")
+                    getattr(self, handler)(raw, inp)
             except Exception as exc:  # Stuck, or anything unexpected inside a step: recover, do not die
                 why = str(exc) if isinstance(exc, Stuck) else f"{type(exc).__name__}: {exc}"
                 if not isinstance(exc, (Stuck, MemoryReadError)):

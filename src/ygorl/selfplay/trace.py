@@ -78,6 +78,7 @@ class Trace:
 
     out: Path
     run: str = field(default_factory=lambda: time.strftime("%Y%m%d-%H%M%S"))
+    seq: int = 0  # records written so far: names the screens and memory snapshots uniquely across duels
     screen_every: int = 0  # save the reference-frame capture every N steps (0: only on demand)
     rec: dict | None = None
     last: dict | None = None  # the last record written (for stuck records)
@@ -99,7 +100,8 @@ class Trace:
     def begin(self, step: int, raw, inp, dialog: str | None) -> dict:
         """Open the record of loop step ``step`` from what was read before deciding."""
         self.flush()
-        self.rec = {"kind": "step", "step": step, "t": round(time.time(), 2), "turn": raw.turn + 1,
+        self.seq += 1  # run-wide: the step number restarts with every duel of a series
+        self.rec = {"kind": "step", "seq": self.seq, "step": step, "t": round(time.time(), 2), "turn": raw.turn + 1,
                     "phase": phase_name(raw.phase), "turn_player": "me" if raw.turn_player == raw.me else "opp",
                     "input": {"mode": inp.mode, "accepting": bool(inp.accepting), "player": inp.player},
                     "dialog": dialog, "memory": digest(raw), "decision": None, "observed": {}, "clicks": [],
@@ -154,10 +156,21 @@ class Trace:
         rec = self._current()
         d = self.out / f"{self.run}-screens"
         d.mkdir(exist_ok=True)
-        name = d / f"{max(rec['step'], 0):04d}.npz"
+        name = d / f"{rec.get('seq', 0):05d}.npz"
         np.savez_compressed(name, screen=np.ascontiguousarray(img[::2, ::2]))
         rec["screen"] = str(name.relative_to(self.out))
         return rec["screen"]
+
+    def save_memory(self, blocks: dict[str, bytes]) -> str:
+        """Raw engine memory of this step (the duel state block and the like), for decoding what the snapshot does
+        not read yet: once-per-turn usage, turn-long effects, activity counters (design 10 「识别与执行的系统化」)."""
+        rec = self._current()
+        d = self.out / f"{self.run}-memory"
+        d.mkdir(exist_ok=True)
+        name = d / f"{rec.get('seq', 0):05d}.npz"
+        np.savez_compressed(name, **{k: np.frombuffer(v, np.uint8) for k, v in blocks.items()})
+        rec["memory_blob"] = str(name.relative_to(self.out))
+        return rec["memory_blob"]
 
     def wants_screen(self, step: int) -> bool:
         return self.screen_every > 0 and step % self.screen_every == 0

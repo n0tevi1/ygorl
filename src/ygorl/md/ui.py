@@ -47,6 +47,18 @@ LIST_SELECT_TEXT = (963, 1099, 1093, 1139)  # the one-button list's Select label
 LIST_SELECT_TWO_TEXT = (1150, 1102, 1215, 1134)  # the two-button list's right (Select) label
 
 
+def list_card_ticked(img: np.ndarray, card: XY) -> bool:
+    """A list card carries MD's tick badge (a blue diamond with a check or an order number) at its top right:
+    0.26-0.33 of a 24 px window white or blue on ticked cards, 0.01 without (measured on a 5-card order list)."""
+    x, _ = card
+    best = 0.0
+    for dx in range(20, 60, 4):
+        for y in range(860, 920, 4):
+            r = img[y - 12 : y + 12, x + dx - 12 : x + dx + 12].reshape(-1, 3).astype(int)
+            best = max(best, float(((r.min(axis=1) > 200) | ((r[:, 2] > 150) & (r[:, 0] < 80))).mean()))
+    return best > 0.15
+
+
 def list_select_state(img: np.ndarray, box: tuple[int, int, int, int] = LIST_SELECT_TEXT) -> str:
     """The one-button card list's Select: "enabled" (bright yellow-green label, measured 0.075 of the box),
     "disabled" (dim olive label, nothing ticked yet: 0.05 dim, 0 bright), "" (no such label: another layout)."""
@@ -98,8 +110,23 @@ def radio_rows(img: np.ndarray) -> list[int]:
     return rows
 
 
+MINIMISED_RESTORE = (1335, 1140)  # the teal ▲ button of a minimised card list / dialog
+
+
+def minimised(img: np.ndarray) -> bool:
+    """A card list or dialog minimised with its ▽ button: only a dark grid button and a teal ▲ (restore) button
+    are left at the bottom (measured: grid box 0.81 dark, restore box 0.39-0.58 teal; nothing else above 0.3)."""
+    grid = img[1100:1175, 1180:1250].astype(int)
+    restore = img[1105:1175, 1290:1380].astype(int)
+    dark = (grid.max(axis=2) < 45).mean()
+    teal = ((restore[:, :, 1] > restore[:, :, 0] + 25) & (restore[:, :, 1] > 110)).mean()
+    return bool(dark > 0.6 and teal > 0.3)
+
+
 def screen_dialog(img: np.ndarray) -> str | None:
     """MD UI dialogs that are not engine input states (measured on the 2054x1184 window)."""
+    if minimised(img):
+        return "minimised"
     if L.menu_button(img, *L.PHASE_MENU["end"]):
         return "phase_menu"  # MD's phase menu (left open by an interrupted phase change)
     if len(radio_rows(img)) >= 2 and list_select_state(img, RADIO_CONFIRM_TEXT) != "":
@@ -107,20 +134,27 @@ def screen_dialog(img: np.ndarray) -> str | None:
     pos_l, pos_r = box_mean(img, 925, 940, 955, 970), box_mean(img, 1100, 940, 1130, 970)
     above = box_mean(img, 700, 760, 1350, 790)  # the board around the position dialog, a prompt panel's title row
     labels = [float((img[1025:1065, x0 : x0 + 120].min(axis=2) > 200).mean()) for x0 in (880, 1060)]  # 表侧…
-    if (
-        pos_l[0] < 30
-        and pos_l[1] < 60
-        and pos_r[0] < 30
-        and pos_r[1] < 70
-        and (above.mean() > 100 or min(labels) > 0.08)
-    ):
-        return "position"  # the white labels under the buttons (0.19 measured) also show on a dark (lava) board
+    if position_buttons(img) is not None:
+        return "position"
+    dark = pos_l[0] < 30 and pos_r[0] < 30
+    if dark and ((pos_l[1] < 60 and pos_r[1] < 70 and above.mean() > 100) or min(labels) > 0.08):
+        # the white labels under the buttons (0.15-0.19 measured) also show on a dark (lava) board, where the right
+        # button's shading came out greener (74) than on the first stages
+        return "position"
     band, mid = box_mean(img, 620, 520, 1430, 560), box_mean(img, 900, 560, 1150, 600)
+    if band.mean() < 100 and mid.mean() < 120 and _lime(img, *YESNO_YES) <= 0.02 and notice_button(img) is not None:
+        return "notice"  # one lit Confirm on a dark panel (yes / no has two)
     if band.mean() < 100 and mid.mean() < 120:
         # yes / no has lime labels on both buttons (0.06 of the label box measured); without them the dark band is
         # another panel (the effect choice, told apart in memory) or just a dark / dimmed board
-        lime = [_lime(img, x, YESNO_NO[1]) for x in (YESNO_NO[0], YESNO_YES[0])]
-        return "yesno" if min(lime) > 0.02 else "panel"
+        # two lit buttons, exactly at the No and Yes spots (the button finder: pills with lime labels). Lime zone
+        # outlines on a dark board lit both label spots without being buttons; a text-density test on the question
+        # missed a short one ("要破坏一张卡吗?", 0.0078)
+        from ygorl.md.explore import find_buttons
+
+        lit = [b.centre for b in find_buttons(img) if b.label == "enabled"]
+        at = lambda spot: any(abs(x - spot[0]) <= 20 and abs(y - spot[1]) <= 20 for x, y in lit)  # noqa: E731
+        return "yesno" if at(YESNO_NO) and at(YESNO_YES) else "panel"
     if box_mean(img, 950, 1100, 1100, 1130).max() < 30 and L.list_cards(img):
         return "list"  # the dark strip alone also shows during a turn change: the list's blue tray must be up too
     banner = box_mean(img, 900, 270, 1150, 300)
@@ -129,6 +163,58 @@ def screen_dialog(img: np.ndarray) -> str | None:
     if banner[0] < 60 and banner[2] < 110 and banner.mean() < 80 and banner[2] > banner[0] + 25 and text > 0.0015:
         return "banner"
     return None
+
+
+def position_buttons(img: np.ndarray) -> tuple[XY, XY] | None:
+    """The summon-position dialog's two buttons wherever MD puts them (centred under the board, or next to the zone
+    of a Special Summon from the hand): a blue upright-card glyph (face-up Attack, ~54x77) and, 140-200 px to its
+    right on the same row, a blue sideways-card glyph (face-up Defense, ~82x40)."""
+    from scipy import ndimage
+
+    y0, x0 = 300, 300
+    box = img[y0:1100, x0:1750].astype(int)
+    blue = (box[:, :, 2] > 150) & (box[:, :, 0] < 110) & (box[:, :, 2] > box[:, :, 0] + 60)
+    labels, _ = ndimage.label(blue)
+    upright, sideways = [], []
+    for i, sl in enumerate(ndimage.find_objects(labels), start=1):
+        h, w = sl[0].stop - sl[0].start, sl[1].stop - sl[1].start
+        if (labels[sl] == i).mean() < 0.4:
+            continue
+        centre = (x0 + (sl[1].start + sl[1].stop) // 2, y0 + (sl[0].start + sl[0].stop) // 2)
+        if 35 <= w <= 75 and 55 <= h <= 100 and h > w * 1.2:
+            upright.append(centre)
+        elif 60 <= w <= 105 and 28 <= h <= 60 and w > h * 1.5:
+            sideways.append(centre)
+    for a in upright:
+        for d in sideways:
+            if 140 <= d[0] - a[0] <= 200 and abs(d[1] - a[1]) <= 15:
+                return a, d
+    return None
+
+
+def notice_button(img: np.ndarray) -> XY | None:
+    """MD's notice ("no card can receive this effect", ...): a centred panel whose only button is a lit Confirm
+    and nothing else to click (buttons, tabs, radio rows, list cards). Its position depends on the text."""
+    from ygorl.md.explore import find_buttons, find_list_cards, find_radios, find_tabs
+
+    found = find_buttons(img) + find_tabs(img) + find_radios(img) + find_list_cards(img)  # not screen_dialog-based
+    if (
+        len(found) == 1
+        and found[0].kind == "button"
+        and found[0].label == "enabled"
+        and 600 < found[0].centre[0] < 1450
+    ):
+        return found[0].centre  # nothing else to pick: not the effect choice (tabs + OK) nor a list
+    return None
+
+
+def zone_outlined(img: np.ndarray, x: int, y: int, w: int = 190, h: int = 170, t: int = 14) -> bool:
+    """A free zone MD offers for a placement: outlined in a dim yellow-green (0.42-0.52 of the ring band measured on
+    the S/T row of the lava stage, at most 0.15 elsewhere, a card's own frame included)."""
+    x0, x1, y0, y1 = x - w // 2, x + w // 2, y - h // 2, y + h // 2
+    ring = np.concatenate([img[y0 : y0 + t, x0:x1].reshape(-1, 3), img[y1 - t : y1, x0:x1].reshape(-1, 3),
+                           img[y0:y1, x0 : x0 + t].reshape(-1, 3), img[y0:y1, x1 - t : x1].reshape(-1, 3)]).astype(int)  # fmt: skip
+    return bool(((ring[:, 0] > 100) & (ring[:, 1] > 110) & (ring[:, 2] < 90)).mean() > 0.3)
 
 
 def _lime(img: np.ndarray, x: int, y: int) -> float:
@@ -215,10 +301,20 @@ class UI:
         return screen_dialog(self.capture())
 
     def highlighted(self) -> list[XY]:
-        """Field cards outlined in MD's yellow selection frame (own row first, then the opponent's)."""
+        """Field cards outlined in MD's yellow selection frame (own row first, then the opponent's); a card in
+        Defense Position lies sideways, so its frame is wide and short (200x130)."""
+        from ygorl.md.explore import find_highlights
+
         img = self.capture()
         spots = [my_monster_xy(s) for s in range(7)] + [opp_monster_xy(s) for s in range(7)]
-        return [xy for xy in spots if yellow_highlight(img, *xy)]
+        lit = [xy for xy in spots if yellow_highlight(img, *xy) or yellow_highlight(img, *xy, w=200, h=130)]
+        # frames found anywhere (MD draws the Extra Monster Zones and a tilted board a little off the measured
+        # spots: a target at (1214, 556) for the spot (1232, 540)); the click goes to the frame itself
+        for frame in (a.centre for a in find_highlights(img)):
+            near = min(spots, key=lambda p: abs(p[0] - frame[0]) + abs(p[1] - frame[1]))
+            if abs(near[0] - frame[0]) + abs(near[1] - frame[1]) < 80 and near not in lit:
+                lit.append(frame)
+        return lit
 
     # --- cards and commands -----------------------------------------------------------------------------------
     def wait_still(
@@ -255,7 +351,8 @@ class UI:
             # MD's Confirm icon blinks (about 2 s on, 2 s off) and may already be up from an earlier click:
             # poll for one straight above the card
             for _ in range(16):
-                found = [p for p in L.find_icons(self.capture(), *box) if abs(p[0] - x) <= 40]
+                img = self.capture()
+                found = [p for p in L.find_icons(img, *box) or L.blue_icons(img, *box) if abs(p[0] - x) <= 40]
                 if found:
                     return found
                 self.sleep(0.3)
@@ -270,6 +367,11 @@ class UI:
                 after = self.capture()
                 icons = L.new_icons(before, after, *box) or [p for p in L.find_icons(after, *box) if p[1] < 940]
                 icons = [p for p in icons if is_command_icon(after, *p)]
+                # the circle test misses some icons (a Set icon next to Activate, The True Name): add the blue
+                # glyphs found by colour, wherever no icon is known yet
+                extra = [p for p in L.blue_icons(after, *box) if p[1] < 940 and is_command_icon(after, *p)
+                         and all(abs(p[0] - q[0]) > 60 for q in icons)]  # fmt: skip
+                icons = sorted(icons + extra)
                 if icons:
                     return icons
                 self.sleep(0.3)
@@ -278,9 +380,14 @@ class UI:
     def open_hand_card(self, xy: XY, why: str) -> list[XY]:
         return self.open_card(xy, why, hand=True)
 
-    def card_command(self, xy: XY, why_card: str, why: str, pause: float = 1.8) -> bool:
-        """Click a field card and then the command icon closest above it; False when no icon appeared."""
+    def card_command(self, xy: XY, why_card: str, why: str, pause: float = 1.8, kind: str | None = None) -> bool:
+        """Click a field card and then the command icon closest above it; False when no icon appeared. With
+        ``kind`` ("activate") only an icon of that glyph (:func:`icon_kind`) counts: a monster can show Activate next
+        to Change Position, and the nearest one was once the wrong one."""
         icons = self.open_card(xy, why_card)
+        if kind is not None and icons:
+            img = self.capture()
+            icons = [p for p in icons if icon_kind(img, *p) == kind]
         if not icons:
             return False
         self.click(*min(icons, key=lambda p: abs(p[0] - xy[0])), why, pause)
@@ -289,7 +396,7 @@ class UI:
     def choose_command(self, icons: Sequence[XY], kind: str, order: Sequence[str], name: str = "") -> XY | None:
         """Click the icon of command ``kind`` among the ``icons`` an opened hand card shows, each told by its glyph
         (:func:`icon_kind`): Activate yellow-green, Summon mostly blue, Set less blue. Special Summon has no
-        measured glyph yet and falls back to MD's ``order`` (:func:`command_order`) among the unclassified icons.
+        measured glyph: it is the icon that matches none of the card's other legal commands (``order``).
         None (nothing clicked) when the card does not show the command asked for: MD refuses it."""
         if kind not in order:
             raise Stuck(f"{kind} not among the buttons {list(order)}")
@@ -303,8 +410,13 @@ class UI:
             target = hits[0]
         elif want:
             return None
-        else:  # spsummon: by position among the icons that are neither Activate nor Set nor Summon
+        else:  # spsummon: the icon that is none of the card's other legal commands
             rest = [p for p, k in zip(icons, kinds, strict=True) if k == ""]
+            if len(rest) != 1:
+                # its glyph can read as another kind (Apprentice Illusion Magician's came out "activate"): an icon
+                # whose look matches no other command the card has is the Special Summon
+                others = {{"mset": "set"}.get(o, o) for o in order if o != kind}
+                rest = [p for p, k in zip(icons, kinds, strict=True) if k not in others]
             if len(rest) != 1:
                 raise Stuck(f"cannot tell the {kind} icon of {name or 'the card'} among {kinds}")
             target = rest[0]
@@ -319,7 +431,9 @@ class UI:
 
     def pick_position(self, position: str = "faceup_attack") -> None:
         """The summon-position dialog: face-up Attack (left button) or face-up Defense (right button)."""
-        buttons = {"faceup_attack": POSITION_FACEUP_ATTACK, "faceup_defense": POSITION_FACEUP_DEFENSE}
+        found = position_buttons(self.capture())
+        attack, defense = found if found is not None else (POSITION_FACEUP_ATTACK, POSITION_FACEUP_DEFENSE)
+        buttons = {"faceup_attack": attack, "faceup_defense": defense}
         if position not in buttons:
             raise Stuck(f"no measured button for {position} in the position dialog")
         self.click(*buttons[position], position.replace("_", " ").replace("faceup", "face-up"), 1.5)
@@ -352,8 +466,10 @@ class UI:
         order = list(order) if order is not None else list(range(len(cards)))
         for combo in islice(combinations(order, need), tries):
             for i in combo:
-                self.click(*cards[i], f"#{i + 1} of {len(cards)} cards in the list", 0.8)
-            for _ in range(7):
+                # one click per card: whether a card is ticked cannot be read reliably (blue card art passes for
+                # the badge), and a second click takes the tick away
+                self.click(*cards[i], f"#{i + 1} of {len(cards)} cards in the list", 1.0)
+            for _ in range(12):  # MD can take a few seconds to light Select after the last tick
                 if list_select_state(self.capture(), box) == "enabled":
                     self.click(*button, f"select {need} cards", 1.5)
                     self._list_open(4.0)
@@ -363,9 +479,10 @@ class UI:
                 self.click(*cards[i], f"untick #{i + 1}", 0.6)
         raise Stuck(f"no set of {need} of the {len(cards)} list cards lit Select")
 
-    def pick_list_cards(self, indices: Sequence[int]) -> list[XY]:
+    def pick_list_cards(self, indices: Sequence[int], ticked: bool = False) -> list[XY]:
         """Tick ``indices`` (left to right on screen) in MD's card-list panel and press Select; returns the cards
-        found in the list. A list with two buttons keeps the panel open after the first: press its right one."""
+        found in the list. A list with two buttons keeps the panel open after the first: press its right one.
+        ``ticked``: the caller already ticked them (and checked them on the information panel)."""
         cards = L.list_cards(self.capture())
         if not cards:
             raise Stuck("a card list with no card found")
@@ -373,7 +490,7 @@ class UI:
         if bad or not indices:
             raise Stuck(f"list entries {list(indices)} asked for, {len(cards)} cards in the list")
         for again in ("", " (again: the tick did not register)"):
-            for i in indices:
+            for i in [] if ticked and not again else indices:
                 nth = "first" if i == 0 else f"#{i + 1}"
                 self.click(*cards[i], f"{nth} of {len(cards)} cards in the list{again}", 0.8)
             # Select lights up once MD has the tick; pressing it before then does nothing, and the next tick of the
@@ -435,11 +552,11 @@ class UI:
 
     def continue_draw(self, attempt: int = 0) -> None:
         """Draw Phase: MD sometimes waits for a click to go on. The phase badge did it once (Graveyard viewer open);
-        when the badge shows only the turn, a click on the Deck did. Alternate between the two."""
-        if attempt % 2 == 0:
-            self.click(*L.PHASE_BADGE, "continue the Draw Phase", 1.5)
-        else:
-            self.click(*MY_DECK, "continue the Draw Phase: the Deck", 1.5)
+        when the badge shows only the turn, a click on the Deck did; once only a click on an empty spot of the board
+        did (the drawn card shown big). Cycle through the three."""
+        spot, why = [(L.PHASE_BADGE, "continue the Draw Phase"), (MY_DECK, "continue the Draw Phase: the Deck"),
+                     ((1300, 640), "continue the Draw Phase: an empty spot")][attempt % 3]  # fmt: skip
+        self.click(*spot, why, 1.5)
 
     def attack(self, attacker_xy: XY, why: str) -> bool:
         """Open an own monster and press its Attack icon; False when MD shows no Attack for it."""

@@ -136,6 +136,28 @@ class GatedMouse:
         self.pointer.click(*self._check(x, y))
 
 
+class MenuMouse:
+    """Window-relative clicks between two Solo duels (:mod:`ygorl.md.menu`), where MD has freed the duel state and
+    :func:`~ygorl.md.memory.solo_gate` cannot run. The guard is the caller's: :class:`~ygorl.md.menu.MenuWalker`
+    clicks only fixed targets on screens it recognises. Refuses while a duel is in progress (the gated mouse's job)."""
+
+    def __init__(self, game) -> None:
+        self.game = game
+
+    def click(self, x: int, y: int) -> None:
+        try:
+            in_duel = not self.game.read().finished
+        except Exception:  # noqa: BLE001 - no readable duel: we are in the menus
+            in_duel = False
+        if in_duel:
+            raise InputError("a duel is in progress: menu clicks are refused (use the gated mouse)")
+        area = find_window().area
+        cx, cy = to_client(x, y, area.width, area.height)
+        if not (0 <= cx < area.width and 0 <= cy < area.height):
+            raise InputError(f"reference ({x}, {y}) is outside the game's client area {area.width}x{area.height}")
+        WindowPointer(area).click(area.x + cx, area.y + cy)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="gated mouse input to the Master Duel window (Solo vs computer only)")
     ap.add_argument("op", choices=("move", "click"))
