@@ -60,7 +60,7 @@ from ygorl.md.panel import PanelBook, name_fits, name_signature, name_words, pan
 from ygorl.md.explore import find_buttons
 from ygorl.md.request import read_request
 from ygorl.md.selection import for_process as selection_for
-from ygorl.md.selection import own_cards
+from ygorl.md.selection import own_cards, scan_pairs
 from ygorl.selfplay.decide import Decider, policy_scorer
 from ygorl.selfplay.observe import ShadowObserver
 from ygorl.selfplay.trace import Trace
@@ -187,14 +187,22 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
     left_hand = count(me1, "hand") < count(me0, "hand")
     if kind == "summon" and act.card is not None and act.card.loc.location == C.LOCATION_MZONE:
         return None  # a Gemini monster summoned again in place: nothing on the board the memory read shows changes
+    # a hand copy arrived in the zone, told by uid (a Tribute Summon of Dark Magician that tributed the Dark
+    # Magician on the field kept the count of Dark Magicians there at 1: a false alarm)
+    hand_uids = {c.uid for c in me0.piles["hand"] if c.cid == cid and c.uid}
+
+    def arrived(loc, **kw):
+        return any(c.uid in hand_uids and all(getattr(c, k) == v for k, v in kw.items()) for c in _cards(me1, loc))
+
     if kind == "summon":
-        ok = left_hand and count(me1, "mzone", face=1, sideways=0) > count(me0, "mzone", face=1, sideways=0)
+        ok = left_hand and (count(me1, "mzone", face=1, sideways=0) > count(me0, "mzone", face=1, sideways=0)
+                            or arrived("mzone", face=1, sideways=0))  # fmt: skip
         return None if ok else "summon: no new face-up Attack Position monster from the hand"
     if kind == "mset":
-        ok = left_hand and count(me1, "mzone", face=0) > count(me0, "mzone", face=0)
+        ok = left_hand and (count(me1, "mzone", face=0) > count(me0, "mzone", face=0) or arrived("mzone", face=0))
         return None if ok else "mset: no new face-down monster from the hand"
     if kind == "sset":
-        ok = left_hand and count(me1, "szone", face=0) > count(me0, "szone", face=0)
+        ok = left_hand and (count(me1, "szone", face=0) > count(me0, "szone", face=0) or arrived("szone", face=0))
         return None if ok else "sset: no new face-down Spell/Trap from the hand"
     if kind == "attack":
         # an attack on a face-down monster with equal DEF only flips it: that counts (a false alarm once)
@@ -687,6 +695,7 @@ class Player:
             self.ui.click(*PHASE_MENU_CANCEL, "close the phase menu", 1.2)
 
     def main_phase(self, raw: RawDuel) -> None:
+        self.last_zone = None  # an earlier action's zone is never this one's (a stale one opened a Set card twice)
         best, legal = self.decide(raw)
         self.close_phase_menu_unless(best.kind)
         kinds = {}
@@ -783,10 +792,11 @@ class Player:
             self.ui.yesno(True, "yes: tribute")
             self.pick_tributes(raw)
             return
+        location = "mzone" if card.is_monster else "szone"
         if best.kind in ("spsummon", "activate") and self.pending_question():
+            self.last_zone = (location, self.free_zone(raw, location))  # the zone, should MD ask it later
             return  # MD asks first (a cost: Apprentice Illusion Magician's discard): the loop answers, then the zone
             # (a Normal Summon / Set goes to its zone straight away: a passing state once skipped that zone)
-        location = "mzone" if card.is_monster else "szone"
         zone = self.free_zone(raw, location)
         self.ui.pick_zone(location, zone, f"zone for {best.kind}")
         self.last_zone = (location, zone)
@@ -1182,7 +1192,9 @@ class Player:
     def on_zone_again(self, raw: RawDuel, inp) -> None:
         self.trace.rule("zone-again")
         self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
-        self.ui.pick_zone(*self.last_zone, "zone again")
+        location = self.last_zone[0]
+        # the leftmost free zone now (memory): a zone taken meanwhile would open the card in it instead
+        self.ui.pick_zone(location, self.free_zone(raw, location), "zone again")
         self.last_zone = None
 
     def on_tributes(self, raw: RawDuel, inp) -> None:
@@ -1325,10 +1337,11 @@ class Player:
                 self.ui.click(*L.PROMPT_CANCEL, "cancel: keep the LP", 1.5)
                 self.context = "list"
                 return
+            deck = [i for i, c in enumerate(req.candidates) if c.location == "deck"]
             if pick is None and self.ra_pays_lp(raw, req):
                 self.trace.rule("ra-pay-lp-taken")
-            deck = [i for i, c in enumerate(req.candidates) if c.location == "deck"]
-            if pick is None and deck and len({self.passwords.get(c.cid) for c in req.candidates}) == 1:
+                index, ticked = 0, False
+            elif pick is None and deck and len({self.passwords.get(c.cid) for c in req.candidates}) == 1:
                 # copies of one card in different places (Mahad: the hand's Dark Magician or the Deck's): the
                 # Deck's, so the hand keeps its card
                 self.trace.rule("list-copies-from-the-deck")
@@ -1494,17 +1507,57 @@ class Player:
             except Exception:  # noqa: BLE001
                 return None
 
+        # a Deck list's ticks did not change the open-card object at all (run s27: 30 ticks, none read): then the
+        # list's own objects are watched, every address holding a candidate's (card id, uid), and the one that
+        # takes the ticked card's pair is followed (diagnostics in the trace either way)
+        scan = {"regions": None, "last": None, "addr": None, "still": 0}
+        reads: list = []
+
+        def scan_tick():
+            if selection is None or not pairs:
+                return None
+            if scan["addr"] is not None:
+                try:
+                    cid, u = struct.unpack("<II", selection.memory.read(scan["addr"], 8))
+                except Exception:  # noqa: BLE001
+                    return None
+                return (cid, u) if (cid, u) in pairs else None
+            if scan["regions"] is None:
+                scan["regions"] = selection.regions()
+            found = scan_pairs(selection.memory, scan["regions"], pairs)
+            last, scan["last"] = scan["last"], found
+            if last is None:
+                return None
+            changed = [a for a, p in found.items() if a in last and last[a] != p]
+            # (an object keeping the card ticked before as well: that slot takes the open slot's old pair)
+            olds = {last[a] for a in changed}
+            changed = [a for a in changed if found[a] not in olds] or changed
+            reads.append({"changed": [hex(a) for a in changed][:6]})
+            if len(changed) == 1:
+                scan["addr"] = changed[0]
+                return found[changed[0]]
+            return None
+
         for page in range(LIST_PAGES):
             for i in range(n):
                 prev = read_open()
+                if scan["still"] >= 2 and scan["last"] is None and scan["addr"] is None:
+                    scan_tick()  # the baseline the next tick is compared against
                 self.ui.click(*cards[i], f"#{i + 1} of {n}: which card?", 0.9)
                 img = self.ui.capture()
                 got, uid, how = None, 0, ""
+                if scan["still"] >= 2:
+                    found = scan_tick()
+                    if found is not None and found[0] in set(cands):
+                        (got, uid), how = found, "memory (the list's object)"
                 if selection is not None and prev is None:
                     found = selection.opened(self.game.read(), pairs)  # the pair that changed with this tick
                     if found is not None and found[0] in set(cands):
                         (got, uid), how = found, "memory (calibrated on the list)"
                 now = read_open()
+                if prev is not None and now == prev:
+                    scan["still"] += 1  # the open-card object did not move with this tick
+                reads.append({"prev": prev.hex() if prev else None, "now": now.hex() if now else None})
                 if got is None and now is not None and prev is not None and now != prev:
                     cid, u = struct.unpack("<II", now)
                     if cid in set(cands):
@@ -1533,7 +1586,8 @@ class Player:
             self.pending_list = (panels[k], req)
             return k[1], False
         k = here[0] if here else (last, 0)
-        self.trace.observe(list_check={"want": want, "unverified": True})
+        self.trace.observe(list_check={"want": want, "unverified": True, "seen": {f"{k[0]}:{k[1]}": v for k, v in
+                                       seen.items()}, "reads": reads[-12:]})  # fmt: skip
         print(f"  list: {self.name(want)} not identified; position {k[1] + 1} is a guess", flush=True)
         self.pending_list = (panels.get(k), req)
         return k[1], False
