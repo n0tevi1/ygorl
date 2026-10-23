@@ -42,6 +42,7 @@
  "effect_next": "0xc",
  "overlay_code": "0x3fb",
  "overlay_kind": "0x5",
+ "player_effects": "0x1d0",
  "input_mode": "0x3cd0",
  "input_accepting": "0x3cdc",
  "input_player": "0x3d00",
@@ -68,7 +69,14 @@
   "cpu_type": "0x1",
   "turn_base": "0x1",
   "normal_summons": "0x30",
-  "set_turn": "0x10"
+  "set_turn": "0x10",
+  "attacked": "0x80",
+  "effect_used": "0x80000",
+  "card_activated": "0x1000",
+  "summon_normal": "0x1",
+  "summon_special": "0x4",
+  "summon_flip": "0xa",
+  "special_summons": "0x34"
  },
  "notes": [
   "2026-10-21 Solo duel: Field Spell face-up face=0x01, Set S/T face=0x00; Set monster face=0x00 turn=0x01, after Flip Summon face=0x01 turn=0x00 (DLL_DuelGetCardTurn = sideways, i.e. Defense Position)",
@@ -79,6 +87,9 @@
   "player types in a Solo duel (2026-10-21): client 0 (human), computer opponent 1",
   "turn counter 3 while the screen showed \"Turn 4 Main 1\" on the client's turn; the computer went first (it had a board at counter 1, the client opened with 6 cards): screen turn = counter + 1",
   "player block +0x30: 0 -> 1 after a Normal Summon on turn 4 (incremented next to the duel statistic for Normal Summons); whether a Set counts is not yet checked",
-  "slot byte +0x14 low bits, all cards seen 2026-10-21: 0x50 monster Set this turn, 0x41 Normal Summoned, 0x44 Special Summoned, 0x4a Flip Summoned, 0x10 Trap Set this turn, 0x00 the same cards a turn later: 0x10 = Set this turn, 0x40 = position locked"
+  "slot byte +0x14 low bits, all cards seen 2026-10-21: 0x50 monster Set this turn, 0x41 Normal Summoned, 0x44 Special Summoned, 0x4a Flip Summoned, 0x10 Trap Set this turn, 0x00 the same cards a turn later: 0x10 = Set this turn, 0x40 = position locked",
+  "2026-10-22 per-turn slot flags, from every recorded own step of 16 Solo runs (out/mdplay/*-memory, the u32 at slot +0x14 before / after each executed decision): every attack (25) sets 0x80 (and 0x40 on a monster not yet locked); every activation of an effect of a card on the field (7) sets 0x80000, a Spell / Trap activated to stay on the field arrives with 0x81000, a summon whose own trigger was used with 0x0c0041; all of them are 0 on the next turn. The 9 recorded activations of Millennium Seeker's field effect with 0x80000 set were all refused by MD (once per turn); with it clear 6 were accepted and 10 refused (7 of them on a Seeker summoned in an earlier turn: a condition this flag does not explain)",
+  "2026-10-22 player block +0x34 counts this turn's Special Summons and +0x30 every summon: steps with only a Special Summoned monster show +0x30 = +0x34 = 1, so Normal Summons = +0x30 - +0x34 (before, +0x30 > 0 alone masked the Normal Summon after any Special Summon)",
+  "2026-10-22 from the disassembly (not in the recordings, which blank the effect table): each player has an effect list whose u16 head is at player block +0x1d0 (DLL_DuelGetAttachedEffectList, also the summon permission check 0x1800c6238); nodes are coded by MD card id, e.g. 0x2ca1 Card Advance and 0x3be5 Ancient Chant (value 0) grant the additional Tribute Summon, a node counts while its kind & 0xf < 6"
  ]
 }

@@ -17,6 +17,8 @@ Layout found in build 23020425 (``S`` = ``*(duel.dll + state_ptr)``, ``p`` = pla
     S + p*player_stride + removed_face + i*2          banished entry i: bit removed_facedown set = face-down
     S + uid_table + uid*8                             u16 card id of a unique id (uid < 512)
     S + effect_table + n*16                           effect-list node: u16 code, u8 kind, u32 uid, ..., u16 next
+    S + p*player_stride + player_effects              u16 head of the player's own effect list (effects applied
+                                                      to the player: "this turn you can ...", restrictions)
 
 A uid word encodes ``uid = (w & 1) | (w >> 8) << 1``; its other low bits are flags. Xyz materials are the nodes on a
 monster's effect list with ``code == overlay_code`` and ``kind & 0xF == overlay_kind``.
@@ -38,6 +40,17 @@ OFFSETS_DIR = Path(__file__).with_name("offsets_data")
 PILES = ("hand", "extra", "deck", "grave", "removed")  # MD locate 13..17, in this order
 FIELD_SLOTS = 13
 SEMANTICS = {"faceup", "defense", "locked_byte", "locked", "cpu_type", "turn_base", "normal_summons", "set_turn"}
+# per-turn state decoded from recorded duels (design 10 「重建能还原什么」); optional: a build without them still
+# reads, it just carries less of the turn. The masks apply to the u32 at slot + locked_byte unless noted.
+TURN_SEMANTICS = {
+    "attacked",  # the monster declared an attack this turn
+    "effect_used",  # an effect of this card was activated this turn (a Spell / Trap's own activation included)
+    "card_activated",  # the Spell / Trap card was activated this turn
+    "summon_normal",  # Normal (or Tribute) Summoned this turn
+    "summon_special",  # Special Summoned this turn
+    "summon_flip",  # Flip Summoned this turn
+    "special_summons",  # u32 in the player block: this turn's Special Summons (normal_summons counts every summon)
+}
 
 
 class OffsetError(RuntimeError):
@@ -77,6 +90,7 @@ class Offsets:
     effect_next: int
     overlay_code: int
     overlay_kind: int
+    player_effects: int  # u16 in the player block: head of the player's effect list (DLL_DuelGetAttachedEffectList)
     # what MD is asking (ygorl.md.request): the engine's input state in S, the selection list, the dialog
     input_mode: int  # u32 in S: which input the engine waits for (DLL_DuelComGetCommandMask)
     input_accepting: int  # u32 in S: non-zero while it accepts input
@@ -120,8 +134,10 @@ class Offsets:
 
         out = {k: ({kk: num(vv) for kk, vv in v.items()} if isinstance(v, dict) else num(v)) for k, v in data.items()}
         offsets = cls(**out)
-        if offsets.verified and set(offsets.semantics) != SEMANTICS:
-            raise OffsetError(f"verified offsets need semantics {sorted(SEMANTICS)}")
+        if offsets.verified and not SEMANTICS <= set(offsets.semantics) <= SEMANTICS | TURN_SEMANTICS:
+            raise OffsetError(
+                f"verified offsets need semantics {sorted(SEMANTICS)} (optional: {sorted(TURN_SEMANTICS)})"
+            )
         return offsets
 
 
@@ -370,6 +386,15 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
     if not any(i.op in ("add", "shl") for i in ov):
         raise OffsetError("DLL_DuelGetThisCardOverlayNum: node indexing changed")
 
+    # DLL_DuelGetAttachedEffectList walks both players' effect lists: two u16 heads, one player stride apart
+    att = code.fn("DLL_DuelGetAttachedEffectList", 0x80)
+    heads = [
+        int(m.group(1), 16) for i in att if (m := re.search(r"movzx\s+\w+,word ptr \[\w+" + disp, f"{i.op} {i.args}"))
+    ]
+    if len(heads) < 2 or heads[1] - heads[0] != player_stride:
+        raise OffsetError(f"DLL_DuelGetAttachedEffectList: expected two list heads a player apart, got {heads}")
+    player_effects = heads[0]
+
     # --- what MD is asking ---
     mask = code.fn("DLL_DuelComGetCommandMask", 0x60)
     input_accepting = int(_find(mask, r"cmp\s+dword ptr \[\w+" + disp + r",0x0", "accepting").group(1), 16)
@@ -411,7 +436,7 @@ def derive(path: str | Path, dis: Disassembler | None = None) -> Offsets:
                    removed_facedown=removed_facedown, uid_table=uid_table, uid_mask=uid_mask,
                    effect_table=effect_table, effect_stride=16, effect_kind=kind_at - effect_table,
                    effect_uid=effect_uid, effect_next=effect_next - effect_table, overlay_code=overlay_code,
-                   overlay_kind=overlay_kind, input_mode=input_mode, input_accepting=input_accepting,
+                   overlay_kind=overlay_kind, player_effects=player_effects, input_mode=input_mode, input_accepting=input_accepting,
                    input_player=input_player, list_ptr=list_ptr, list_max=list_max, list_type=list_type,
                    list_count=list_count, list_marker=list_marker, list_item_cid=list_item_cid,
                    list_item_from=list_item_from, dialog_type=dialog_type, dialog_mix_count=dialog_mix_count,
@@ -433,5 +458,5 @@ def load_or_derive(dll: str | Path) -> Offsets:
     return derive(dll)
 
 
-__all__ = ["FIELD_SLOTS", "OFFSETS_DIR", "OffsetError", "Offsets", "PILES", "derive", "load_or_derive",
-           "offsets_file", "parse_objdump", "pe_exports"]  # fmt: skip
+__all__ = ["FIELD_SLOTS", "OFFSETS_DIR", "OffsetError", "Offsets", "PILES", "SEMANTICS", "TURN_SEMANTICS", "derive",
+           "load_or_derive", "offsets_file", "parse_objdump", "pe_exports"]  # fmt: skip

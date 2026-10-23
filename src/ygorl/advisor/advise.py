@@ -4,9 +4,10 @@ For each sample, :func:`ygorl.advisor.reconstruct.complete` fills in the hidden 
 :func:`~ygorl.advisor.reconstruct.build` puts the board into the core; the network (a PPO or BC checkpoint,
 ``load_actor``) scores the legal actions of the advisor's idle decision. Actions are matched across samples by
 (kind, card password, effect description), since the samples differ in the hidden cards but not in the
-advisor's own options. The event history is empty (a reconstructed game has no past), and what the core cannot
-be told is applied as a mask on the result: a used Normal Summon, monsters that cannot change position, the
-Battle Phase in Main Phase 2.
+advisor's own options. The event history is empty (a reconstructed game has no past). The turn so far (summons,
+attacks, once-per-turn uses MD's flags pin down) is put into the core by the reconstruction; :func:`masked` repeats
+the plain cases as a mask (a used Normal Summon, monsters that cannot change position or attack again, a Trap Set
+this turn) and adds what the core cannot be told: the Battle Phase in Main Phase 2.
 
 Read-only: nothing here talks to a game client.
 """
@@ -36,8 +37,9 @@ def action_key(action: Action) -> tuple[str, int, int]:
 
 
 def masked(snapshot: BoardSnapshot, action: Action, cards: Mapping | None = None) -> bool:
-    """True for an action the core offers but the real game does not allow (what the core cannot be told)."""
-    if action.kind in NORMAL_SUMMON_KINDS and snapshot.normal_summoned:
+    """True for an action the core offers but the real game does not allow (what the core cannot be told, and the
+    turn state the reconstruction applies, as a second line)."""
+    if action.kind in NORMAL_SUMMON_KINDS and not snapshot.normal_summon_left:
         return True
     if action.kind == "battle_phase" and snapshot.phase == "main2":
         return True
@@ -176,7 +178,7 @@ def format_advice(advice: Advice, cards: Mapping, *, top: int = 10, deck_names: 
         lines.append(f"no policy: the reconstruction's legal actions ({len(advice.suggestions)}), legal in k/N samples")
         for s in sorted(advice.suggestions, key=lambda s: -s.legal_in):
             lines.append(f"{s.legal_in:>3}/{advice.samples}  {describe_action(s.action, cards)}")
-    lines.append("no event history (reconstructed board); once-per-turn usage is not modelled")
+    lines.append("no event history (reconstructed board); once-per-turn uses only as far as MD's flags tell")
     lines += [f"warning: {w}" for w in advice.warnings]
     return "\n".join(lines)
 
