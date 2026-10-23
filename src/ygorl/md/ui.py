@@ -239,6 +239,8 @@ def notice_button(img: np.ndarray) -> XY | None:
     and nothing else to click (buttons, tabs, radio rows, list cards). Its position depends on the text."""
     from ygorl.md.explore import find_buttons, find_list_cards, find_radios, find_tabs
 
+    if L.menu_button(img, *L.PHASE_MENU["end"]):
+        return None  # the phase menu: its Cancel is the only button the finder sees (the phases are rings)
     found = find_buttons(img) + find_tabs(img) + find_radios(img) + find_list_cards(img)  # not screen_dialog-based
     if (
         len(found) == 1
