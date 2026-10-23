@@ -47,6 +47,7 @@ from ygorl.selfplay.shadow import ShadowDuel
 # the dialog type tells them apart (10: the position dialog with its buttons).
 POSITION_DIALOG = 10
 DECLINE = ("pass", "no", "cancel", "finish")
+SHUFFLED = ("deck", "extra")  # piles whose order the shadow does not share with MD (it shuffles them)
 
 # MD dialog (as the player names it) -> the shadow decisions that ask the same question
 DIALOG_DECISIONS: dict[str, tuple] = {
@@ -61,6 +62,15 @@ DIALOG_DECISIONS: dict[str, tuple] = {
 POSITION_BUTTONS = (C.POS_FACEUP_ATTACK, C.POS_FACEUP_DEFENSE)
 
 
+def md_option(c, me: int, passwords: Mapping[int, int]) -> Option:
+    """MD candidate ``c`` as a bridge option. The shadow shuffles the cards left in the Deck and Extra Deck (their
+    order is hidden), so a candidate there is any copy of its card: MD's pile index names no shadow card (an audit
+    found Foolish Burial's Deck list paired with 0 or 1 shadow option out of 14)."""
+    sequence = None if c.location in SHUFFLED else c.sequence
+    return Option(password=passwords.get(c.cid, 0), location=c.location, sequence=sequence,
+                  controller=0 if c.player == me else 1)  # fmt: skip
+
+
 def to_bridge(req: MDRequest, me: int, passwords: Mapping[int, int]) -> Request | None:
     """MD's request in the bridge's terms (None for kinds the bridge has no counterpart for: draw, summon_pick)."""
     if req.kind in ("idle", "battle"):
@@ -73,8 +83,7 @@ def to_bridge(req: MDRequest, me: int, passwords: Mapping[int, int]) -> Request 
         kind = "position" if req.dialog_type == POSITION_DIALOG else "place"
     else:
         return None
-    options = [Option(password=passwords.get(c.cid, 0), location=c.location, sequence=c.sequence,
-                      controller=0 if c.player == me else 1) for c in req.candidates if c.cid]  # fmt: skip
+    options = [md_option(c, me, passwords) for c in req.candidates if c.cid]
     return Request(kind=kind, options=options, min=req.min or 1, max=req.max or 1)
 
 
@@ -306,9 +315,7 @@ class ShadowObserver:
         if dialog == "list":
             pairs = {}
             for i, c in enumerate(req.candidates if req is not None else ()):
-                opt = Option(password=passwords.get(c.cid, 0), location=c.location, sequence=c.sequence,
-                             controller=0 if c.player == me else 1)  # fmt: skip
-                a = find(point, opt)
+                a = find(point, md_option(c, me, passwords))
                 if a is not None and a not in pairs.values():
                     pairs[i] = a
             return pairs
@@ -365,5 +372,5 @@ def _auto(step) -> dict:
     }
 
 
-__all__ = ["DIALOG_DECISIONS", "POSITION_BUTTONS", "ShadowObserver", "md_option_desc", "option_of_description",
+__all__ = ["DIALOG_DECISIONS", "POSITION_BUTTONS", "SHUFFLED", "ShadowObserver", "md_option", "md_option_desc", "option_of_description",
            "option_pairs", "to_bridge"]  # fmt: skip

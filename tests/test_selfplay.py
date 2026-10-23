@@ -231,6 +231,11 @@ def test_md_requests_map_to_bridge_requests():
     assert ask.kind == "select_card" and (ask.min, ask.max) == (1, 1)
     assert [(o.password, o.location, o.sequence, o.controller) for o in ask.options] == [
         (64788463, "mzone", 0, 0), (90876561, "hand", 2, 1)]  # fmt: skip
+    # the shadow shuffles the Deck and the Extra Deck: MD's pile index there names no shadow card
+    piles = MDRequest(kind="select_card", mode=8, accepting=True, player=0, min=1, max=1,
+                      candidates=(Candidate(5558, 40, 0, "deck", 7), Candidate(5559, 41, 0, "extra", 1),
+                                  Candidate(5559, 42, 0, "grave", 3)))  # fmt: skip
+    assert [o.sequence for o in to_bridge(piles, 0, pw).options] == [None, None, 3]
     assert to_bridge(MDRequest(kind="chain", mode=5, accepting=True, player=0), 0, pw).kind == "chain"
     assert to_bridge(MDRequest(kind="position", mode=7, accepting=True, player=0, dialog_type=POSITION_DIALOG),
                      0, pw).kind == "position"  # fmt: skip
@@ -282,6 +287,21 @@ def test_lockstep_answers_md_dialogs_through_the_shadow(cards):
     obs.scorer = prefer(value=C.POS_FACEUP_DEFENSE)
     pick, record = obs.choose("position", None, 0, pw)
     assert pick == 1 and record["ygo"] == "SelectPosition"
+
+    # Foolish Burial: MD lists the Deck's monsters in its own Deck order, the shadow's Deck is shuffled; the
+    # candidates pair by card (an audit found 0 or 1 pair from 14 candidates when the pile index had to match)
+    foolish = 81439173
+    obs.shadow = sh = shadow([SnapshotCard("hand", foolish), SnapshotCard("hand", JACK)], (QUEEN,) * 3 + (BLUE_EYES,) * 3,
+                             cards=cards)  # fmt: skip
+    sh.pick(Option(foolish, "hand"), "activate")
+    sh.step(0)  # the zone
+    assert isinstance(sh.point.decision, M.SelectCard)
+    pw = {3: QUEEN, 4: BLUE_EYES}
+    deck = MDRequest(kind="mode0", mode=0, accepting=False, player=0,
+                     candidates=tuple(Candidate(cid, 20 + k, 0, "deck", k) for k, cid in enumerate((3, 3, 4, 3, 4, 4))))  # fmt: skip
+    obs.scorer = prefer(BLUE_EYES)
+    pick, record = obs.choose("list", deck, 0, pw)
+    assert pick == 2 and record["options"] == 2 and record["action"][1] == BLUE_EYES
 
     # a yes / no the shadow does not ask: the shadow is dropped and the caller's rule decides
     obs.shadow = shadow(me, (QUEEN,) * 3, cards=cards)
