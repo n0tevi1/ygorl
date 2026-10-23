@@ -56,6 +56,7 @@ from ygorl.md.ui import (
 )
 from ygorl.md.panel import PanelBook, name_fits, name_signature, name_words, panel_kind
 from ygorl.md.request import read_request
+from ygorl.md.selection import for_process as selection_for
 from ygorl.selfplay.decide import Decider, policy_scorer
 from ygorl.selfplay.observe import ShadowObserver
 from ygorl.selfplay.trace import Trace
@@ -350,6 +351,7 @@ class Player:
         self.mouse = GatedMouse()
         self.ui = UI(self.mouse, self._capture)
         self.game = self.mouse.game
+        self.selection = selection_for(self.game.memory, self.game.pid)
         self.cards = default_cards()
         self.passwords = load_md_cid(self.env.artifact_path("md_cid.json"))
         self.prior = OpponentPrior.from_environment(self.env)
@@ -480,10 +482,48 @@ class Player:
         return (k.level, k.attack, k.defense)
 
     def verify_hand_card(self, raw: RawDuel, cid: int, xy, icons):
-        """Check on MD's information panel that the opened card is ``cid`` (the hand order on screen is inferred).
-        A different card: try the other hand positions until the panel shows ``cid``. Unknown (nothing learned for
-        these cards yet): keep the click, and learn from it once memory confirms the action."""
+        """Check that the opened hand card is ``cid`` (the hand order on screen is MD's own): from memory
+        (:mod:`ygorl.md.selection`) once the open-card object is found, else on the information panel."""
         hand = [c.cid for c in raw.players[raw.me].piles["hand"]]
+        told = self.verify_by_memory(raw, cid, xy, icons)
+        if told is not None:
+            return told
+        return self.verify_on_panel(raw, cid, xy, icons, hand)
+
+    def verify_by_memory(self, raw: RawDuel, cid: int, xy, icons):
+        """The open card read from memory; calibrates first if needed (opens another hand card, then this one
+        again). Returns the command icons of the card ``cid`` once it is open, or None when memory cannot tell."""
+        hand = [c.cid for c in raw.players[raw.me].piles["hand"]]
+        sel = self.selection.opened(raw)
+        if sel is None and len(hand) > 1 and not self.selection.calibrated():
+            other = next(p for p in (L.hand_card(i, len(hand)) for i in range(len(hand))) if p != xy)
+            self.ui.open_hand_card(other, "calibrate: the open card, from memory")
+            if self.selection.opened(raw) is not None:
+                icons = self.ui.open_hand_card(xy, f"hand {self.name(cid)} (after calibrating)")
+                sel = self.selection.opened(raw)
+        if sel is None:
+            return None
+        self.trace.observe(selected={"want": cid, "got": sel[0], "uid": sel[1], "at": list(xy)})
+        if sel[0] == cid:
+            return icons
+        print(f"  memory: the open card is {self.name(sel[0])}, not {self.name(cid)}: searching the hand", flush=True)
+        for i in range(len(hand)):
+            pos = L.hand_card(i, len(hand))
+            if pos == xy:
+                continue
+            found = self.ui.open_hand_card(pos, f"hand #{i + 1}: looking for {self.name(cid)}")
+            sel = self.selection.opened(raw)
+            if sel is None:
+                return None  # the object moved: the panel decides this time
+            if sel[0] == cid:
+                self.trace.observe(selected={"want": cid, "found_at": i, "uid": sel[1]})
+                return found
+        raise Stuck(f"{self.name(cid)} not found in the hand (memory: no position opens it)")
+
+    def verify_on_panel(self, raw: RawDuel, cid: int, xy, icons, hand: list[int]):
+        """Check on MD's information panel that the opened card is ``cid``. A different card: try the other hand
+        positions until the panel shows ``cid``. Unknown (nothing learned for these cards yet): keep the click, and
+        learn from it once memory confirms the action."""
         stats = {c: self.card_stats(c) for c in hand}
         img = img0 = self.ui.capture()
         got, how = self.panel.identify(img, hand, stats)

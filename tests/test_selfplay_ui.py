@@ -528,11 +528,67 @@ def test_unknown_panel_is_not_taken_for_one_of_two_unlearned_spells():
     player.ui.open_hand_card = lambda xy, why: [(xy[0], 880)]
     player.trace = type("T", (), {"observe": lambda self, **k: None})()
     player.panel = type("P", (), {"names": {}, "identify": lambda self, img, h, s: (None, "unknown")})()
+    player.selection = NoSelection()
     player.card_stats = lambda c: None
     player.card_kind = lambda c: "spell"
     player.name = str
     with pytest.raises(Stuck, match="not found"):
         player.verify_hand_card(raw, hand[0], L.hand_card(0, len(hand)), [(0, 0)])
+
+
+class NoSelection:
+    """Memory cannot tell the open card (still calibrating, and calibration finds nothing)."""
+
+    def opened(self, raw):
+        return None
+
+    def calibrated(self):
+        return False
+
+
+def test_open_card_is_read_from_memory():
+    """The open-card object holds (card id, uid): found by the pair that changes between two openings, then read
+    directly; the hand is searched by memory, not by the panel."""
+    import struct
+
+    from ygorl.md.memory import BufferMemory
+    from ygorl.md.selection import Selection
+    from ygorl.selfplay.loop import Player
+
+    raw = read_duel(build_memory(), BASE, replace(OFF, verified=True, semantics=SEM))
+    cards = [(c.cid, c.uid) for c in raw.players[raw.me].piles["hand"]]
+    assert len(cards) >= 2
+    heap = bytearray(0x1000)
+    struct.pack_into("<II", heap, 0x100, *cards[0])  # a card object: never changes
+    struct.pack_into("<II", heap, 0x204, *cards[1])  # another one
+    UI_AT = 0x804
+    mem = BufferMemory({0x10000: heap})
+    sel = Selection(mem, lambda: [(0x10000, 0x11000)])
+    order = [1, 0]  # MD's screen order: position 0 holds the second card
+
+    def open_at(i):
+        struct.pack_into("<II", heap, UI_AT, *cards[order[i]])
+        mem.regions[0x10000] = bytes(heap)
+
+    player = Player.__new__(Player)
+    player.selection = sel
+    player.trace = type("T", (), {"observe": lambda self, **k: None})()
+    player.name = str
+    opened = []
+
+    def open_hand_card(xy, why):
+        i = [L.hand_card(k, len(cards)) for k in range(len(cards))].index(xy)
+        opened.append(i)
+        open_at(i)
+        return [(xy[0], 880)]
+
+    player.ui = type("U", (), {"open_hand_card": staticmethod(open_hand_card)})()
+    # the policy wants cards[0]; the sort rule guessed position 0 (which holds cards[1])
+    open_at(0)
+    xy0 = L.hand_card(0, len(cards))
+    got = player.verify_by_memory(raw, cards[0][0], xy0, [(xy0[0], 880)])
+    assert sel.address == 0x10000 + UI_AT  # calibrated on the pair that changed
+    assert got == [(L.hand_card(1, len(cards))[0], 880)] and opened[-1] == 1  # found at position 1
 
 
 def test_unlearned_names_are_told_apart_by_their_words():
