@@ -268,11 +268,17 @@ def declares_a_card(password: int) -> bool:
     return False
 
 
+def plain_name(name: str) -> bool:
+    """A card name of ASCII letters, digits and spaces only: typed whole, MD's search finds exactly it."""
+    return all((ch.isascii() and ch.isalnum()) or ch == " " for ch in name)
+
+
 def searchable(name: str) -> str:
-    """The longest stretch of a card name that the keyboard can type (search matches substrings)."""
+    """The longest stretch of a card name that the keyboard can type (search matches substrings). Apostrophes and
+    quotes split it: MD's names use other glyphs for them, and a search with the ASCII one finds nothing."""
     from ygorl.md.input import GatedMouse
 
-    ok = lambda ch: (ch.isascii() and ch.isalnum()) or ch in GatedMouse.KEYSYMS  # noqa: E731
+    ok = lambda ch: ((ch.isascii() and ch.isalnum()) or ch in GatedMouse.KEYSYMS) and ch not in "'\""  # noqa: E731
     parts, cur = [], ""
     for ch in name:
         if ok(ch):
@@ -1196,7 +1202,10 @@ class Player:
         seen = Counter(self.passwords.get(c.cid) for z in ("hand", "grave", "removed") for c in me.piles[z])
         seen += Counter(self.passwords.get(c.cid) for c in me.slots if c is not None)
         left = Counter(deck.main) - seen
-        best = max(left, key=lambda p: (left[p], p)) if left else next(iter(deck.main))
+        # a name the keyboard types whole finds exactly that card; MD's search found nothing for "Ra's Disciple"
+        # (its apostrophe is not the ASCII one), so plainly spelled names come first
+        plain = lambda p: plain_name(self.cards[p].name)  # noqa: E731
+        best = max(left, key=lambda p: (plain(p), left[p], p)) if left else next(iter(deck.main))
         return self.cards[best].name
 
     def find_in_list(self, req, pick: int) -> tuple[int, bool]:

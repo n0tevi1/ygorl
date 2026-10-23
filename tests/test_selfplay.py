@@ -300,3 +300,13 @@ def test_md_option_descriptions_pair_with_ygopro_options():
     assert option_pairs([1234 << 20 | 1, 1234 << 20], [1234 << 20, 1234 << 20 | 1]) == {0: 1, 1: 0}
     assert option_pairs([None, None], [7, 8]) == {0: 0, 1: 1}  # by order when the counts agree
     assert option_pairs([None, None, None], [7, 8]) is None
+
+
+def test_declared_names_avoid_apostrophes():
+    """MD's search found nothing for "Ra's Disciple" typed with an ASCII apostrophe: such names are searched by
+    their longest plain stretch, and plainly spelled names are preferred when choosing what to declare."""
+    from ygorl.selfplay.loop import plain_name, searchable
+
+    assert searchable("Ra's Disciple") == "s Disciple"  # still a substring of MD's "Ra’s Disciple"
+    assert searchable("Blue-Eyes White Dragon") == "Blue-Eyes White Dragon"
+    assert plain_name("Dark Magician") and not plain_name("Ra's Disciple") and not plain_name("Blue-Eyes")
