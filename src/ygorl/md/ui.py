@@ -404,6 +404,18 @@ class UI:
                     return found
                 self.sleep(0.3)
             return []
+
+        def row(before, after) -> list[XY]:
+            icons = L.new_icons(before, after, *box) or [p for p in L.find_icons(after, *box) if p[1] < 940]
+            icons = [p for p in icons if is_command_icon(after, *p)]
+            # the circle test misses some icons (a Set icon next to Activate, The True Name): add the blue
+            # glyphs found by colour, wherever no icon is known yet
+            extra = [p for p in L.blue_icons(after, *box) if p[1] < 940 and is_command_icon(after, *p)
+                     and all(abs(p[0] - q[0]) > 60 for q in icons)]  # fmt: skip
+            # only the row above this card: icons left by another card (opened before, slower to fade out
+            # than this one's are to fade in) were taken for this card's
+            return [p for p in sorted(icons + extra) if abs(p[0] - x) <= 220]
+
         for attempt in range(2):  # the first click can land while an animation still covers the hand
             before = self.capture()
             self.click(x, y, why if not attempt else f"{why} (again)", 0.6)
@@ -411,24 +423,17 @@ class UI:
             # open by an earlier stop keeps its icons, so icons already there count too (only command icons sit
             # above y 940 in the hand band: the lifted card's art starts lower)
             for _ in range(10):
-                after = self.capture()
-                icons = L.new_icons(before, after, *box) or [p for p in L.find_icons(after, *box) if p[1] < 940]
-                icons = [p for p in icons if is_command_icon(after, *p)]
-                # the circle test misses some icons (a Set icon next to Activate, The True Name): add the blue
-                # glyphs found by colour, wherever no icon is known yet
-                extra = [p for p in L.blue_icons(after, *box) if p[1] < 940 and is_command_icon(after, *p)
-                         and all(abs(p[0] - q[0]) > 60 for q in icons)]  # fmt: skip
-                icons = sorted(icons + extra)
-                # only the row above this card: icons left by another card (opened before, slower to fade out
-                # than this one's are to fade in) were taken for this card's
-                icons = [p for p in icons if abs(p[0] - x) <= 220]
+                icons = row(before, self.capture())
                 if icons:
                     # the icons fade in: wait until they are fully drawn (a half-faded Summon read as Set by its
                     # glyph colour, and a click on a fading icon was ignored), then report them
                     xs, ys = [p[0] for p in icons], [p[1] for p in icons]
                     self.wait_still((max(min(xs) - 50, 0), min(ys) - 50, min(max(xs) + 50, L.REF_W), max(ys) + 50),
                                     timeout=2.4, tolerance=2.0)  # fmt: skip
-                    return icons
+                    # one at a time: a second icon can still be fading in when the first is found (Millennium
+                    # Revelation showed only its Set icon once, and its Activate was refused)
+                    more = [p for p in row(before, self.capture()) if all(abs(p[0] - q[0]) > 60 for q in icons)]
+                    return sorted(icons + more)
                 self.sleep(0.3)
         return []
 
