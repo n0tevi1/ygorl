@@ -55,6 +55,7 @@ from ygorl.md.ui import (
 )
 from ygorl.md.panel import PanelBook, panel_kind
 from ygorl.md.request import read_request
+from ygorl.selfplay.decide import Decider, policy_scorer
 from ygorl.selfplay.observe import ShadowObserver
 from ygorl.selfplay.trace import Trace
 
@@ -299,6 +300,9 @@ class Player:
         self.out.mkdir(parents=True, exist_ok=True)
         self.trace = Trace(self.out, screen_every=self.screen_every)
         self.observer = ShadowObserver(self.env.rule_flags, self.cards, self.prior, self._score)  # design 10
+        scorer = policy_scorer(self.policy, self.cards, self.env.player.starting_lp) if self.policy else None
+        self.decider = Decider(self.env.rule_flags, self.cards, self.passwords, self.prior, scorer=scorer,
+                               samples=self.samples)  # in-action decisions rebuilt from the current board  # fmt: skip
         self.panel = PanelBook(self.out / "panel_book.npz")  # learned across runs
         self.attacked: set[int] = set()  # uids that attacked (or could not) in this Battle Phase
         self.turn_seen = -1
@@ -631,8 +635,10 @@ class Player:
         return top.action, allowed
 
     def battle(self, raw: RawDuel) -> None:
-        """The policy chooses: attack with which monster, Main Phase 2 or End Phase. The target is a rule: the most
-        valuable monster the attacker beats, else the weakest; direct when the opponent has no monster."""
+        """The policy chooses: attack with which monster, Main Phase 2 or End Phase, and the attack target (rebuilt
+        from the current board, :meth:`ygorl.selfplay.decide.Decider.attack_target`). The rule when the rebuild
+        cannot tell: the most valuable monster the attacker beats, else the weakest; direct when the opponent has no
+        monster."""
         best, _ = self.decide(raw)
         self.close_phase_menu_unless(best.kind)
         self.context = best.kind
@@ -660,18 +666,25 @@ class Player:
         if not self.ui.attack(my_monster_xy(slot), f"attacker {self.name(card.cid)}"):
             return self.refused(raw, best, f"no Attack for {self.name(card.cid)}")
         if targets and self.input().mode == FIELD_PICK:
-            _, _, s = max(targets)
+            s = self.rebuilt("target", raw, slot, frozenset(self.attacked - {card.uid}))
+            if s not in {t[2] for t in targets}:
+                _, _, s = max(targets)
+                self.trace.sub("target", by="rule", rule="target-most-valuable-beaten", slot=s)
             self.trace.observe(target_slot=s)
             if not self.ui.pick_target(opp_monster_xy(s), f"target {s}"):
                 raise Stuck("no Confirm icon above the attack target")
         self.context = f"attack lp {opp.lp}"
 
     def prompt(self, raw: RawDuel, inp: Input) -> None:
-        """Chain / open-timing prompts: respond to the opponent's attacks and in our own End Phase, else pass."""
+        """Chain / open-timing prompts: the policy through the shadow (inside our action), else through a rebuild
+        that reaches the same turn and phase (:meth:`ygorl.selfplay.decide.Decider.respond`); the rule when neither
+        can tell: respond to the opponent's attacks and in our own End Phase, else pass."""
         phase = PHASES[raw.phase] if raw.phase < len(PHASES) else ""
         theirs = raw.turn_player != raw.me
         respond = (theirs and phase == "battle") or (not theirs and phase == "end")
         pick = None if theirs else self.lockstep("prompt", raw, lambda: self.request_now(raw))
+        if pick is None:
+            pick = self.rebuilt("respond", raw)
         if pick is not None:
             respond = pick == 0
         # the same prompt again with nothing of ours changed: the activation did not happen (MD can offer a card it
@@ -695,7 +708,39 @@ class Player:
 
         return _logits(replace(shadow.rec, point=point), self.policy, self.cards, self.env.player.starting_lp)
 
-    def lockstep(self, dialog: str, raw: RawDuel, req=None, count: int = 0) -> int | None:
+    def rebuilt(self, question: str, raw: RawDuel, *args):
+        """The policy's answer to ``question`` ("target", "position", "respond") rebuilt from the current board
+        (:class:`ygorl.selfplay.decide.Decider`); None when the rebuild cannot tell (the caller's rule decides).
+        Recorded as the step's decision (the target: as the attack decision's ``target``)."""
+        decider = getattr(self, "decider", None)  # tests build players without one
+        if decider is None:
+            return None
+        if question == "target":
+            choice = decider.attack_target(raw, *args)
+        elif question == "position":
+            action, before = (self.expect.action, self.expect.before) if self.expect is not None else (None, None)
+            listed = getattr(self, "listed", (None, ()))
+            shadow = getattr(getattr(self, "observer", None), "shadow", None)
+            choice = decider.position(raw, self.request_now(raw), action, shadow, before,
+                                      listed[1] if listed[0] is self.expect else ())  # fmt: skip
+        else:
+            choice = decider.respond(raw, self.request_now(raw))
+        record = choice.record()
+        if choice.pick is None:
+            self.trace.observe(rebuild=record)
+            print(f"  rebuild ({question}): no decision ({'; '.join(choice.notes[:2])})", flush=True)
+            return None
+        if question == "target":
+            self.trace.sub("target", by="rebuild", **record)
+            if choice.shadow is not None:
+                self.observer.adopt(choice.shadow, "attack")  # in lockstep again for what the attack asks next
+        else:
+            self.trace.rebuilt(**record)
+        print(f"  rebuild ({question}): {choice.pick} {record['probs']} over {choice.reached}/{choice.samples}",
+              flush=True)  # fmt: skip
+        return choice.pick
+
+    def lockstep(self, dialog: str, raw: RawDuel, req=None, count: int = 0, zone=None) -> int | None:
         """The option the policy picks for MD's ``dialog`` through the shadow duel (None: no shadow, or it does not
         match; the caller's rule decides). Recorded as the step's decision."""
         observer = getattr(self, "observer", None)  # tests build players without one
@@ -703,7 +748,7 @@ class Player:
             return None
         if callable(req):  # read only when there is a shadow to ask
             req = req()
-        pick, record = observer.choose(dialog, req, raw.me, self.passwords, count=count)
+        pick, record = observer.choose(dialog, req, raw.me, self.passwords, count=count, zone=zone)
         if record:
             self.trace.observe(lockstep=record)
         if pick is not None:
@@ -831,14 +876,16 @@ class Player:
 
     def dialog(self, raw: RawDuel, kind: str) -> None:
         if kind == "position":
-            pick = self.lockstep("position", raw)
+            zone = self.free_zone(raw, "mzone")  # MD asks the zone next; the shadow takes the same before the position
+            pick = self.lockstep("position", raw, zone=("mzone", zone))
+            if pick is None:
+                pick = self.rebuilt("position", raw)
             if pick == 1:
                 self.ui.pick_position("faceup_defense")
             else:
                 if pick is None:
                     self.trace.rule("position-faceup-attack")
                 self.ui.pick_position("faceup_attack")
-            zone = self.free_zone(raw, "mzone")
             self.ui.pick_zone("mzone", zone, "zone for the summon")
             self._placed("mzone", zone)
         elif kind == "option":
@@ -893,6 +940,7 @@ class Player:
                 self.trace.observe(list="gone before the pick")
                 return
             req = self.request_now(raw, list_shown=True)
+            self.listed = (self.expect, tuple(c.cid for c in req.candidates))  # names a monster summoned next
             need = next((v for k, v in req.params if k == 8), 1)  # "choose N cards" (Fusion Materials)
             if 1 < need <= len(L.list_cards(self.ui.capture())):
                 self.trace.rule("list-set-first-accepted", need=need)  # MD's list here is not the one in memory

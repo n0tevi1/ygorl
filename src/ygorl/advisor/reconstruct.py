@@ -235,15 +235,20 @@ class Reconstruction:
     warnings: list[str]
 
 
-def build(board: CompletedBoard, rule_flags: int, *, cards=None, scripts=None, seed: int = 1) -> Reconstruction:
+def build(board: CompletedBoard, rule_flags: int, *, cards=None, scripts=None, seed: int = 1, extra_script: str = "",
+          until: Callable[[DecisionPoint], bool] | None = None) -> Reconstruction:  # fmt: skip
     """Start a duel holding ``board`` and run it to the advisor's first idle decision: Main Phase 1, or for a
-    Battle Phase snapshot the battle command reached by taking the core's own ``battle_phase`` action there."""
+    Battle Phase snapshot the battle command reached by taking the core's own ``battle_phase`` action there.
+
+    ``extra_script``: Lua appended to the board script (:mod:`ygorl.selfplay.decide` registers a one-shot effect
+    there to make the core ask a question of its own, e.g. a Summon's position); ``until``: stop instead at the
+    first setup decision it accepts (that decision is not answered)."""
     cards = cards if cards is not None else default_cards()
     base = scripts if scripts is not None else default_scripts()
     snap = board.snapshot
     if snap.turn > 1:
         rule_flags |= C.DUEL_ATTACK_FIRST_TURN
-    script = board_script(board).encode()
+    script = (board_script(board) + extra_script).encode()
 
     def read(name: str) -> bytes | None:
         return script if name == BOARD_SCRIPT else base.read(name)
@@ -270,6 +275,9 @@ def build(board: CompletedBoard, rule_flags: int, *, cards=None, scripts=None, s
         point = tracker.point()
         if point is None:
             raise ReconstructError(f"the duel stopped while being set up ({tracker.result.reason})")
+        if until is not None and until(point):
+            warnings += [f"script error: {e}" for e in tracker.result.script_errors]
+            return Reconstruction(board, core, tracker, point, warnings)
         if point.player == 0 and isinstance(point.decision, M.SelectBattleCmd) and snap.phase == "battle":
             warnings += [f"script error: {e}" for e in tracker.result.script_errors]
             return Reconstruction(board, core, tracker, point, warnings)

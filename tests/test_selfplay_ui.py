@@ -8,7 +8,7 @@ import pytest
 
 from ygorl.md import layout as L
 from ygorl.md.memory import read_duel
-from ygorl.md.ui import UI, Stuck, command_order
+from ygorl.md.ui import POSITION_FACEUP_DEFENSE, UI, Stuck, command_order
 from ygorl.selfplay import trace as T
 from tests.test_md import ASH, BASE, BEWD, DM, OFF, PASSWORDS, SEM, build_memory
 
@@ -233,6 +233,43 @@ def test_player_decisions_drive_the_ui(tmp_path):
     player.prompt(raw, SimpleNamespace(mode=4, accepting=1, player=0))  # own Main Phase 1: pass
     assert mouse.clicks == [(940, 956), L.my_zone("mzone", 0), L.PROMPT_CANCEL] and sleeps == [1.5, 2.5, 1.5]
     assert player.trace.rec["decision"] == {"by": "rule", "rule": "prompt-pass"}
+
+
+def test_rebuilt_decisions_reach_the_ui(tmp_path):
+    """Without a shadow the position and the prompt come from the rebuild (design 10 「识别与执行的系统化」): the
+    policy's face-up Defense and its activation in the opponent's turn, recorded as {"by": "rebuild"}."""
+    from ygorl.selfplay.decide import Choice
+    from ygorl.selfplay.loop import PHASES, Player
+
+    raw = read_duel(build_memory(), BASE, replace(OFF, verified=True, semantics=SEM))
+    player = Player.__new__(Player)
+    player.ui, mouse, _ = make_ui(board())
+    player.trace = T.Trace(tmp_path)
+    player.context, player.responded = "", None
+    player.request_now = lambda raw, list_shown=False: SimpleNamespace(params=(), candidates=())
+    asked = []
+
+    class Decider:
+        def position(self, *args):
+            asked.append(("position", args[2:4]))
+            return Choice("position", pick=1, probs={0: 0.2, 1: 0.8}, reached=2, samples=2)
+
+        def respond(self, raw, req):
+            asked.append(("respond", raw.turn_player))
+            return Choice("respond", pick=0, probs={0: 0.7, 1: 0.3}, reached=1, samples=2)
+
+    player.decider = Decider()
+    player.trace.begin(0, raw, SimpleNamespace(mode=0, accepting=0, player=0), "position")
+    player.dialog(raw, "position")
+    assert mouse.clicks == [POSITION_FACEUP_DEFENSE, L.my_zone("mzone", 0)]  # the Defense button, then the zone
+    assert player.trace.rec["decision"]["by"] == "rebuild" and player.trace.rec["decision"]["pick"] == 1
+    theirs = replace(raw, phase=PHASES.index("main1"), turn_player=1 - raw.me)
+    inp = SimpleNamespace(mode=5, accepting=1, player=0)
+    player.trace.begin(1, theirs, inp, None)
+    player.prompt(theirs, inp)
+    assert mouse.clicks[2:] == [L.PROMPT_CARD, L.PROMPT_ACTIVATE]
+    assert player.trace.rec["decision"]["question"] == "respond"
+    assert asked == [("position", (None, None)), ("respond", 1 - raw.me)]
 
 
 def test_end_phase_prompt_passes_when_the_response_did_not_take(tmp_path):
