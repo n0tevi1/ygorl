@@ -10,7 +10,9 @@ A run writes ``<out>/<run>.jsonl``: a ``start`` record (run metadata), one ``ste
                 "opp": {"lp": 6100, "field": [... face-down cards as [0, face, sideways]], "grave": [...],
                         "counts": {...}}},
      "decision": {"by": "policy", "action": "summon", "card": 89631139, "p": 0.61, "phase": "main1",
-                  "top": [["summon", 89631139, 0.61], ...]}            # or {"by": "rule", "rule": "prompt-pass"}, {"by": "shadow", "dialog": "list", "pick": 1, ...}
+                  "top": [["summon", 89631139, 0.61], ...]}            # or {"by": "rule", "rule": "prompt-pass"}, {"by": "shadow", "dialog": "list", "pick": 1, ...},
+                                                                        # {"by": "rebuild", "question": "respond", "pick": 0, "probs": {...}, ...};
+                                                                        # an attack carries "target": {"by": "rebuild" | "rule", ...}
      "observed": {"icons": [[x, y], ...]},                              # what the UI layer reported
      "clicks": [{"t": ..., "xy": [x, y], "why": "summon"}, ...],
      "check": {"action": "summon", "card": 89631139, "ok": true, "problem": null},   # the previous action's check
@@ -130,6 +132,19 @@ class Trace:
         """The policy decided this dialog through the shadow duel (design 10 「边角情况由 player 自己学会」)."""
         self._current()["decision"] = {"by": "shadow", "dialog": dialog, "pick": pick, **detail}
 
+    def rebuilt(self, **record) -> None:
+        """The policy decided this step on a rebuild of the current board (:class:`ygorl.selfplay.decide.Choice`
+        record: question, pick, averaged probabilities)."""
+        self._current()["decision"] = _jsonable({"by": "rebuild", **record})
+
+    def sub(self, name: str, **detail) -> None:
+        """A part of this step's decision decided separately (the attack target of a policy attack): ``detail``
+        holds its own ``by``."""
+        rec = self._current()
+        if rec["decision"] is None:
+            rec["decision"] = {"by": detail.get("by"), "question": name}
+        rec["decision"][name] = _jsonable(detail)
+
     def observe(self, **seen) -> None:
         """What the UI layer reported (icons found, list cards, highlighted cards, ...)."""
         self._current()["observed"].update(_jsonable(seen))
@@ -238,8 +253,12 @@ def summarize(records: Iterable[dict]) -> dict:
         d = r.get("decision")
         if d:
             by = d.get("by")
-            label = {"policy": f"policy:{d.get('action')}", "shadow": f"shadow:{d.get('dialog')}"}
+            label = {"policy": f"policy:{d.get('action')}", "shadow": f"shadow:{d.get('dialog')}",
+                     "rebuild": f"rebuild:{d.get('question')}"}  # fmt: skip
             decisions[label.get(by, f"rule:{d.get('rule')}")] += 1
+            target = d.get("target")
+            if isinstance(target, dict):  # an attack's target, decided on its own
+                decisions[f"target:{target.get('by')}"] += 1
         c = r.get("check")
         if c:
             checks["ok" if c.get("ok") else "failed"] += 1
