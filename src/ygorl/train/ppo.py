@@ -90,6 +90,9 @@ class PPOConfig:
     # windows, responses, selections inside the opponent's effects). 1 = unchanged. Diagnostic for whether those
     # decisions lack gradient rather than signal (docs/spikes/rl-methodology-review-2026-10-20.md §7.2)
     response_weight: float = 1.0
+    # multiply the policy-gradient weight of rows decided by the seat that moved first (engine player 0; in self-play
+    # both seats are the learner): a curriculum on the harder seat (#442: the first seat wins 8-12 pp less); 1 = off
+    first_seat_weight: float = 1.0
     aux_coef: float = 0.0  # weight of the critic's auxiliary-head loss (#440); needs a model built with aux heads
     # solver hand-trap labels on scripted-line games (train.line_labels, TrainConfig.line_labels): at a labelled chain
     # window with an Ash candidate, line_bonus_coef * (u_k - max later u) is added to the advantage of the taken
@@ -129,6 +132,8 @@ class PPOConfig:
             raise ValueError("adv_keep_mode must be rows or policy")
         if not self.response_weight > 0:
             raise ValueError("response_weight must be positive")
+        if not self.first_seat_weight > 0:
+            raise ValueError("first_seat_weight must be positive")
         if self.aux_coef < 0:
             raise ValueError("aux_coef must be nonnegative")
         if self.line_bonus_coef < 0:
@@ -410,6 +415,9 @@ class PPOLearner:
                 raise ValueError("response_weight needs observations with globals (is_my_turn)")
             opp_turn = (ro.obs["globals"][:, 2] == 0).to(dev)
             adv = torch.where(opp_turn, adv * cfg.response_weight, adv)
+        if cfg.first_seat_weight != 1.0:
+            first_seat = (ro.players.reshape(-1) == 0).to(dev)
+            adv = torch.where(first_seat, adv * cfg.first_seat_weight, adv)
         q_targets = est.q_targets.reshape(-1).float().to(dev)
         v_targets = est.v_targets.reshape(-1).float().to(dev)
         actions = ro.actions.reshape(-1).to(dev)
