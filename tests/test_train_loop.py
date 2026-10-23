@@ -581,7 +581,13 @@ def test_separate_critic_warm_start_copies_the_actor_trunk(run, vocab, tmp_path)
     actor, trunk = t.model.actor.state_dict(), t.model.critic_trunk.state_dict()
     assert actor.keys() == trunk.keys()
     assert all(torch.equal(actor[k], trunk[k]) for k in actor)
-    source = trainer.model.critic.state_dict()
+    from ygorl.train.checkpoint import load_checkpoint
+
+    source = {
+        k[len("critic.") :]: v
+        for k, v in load_checkpoint(ppo_ckpt)["learner"]["model"].items()
+        if k.startswith("critic.")
+    }
     for k, v in t.model.critic.state_dict().items():
         assert torch.equal(v, source[k]), k
     assert any("heads load from the checkpoint" in line for line in logs)

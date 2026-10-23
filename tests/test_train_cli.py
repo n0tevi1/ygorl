@@ -17,7 +17,7 @@ from ygorl.train.trainer import TrainConfig  # noqa: E402
 DECKS = ("a.ydk", "b.ydk")
 # string fields without choices: a valid non-default value each
 STRINGS = {"env": "v1", "text_dir": str(Path("/tmp/feats").resolve()), "bc_prior": "bc.pt", "init_from": "init.pt", "device": "cuda:1",
-           "register_matrix": str(Path("/tmp/matrix.json").resolve()), "keep_best_by": "random", "ppo.objective": "pg", "deck_pool": str(Path("/tmp/pool.json").resolve())}  # fmt: skip
+           "register_matrix": str(Path("/tmp/matrix.json").resolve()), "keep_best_by": "random", "ppo.objective": "pg", "deck_pool": str(Path("/tmp/pool.json").resolve()), "critic_init": "fresh"}  # fmt: skip
 TUPLES = {"eval_opponents": ("random", "greedy", "policy:x.pt"), "pin_opponents": ("a.pt", "b.pt"),
           "line_demos": ("a.jsonl", "b.jsonl")}  # fmt: skip
 
