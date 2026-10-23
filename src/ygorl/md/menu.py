@@ -29,7 +29,8 @@ XY = tuple[int, int]
 VICTORY_CONFIRM = (1027, 1065)
 BACK = (1825, 1079)
 PLAY, PLAY_BOX = (1675, 1002), (1460, 975, 1890, 1030)
-NODE_EDGE_Y, NODE_CENTRE_DY = 515, 120  # the nodes' top edge row; their centre is this far below it
+NODE_EDGE_Y, NODE_CENTRE_DY = 515, 120  # the nodes' top edge row (measured); their centre is this far below it
+NODE_EDGE_BAND = range(480, 600)  # the edge row moves with the layout (538 on the headless display): searched
 NODE_MIN_WIDTH = 40  # a node partly scrolled off the right edge still counts
 
 
@@ -44,19 +45,24 @@ def _runs(mask: np.ndarray, least: int) -> list[tuple[int, int]]:
     return [(int(a), int(b)) for a, b in zip(edges[::2], edges[1::2], strict=True) if b - a >= least]
 
 
+def _edge_nodes(img: np.ndarray) -> tuple[int, list[tuple[str, int]]]:
+    """The row of node top edges with the most nodes, and those nodes."""
+    best: tuple[int, list[tuple[str, int]]] = (NODE_EDGE_Y, [])
+    for y in NODE_EDGE_BAND:
+        row = img[y].astype(int)
+        lime = (row[:, 1] > 180) & (row[:, 0] > 130) & (row[:, 2] < 80)
+        white = row.min(axis=1) > 180
+        found = [("lime", (a + b) // 2) for a, b in _runs(lime, NODE_MIN_WIDTH) if b - a < 260]
+        found += [("white", (a + b) // 2) for a, b in _runs(white, NODE_MIN_WIDTH) if b - a < 260]
+        if len(found) > len(best[1]):
+            best = (y, sorted(found, key=lambda n: n[1]))
+    return best
+
+
 def stage_nodes(img: np.ndarray) -> list[tuple[str, int]]:
     """The stage nodes on screen, left to right: ("lime" cleared / current, or "white" newly unlocked, centre x).
     Locked nodes (grey) are left out."""
-    nodes = []
-    for y in range(NODE_EDGE_Y - 2, NODE_EDGE_Y + 3):
-        row = img[y].astype(int)
-        lime = (row[:, 1] > 200) & (row[:, 0] > 150) & (row[:, 2] < 80)
-        white = row.min(axis=1) > 180
-        found = [("lime", (a + b) // 2) for a, b in _runs(lime, NODE_MIN_WIDTH)]
-        found += [("white", (a + b) // 2) for a, b in _runs(white, NODE_MIN_WIDTH)]
-        if len(found) > len(nodes):
-            nodes = sorted(found, key=lambda n: n[1])
-    return nodes
+    return _edge_nodes(img)[1]
 
 
 TURN_ORDER_ROWS = (571, 661, 751)  # 随机 (random) / 先攻 (first) / 后攻 (second), stacked at x 1027
@@ -108,10 +114,10 @@ def target(img: np.ndarray, kind: str) -> XY | None:
         lit = [b for b in find_buttons(img) if b.label == "enabled"]
         return lit[0].centre if len(lit) == 1 else None  # one Confirm, else not a screen of ours
     if kind == "stages":
-        nodes = stage_nodes(img)
+        edge, nodes = _edge_nodes(img)
         new = [x for c, x in nodes if c == "white"]
         x = new[0] if new else max(x for c, x in nodes if c == "lime")
-        return min(x, 2010), NODE_EDGE_Y + NODE_CENTRE_DY
+        return min(x, 2010), edge + NODE_CENTRE_DY
     return None
 
 

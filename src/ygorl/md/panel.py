@@ -116,6 +116,46 @@ def digit_glyphs(img: np.ndarray, band) -> list[np.ndarray]:
     return glyphs
 
 
+DIGIT_IOU = 0.92  # measured: a digit against its own templates >= 0.975, against other digits' <= 0.84
+
+
+def _iou(a: np.ndarray, b: np.ndarray) -> float:
+    union = (a | b).sum()
+    return float((a & b).sum() / union) if union else 0.0
+
+
+NAME_TEXT_END = 340  # band columns from here on are the attribute icon (its white rim)
+
+
+def name_width(sig: np.ndarray) -> int:
+    """The width of the name text in a name signature (pixels from its first to its last white column). The band's
+    last columns hold the attribute icon's white rim: left out."""
+    cols = np.flatnonzero(sig[:, :NAME_TEXT_END].any(axis=0))
+    return int(cols[-1] - cols[0] + 1) if len(cols) else 0
+
+
+_NARROW, _WIDE = set("ijlI.,'!:;|()[] -ftr\"\u00b7"), set("mwMW@%")
+
+
+def predicted_width(name: str) -> float:
+    """A rough width of ``name`` in the panel's proportional font, in units of an average lowercase letter."""
+    return sum(0.45 if c in _NARROW else 1.45 if c in _WIDE else 1.15 if c.isupper() or c.isdigit() else 1.0
+               for c in name)  # fmt: skip
+
+
+PX_PER_UNIT = 17.8  # measured on the English client: Raigeki 107 px (6.0 units), Blaze Cannon 200 px (11.2)
+NAME_FULL = 320  # text this wide runs into the attribute icon: the name is truncated and its length hidden
+
+
+def width_fits(width: int, name: str, tolerance: float = 0.15) -> bool:
+    """Whether a never-learned panel whose name text is ``width`` px wide can show the card called ``name``: lets
+    the player tell two unlearned cards of one kind apart (Raigeki from Blaze Cannon) without guessing."""
+    want = predicted_width(name) * PX_PER_UNIT
+    if width >= NAME_FULL:
+        return want >= NAME_FULL * (1 - tolerance)
+    return abs(width - want) <= tolerance * want
+
+
 class PanelBook:
     """Learned name signatures (card id -> bitmaps) and digit templates (char -> bitmaps); saved as one ``.npz``."""
 
@@ -144,15 +184,17 @@ class PanelBook:
 
     # --- reading ---
     def read_number(self, img: np.ndarray, band) -> str:
+        """Each digit is the template with the best foreground IoU, if that reaches :data:`DIGIT_IOU`. (Pixel
+        agreement was dominated by the background: a level 6 read as 5 at 0.925.)"""
         text = ""
         for g in digit_glyphs(img, _shifted(band, img)):
             best, score = "?", 0.0
             for ch, temps in self.digits.items():
                 for t in temps:
-                    s = float((g == t).mean())
+                    s = _iou(g, t)
                     if s > score:
                         best, score = ch, s
-            text += best if score >= 0.9 else "?"
+            text += best if score >= DIGIT_IOU else "?"
         return text
 
     def identify(self, img: np.ndarray, candidates: Sequence[int], stats: Mapping[int, tuple[int, int, int] | None]
@@ -202,4 +244,14 @@ class PanelBook:
                 self.digits.setdefault(ch, []).append(g)
 
 
-__all__ = ["PanelBook", "digit_glyphs", "name_signature", "panel_kind", "panel_open", "same_name"]
+__all__ = [
+    "PanelBook",
+    "digit_glyphs",
+    "name_signature",
+    "name_width",
+    "panel_kind",
+    "panel_open",
+    "predicted_width",
+    "same_name",
+    "width_fits",
+]

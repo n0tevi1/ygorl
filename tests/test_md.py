@@ -356,6 +356,9 @@ def test_parse_tree_and_xwd():
     header = [100, 7, 2, 24, 2, 1, 0, 0, 32, 0, 32, 32, 8, 4, 0xFF0000, 0xFF00, 0xFF, 8, 0, 0, 0, 0, 0, 0, 0]
     data = struct.pack(">25I", *header) + bytes([0, 0, 255, 0, 255, 0, 0, 0])
     assert parse_xwd(data).tolist() == [[[255, 0, 0], [0, 0, 255]]]
+    header[11], header[12] = 24, 8  # packed 24 bpp, rows padded to 32 bits
+    data = struct.pack(">25I", *header) + bytes([0, 0, 255, 255, 0, 0, 0, 0])
+    assert parse_xwd(data).tolist() == [[[255, 0, 0], [0, 0, 255]]]
 
 
 def test_normal_summoned_from_the_counter():

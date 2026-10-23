@@ -97,12 +97,13 @@ def parse_xwd(data: bytes) -> np.ndarray:
     header_size, depth, width, height = header[0], header[3], header[4], header[5]
     bits_per_pixel, bytes_per_line, byte_order, ncolors = header[11], header[12], header[7], header[19]
     red_mask = header[14]
-    if bits_per_pixel != 32 or depth not in (24, 32):
+    if bits_per_pixel not in (24, 32) or depth not in (24, 32):
         raise ScreenError(f"unsupported xwd format: depth {depth}, {bits_per_pixel} bits per pixel")
     start = header_size + ncolors * 12
     rows = np.frombuffer(data, dtype=np.uint8, count=bytes_per_line * height, offset=start)
-    px = rows.reshape(height, bytes_per_line)[:, : width * 4].reshape(height, width, 4)
-    if byte_order == 1:  # MSBFirst: xRGB
+    size = bits_per_pixel // 8  # 24 bpp packed: Xwayland after a window resize
+    px = rows.reshape(height, bytes_per_line)[:, : width * size].reshape(height, width, size)
+    if byte_order == 1:  # MSBFirst: (x)RGB
         px = px[:, :, ::-1]
     # LSBFirst with the usual 0xff0000 red mask: B, G, R, x in memory
     if red_mask == 0xFF0000:

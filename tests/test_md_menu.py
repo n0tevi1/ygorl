@@ -40,7 +40,8 @@ def test_screens_and_targets():
     assert menu.screen(d) == "detail" and menu.target(d, "detail") == menu.PLAY
     s = nodes(blank(), [LIME, LIME, LIME])
     assert menu.screen(s) == "stages"
-    assert menu.target(s, "stages") == (77 + 520 + 85, menu.NODE_EDGE_Y + menu.NODE_CENTRE_DY)  # the current stage
+    x, y = menu.target(s, "stages")  # the current stage, below the edge row found
+    assert x == 77 + 520 + 85 and abs(y - (menu.NODE_EDGE_Y + menu.NODE_CENTRE_DY)) <= 1
     s = nodes(blank(), [LIME, LIME, WHITE])
     assert [c for c, _ in menu.stage_nodes(s)] == ["lime", "lime", "white"]
     assert menu.target(s, "stages")[0] == 77 + 520 + 85  # the newly unlocked one

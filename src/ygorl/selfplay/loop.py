@@ -54,7 +54,7 @@ from ygorl.md.ui import (
     yellow_highlight,
     zone_outlined,
 )
-from ygorl.md.panel import PanelBook, panel_kind
+from ygorl.md.panel import PanelBook, name_signature, name_width, panel_kind, width_fits
 from ygorl.md.request import read_request
 from ygorl.selfplay.decide import Decider, policy_scorer
 from ygorl.selfplay.observe import ShadowObserver
@@ -461,15 +461,13 @@ class Player:
         these cards yet): keep the click, and learn from it once memory confirms the action."""
         hand = [c.cid for c in raw.players[raw.me].piles["hand"]]
         stats = {c: self.card_stats(c) for c in hand}
-        img = self.ui.capture()
+        img = img0 = self.ui.capture()
         got, how = self.panel.identify(img, hand, stats)
         kind, want_kind = panel_kind(img), self.card_kind(cid)
         first_unknown = got is None and (not kind or kind == want_kind)
-        self.trace.observe(panel={"want": cid, "got": got, "how": how, "kind": kind, "want_kind": want_kind})
-        # an unknown panel is the wanted card only when no other card of that kind in hand is unknown too (Fist of
-        # Fate was Set for Millennium Revelation: two spells, neither learned yet)
-        twins = [c for c in hand if c != cid and self.card_kind(c) == want_kind and c not in self.panel.names]
-        if got == cid or (first_unknown and not twins):
+        self.trace.observe(panel={"want": cid, "got": got, "how": how, "kind": kind, "want_kind": want_kind,
+                                  "width": name_width(name_signature(img))})  # fmt: skip
+        if got == cid or (first_unknown and self.unlearned_is(img, cid, hand)):
             self.pending_panel = (img, raw)
             return icons
         if got is None:
@@ -487,13 +485,13 @@ class Player:
             img = self.ui.capture()
             seen, how = self.panel.identify(img, hand, stats)
             kind = panel_kind(img)
-            if seen == cid or (seen is None and kind == want_kind and not twins):
+            if seen == cid or (seen is None and kind == want_kind and self.unlearned_is(img, cid, hand)):
                 self.trace.observe(panel={"want": cid, "found_at": i, "how": how or kind})
                 self.pending_panel = (img, raw)
                 return found
-            if seen is None and (not kind or kind == want_kind):
+            if seen is None and (not kind or kind == want_kind) and self.width_allows(img, cid):
                 unknown.append((i, found, img))
-        if first_unknown:  # the first click's own panel is a candidate too: elimination needs it ruled out
+        if first_unknown and self.width_allows(img0, cid):  # the first panel is a candidate too: rule it out
             unknown.append((-1, None, None))
         if cid not in self.panel.names and len(unknown) == 1 and unknown[0][1] is not None:
             # the wanted card was never learned, and every other position showed a card that is not it: by elimination
@@ -506,6 +504,21 @@ class Player:
             self.pending_panel = (img, raw)
             return found
         raise Stuck(f"{self.name(cid)} not found in the hand by its information panel")
+
+    def width_allows(self, img: np.ndarray, cid: int) -> bool:
+        """The name text on the panel is about as wide as ``cid``'s name (:func:`ygorl.md.panel.width_fits`)."""
+        return width_fits(name_width(name_signature(img)), self.name(cid))
+
+    def unlearned_is(self, img: np.ndarray, cid: int, hand: list[int]) -> bool:
+        """A panel no learned card matches shows ``cid`` when its kind and name width fit ``cid`` and no other
+        unlearned card of that kind in hand fits as well (Fist of Fate was Set for Millennium Revelation: two
+        spells, neither learned yet; Raigeki and Blaze Cannon differ by 90 px of name)."""
+        kind = self.card_kind(cid)
+        if not self.width_allows(img, cid):
+            return False
+        twins = [c for c in dict.fromkeys(hand) if c != cid and self.card_kind(c) == kind
+                 and c not in self.panel.names and self.width_allows(img, c)]  # fmt: skip
+        return not twins
 
     def hand_xy(self, raw: RawDuel, cid: int) -> tuple[int, int]:
         """Screen position of the hand card with MD id ``cid`` (MD sorts the hand on screen)."""
