@@ -51,6 +51,15 @@ def menu_button(img: np.ndarray, x: int, y: int, radius: int = 90) -> bool:
 
 FIELD_COMMAND_DY = -145
 PROMPT_CARD = (1026, 934)  # the first card of a response prompt
+PROMPT_CARD_STEP = 166  # several offered cards sit side by side, centred on PROMPT_CARD (two: x 940 and 1106)
+
+
+def prompt_cards(count: int) -> list[tuple[int, int]]:
+    """Where each of ``count`` cards offered by a response prompt is drawn (left to right)."""
+    x, y = PROMPT_CARD
+    return [(round(x + (i - (count - 1) / 2) * PROMPT_CARD_STEP), y) for i in range(count)]
+
+
 PROMPT_CANCEL, PROMPT_ACTIVATE = (870, 1117), (1180, 1117)
 
 

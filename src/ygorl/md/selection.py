@@ -91,14 +91,17 @@ class Selection:
         self.address = None
         return None
 
-    def opened(self, raw: RawDuel) -> Pair | None:
-        """Call after a hand card was opened: the open card, or None while still calibrating (the first opening
-        of a duel, or one that showed the same card as the last)."""
+    def opened(self, raw: RawDuel, pairs: Iterable[Pair] | None = None) -> Pair | None:
+        """Call after a card was opened: the open card, or None while still calibrating (the first opening of a
+        duel, or one that showed the same card as the last). ``pairs``: what the open card can be (default: the
+        hand; a card list's candidates when a list is calibrated on, its first card ticked before any hand card
+        was opened)."""
         got = self.read(raw)
         if got is not None:
             return got
-        hand = {(c.cid, c.uid) for c in raw.players[raw.me].piles["hand"] if c.uid}
-        found = scan_pairs(self.memory, self.regions(), hand)
+        if pairs is None:
+            pairs = {(c.cid, c.uid) for c in raw.players[raw.me].piles["hand"] if c.uid}
+        found = scan_pairs(self.memory, self.regions(), pairs)
         changed = [a for a, p in found.items() if a in self.candidates and self.candidates[a] != p]
         # the object keeps the card opened before as well: that slot's new value is the open slot's old one
         before = {self.candidates[a] for a in changed}

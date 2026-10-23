@@ -131,7 +131,7 @@ DECLARE_SEARCH, DECLARE_CLEAR, DECLARE_GO = (1026, 717), (1289, 717), (759, 717)
 GY_PILE, GY_STRIP_X, GY_STRIP_Y0, GY_STRIP_STEP = (1600, 812), 1946, 280, 150
 GY_STRIP_SHOWN = 5  # strip positions on screen without scrolling (y 280 .. 880)
 GY_ICON = (1624, 690)  # where MD draws the opened Graveyard card's command, above the pile
-GY_ICON_BOX = (1480, 570, 1770, 810)
+GY_ICON_BOX = (1544, 610, 1704, 770)  # GY_ICON +- 80: wider boxes took the lava's glow for icons
 
 
 def declare_box(img: np.ndarray) -> bool:
@@ -456,8 +456,8 @@ class UI:
     def open_graveyard_card(self, index: int, kind: str, why: str) -> tuple[list[XY], np.ndarray]:
         """Open the ``index``-th card of the open Graveyard strip (0 = top); returns the icons of command ``kind``
         it opened and the capture they were read on (nothing is clicked on them). Only icons that appeared with the
-        click, beside the card (left of the strip, within 220 px of its height), count: the lava's yellow glow
-        passed for Activate icons anywhere on the board, and their clicks did nothing."""
+        click, above the pile (:data:`GY_ICON_BOX`), count: the lava's yellow glow passed for Activate icons
+        anywhere on the board, and their clicks did nothing."""
         xy = (GY_STRIP_X, GY_STRIP_Y0 + index * GY_STRIP_STEP)
         before = self.capture()
         self.click(*xy, why, 1.2)
@@ -465,9 +465,9 @@ class UI:
         for _ in range(8):
             after = self.capture()
             icons = []
-            # MD draws a Graveyard card's commands above the pile (a greyed "Activate" measured at (1624, 690));
-            # beside the strip card too, in case
-            for box in (GY_ICON_BOX, (1300, max(xy[1] - 220, 0), GY_STRIP_X - 70, min(xy[1] + 220, L.REF_H))):
+            # MD draws a Graveyard card's commands above the pile (a greyed "Activate" measured at (1624, 690)); a
+            # box beside the strip card took the lava's glow for icons three times (run s25), so only there
+            for box in (GY_ICON_BOX,):
                 found = L.new_icons(before, after, *box) + L.green_icons(after, *box) + L.blue_icons(after, *box)
                 icons += [p for p in found if is_command_icon(after, *p) and all(abs(p[0] - q[0]) + abs(p[1] - q[1])
                                                                                     > 60 for q in icons)]  # fmt: skip

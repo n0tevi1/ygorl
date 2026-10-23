@@ -812,3 +812,28 @@ def test_graveyard_activation_checks_the_open_card_in_memory():
     player.selection = SimpleNamespace(read=lambda r: (222, 0))  # memory says another card is always open
     player.graveyard_activate(raw, action, 111)
     assert refused and all(c == "pile" or c[0] != 1500 for c in clicks)  # no icon of another card clicked
+
+
+def test_prompt_cards_sit_side_by_side():
+    """One offered card at PROMPT_CARD; two at x 940 and 1106 (measured: Sun God Unification and Dark Spell
+    Regeneration offered together)."""
+    assert L.prompt_cards(1) == [L.PROMPT_CARD]
+    assert [x for x, _ in L.prompt_cards(2)] == [943, 1109]
+
+
+def test_prompt_ticks_each_offered_card_until_memory_names_the_one_meant():
+    """A prompt offering two cards: the second one is the policy's; it is found by reading memory per tick."""
+    from ygorl.selfplay.loop import Player
+
+    at = {xy: cid for xy, cid in zip(L.prompt_cards(2), (1, 2), strict=True)}
+    state, clicks = {"open": None}, []
+    player = Player.__new__(Player)
+    player.ui = SimpleNamespace(click=lambda x, y, why, pause=0: clicks.append((x, y)) or state.update(
+        open=at.get((x, y), state["open"])))  # fmt: skip
+    player.game = SimpleNamespace(read=lambda: None)
+    player.selection = SimpleNamespace(address=1, read=lambda raw: (state["open"], 9) if state["open"] else None)
+    player.passwords = {1: 111, 2: 222}
+    player.trace = SimpleNamespace(observe=lambda **k: None)
+    assert player.tick_prompt_card(222) == 222 and state["open"] == 2
+    state["open"], clicks[:] = None, []
+    assert player.tick_prompt_card(333) == 111 and state["open"] == 1  # none meant: the first card, ticked again

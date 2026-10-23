@@ -59,6 +59,7 @@ from ygorl.md.panel import PanelBook, name_fits, name_signature, name_words, pan
 from ygorl.md.explore import find_buttons
 from ygorl.md.request import read_request
 from ygorl.md.selection import for_process as selection_for
+from ygorl.md.selection import own_cards
 from ygorl.selfplay.decide import Decider, policy_scorer
 from ygorl.selfplay.observe import ShadowObserver
 from ygorl.selfplay.trace import Trace
@@ -70,6 +71,7 @@ OPTION_OK = (1024, 788)
 
 
 LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
+LIST_PAGES = 6  # the arrow scrolls less than a page: 3-4 turns for 9-11 cards
 
 
 def list_more(img: np.ndarray) -> bool:
@@ -181,6 +183,8 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
         return sum(c.cid == cid and all(getattr(c, k) == v for k, v in kw.items()) for c in _cards(pl, loc))
 
     left_hand = count(me1, "hand") < count(me0, "hand")
+    if kind == "summon" and act.card is not None and act.card.loc.location == C.LOCATION_MZONE:
+        return None  # a Gemini monster summoned again in place: nothing on the board the memory read shows changes
     if kind == "summon":
         ok = left_hand and count(me1, "mzone", face=1, sideways=0) > count(me0, "mzone", face=1, sideways=0)
         return None if ok else "summon: no new face-up Attack Position monster from the hand"
@@ -712,6 +716,14 @@ class Player:
                 if not self.ui.card_command(xy, f"field {self.name(cid)} (again)", "activate", 2.0, kind="activate"):
                     return self.refused(raw, best, f"no Activate for {self.name(cid)} on the field")
             return
+        if where.location == C.LOCATION_MZONE and best.kind == "summon":
+            # a Gemini monster already on the field is Normal Summoned again (Red-Eyes Archfiend of Lightning): its
+            # Summon icon above it, no zone
+            xy = my_monster_xy(where.sequence)
+            if not self.ui.card_command(xy, f"field {self.name(cid)}", "summon (gemini)", 2.0, kind="summon"):
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                return self.refused(raw, best, f"no Summon for {self.name(cid)} on the field")
+            return
         if where.location == C.LOCATION_GRAVE and best.kind == "activate":
             return self.graveyard_activate(raw, best, cid)
         if where.location == C.LOCATION_MZONE and best.kind == "reposition":
@@ -809,11 +821,12 @@ class Player:
             if icons:
                 self.ui.click(*icons[0], "activate (graveyard)", 2.0)
                 return
-            if sel is not None and self.ui.graveyard_command_greyed(self.gy_before, shot):
-                # MD offers the command greyed out: its rules differ from the reconstruction's here (Ancient
-                # Chant's Graveyard effect, greyed on a turn no copy was activated): masked for the rest of the turn
+            if sel is not None:
+                # memory says it is the card, and MD shows no Activate (greyed, or none at all): its rules differ
+                # from the reconstruction's here (Ancient Chant's Graveyard effect): masked for the rest of the turn,
+                # not just the phase (the policy picked it again seven times in run s25)
                 self.forbidden.add(((raw.turn, "*"), _action_key(best)))
-                self.trace.observe(graveyard_greyed=cid)
+                self.trace.observe(graveyard_greyed=self.ui.graveyard_command_greyed(self.gy_before, shot))
             break  # the right card (or the one the order names), and MD shows it no Activate
         self.ui.click(*NEUTRAL_SPOT, "close the graveyard", 0.8)
         self.refused(raw, best, f"no Activate for {self.name(cid)} in the Graveyard")
@@ -967,10 +980,7 @@ class Player:
             # the rebuild's answer is for the window, not for the card MD offers here: tick it, read which card
             # it is from memory, and pass when it is another one (Ultimate Divine-Beast was flipped for a Mirror
             # Force answer)
-            self.ui.click(*L.PROMPT_CARD, "tick the offered card", 0.8)
-            got = self.selection.read(self.game.read()) if getattr(self, "selection", None) else None
-            got_pw = self.passwords.get(got[0]) if got else None
-            self.trace.observe(prompt_card={"want": want, "got": got_pw})
+            got_pw = self.tick_prompt_card(want)
             if got_pw is not None and got_pw != want:
                 print(f"  prompt: MD offers {self.name(got[0])}, the policy meant another card: pass", flush=True)
                 self.ui.respond_prompt(False)
@@ -982,6 +992,29 @@ class Player:
         self.ui.respond_prompt(respond)
         if respond:
             self.context = "respond"
+
+    def tick_prompt_card(self, want: int) -> int | None:
+        """Tick the card a response prompt offers that the policy means (password ``want``): MD can offer several
+        side by side (Sun God Unification and Dark Spell Regeneration: only the first was ever ticked, and the
+        prompt passed). Which card is ticked is read from memory; the first one's password when none is ``want``."""
+        sel = getattr(self, "selection", None)
+        first, first_xy, tried = None, None, set()
+        for count in range(1, 5):
+            for xy in L.prompt_cards(count):
+                if xy in tried:
+                    continue
+                tried.add(xy)
+                self.ui.click(*xy, "tick the offered card", 0.8)
+                got = sel.read(self.game.read()) if sel is not None else None
+                got_pw = self.passwords.get(got[0]) if got else None
+                self.trace.observe(prompt_card={"want": want, "got": got_pw, "at": xy})
+                if got_pw == want or sel is None or sel.address is None:
+                    return got_pw  # the card meant, or memory cannot tell another card
+                if first is None and got_pw is not None:
+                    first, first_xy = got_pw, xy
+        if first_xy is not None:
+            self.ui.click(*first_xy, "tick the first card again", 0.8)
+        return first
 
     def _score(self, shadow, point):
         """The policy's logits on a shadow decision point (sub-picks inside our own action)."""
@@ -1278,7 +1311,13 @@ class Player:
                 self.context = "list"
                 return
             pick = None if stale else self.lockstep("list", raw, req)
-            if pick is None:
+            deck = [i for i, c in enumerate(req.candidates) if c.location == "deck"]
+            if pick is None and deck and len({self.passwords.get(c.cid) for c in req.candidates}) == 1:
+                # copies of one card in different places (Mahad: the hand's Dark Magician or the Deck's): the
+                # Deck's, so the hand keeps its card
+                self.trace.rule("list-copies-from-the-deck")
+                index, ticked = self.find_in_list(req, deck[0])
+            elif pick is None:
                 # a rule pick has no card in mind: the first card on screen (not memory's first candidate: the list
                 # can scroll and its order differs, an audit found Dark Magician sent for the "first" Ra)
                 self.trace.rule("list-first-on-screen")
@@ -1401,12 +1440,25 @@ class Player:
             return 0, False
         pw = lambda cid: self.passwords.get(cid, cid)  # noqa: E731
         want = cands[pick]
-        if n <= 1 or len({pw(c) for c in cands}) <= 1:
+        # copies of the wanted card in different places (Mahad's Dark Magician: the hand's or the Deck's) are
+        # told apart by their uid, which only memory gives
+        want_uid = req.candidates[pick].uid
+        copies = [c for c in req.candidates if pw(c.cid) == pw(want)]
+        by_uid = len({c.location for c in copies}) > 1 and want_uid != 0
+        if n <= 1 or (len({pw(c) for c in cands}) <= 1 and not by_uid):
             return 0, False  # one card, or only copies of one card: any position is the wanted card
         stats = {c: self.card_stats(c) for c in set(cands)}
         seen: dict = {}
         panels = {}
         selection = getattr(self, "selection", None)
+
+        # the open-card object is not found yet (a list asked before any hand card was opened twice: Foolish
+        # Burial's Deck list on turn 1 was guessed wrong twice): calibrate on the list's own ticks
+        # (every card of ours: the first scan must also find the object holding the card opened before the list)
+        pairs = {(c.cid, c.uid) for c in req.candidates if c.uid}
+        if selection is not None and selection.address is None:
+            pairs |= {(cid, uid) for uid, cid in own_cards(self.game.read()).items()}
+            selection.opened(self.game.read(), pairs)  # the scan the first tick is compared against
 
         def read_open():
             if selection is None or selection.address is None:
@@ -1416,28 +1468,32 @@ class Player:
             except Exception:  # noqa: BLE001
                 return None
 
-        for page in range(4):
+        for page in range(LIST_PAGES):
             for i in range(n):
                 prev = read_open()
                 self.ui.click(*cards[i], f"#{i + 1} of {n}: which card?", 0.9)
                 img = self.ui.capture()
+                got, uid, how = None, 0, ""
+                if selection is not None and prev is None:
+                    found = selection.opened(self.game.read(), pairs)  # the pair that changed with this tick
+                    if found is not None and found[0] in set(cands):
+                        (got, uid), how = found, "memory (calibrated on the list)"
                 now = read_open()
-                got, how = None, ""
-                if now is not None and now != prev:
-                    cid = struct.unpack("<I", now[:4])[0]
+                if got is None and now is not None and prev is not None and now != prev:
+                    cid, u = struct.unpack("<II", now)
                     if cid in set(cands):
-                        got, how = cid, "memory"
-                if got is None:
+                        got, uid, how = cid, u, "memory"
+                if got is None and not by_uid:
                     got, how = self.panel.identify(img, list(dict.fromkeys(cands)), stats)
                 seen[(page, i)], panels[(page, i)] = got, img
-                if got is not None and pw(got) == pw(want):
+                if got is not None and pw(got) == pw(want) and (not by_uid or uid == want_uid):
                     self.trace.observe(list_check={"want": want, "seen": {f"{k[0]}:{k[1]}": v for k, v in
                                                                           seen.items()}, "by": how})  # fmt: skip
                     self.pending_list = (img, req)
                     return i, True
                 self.ui.click(*cards[i], f"untick #{i + 1}", 0.6)
-            if not list_more(self.ui.capture()):
-                break
+            if page == LIST_PAGES - 1 or not list_more(self.ui.capture()):
+                break  # (no page turned after the last one looked at: a guess there clicked an unseen card)
             self.ui.click(*LIST_NEXT, "next cards of the list", 1.2)
             cards = L.list_cards(self.ui.capture())
             n = len(cards)
@@ -1489,6 +1545,17 @@ class Player:
             if not self.ui.card_command(my_monster_xy(s), f"tribute {self.name(c.cid)}", "confirm tribute", 2.0):
                 raise Stuck("no Confirm icon above the tribute")
             taken.add(s)
+
+    def monster_attack_at(self, raw: RawDuel, xy) -> int:
+        """The ATK of our monster drawn at ``xy`` (a large number when none is there)."""
+        me = raw.players[raw.me]
+        for s in range(7):
+            c = me.slots[s]
+            m = my_monster_xy(s)
+            if c is not None and abs(m[0] - xy[0]) + abs(m[1] - xy[1]) < 80:
+                k = self.cards.get(self.passwords.get(c.cid))
+                return k.attack if k is not None else 0
+        return 1 << 20
 
     @staticmethod
     def occupied(raw: RawDuel, spots) -> list:
@@ -1545,8 +1612,14 @@ class Player:
             # without the shadow: a target of the opponent's first (a destroy / target effect offering both sides
             # must not hit our own card); tributes are picked by :meth:`pick_tributes`, not here
             theirs = [p for p in fresh if p[1] < 640]
-            xy = (theirs or fresh)[0]
-            self.trace.rule("field-pick-opponent-first" if theirs else "field-pick-first")
+            if theirs:
+                xy = theirs[0]
+                self.trace.rule("field-pick-opponent-first")
+            else:
+                # our own monsters only (a Tribute for a cost, Soul Crossing's): the lowest ATK first (Apprentice
+                # Illusion Magician, 2000, was tributed while a 1000 Ra's Disciple was framed too)
+                xy = min(fresh, key=lambda p: self.monster_attack_at(raw, p))
+                self.trace.rule("field-pick-own-lowest-atk")
         for target in [xy] + [q for q in fresh if q != xy]:
             if self.ui.card_command(target, "highlighted card", "confirm"):
                 picked.append(target)
