@@ -54,7 +54,7 @@ from ygorl.md.ui import (
     yellow_highlight,
     zone_outlined,
 )
-from ygorl.md.panel import PanelBook, name_signature, name_width, panel_kind, width_fits
+from ygorl.md.panel import PanelBook, name_fits, name_signature, name_words, panel_kind
 from ygorl.md.request import read_request
 from ygorl.selfplay.decide import Decider, policy_scorer
 from ygorl.selfplay.observe import ShadowObserver
@@ -466,7 +466,7 @@ class Player:
         kind, want_kind = panel_kind(img), self.card_kind(cid)
         first_unknown = got is None and (not kind or kind == want_kind)
         self.trace.observe(panel={"want": cid, "got": got, "how": how, "kind": kind, "want_kind": want_kind,
-                                  "width": name_width(name_signature(img))})  # fmt: skip
+                                  "words": name_words(name_signature(img))})  # fmt: skip
         if got == cid or (first_unknown and self.unlearned_is(img, cid, hand)):
             self.pending_panel = (img, raw)
             return icons
@@ -506,13 +506,13 @@ class Player:
         raise Stuck(f"{self.name(cid)} not found in the hand by its information panel")
 
     def width_allows(self, img: np.ndarray, cid: int) -> bool:
-        """The name text on the panel is about as wide as ``cid``'s name (:func:`ygorl.md.panel.width_fits`)."""
-        return width_fits(name_width(name_signature(img)), self.name(cid))
+        """The name text on the panel has the words of ``cid``'s name (:func:`ygorl.md.panel.name_fits`)."""
+        return name_fits(name_signature(img), self.name(cid))
 
     def unlearned_is(self, img: np.ndarray, cid: int, hand: list[int]) -> bool:
-        """A panel no learned card matches shows ``cid`` when its kind and name width fit ``cid`` and no other
+        """A panel no learned card matches shows ``cid`` when its kind and name words fit ``cid`` and no other
         unlearned card of that kind in hand fits as well (Fist of Fate was Set for Millennium Revelation: two
-        spells, neither learned yet; Raigeki and Blaze Cannon differ by 90 px of name)."""
+        spells, neither learned yet; Blaze Cannon and Soul Crossing differ in their words)."""
         kind = self.card_kind(cid)
         if not self.width_allows(img, cid):
             return False

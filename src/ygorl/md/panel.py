@@ -144,16 +144,40 @@ def predicted_width(name: str) -> float:
 
 
 PX_PER_UNIT = 17.8  # measured on the English client: Raigeki 107 px (6.0 units), Blaze Cannon 200 px (11.2)
-NAME_FULL = 320  # text this wide runs into the attribute icon: the name is truncated and its length hidden
+NAME_FULL = 320  # text this wide runs into the attribute icon: the name is truncated and its last word cut
+WORD_GAP = 9  # px: blank columns between words (measured 13-15) and between letters (2-5)
 
 
-def width_fits(width: int, name: str, tolerance: float = 0.15) -> bool:
-    """Whether a never-learned panel whose name text is ``width`` px wide can show the card called ``name``: lets
-    the player tell two unlearned cards of one kind apart (Raigeki from Blaze Cannon) without guessing."""
-    want = predicted_width(name) * PX_PER_UNIT
-    if width >= NAME_FULL:
-        return want >= NAME_FULL * (1 - tolerance)
-    return abs(width - want) <= tolerance * want
+def name_words(sig: np.ndarray) -> list[int]:
+    """The widths of the words of the name text (letters closer than :data:`WORD_GAP` belong to one word)."""
+    cols = sig[:, :NAME_TEXT_END].any(axis=0)
+    xs = np.flatnonzero(cols)
+    if not len(xs):
+        return []
+    words, start = [], xs[0]
+    for a, b in zip(xs, xs[1:]):
+        if b - a > WORD_GAP:
+            words.append(int(a - start + 1))
+            start = b
+    words.append(int(xs[-1] - start + 1))
+    return words
+
+
+def name_fits(sig: np.ndarray, name: str, tolerance: float = 0.12, slack: int = 8) -> bool:
+    """Whether a never-learned panel whose name text is ``sig`` can show the card called ``name``: the word count
+    and each word's width (:func:`predicted_width`) agree. Tells two unlearned cards of one kind apart without
+    guessing (Blaze Cannon and Soul Crossing are both 200 px wide, but 5 + 6 letters against 4 + 8)."""
+    seen = name_words(sig)
+    want = [predicted_width(w) * PX_PER_UNIT for w in name.split()]
+    if not seen:
+        return False
+    if sum(seen) + WORD_GAP * (len(seen) - 1) >= NAME_FULL:  # truncated: the last visible word may be cut
+        seen, want = seen[:-1], want[: len(seen) - 1]
+        if len(want) < len(seen):
+            return False
+    elif len(seen) != len(want):
+        return False
+    return all(abs(s - w) <= max(tolerance * w, slack) for s, w in zip(seen, want, strict=True))
 
 
 class PanelBook:
@@ -253,5 +277,6 @@ __all__ = [
     "panel_open",
     "predicted_width",
     "same_name",
-    "width_fits",
+    "name_fits",
+    "name_words",
 ]

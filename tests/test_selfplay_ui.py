@@ -535,6 +535,30 @@ def test_unknown_panel_is_not_taken_for_one_of_two_unlearned_spells():
         player.verify_hand_card(raw, hand[0], L.hand_card(0, len(hand)), [(0, 0)])
 
 
+def test_unlearned_names_are_told_apart_by_their_words():
+    """Blaze Cannon and Soul Crossing are both ~200 px of name text; their words (measured 76 + 110 and 61 + 125
+    px, 14 px apart) are not alike."""
+    from ygorl.md.panel import name_fits, name_words
+
+    def sig(words):
+        out, x = np.zeros((27, 360), bool), 6
+        for w in words:
+            for gx in range(x, x + w, 18):  # letters 14 px wide, 4 px apart
+                out[5:20, gx : min(gx + 14, x + w)] = True
+            out[5:20, x + w - 3 : x + w] = True  # the last letter reaches the word's end
+            x += w + 14
+        return out
+
+    blaze, soul = sig([76, 110]), sig([61, 125])
+    assert name_words(blaze) == [76, 110] and name_words(soul) == [61, 125]
+    assert name_fits(blaze, "Blaze Cannon") and not name_fits(blaze, "Soul Crossing")
+    assert name_fits(soul, "Soul Crossing") and not name_fits(soul, "Blaze Cannon")
+    assert name_fits(sig([107]), "Raigeki") and not name_fits(sig([107]), "Blaze Cannon")
+    # a truncated name: the last visible word is cut, the words before it still count
+    assert name_fits(sig([160, 101, 45]), "Apprentice Illusion Magician")
+    assert not name_fits(sig([160, 101, 45]), "The Winged Dragon of Ra - Sphere Mode")
+
+
 def test_list_pick_is_checked_on_the_panel():
     """MD's on-screen list order is not memory's (reversed here): the guessed position is ticked, the panel names
     another candidate, so it is unticked and the next position tried until the panel shows the wanted card."""
