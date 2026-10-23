@@ -487,6 +487,38 @@ def test_yesno_needs_its_button_labels():
     assert screen_dialog(img) == "yesno"
 
 
+def _banner(img: np.ndarray, top: int) -> None:
+    """MD's banner: a navy band across the board, lighter behind its white text."""
+    img[top : top + 100, 466:1590] = (12, 40, 56)
+    img[top + 15 : top + 75, 900:1150] = (32, 68, 84)
+    img[top + 45 : top + 60, 950:1100] = 255
+
+
+def test_banner_over_a_dark_board():
+    """On the lava stage the board's middle row reads as a dark band: a top banner over it is still a banner."""
+    from ygorl.md.ui import screen_dialog
+
+    img = np.full((L.REF_H, L.REF_W, 3), 40, np.uint8)
+    assert screen_dialog(img) == "panel"
+    _banner(img, 255)
+    assert screen_dialog(img) == "banner"
+
+
+def test_banner_at_the_top_or_the_bottom_of_the_board():
+    from ygorl.md.ui import screen_dialog
+
+    board = np.full((L.REF_H, L.REF_W, 3), 110, np.uint8)
+    assert screen_dialog(board) is None
+    img = board.copy()
+    img[270:300, 900:1150] = (32, 68, 84)  # navy and white at the top centre only: a monster's art and ATK digits
+    img[300:315, 950:1100] = 255
+    assert screen_dialog(img) is None
+    for top in (255, 855):  # MD drops the banner low when the targets are in the opponent's rows
+        img = board.copy()
+        _banner(img, top)
+        assert screen_dialog(img) == "banner"
+
+
 def test_zone_outlined_finds_the_offered_spell_zone():
     from ygorl.md.ui import zone_outlined
 

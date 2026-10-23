@@ -173,15 +173,38 @@ def screen_dialog(img: np.ndarray) -> str | None:
 
         lit = [b.centre for b in find_buttons(img) if b.label == "enabled"]
         at = lambda spot: any(abs(x - spot[0]) <= 20 and abs(y - spot[1]) <= 20 for x, y in lit)  # noqa: E731
-        return "yesno" if at(YESNO_NO) and at(YESNO_YES) else "panel"
+        if at(YESNO_NO) and at(YESNO_YES):
+            return "yesno"
+        # the lava stage's own middle row reads 97-107 in that band: a top banner over it is still a banner
+        return "banner" if _top_banner(img) else "panel"
     if box_mean(img, 950, 1100, 1100, 1130).max() < 30 and L.list_cards(img):
         return "list"  # the dark strip alone also shows during a turn change: the list's blue tray must be up too
-    banner = box_mean(img, 900, 270, 1150, 300)
-    text = (img[260:330, 470:1590].min(axis=2) > 200).mean()
-    # MD's banner is a navy band (32 68 84 measured) with white text: a dark field (the lava stage, 53 44 48) is not
-    if banner[0] < 60 and banner[2] < 110 and banner.mean() < 80 and banner[2] > banner[0] + 25 and text > 0.0015:
+    if _top_banner(img) or _bottom_banner(img):
         return "banner"
     return None
+
+
+def _top_banner(img: np.ndarray) -> bool:
+    """MD's banner across the top of the board: a navy band (32 68 84 measured) with white text; a dark field (the
+    lava stage, 53 44 48) is not. The band runs on, darker, on both sides of its text (11-17 38-45 54-60 measured at
+    x 650-750 and 1250-1350 above the text row): an opponent's monster at the top centre (teal art, white ATK digits)
+    passes the centre test alone, with the lava field (34-40 32-35 35-38) on either side."""
+    banner = box_mean(img, 900, 270, 1150, 300)
+    text = (img[260:330, 470:1590].min(axis=2) > 200).mean()
+    if not (banner[0] < 60 and banner[2] < 110 and banner.mean() < 80 and banner[2] > banner[0] + 25 and text > 0.0015):  # fmt: skip
+        return False
+    wings = [box_mean(img, x0, 272, x0 + 100, 292) for x0 in (650, 1250)]
+    return all(w[1] > w[0] + 20 and w[2] > w[0] + 30 and w.max() < 110 for w in wings)
+
+
+def _bottom_banner(img: np.ndarray) -> bool:
+    """The same banner low on the board (y 855-955), where MD puts it when the targets are in the opponent's rows
+    (choose an attack target): a deeper navy core (13-19 54-58 78-81 measured; the lava stage's blue-lit own rows,
+    58 73 98, are not) with white text. Only asked when nothing else matched: the effect choice and chain panels
+    are navy there too."""
+    core = box_mean(img, 900, 860, 1150, 895)
+    text = (img[850:930, 470:1590].min(axis=2) > 200).mean()
+    return bool(core[0] < 35 and core[1] > core[0] + 20 and core[2] > core[0] + 35 and core.mean() < 60 and text > 0.0015)  # fmt: skip
 
 
 def position_buttons(img: np.ndarray) -> tuple[XY, XY] | None:
