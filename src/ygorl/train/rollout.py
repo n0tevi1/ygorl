@@ -10,6 +10,11 @@ per column ("fixed-length segments with auto-reset").
 - **Snapshot opponent** (``opponent = <snapshot id>``): only the learner seat's decisions are rows; the
   snapshot's decisions are part of the environment (docs/training.md: "只收学习方的行"). They are played
   with ``opponents(id).policy_logits`` and counted in ``Rollout.opponent_decisions``.
+- **Scripted line** (``Assignment.line``, a :class:`ygorl.train.lines.LineScript`): a pool game whose opponent seat
+  opens with a solver demonstration (:class:`~ygorl.train.lines.LinePlayer` picks the candidate matching each step)
+  and is played by the snapshot once the line ends or breaks. The learner's rows carry the line's id
+  (``Rollout.line_id``, -1 elsewhere) and ``Rollout.line_window`` (its chain-window decisions of the game, 1-based;
+  0 on other decisions), for joining solver labels later; ``FinishedGame.line`` records how the line went.
 - **Terminal rows**: the result is attached to the column's last row of that game: ``done``; reward +1 / -1
   / 0 from that row's seat. Games cut by a limit or an engine error (:data:`TRUNCATION_REASONS`) are
   **truncations**, not outcomes: ``done`` and ``truncated``, reward 0; the estimator bootstraps them from the
@@ -33,9 +38,11 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 
+from ygorl.engine.constants import MSG_SELECT_CHAIN
 from ygorl.engine.outcome import TRUNCATED
 from ygorl.env.driver import EnvStalled, StallWatch
 from ygorl.nets.batch import policy_logits
+from ygorl.train.lines import LinePlayer
 
 TRUNCATION_REASONS = TRUNCATED  # games the host stopped: bootstrapped, not terminal (ygorl.engine.outcome)
 
@@ -53,6 +60,7 @@ class Assignment:
     opponent: int | None = None  # None: the current policy on both seats; else a snapshot id (pool opponent)
     learner_seat: int = 0  # engine seat of the learner in a pool game (ignored in self-play)
     info: Mapping[str, Any] = field(default_factory=dict)  # free-form labels (deck names ...) for the logs
+    line: Any = None  # a LineScript the opponent seat opens with (needs a snapshot opponent); None: none
 
     def is_learner(self, seat: int) -> bool:
         return self.opponent is None or seat == self.learner_seat
@@ -66,6 +74,7 @@ class FinishedGame:
     truncated: bool  # cut by a limit / error: not a win or a loss for training
     learner_rows: int  # training rows the game contributed (across rollouts)
     result: dict
+    line: dict | None = None  # scripted game: LinePlayer.finish() (id, status completed / broken / playing, ...)
 
     @property
     def learner_score(self) -> float | None:
@@ -102,6 +111,8 @@ class Rollout:
     seconds: float
     complete_games: bool = False
     discarded_rows: int = 0  # complete-game mode: rows of truncated games (still charged as decisions)
+    line_id: Tensor | None = None  # [T, B] id of the scripted line of the row's game, -1 without one
+    line_window: Tensor | None = None  # [T, B] the seat's chain-window decisions so far in its game (1-based); else 0
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -126,6 +137,8 @@ class _Row:
     reward: float = 0.0
     done: bool = False
     truncated: bool = False
+    line_id: int = -1
+    line_window: int = 0
 
 
 @dataclass
@@ -134,6 +147,8 @@ class _Slot:
     opponent: nn.Module | None = None  # the snapshot, resolved when the game starts (it may leave the pool)
     rows: int = 0  # rows of the current game, across rollouts
     rows_here: int = 0  # rows of the current game in the column being filled
+    line: LinePlayer | None = None  # scripted game: the opponent seat's line
+    windows: int = 0  # the learner's chain-window decisions so far in this game
 
 
 class RolloutCollector:
@@ -212,6 +227,8 @@ class RolloutCollector:
                         self._held[ev.env_id] = ev
                     else:
                         learner.append(ev)
+                elif slot.line is not None and self._act_line(slot, ev):
+                    opponent_decisions += 1
                 else:
                     others[id(slot.opponent)].append(ev)
             if learner:
@@ -254,6 +271,8 @@ class RolloutCollector:
                     self._slots[ev.env_id] = None
                 elif slot.assignment.is_learner(ev.player):
                     learner.append(ev)
+                elif slot.line is not None and self._act_line(slot, ev):
+                    opponent_decisions += 1
                 else:
                     others[id(slot.opponent)].append(ev)
             if learner:
@@ -291,7 +310,12 @@ class RolloutCollector:
             if self.opponents is None:
                 raise RuntimeError("a pool game needs opponents(snapshot_id)")
             opponent = self.opponents(assignment.opponent)
-        self._slots[env_id] = _Slot(assignment, opponent)
+        line = None
+        if assignment.line is not None:
+            if opponent is None:
+                raise RuntimeError("a scripted-line game needs a snapshot opponent to continue the line")
+            line = LinePlayer(assignment.line, bool(getattr(self.env, "skip_forced", False)))
+        self._slots[env_id] = _Slot(assignment, opponent, line=line)
         self._watch.started(env_id)
         self.games_started += 1
         self.env.reset(env_id, assignment.spec)
@@ -308,7 +332,8 @@ class RolloutCollector:
             if not truncated and winner is not None:
                 scale = self.turn_discount ** int(res.get("turns", 0)) if self.turn_discount < 1 else 1.0
                 row.reward = scale if winner == row.player else -scale
-        return FinishedGame(slot.assignment, winner, reason, truncated, slot.rows, dict(res))
+        return FinishedGame(slot.assignment, winner, reason, truncated, slot.rows, dict(res),
+                            slot.line.finish() if slot.line is not None else None)  # fmt: skip
 
     # -- acting ---------------------------------------------------------------------------------------
     def _act_learner(self, events: list, cols: list[list[_Row]]) -> None:
@@ -324,11 +349,25 @@ class RolloutCollector:
         for i, ev in enumerate(events):
             a = int(actions[i])
             slot = self._slots[ev.env_id]
+            window = 0
+            g = ev.obs.get("globals")  # absent on toy environments (train.toy)
+            if g is not None and int(g[18]) == MSG_SELECT_CHAIN:
+                slot.windows += 1
+                window = slot.windows
+            line_id = slot.assignment.line.id if slot.assignment.line is not None else -1
             cols[ev.env_id].append(_Row(ev.obs, ev.privileged, int(ev.player), a, float(chosen[i]), probs[i], q[i],
-                                        float(v[i])))  # fmt: skip
+                                        float(v[i]), line_id=line_id, line_window=window))  # fmt: skip
             slot.rows += 1
             slot.rows_here += 1
             self.env.step(ev.env_id, a)
+
+    def _act_line(self, slot: _Slot, ev) -> bool:
+        """Play the opponent seat's decision from its scripted line; False once the line is over (the snapshot plays)."""
+        row = slot.line.act(ev.obs)
+        if row is None:
+            return False
+        self.env.step(ev.env_id, row)
+        return True
 
     def _act_opponent(self, module: nn.Module, events: list) -> None:
         batch = self.model.collate([ev.obs for ev in events], self.device)
@@ -377,7 +416,8 @@ class RolloutCollector:
             dones=grid([r.done for r in rows], torch.bool), truncated=grid([r.truncated for r in rows], torch.bool),
             bootstrap_player=boot_player, bootstrap_mask=boot_mask, bootstrap_probs=boot_probs, bootstrap_q=boot_q,
             bootstrap_value=boot_value, games=games, opponent_decisions=opponent_decisions, seconds=seconds,
-            complete_games=complete,
+            complete_games=complete, line_id=grid([r.line_id for r in rows], torch.long),
+            line_window=grid([r.line_window for r in rows], torch.long),
         )  # fmt: skip
 
 
