@@ -221,7 +221,9 @@ def list_cards(img: np.ndarray, trays: Sequence[tuple[int, int, int]] = TRAY_RGB
 
     The cards sit on flat trays (blue for own cards, red for the opponent's) whose strip just below them (y ~1030-1060) is unbroken; a tray is
     ``158 * n - 20`` wide for n cards (lists of 2, 3, 4 and 6 cards measured), and its cards are spread evenly over
-    it. Cards from different places (the field, the Deck: Fusion Materials) sit on separate trays 20 px apart.
+    it. Cards from different places (the field, the Deck: Fusion Materials) sit on separate trays 20 px apart. A list
+    too long for the panel scrolls: its tray is cut at the panel's edge (wider than its whole cards) and the cards
+    start at its left end (a 7-card list measured: tray 999 px from x 530, cards from x 599).
     """
     best: list[tuple[int, int]] = []  # (left, width) of the trays on the row that shows the most tray
     for y in range(1030, 1062, 2):
@@ -238,5 +240,7 @@ def list_cards(img: np.ndarray, trays: Sequence[tuple[int, int, int]] = TRAY_RGB
     for left, width in best:
         n = round((width + 20) / CARD_STEP)
         first = left + (width - (n - 1) * CARD_STEP) / 2
+        if width > CARD_STEP * n - 20 + 10:  # a list that scrolls: the tray runs on past the panel, cards from its left
+            first = left + (CARD_STEP - 20) / 2
         cards += [(round(first + i * CARD_STEP), LIST_CARD_Y) for i in range(n)]
     return cards

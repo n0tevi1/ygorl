@@ -496,6 +496,15 @@ def test_list_cards_from_the_tray_width(n):
     assert list_cards(img) == [(x, 905) for x in centres]
 
 
+def test_list_cards_of_a_scrolling_list_start_at_the_tray_left():
+    """A 7-card list in a 6-card panel: the tray runs on to the panel's edge, the cut-off 7th card is not counted."""
+    from ygorl.md.layout import CARD_STEP, TRAY_RGB, list_cards
+
+    img = np.full((1184, 2054, 3), 15, np.uint8)
+    img[820:1060, 530:1529] = TRAY_RGB  # 999 px: wider than six cards (928), short of seven
+    assert list_cards(img) == [(599 + i * CARD_STEP, 905) for i in range(6)]
+
+
 def test_expectation_checks_the_policys_action_against_memory():
     from types import SimpleNamespace
 
