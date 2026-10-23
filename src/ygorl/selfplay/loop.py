@@ -1108,7 +1108,20 @@ class Player:
             if not L.list_cards(self.ui.capture()):  # a passing frame (a turn change) looked like a list
                 self.trace.observe(list="gone before the pick")
                 return
+            shown = len(L.list_cards(self.ui.capture()))
             req = self.request_now(raw, list_shown=True)
+            for _ in range(8):  # MD fills its list a moment after the panel shows: one stale candidate was read once
+                if len(req.candidates) >= shown:
+                    break
+                time.sleep(0.3)
+                raw = self.game.read()
+                req = self.request_now(raw, list_shown=True)
+            stale = len(req.candidates) < shown
+            if stale:
+                # (Apprentice Illusion Magician's discard: one candidate, the opponent's card, against 5 on screen;
+                # the shadow took it for a forced pick)
+                self.trace.observe(list_request={"stale": [[c.cid, c.location, c.sequence] for c in req.candidates],
+                                                 "shown": shown})  # fmt: skip
             self.listed = (self.expect, tuple(c.cid for c in req.candidates))  # names a monster summoned next
             need = next((v for k, v in req.params if k == 8), 1)  # "choose N cards" (Fusion Materials)
             if 1 < need <= len(L.list_cards(self.ui.capture())):
@@ -1116,7 +1129,7 @@ class Player:
                 self.trace.observe(list_set=self.ui.pick_list_set(need))
                 self.context = "list"
                 return
-            pick = self.lockstep("list", raw, req)
+            pick = None if stale else self.lockstep("list", raw, req)
             if pick is None:
                 # a rule pick has no card in mind: the first card on screen (not memory's first candidate: the list
                 # can scroll and its order differs, an audit found Dark Magician sent for the "first" Ra)
