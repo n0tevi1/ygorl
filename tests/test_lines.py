@@ -286,3 +286,23 @@ def test_library_leaves_out_records_bound_to_another_environment(db, vocab, tmp_
     lib = LineLibrary.load([path], vocab, cards=db)
     assert len(lib) == 2 and len(lib.problems) == 1 and "md-1999-01" in lib.problems[0]
     assert [s.id for s in lib.scripts] == [0, 1] and isinstance(lib[0], LineScript)
+
+
+def test_library_sample_can_be_restricted_to_dealable_ids():
+    """LineLibrary.dealable (TrainConfig.line_labelled_only) limits sampling to the given ids; empty = error."""
+    import numpy as np
+
+    from ygorl.train.lines import LineLibrary, LineScript, LineStep
+    from ygorl.cards.ydk import Deck
+
+    scripts = [
+        LineScript(i, Deck((1,), (), (), f"d{i}"), i, (0, 0, 0, 0), 0, {}, (LineStep((1,), False),)) for i in range(5)
+    ]
+    lib = LineLibrary(scripts)
+    rng = np.random.default_rng(0)
+    assert {lib.sample(rng).id for _ in range(50)} == set(range(5))
+    lib.dealable = [1, 3]
+    assert {lib.sample(rng).id for _ in range(50)} == {1, 3}
+    lib.dealable = []
+    with pytest.raises(ValueError, match="dealable"):
+        lib.sample(rng)

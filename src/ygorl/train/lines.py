@@ -180,6 +180,9 @@ class LineLibrary:
         self.scripts = list(scripts)
         self.problems = list(problems)
         self.seconds = 0.0
+        self.dealable: list[int] | None = (
+            None  # ids `sample` draws from; None = every script (TrainConfig.line_labelled_only)
+        )
 
     @classmethod
     def load(cls, paths: Iterable[str | Path], vocab: CardVocab, *, cards=None, env: Environment | None = None,
@@ -211,6 +214,10 @@ class LineLibrary:
     def sample(self, rng: np.random.Generator) -> LineScript:
         if not self.scripts:
             raise ValueError("the line library is empty")
+        if self.dealable is not None:
+            if not self.dealable:
+                raise ValueError("no dealable line (line_labelled_only with no labelled line)")
+            return self.scripts[self.dealable[int(rng.integers(len(self.dealable)))]]
         return self.scripts[int(rng.integers(len(self.scripts)))]
 
 

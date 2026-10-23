@@ -117,6 +117,9 @@ class TrainConfig:
     # graded hand-trap labels of those lines (train.line_labels; the window cache is written next to the file): the
     # learner's labelled chain windows get ppo.line_bonus_coef * bonus on their advantage
     line_labels: str | None = None
+    # deal only the lines that carry a label (line_labels): the labelled rows are sparse otherwise (a labelled line and
+    # the learner holding the hand trap are both needed); scripted games then never use unlabelled lines
+    line_labelled_only: bool = False
     snapshot_every: int = 10  # updates
     pool_sampling: str = (
         "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
@@ -184,6 +187,8 @@ class TrainConfig:
             raise ValueError("line_share must be in [0, 1] and needs line_demos when above 0")
         if self.line_labels and not (self.line_demos and self.line_share > 0):
             raise ValueError("line_labels needs line_demos and a line_share above 0 (the labels are on those lines)")
+        if self.line_labelled_only and not self.line_labels:
+            raise ValueError("line_labelled_only needs line_labels")
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -295,6 +300,9 @@ class Trainer:
             if cfg.line_labels:
                 self.line_labels = LineLabels.load(cfg.line_labels, self.lines, self.vocab, cards=self.cards,
                                                    env=self.environment, event_length=cfg.event_length, log=self.log)  # fmt: skip
+                if cfg.line_labelled_only:
+                    self.lines.dealable = sorted({key[0] for key in self.line_labels.table})
+                    self.log(f"scripted lines dealt from the {len(self.lines.dealable)} labelled lines only")
         self.learner = PPOLearner(self.model, cfg.ppo, prior, line_labels=self.line_labels)
         self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share, cfg.pool_sampling, cfg.pfsp_power)
         for path in cfg.pin_opponents:

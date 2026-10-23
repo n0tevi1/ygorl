@@ -17,7 +17,7 @@ from ygorl.train.trainer import TrainConfig  # noqa: E402
 DECKS = ("a.ydk", "b.ydk")
 # string fields without choices: a valid non-default value each
 STRINGS = {"env": "v1", "text_dir": str(Path("/tmp/feats").resolve()), "bc_prior": "bc.pt", "init_from": "init.pt", "device": "cuda:1",
-           "register_matrix": str(Path("/tmp/matrix.json").resolve()), "keep_best_by": "random", "ppo.objective": "pg", "deck_pool": str(Path("/tmp/pool.json").resolve()), "critic_init": "fresh"}  # fmt: skip
+           "register_matrix": str(Path("/tmp/matrix.json").resolve()), "keep_best_by": "random", "ppo.objective": "pg", "deck_pool": str(Path("/tmp/pool.json").resolve()), "critic_init": "fresh", "line_labels": str(Path("/tmp/graded.jsonl").resolve())}  # fmt: skip
 TUPLES = {"eval_opponents": ("random", "greedy", "policy:x.pt"), "pin_opponents": ("a.pt", "b.pt"),
           "line_demos": ("a.jsonl", "b.jsonl")}  # fmt: skip
 
@@ -58,6 +58,10 @@ def perturbed(key: str):
         base = replace(base, complete_games=True)
     if key == "line_share":
         base = replace(base, line_demos=("demos.jsonl",))
+    if key == "line_labels":
+        base = replace(base, line_demos=("demos.jsonl",), line_share=0.5)
+    if key == "line_labelled_only":
+        base = replace(base, line_demos=("demos.jsonl",), line_share=0.5, line_labels="graded.jsonl")
     owner = key.partition(".")[0]
     if owner == "net":
         return replace(base, net={**base.net, **{k[4:]: v for k, v in values.items()}})
