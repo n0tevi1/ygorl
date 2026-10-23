@@ -778,6 +778,7 @@ class Player:
         seq = best.card.loc.sequence
         guess = len(grave) - 1 - seq if 0 <= seq < len(grave) else 0  # the strip shows the top card first
         tries = [guess] + [i for i in range(len(grave)) if i != guess]
+        self.gy_before = self.ui.capture()
         self.ui.open_graveyard()
         for i in [t for t in tries if t < GY_STRIP_SHOWN]:  # deeper cards need the strip scrolled: not yet
             icons, shot = self.ui.open_graveyard_card(
@@ -794,6 +795,11 @@ class Player:
             if icons:
                 self.ui.click(*icons[0], "activate (graveyard)", 2.0)
                 return
+            if sel is not None and self.ui.graveyard_command_greyed(self.gy_before, shot):
+                # MD offers the command greyed out: its rules differ from the reconstruction's here (Ancient
+                # Chant's Graveyard effect, greyed on a turn no copy was activated): masked for the rest of the turn
+                self.forbidden.add(((raw.turn, "*"), _action_key(best)))
+                self.trace.observe(graveyard_greyed=cid)
             break  # the right card (or the one the order names), and MD shows it no Activate
         self.ui.click(*NEUTRAL_SPOT, "close the graveyard", 0.8)
         self.refused(raw, best, f"no Activate for {self.name(cid)} in the Graveyard")
@@ -844,6 +850,7 @@ class Player:
         key = (raw.turn, raw.phase)
         no_attacks = (key, ATTACKS_MASKED) in self.forbidden
         allowed = [g for g in advice.suggestions if (key, _action_key(g.action)) not in self.forbidden
+                   and ((raw.turn, "*"), _action_key(g.action)) not in self.forbidden
                    and not (no_attacks and g.action.kind == "attack") and clickable(g.action)]  # fmt: skip
         if not allowed:
             raise Stuck(f"no legal action left in the {snap.phase} reconstruction (MD refused the rest)")

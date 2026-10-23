@@ -130,6 +130,8 @@ DECLARE_SEARCH, DECLARE_CLEAR, DECLARE_GO = (1026, 717), (1289, 717), (759, 717)
 # the advisor's Graveyard pile and the strip its viewer opens at the right edge (measured: 2 cards at y 280, 430)
 GY_PILE, GY_STRIP_X, GY_STRIP_Y0, GY_STRIP_STEP = (1600, 812), 1946, 280, 150
 GY_STRIP_SHOWN = 5  # strip positions on screen without scrolling (y 280 .. 880)
+GY_ICON = (1624, 690)  # where MD draws the opened Graveyard card's command, above the pile
+GY_ICON_BOX = (1480, 570, 1770, 810)
 
 
 def declare_box(img: np.ndarray) -> bool:
@@ -462,14 +464,29 @@ class UI:
         after = before
         for _ in range(8):
             after = self.capture()
-            box = (1300, max(xy[1] - 220, 0), GY_STRIP_X - 70, min(xy[1] + 220, L.REF_H))
-            icons = [p for p in L.new_icons(before, after, *box) if is_command_icon(after, *p)]
+            icons = []
+            # MD draws a Graveyard card's commands above the pile (a greyed "Activate" measured at (1624, 690));
+            # beside the strip card too, in case
+            for box in (GY_ICON_BOX, (1300, max(xy[1] - 220, 0), GY_STRIP_X - 70, min(xy[1] + 220, L.REF_H))):
+                found = L.new_icons(before, after, *box) + L.green_icons(after, *box) + L.blue_icons(after, *box)
+                icons += [p for p in found if is_command_icon(after, *p) and all(abs(p[0] - q[0]) + abs(p[1] - q[1])
+                                                                                    > 60 for q in icons)]  # fmt: skip
             hits = [p for p in icons if icon_kind(after, *p) == kind]
             if hits:
                 self.wait_still((hits[0][0] - 50, hits[0][1] - 50, hits[0][0] + 50, hits[0][1] + 50), timeout=2.0)
                 return sorted(hits, key=lambda p: abs(p[1] - xy[1])), after
             self.sleep(0.3)
         return [], after
+
+    @staticmethod
+    def graveyard_command_greyed(before: np.ndarray, after: np.ndarray) -> bool:
+        """MD shows the Graveyard card's command, greyed out: the effect cannot be activated now. A grey disc
+        appeared at :data:`GY_ICON` (it changed, and it has no colour)."""
+        x, y = GY_ICON
+        a = after[y - 35 : y + 35, x - 35 : x + 35].astype(int)
+        b = before[y - 35 : y + 35, x - 35 : x + 35].astype(int)
+        grey = float((a.max(axis=2) - a.min(axis=2)).mean())
+        return bool(np.abs(a - b).mean() > 12 and grey < 32)  # 5-28 measured (the lava tints it)
 
     def open_hand_card(self, xy: XY, why: str) -> list[XY]:
         return self.open_card(xy, why, hand=True)

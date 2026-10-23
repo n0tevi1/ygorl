@@ -794,6 +794,8 @@ def test_graveyard_activation_checks_the_open_card_in_memory():
             state.update(open=shown[i]) or ([(1500, 300 + i)], np.zeros((2, 2, 3)))
         ),
         click=lambda x, y, why, pause=0: clicks.append((x, y)),
+        capture=lambda: np.zeros((2, 2, 3)),
+        graveyard_command_greyed=lambda before, after: False,
     )
     player = Player.__new__(Player)
     player.ui, player.name, player.out = ui, str, Path(tempfile.mkdtemp())
@@ -802,6 +804,7 @@ def test_graveyard_activation_checks_the_open_card_in_memory():
     player.selection = SimpleNamespace(read=lambda r: (state["open"], 0))
     refused = []
     player.refused = lambda r, a, why: refused.append(why)
+    player.forbidden = set()
     action = SimpleNamespace(card=SimpleNamespace(loc=SimpleNamespace(sequence=0)))  # grave[0] = 111
     player.graveyard_activate(raw, action, 111)
     assert clicks == ["pile", (1500, 301)] and not refused  # strip #2 holds grave[0]; its icon clicked
