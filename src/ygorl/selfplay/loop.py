@@ -692,7 +692,11 @@ class Player:
             else:
                 raise Stuck("no position measured for the Field Zone yet")
             if not self.ui.card_command(xy, f"field {self.name(cid)}", "activate", 2.0, kind="activate"):
-                return self.refused(raw, best, f"no Activate for {self.name(cid)} on the field")
+                # a draw reveal or an effect's animation can cover the field: settle and look once more
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+                if not self.ui.card_command(xy, f"field {self.name(cid)} (again)", "activate", 2.0, kind="activate"):
+                    return self.refused(raw, best, f"no Activate for {self.name(cid)} on the field")
             return
         if where.location == C.LOCATION_MZONE and best.kind == "reposition":
             # a monster's change-of-position icon: only taken when it is the card's single icon (no glyph measured)
@@ -868,7 +872,9 @@ class Player:
         can tell: respond to the opponent's attacks and in our own End Phase, else pass."""
         phase = PHASES[raw.phase] if raw.phase < len(PHASES) else ""
         theirs = raw.turn_player != raw.me
-        respond = (theirs and phase == "battle") or (not theirs and phase == "end")
+        # the rule: respond to the opponent's attacks, and to our own triggers in our Draw / Standby / End Phase
+        # ("You drew card(s). Activate?" of Palladium Oracle Mahad, a free Special Summon, was passed)
+        respond = (theirs and phase == "battle") or (not theirs and phase in ("draw", "standby", "end"))
         self.respond_card = None  # set by a rebuild below, not left over from an earlier one
         pick = None if theirs else self.lockstep("prompt", raw, lambda: self.request_now(raw))
         if pick is None:

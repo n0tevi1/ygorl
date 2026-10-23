@@ -400,7 +400,10 @@ class UI:
             # poll for one straight above the card
             for _ in range(16):
                 img = self.capture()
-                found = [p for p in L.find_icons(img, *box) or L.blue_icons(img, *box) if abs(p[0] - x) <= 40]
+                # yellow-green Activate icons glow to their rim: the rim test misses them (a Set Raigeki was refused
+                # twice with its Activate icon on screen)
+                found = [p for p in L.find_icons(img, *box) or L.blue_icons(img, *box) or L.green_icons(img, *box)
+                         if abs(p[0] - x) <= 40]  # fmt: skip
                 if found:
                     return found
                 self.sleep(0.3)
