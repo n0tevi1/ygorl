@@ -640,6 +640,27 @@ def test_open_card_is_read_from_memory():
     assert got == [(L.hand_card(1, len(cards))[0], 880)] and opened[-1] == 1  # found at position 1
 
 
+def test_open_card_slot_is_the_lower_of_two_equal_slots():
+    """Opening one card twice leaves the same pair in the open slot and in the previous-card slot 0x78 above it."""
+    import struct
+
+    from ygorl.md.memory import BufferMemory
+    from ygorl.md.selection import PREVIOUS, Selection
+
+    raw = read_duel(build_memory(), BASE, replace(OFF, verified=True, semantics=SEM))
+    a, b = [(c.cid, c.uid) for c in raw.players[raw.me].piles["hand"]][:2]
+    heap = bytearray(0x1000)
+    for at in (0x400, 0x400 + PREVIOUS):
+        struct.pack_into("<II", heap, at, *a)
+    mem = BufferMemory({0x10000: bytes(heap)})
+    sel = Selection(mem, lambda: [(0x10000, 0x11000)])
+    assert sel.opened(raw) is None
+    for at in (0x400, 0x400 + PREVIOUS):
+        struct.pack_into("<II", heap, at, *b)
+    mem.regions[0x10000] = bytes(heap)
+    assert sel.opened(raw) == b and sel.address == 0x10400
+
+
 def test_unlearned_names_are_told_apart_by_their_words():
     """Blaze Cannon and Soul Crossing are both ~200 px of name text; their words (measured 76 + 110 and 61 + 125
     px, 14 px apart) are not alike."""

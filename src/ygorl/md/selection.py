@@ -24,6 +24,7 @@ import numpy as np
 from ygorl.md.memory import Memory, MemoryReadError, RawDuel
 
 Pair = tuple[int, int]  # (card id, uid)
+PREVIOUS = 0x78  # the open-card object keeps the card opened before this far after the open one
 CHUNK = 1 << 24
 
 
@@ -102,6 +103,8 @@ class Selection:
         # the object keeps the card opened before as well: that slot's new value is the open slot's old one
         before = {self.candidates[a] for a in changed}
         kept = [a for a in changed if found[a] not in before] or changed
+        # both slots can hold the same card (one card opened twice): the open slot is the one 0x78 below the other
+        kept = [a for a in kept if a - PREVIOUS not in kept]
         self.last = {"hits": {hex(a): list(p) for a, p in found.items()},
                      "changed": [hex(a) for a in changed], "kept": [hex(a) for a in kept]}  # fmt: skip
         changed = kept
