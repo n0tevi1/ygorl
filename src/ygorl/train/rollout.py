@@ -34,6 +34,7 @@ time (one forward pass per batch of ready decisions).
 
 from __future__ import annotations
 
+import copy
 import time
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -196,6 +197,9 @@ class RolloutCollector:
         self._slots: list[_Slot | None] = [None] * env.num_envs
         self._held: dict[int, Any] = {}  # env -> pending learner decision (the bootstrap state)
         self.games_started = 0
+        # snapshot module id -> (the module, its copy with Linear parameters in the autocast dtype, that dtype); the
+        # module itself is kept so its id cannot be reused by another object while the entry lives (_opponent_module)
+        self._cast: dict[int, tuple[nn.Module, nn.Module, torch.dtype]] = {}
 
     # -- public -------------------------------------------------------------------------------------
     @torch.no_grad()
@@ -391,10 +395,35 @@ class RolloutCollector:
         probabilities on the device, without waiting for them (:meth:`_step_opponents` samples)."""
         pending = []
         for evs in groups.values():
-            module = self._slots[evs[0].env_id].opponent
+            module = self._opponent_module(self._slots[evs[0].env_id].opponent)
             batch = self.model.collate([ev.obs for ev in evs], self.device)
             pending.append((evs, torch.softmax(policy_logits(module, batch).float(), -1)))
         return pending
+
+    def _opponent_module(self, module: nn.Module) -> nn.Module:
+        """The module a snapshot's forward runs through. Under autocast on the device it is a frozen copy whose
+        ``nn.Linear`` weights and biases are already in the autocast dtype: autocast casts them on every call
+        otherwise (its cast cache only keeps parameters that require a gradient, which snapshots do not), one
+        kernel per tensor per forward. Casting once ahead gives the same values (the same rounding). The snapshot
+        itself is untouched (it is what the pool saves and evaluates)."""
+        kind = self.device.type
+        if kind == "cpu" or not torch.is_autocast_enabled(kind):
+            return module
+        dtype = torch.get_autocast_dtype(kind)
+        entry = self._cast.get(id(module))
+        if entry is not None and entry[0] is module and entry[2] == dtype:
+            return entry[1]
+        if len(self._cast) >= 64:  # keep the opponents still in a slot (the pool evicts, snapshots come and go)
+            live = {id(s.opponent) for s in self._slots if s is not None and s.opponent is not None}
+            self._cast = {k: v for k, v in self._cast.items() if k in live}
+        cast = copy.deepcopy(module)
+        for m in cast.modules():
+            if isinstance(m, nn.Linear):
+                m.weight.data = m.weight.data.to(dtype)
+                if m.bias is not None:
+                    m.bias.data = m.bias.data.to(dtype)
+        self._cast[id(module)] = (module, cast, dtype)
+        return cast
 
     def _step_opponents(self, pending: list[tuple[list, Tensor]]) -> int:
         """Sample and step the opponents' decisions of :meth:`_forward_opponents`: one device-to-host copy and one
