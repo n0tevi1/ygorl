@@ -567,6 +567,7 @@ def test_open_card_is_read_from_memory():
     order = [1, 0]  # MD's screen order: position 0 holds the second card
 
     def open_at(i):
+        struct.pack_into("<II", heap, UI_AT + 0x78, *struct.unpack_from("<II", heap, UI_AT))  # the one before
         struct.pack_into("<II", heap, UI_AT, *cards[order[i]])
         mem.regions[0x10000] = bytes(heap)
 

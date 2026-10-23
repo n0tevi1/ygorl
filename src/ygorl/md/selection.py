@@ -7,7 +7,8 @@ found at run time and cached (:class:`Selection`):
 - scan the writable mappings for adjacent (card id, uid) pairs of the player's own hand cards: about ten hits, in
   1.6 s (the card objects themselves, a few copies, and the open card);
 - after the next opening of a different card, the open card's address is the one hit whose pair changed; the
-  others are card objects that do not move.
+  others are card objects that do not move. The object also keeps the card opened before (a slot 0x78 further):
+  it changes too, to the open slot's old pair, and is left out.
 
 Once known, every opening is told by one read; a read that is no card of the player's (the object was freed, a
 new duel) drops the address and the next openings calibrate again. Read-only, like :mod:`ygorl.md.memory`.
@@ -97,6 +98,9 @@ class Selection:
         hand = {(c.cid, c.uid) for c in raw.players[raw.me].piles["hand"] if c.uid}
         found = scan_pairs(self.memory, self.regions(), hand)
         changed = [a for a, p in found.items() if a in self.candidates and self.candidates[a] != p]
+        # the object keeps the card opened before as well: that slot's new value is the open slot's old one
+        before = {self.candidates[a] for a in changed}
+        changed = [a for a in changed if found[a] not in before] or changed
         self.candidates = found
         if len(changed) == 1:
             self.address = changed[0]
