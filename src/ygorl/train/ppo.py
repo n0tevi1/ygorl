@@ -34,7 +34,15 @@ from torch import Tensor, nn
 
 from ygorl.nets.batch import policy_logits
 from ygorl.nets.policy import trim_padding
-from ygorl.train.advantages import ESTIMATORS, NORMALIZE_MODES, VRPO_MODES, Estimate, estimate, terminal_returns
+from ygorl.train.advantages import (
+    ESTIMATORS,
+    NORMALIZE_MODES,
+    VRPO_MODES,
+    Estimate,
+    estimate,
+    normalize_advantages,
+    terminal_returns,
+)
 from ygorl.train.aux import aux_targets
 from ygorl.train.critic import aux_loss, q_loss, v_loss
 from ygorl.train.rollout import Rollout
@@ -83,6 +91,10 @@ class PPOConfig:
     # decisions lack gradient rather than signal (docs/spikes/rl-methodology-review-2026-10-20.md §7.2)
     response_weight: float = 1.0
     aux_coef: float = 0.0  # weight of the critic's auxiliary-head loss (#440); needs a model built with aux heads
+    # solver hand-trap labels on scripted-line games (train.line_labels, TrainConfig.line_labels): at a labelled chain
+    # window with an Ash candidate, line_bonus_coef * (u_k - max later u) is added to the advantage of the taken
+    # action (the sign flipped when it held) before the advantages are normalized; 0 = off (rollouts unchanged)
+    line_bonus_coef: float = 0.0
 
     def __post_init__(self) -> None:
         if self.critic_target not in ("lambda", "terminal"):
@@ -113,6 +125,8 @@ class PPOConfig:
             raise ValueError("response_weight must be positive")
         if self.aux_coef < 0:
             raise ValueError("aux_coef must be nonnegative")
+        if self.line_bonus_coef < 0:
+            raise ValueError("line_bonus_coef must be nonnegative")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -267,14 +281,17 @@ class _Laps:
 
 
 class PPOLearner:
-    """Owns the model's optimizer, the EMA reference policy and the optional BC prior."""
+    """Owns the model's optimizer, the EMA reference policy, the optional BC prior and the optional solver-window
+    labels (``line_labels``, a :class:`ygorl.train.line_labels.LineLabels`; used with ``cfg.line_bonus_coef > 0``)."""
 
-    def __init__(self, model: nn.Module, cfg: PPOConfig, prior: nn.Module | None = None) -> None:
+    def __init__(self, model: nn.Module, cfg: PPOConfig, prior: nn.Module | None = None, line_labels=None) -> None:
         self.model = model
         self.cfg = cfg
         self.objective = _OBJECTIVES[cfg.objective](cfg)
         self.reference = self._frozen(model)
         self.prior = None if prior is None else self._frozen(prior)
+        self.line_labels = line_labels
+        self._line_stats: dict[str, float] = {}
         self.optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, eps=cfg.adam_eps)
         self.updates = 0
         self.timing = False  # add time/<section> of each update to its stats (tools/bench_train.py)
@@ -330,13 +347,23 @@ class PPOLearner:
 
     # -- update --------------------------------------------------------------------------------------
     def targets(self, ro: Rollout) -> Estimate:
+        """The estimator's targets; with line labels and ``line_bonus_coef > 0`` the per-row label bonus
+        (:meth:`ygorl.train.line_labels.LineLabels.bonus`) is added to the raw advantages, which are then
+        normalized as usual (the estimator normalizes itself when there is no bonus: the same operations)."""
         cfg = self.cfg
+        self._line_stats = {}
+        bonus = None
+        if self.line_labels is not None and cfg.line_bonus_coef > 0:
+            bonus, self._line_stats = self.line_labels.bonus(ro)
         est = estimate(cfg.estimator, rewards=ro.rewards, dones=ro.dones, players=ro.players, actions=ro.actions,
                         action_mask=ro.action_mask, probs=ro.probs, q=ro.q, values=ro.values, gamma=cfg.gamma,
                         lam=cfg.lam, bootstrap_player=ro.bootstrap_player, bootstrap_value=ro.bootstrap_value,
                         bootstrap_q=ro.bootstrap_q, bootstrap_probs=ro.bootstrap_probs,
                         bootstrap_mask=ro.bootstrap_mask, truncated=ro.truncated, vrpo_mode=cfg.vrpo_mode,
-                        normalize=cfg.adv_norm, target_lam=cfg.critic_lam)  # fmt: skip
+                        normalize="none" if bonus is not None else cfg.adv_norm, target_lam=cfg.critic_lam)  # fmt: skip
+        if bonus is not None:
+            raw = est.advantages + cfg.line_bonus_coef * bonus.to(est.advantages)
+            est.advantages = normalize_advantages(raw, mode=cfg.adv_norm)
         if cfg.critic_target == "terminal":
             if not ro.complete_games:
                 raise ValueError("terminal targets require complete-game collection")
@@ -474,6 +501,7 @@ class PPOLearner:
         stats.update(_advantage_by_kind(obs, actions, adv))
         if prior_rows is not None:
             stats["kl_prior_rows"] = int(prior_rows.sum())
+        stats.update(self._line_stats)
         stats.update(laps.stats())
         return stats
 

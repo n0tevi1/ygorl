@@ -56,6 +56,7 @@ from ygorl.train.checkpoint import (
 from ygorl.train.ppo import PPOConfig, PPOLearner
 from ygorl.train.rollout import Rollout, RolloutCollector, RolloutStalled
 from ygorl.train.league import League
+from ygorl.train.line_labels import LineLabels
 from ygorl.train.lines import LineLibrary
 from ygorl.train.selfplay import DeckPool, EvolvedDecks, SelfPlaySchedule, SnapshotPool
 
@@ -113,6 +114,9 @@ class TrainConfig:
     # seat opens with in line_share of the pool games (the snapshot plays on once the line ends or breaks)
     line_demos: tuple[str, ...] = ()
     line_share: float = 0.0
+    # graded hand-trap labels of those lines (train.line_labels; the window cache is written next to the file): the
+    # learner's labelled chain windows get ppo.line_bonus_coef * bonus on their advantage
+    line_labels: str | None = None
     snapshot_every: int = 10  # updates
     pool_sampling: str = (
         "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
@@ -178,6 +182,8 @@ class TrainConfig:
             raise ValueError("num_envs and steps must be at least 1")
         if not 0 <= self.line_share <= 1 or (self.line_share > 0 and not self.line_demos):
             raise ValueError("line_share must be in [0, 1] and needs line_demos when above 0")
+        if self.line_labels and not (self.line_demos and self.line_share > 0):
+            raise ValueError("line_labels needs line_demos and a line_share above 0 (the labels are on those lines)")
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -278,7 +284,18 @@ class Trainer:
                 raise ValueError(f"{cfg.bc_prior}: the run and the prior differ: {'; '.join(why)}; the prior would "
                                  "read other cards from the same indices")  # fmt: skip
             prior = loaded.net.to(self.device)
-        self.learner = PPOLearner(self.model, cfg.ppo, prior)
+        self.lines = self.line_labels = None
+        if cfg.line_demos and cfg.line_share > 0:
+            self.lines = LineLibrary.load(cfg.line_demos, self.vocab, cards=self.cards, env=self.environment)
+            self.log(f"scripted lines: {len(self.lines)} from {len(cfg.line_demos)} file(s) in {self.lines.seconds:.0f} s"
+                     + "".join(f"; left out {p}" for p in self.lines.problems[:10])
+                     + (f"; ... {len(self.lines.problems)} left out" if len(self.lines.problems) > 10 else ""))  # fmt: skip
+            if not len(self.lines):
+                raise ValueError("line_demos has no solved plain line that replays (see the log)")
+            if cfg.line_labels:
+                self.line_labels = LineLabels.load(cfg.line_labels, self.lines, self.vocab, cards=self.cards,
+                                                   env=self.environment, event_length=cfg.event_length, log=self.log)  # fmt: skip
+        self.learner = PPOLearner(self.model, cfg.ppo, prior, line_labels=self.line_labels)
         self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share, cfg.pool_sampling, cfg.pfsp_power)
         for path in cfg.pin_opponents:
             pinned = load_actor(path, cfg.text_dir)
@@ -294,14 +311,6 @@ class Trainer:
                                         validate=None if env is None else lambda d: [str(v) for v in env.validate_deck(d, self.cards)])  # fmt: skip
             if state is None:
                 self._reload_deck_pool()
-        self.lines = None
-        if cfg.line_demos and cfg.line_share > 0:
-            self.lines = LineLibrary.load(cfg.line_demos, self.vocab, cards=self.cards, env=self.environment)
-            self.log(f"scripted lines: {len(self.lines)} from {len(cfg.line_demos)} file(s) in {self.lines.seconds:.0f} s"
-                     + "".join(f"; left out {p}" for p in self.lines.problems[:10])
-                     + (f"; ... {len(self.lines.problems)} left out" if len(self.lines.problems) > 10 else ""))  # fmt: skip
-            if not len(self.lines):
-                raise ValueError("line_demos has no solved plain line that replays (see the log)")
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
                                          selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed,
                                          evolved=self.evolved, lines=self.lines, line_share=cfg.line_share)  # fmt: skip
@@ -545,7 +554,9 @@ class Trainer:
                  f"(truncated {record['truncated_games']}), entropy {stats['entropy']:.3f}, kl_ref {stats['kl_ref']:.4f}, "
                  f"q_loss {stats['q_loss']:.4f}, pool win {record['pool_win_rate']}"
                  + (f", lines {record['line_completed']}/{record['line_games']} completed, {record['line_broken']} "
-                    f"broken (mean step {record['line_broken_step']})" if self.lines is not None else ""))  # fmt: skip
+                    f"broken (mean step {record['line_broken_step']})" if self.lines is not None else "")
+                 + (f", labelled windows {record['line_labelled_rows']} ({record['line_fire_rows']} fired, mean bonus "
+                    f"{record['line_bonus_mean']:.3f})" if "line_labelled_rows" in record else ""))  # fmt: skip
         return record
 
     def _diagnostic_record(self, game) -> dict:

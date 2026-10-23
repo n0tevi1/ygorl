@@ -379,6 +379,20 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   学习方的行带 `Rollout.line_id`（示范在库中的编号，非脚本局为 −1）与 `Rollout.line_window`（本局到此为止该座位的连锁窗口决策计数，1 起；非连锁窗口为 0），
   供之后把求解器标签接到应答窗口上；`FinishedGame.line` 记录线的结局，`metrics.jsonl` 多 `line_games` / `line_completed` / `line_broken` / `line_broken_step` / `line_unfinished` 列。
   `line_share = 0` 时不多抽随机数，与原来逐位相同。已知的模糊：键不含候选数，若学习方的打断恰好制造了一个与线下一步同键的决策（例如都是「不连锁」），线会错位一步、通常随后断掉。
+- **应答窗口的身份与求解器标签**（`TrainConfig.line_labels`、`PPOConfig.line_bonus_coef`；`ygorl.train.line_labels`）：学习方用自己的卡组应答，
+  它收到的连锁提示未必与求解器的被动应答方（只拿一张灰流丽，密码 14558127）一样多，单纯计数的 `line_window` 会错位；
+  于是有真实选择的连锁窗口（MSG_SELECT_CHAIN 且可选行多于一行；强制的「无可发动」提示不算）另记 `Rollout.line_effect`——所应答的效果
+  （`ygorl.train.lines.chain_effect`：事件窗口里最新一条其后没有 `chain_end` 的 `chaining` 事件的卡，词表下标；开放窗口为 0；其它行为 −1）——
+  和 `Rollout.line_occurrence`（本局该座位第几次应答这个效果，1 起；其它行为 0）。
+  分级标签（`out/claude-scale/handtrap_labels_graded.py` 的 JSONL：每手 `values[k]` = 在第 k 个灰流丽窗口发动后 combo 可达最好盘面的下降量，`best_without` = 不被打断时的分数）
+  按同一种身份接到线上：`line_labels.build_window_table` 用数据集构建器的方式重放每条有标签的线（plain 起点、被动应答方卡组末尾加一张灰流丽、combo 座位按线走、应答方一律 pass），
+  记下每个窗口应答的效果密码与次数，缓存在分级文件旁的 `<name>.windows.json`（含 `event_length`；缺的手才重放，每手约 50 ms）。
+  `LineLabels` 把 `(line_id, 效果, 次数) -> (u_k = values[k] / best_without, 之后窗口的最大 u)` 交给 `PPOLearner`：
+  脚本局里有标签、且候选里有灰流丽的窗口行，所取动作是灰流丽发动时加 `line_bonus_coef · (u_k − max_{j>k} u_j)`，是 pass 或其它动作时加其相反数
+  （这个窗口至少与之后任一窗口一样伤时发动对，否则按兵不动对），加在优势**归一化之前**（`PPOLearner.targets`：估计器不归一化，加完再 `normalize_advantages`；
+  没有标签或系数为 0 时走原路径，逐位不变）。无标签的行加 0。`metrics.jsonl` 与日志多 `line_labelled_rows`（有标签且有灰流丽候选的行数）、`line_fire_rows`（其中发动的）、`line_bonus_mean`。
+  已知的局限：灰流丽是否可发动按效果判定，学习方若还拿别的手坑，在求解器没见过的效果上多出的提示不影响有标签的键；
+  事件窗口比 `chaining` 到提示之间的事件数短时效果读作 0，重放用与本次相同的 `event_length` 以保持一致。
 
 ### 8.4 评估
 
