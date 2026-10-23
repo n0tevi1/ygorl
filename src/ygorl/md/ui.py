@@ -133,7 +133,10 @@ def declare_box(img: np.ndarray) -> bool:
     bar = img[700:722, 780:1270].reshape(-1, 3).astype(int)
     grey = (np.abs(bar[:, 0] - bar[:, 2]) < 8) & (bar.min(axis=1) > 40) & (bar.max(axis=1) < 100)
     sides = img[700:722, 690:710].reshape(-1, 3).astype(int).max(axis=1).mean() < 30
-    return bool(grey.mean() > 0.8 and sides)
+    if grey.mean() > 0.8 and sides:
+        return True
+    # after a search the box is highlighted (its grey no longer flat); the results' grey tray still tells
+    return sides and bool(L.list_cards(img, trays=(L.DECLARE_TRAY,)))
 
 
 def screen_dialog(img: np.ndarray) -> str | None:
