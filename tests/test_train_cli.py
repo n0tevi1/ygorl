@@ -61,7 +61,7 @@ def perturbed(key: str):
     if key == "line_labels":
         base = replace(base, line_demos=("demos.jsonl",), line_share=0.5)
     if key == "line_labelled_only":
-        base = replace(base, line_demos=("demos.jsonl",), line_share=0.5, line_labels="graded.jsonl")
+        base = replace(base, line_demos=("demos.jsonl",), line_share=0.5, line_labels="/tmp/graded.jsonl")
     owner = key.partition(".")[0]
     if owner == "net":
         return replace(base, net={**base.net, **{k[4:]: v for k, v in values.items()}})
