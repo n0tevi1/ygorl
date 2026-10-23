@@ -229,7 +229,7 @@ def test_prompt_and_dialog_buttons():
     ui.yesno(False)
     ui.continue_draw()
     assert mouse.clicks == [L.PROMPT_CARD, L.PROMPT_ACTIVATE, L.PROMPT_CANCEL, (940, 956), (866, 658), L.PHASE_BADGE]
-    assert sleeps == [0.8, 2.0, 1.5, 1.5, 1.5, 1.5]
+    assert sleeps[:4] == [0.8, 2.0, 1.5, 1.5] and sleeps[-1] == 1.5  # yesno settles first (polls in between)
     ui.yesno(True)
     assert mouse.clicks[-1] == (1186, 658)
 

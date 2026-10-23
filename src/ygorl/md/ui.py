@@ -508,7 +508,13 @@ class UI:
 
     def yesno(self, yes: bool, why: str = "") -> None:
         """MD's yes / no dialog (both buttons measured: Tribute Summon confirmation, "Normal Summon now?")."""
-        self.click(*(YESNO_YES if yes else YESNO_NO), why or ("yes" if yes else "no"), 1.5)
+        xy = YESNO_YES if yes else YESNO_NO
+        # the dialog slides in: a click before it settles is lost (the duel then waited 120 s on True Name's
+        # "add it to your hand?"); settle, click, and click again if the dialog is still up
+        self.wait_still((700, 600, 1350, 720), timeout=2.0, tolerance=2.0)
+        self.click(*xy, why or ("yes" if yes else "no"), 1.5)
+        if screen_dialog(self.capture()) == "yesno":
+            self.click(*xy, f"{why or ('yes' if yes else 'no')} (again: the dialog stayed)", 1.5)
 
     def pick_radio(self, index: int = 0) -> int:
         """MD's radio-button dialog: pick row ``index`` (top down) and Confirm; returns the number of rows."""
