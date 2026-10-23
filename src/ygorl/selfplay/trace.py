@@ -126,16 +126,26 @@ class Trace:
 
     def rule(self, rule: str, **detail) -> None:
         """A hard-coded rule decided this step (prompt, dialog, field pick, ...)."""
-        self._current()["decision"] = {"by": "rule", "rule": rule, **detail}
+        self._decide({"by": "rule", "rule": rule, **detail})
 
     def shadow(self, dialog: str, pick: int, **detail) -> None:
         """The policy decided this dialog through the shadow duel (design 10 「边角情况由 player 自己学会」)."""
-        self._current()["decision"] = {"by": "shadow", "dialog": dialog, "pick": pick, **detail}
+        self._decide({"by": "shadow", "dialog": dialog, "pick": pick, **detail})
 
     def rebuilt(self, **record) -> None:
         """The policy decided this step on a rebuild of the current board (:class:`ygorl.selfplay.decide.Choice`
         record: question, pick, averaged probabilities)."""
-        self._current()["decision"] = _jsonable({"by": "rebuild", **record})
+        self._decide(_jsonable({"by": "rebuild", **record}))
+
+    def _decide(self, decision: dict) -> None:
+        """Record this step's decision; one made inside the policy's action this step (its Tributes, a list it
+        asks) goes under the policy decision's ``then`` instead of replacing it (an audit read the Tribute rule as
+        the step's decision and the summon was lost)."""
+        rec = self._current()
+        if rec["decision"] is not None and rec["decision"].get("by") == "policy":
+            rec["decision"].setdefault("then", []).append(decision)
+        else:
+            rec["decision"] = decision
 
     def sub(self, name: str, **detail) -> None:
         """A part of this step's decision decided separately (the attack target of a policy attack): ``detail``

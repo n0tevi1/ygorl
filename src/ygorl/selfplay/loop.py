@@ -1078,6 +1078,7 @@ class Player:
             hand = {c.uid for c in now.players[now.me].piles["hand"]}
             if got is not None and got[1] in hand:
                 self.trace.rule("prompt-respond-hand-trigger", card=got[0])
+                self.listed = (self.expect, (got[0],))  # names the monster whose position is asked next
                 self.ui.click(*L.PROMPT_ACTIVATE, "activate", 2.0)
                 self.context, self.hand_trigger = "respond", seen  # the same prompt again: it did not take, pass
                 return
@@ -1097,6 +1098,10 @@ class Player:
                 return
             self.ui.click(*L.PROMPT_ACTIVATE, "activate", 2.0)
             self.context = "respond"
+            if getattr(self, "prompted", 0):
+                # the card activated names the monster a summon's position question is about next (Millennium
+                # Seeker's own Special Summon took the Attack Position rule: "the summoned monster is not known")
+                self.listed = (self.expect, (self.prompted,))
             return
         self.ui.respond_prompt(respond)
         if respond:
@@ -1137,6 +1142,7 @@ class Player:
                 self.ui.click(*xy, "tick the offered card", 0.8)
                 got = sel.read(self.game.read()) if sel is not None else None
                 got_pw = self.passwords.get(got[0]) if got else None
+                self.prompted = got[0] if got else 0
                 self.trace.observe(prompt_card={"want": want, "got": got_pw, "at": xy})
                 if got_pw == want or sel is None or sel.address is None:
                     return got_pw  # the card meant, or memory cannot tell another card

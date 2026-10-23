@@ -82,8 +82,10 @@ POWER = {CommandBit.ATTACK: 2, CommandBit.SPSUMMON: 3, CommandBit.ACTION: 3, Com
 # CardPlane.auraEffType (an effect id) -> the groups present. CardPlace.GetActivateAura picks 1 (only group 1),
 # 3 (group 2, maybe 1), 5 (group 3, maybe 1) or 7 (2 and 3), +1 for the open card; CardPlane.ReqHighlight maps
 # them to these ids (5 / 6 have two ids each)
-AURA_GROUPS = {0x7C: {1}, 0x7D: {1}, 0x18: {1, 2}, 0x19: {1, 2}, 0x7E: {1, 3}, 0x7F: {1, 3}, 0x88: {1, 3},
-               0x89: {1, 3}, 0xED: {1, 2, 3}, 0xEE: {1, 2, 3}}  # fmt: skip
+# (a group-3 aura can hide group 2 too: Apprentice Illusion Magician offered Special Summon, Summon and Set,
+# mask 0x54, under aura 0x7e, run s30; so 0x7e / 0x7f / 0x88 / 0x89 rule out nothing but are kept as group 3)
+AURA_GROUPS = {0x7C: {1}, 0x7D: {1}, 0x18: {1, 2}, 0x19: {1, 2}, 0x7E: {1, 2, 3}, 0x7F: {1, 2, 3}, 0x88: {1, 2, 3},
+               0x89: {1, 2, 3}, 0xED: {1, 2, 3}, 0xEE: {1, 2, 3}}  # fmt: skip
 # the group a card certainly has: the one that set the aura (group 1 may come along with 2 or 3)
 AURA_SURE = {0x7C: 1, 0x7D: 1, 0x18: 2, 0x19: 2, 0x7E: 3, 0x7F: 3, 0x88: 3, 0x89: 3}
 # CardSelectionList.m_ListType of the prompts that offer activations (CreateActivableList)

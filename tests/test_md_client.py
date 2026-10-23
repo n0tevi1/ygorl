@@ -137,7 +137,8 @@ def test_command_bits_and_kinds():
     assert HIGHLIGHT_MASK & CommandBit.LOOK == 0
     assert aura_kinds(0x7C) == {"sset", "reposition"}  # only group 1
     assert aura_kinds(0x18) == {"attack", "summon", "flip", "mset", "sset", "reposition"}
-    assert aura_kinds(0x88) == aura_kinds(0x7E) == {"spsummon", "activate", "sset", "reposition"}
+    # a group-3 aura may hide group 2 (mask 0x54 under aura 0x7e, run s30): it rules out nothing
+    assert aura_kinds(0x88) == aura_kinds(0x7E) == aura_kinds(0xED)
     assert "activate" not in aura_kinds(0x19) and aura_kinds(0xED) >= {"activate", "attack"}
     assert aura_kinds(0) == set() and set(AURA_GROUPS) >= {0x7C, 0x7D, 0x18, 0x19, 0x7E, 0x7F, 0x88, 0x89, 0xED, 0xEE}
 
