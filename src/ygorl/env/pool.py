@@ -39,7 +39,6 @@ from ygorl.engine.duel import (
     default_cards,
     default_scripts,
     deck_of_seat,
-    expand_seed,
     seat_of_deck,
 )
 from ygorl.engine import outcome as O
@@ -53,6 +52,9 @@ class GameSpec:
     deck_b: Deck
     first: int = 0
     config: DuelConfig = field(default_factory=DuelConfig)
+    # explicit core RNG words (four u64) instead of expand_seed(seed): games that continue a recorded start (a solver
+    # demonstration's line, docs/solver.md); the decks are then given in load order with config.shuffle_decks off
+    core_seed: tuple[int, ...] | None = None
 
     def deck_of_seat(self, seat: int) -> int:
         """Index into (a, b) of the deck at engine ``seat`` (seat 0 moves first): ``(first + seat) % 2``."""
@@ -100,14 +102,14 @@ class VecDuelEnv:
         if self._state[env_id] == _RUNNING:
             raise RuntimeError(f"env {env_id} is busy")
         duel = Duel(spec.seed, None, spec.deck_a, spec.deck_b, cards=self.cards, config=spec.config, first=spec.first,
-                    record_steps=self.record_steps)  # fmt: skip
+                    record_steps=self.record_steps, core_seed=spec.core_seed)  # fmt: skip
         self._trackers[env_id] = duel.tracker()
         self._specs[env_id] = spec
         p = spec.config.player
         player = (p.starting_lp, p.starting_hand, p.draw_per_turn)
         decks = [(list(main), list(extra)) for main, extra in duel.loaded_decks()]
         self._state[env_id] = _RUNNING
-        self._pool.start(env_id, expand_seed(spec.seed), spec.config.rule_flags, player, player, decks)
+        self._pool.start(env_id, duel.core_seed, spec.config.rule_flags, player, player, decks)
 
     def act(self, env_id: int, action: int, probs=None) -> None:
         """Answer the pending decision point of ``env_id`` with an action index."""

@@ -17,7 +17,7 @@ import numpy as np
 
 from ygorl import _core
 from ygorl.cards.cdb import CardVocab
-from ygorl.engine.duel import Duel, default_cards, default_scripts, expand_seed
+from ygorl.engine.duel import Duel, default_cards, default_scripts
 from ygorl.engine.outcome import TRUNCATED
 from ygorl.env.driver import Game, drive
 from ygorl.env.events import DEFAULT_EVENT_LENGTH
@@ -95,12 +95,13 @@ class EncodedVecEnv:
         if spec.config.curriculum != "full" or spec.config.augmented_start:
             raise NotImplementedError("EncodedVecEnv supports only curriculum='full' without augmented_start; "
                                       "curriculum modes (T2.6) run on VecDuelEnv / Duel.run")  # fmt: skip
-        duel = Duel(spec.seed, None, spec.deck_a, spec.deck_b, cards=self.cards, config=spec.config, first=spec.first)
+        duel = Duel(spec.seed, None, spec.deck_a, spec.deck_b, cards=self.cards, config=spec.config, first=spec.first,
+                    core_seed=spec.core_seed)  # fmt: skip
         cfg = spec.config
         p = cfg.player
         player = (p.starting_lp, p.starting_hand, p.draw_per_turn)
         decks = [(list(m), list(e)) for m, e in duel.loaded_decks()]
-        self._pool.reset(env_id, expand_seed(spec.seed), cfg.rule_flags, player, player, decks, cfg.max_turns,
+        self._pool.reset(env_id, duel.core_seed, cfg.rule_flags, player, player, decks, cfg.max_turns,
                          cfg.max_decisions)  # fmt: skip
         if self._action_traces is not None:
             self._action_traces[env_id] = []
