@@ -14,11 +14,11 @@ training run replays nothing once the cache is complete.
 
 :class:`LineLabels` joins the labels to a :class:`~ygorl.train.lines.LineLibrary` and turns a rollout into a per-row
 bonus for PPO (``PPOConfig.line_bonus_coef``): at a labelled window with an Ash candidate, with ``u_k = values[k] /
-best_without`` and ``m_k = max(u_j, j > k)`` (0 at the last window), the taken action gets ``u_k - m_k`` if it is
-the Ash activation and ``m_k - u_k`` otherwise -- firing is right where this window hurts at least as much as any
-later one, holding is right otherwise. Rows without a label get 0. :meth:`LineLabels.ce_targets` turns the same
-windows into supervised targets instead (``PPOConfig.line_ce_coef``): the activation where ``u_k - m_k > 0``, the
-passive answer otherwise, weighted by ``|u_k - m_k|``.
+best_without`` and ``m_k = max(u_j, j > k)`` (0 at the last window), the gain of firing is ``g_k = u_k - m_k`` when
+``u_k < m_k`` (a later window hurts more: hold) and ``u_k`` otherwise (this window is as damaging as any later one,
+ties included: fire now); the taken action gets ``g_k`` if it is the Ash activation and ``-g_k`` otherwise. Rows
+without a label get 0. :meth:`LineLabels.ce_targets` turns the same windows into supervised targets instead
+(``PPOConfig.line_ce_coef``): the activation where ``g_k > 0``, the passive answer otherwise, weighted by ``|g_k|``.
 """
 
 from __future__ import annotations
@@ -153,7 +153,10 @@ class WindowLabel:
 
     @property
     def fire_bonus(self) -> float:
-        return self.u - self.later
+        """Gain of firing here: ``u - later`` when a later window hurts more (negative: hold), else ``u`` itself
+        (firing at the earliest window that is as damaging as any later one, including ties, is right; 0 when
+        nothing is at stake). The strict ``u - later`` alone made every tied window a hold and taught over-holding."""
+        return self.u - self.later if self.u < self.later else self.u
 
 
 class LineLabels:
@@ -244,9 +247,9 @@ class LineLabels:
     @torch.no_grad()
     def ce_targets(self, ro) -> tuple[Tensor, Tensor, dict[str, float]]:
         """The supervised targets of ``PPOConfig.line_ce_coef`` at the windows :meth:`bonus` uses: ``[T, B]`` long
-        candidate index (-1 elsewhere) -- the first Ash activation row when ``u_k - later > 0``, else the row's
+        candidate index (-1 elsewhere) -- the first Ash activation row when the gain ``g_k`` is positive, else the row's
         passive answer (the first choosable candidate of a kind in :data:`~ygorl.solver.demo.PASSIVE_KINDS` order;
-        a window without one is skipped) -- and ``[T, B]`` float weight ``|u_k - later|`` (0 elsewhere). Stats:
+        a window without one is skipped) -- and ``[T, B]`` float weight ``|g_k|`` (0 elsewhere). Stats:
         ``line_ce_rows`` (rows with a target), ``line_ce_fire_targets`` (of which the target is the activation)."""
         T, B = ro.shape
         target = torch.full((T, B), -1, dtype=torch.long)

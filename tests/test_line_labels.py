@@ -163,7 +163,11 @@ def test_the_window_table_is_built_once_and_cached_next_to_the_graded_file(libra
     sky = next(s.id for s in library.scripts if s.deck.name == "sky-striker")
     assert sorted((lb.u, lb.later) for lb in by_line[sky]) == [(0.0, 1.0), (1.0, 0.0)]
     assert sorted(lb.fire_bonus for lb in by_line[sky]) == [-1.0, 1.0]  # hold at the bait, fire at the starter
-    assert sorted(lb.fire_bonus for lb in by_line[1 - sky]) == [-1.0, 0.0, 1.0]
+    assert sorted(lb.fire_bonus for lb in by_line[1 - sky]) == [
+        -1.0,
+        1.0,
+        1.0,
+    ]  # a tied window fires: earliest window as damaging as any later one
 
 
 # ------------------------------------------------------------------------------------------ PPO bonus
