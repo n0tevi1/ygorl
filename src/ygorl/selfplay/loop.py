@@ -1194,7 +1194,9 @@ class Player:
         self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
         location = self.last_zone[0]
         # the leftmost free zone now (memory): a zone taken meanwhile would open the card in it instead
-        self.ui.pick_zone(location, self.free_zone(raw, location), "zone again")
+        zone = self.free_zone(raw, location)
+        self.ui.pick_zone(location, zone, "zone again")
+        self._placed(location, zone)  # the shadow takes the same zone and stays in step
         self.last_zone = None
 
     def on_tributes(self, raw: RawDuel, inp) -> None:
@@ -1968,7 +1970,11 @@ class Player:
             req = read_request(self.game.memory, self.game.module.base, self.game.offsets, raw)
             if dialog == "panel" and not (req.dialog_type == OPTION_DIALOG and len(req.choices) >= 2):
                 dialog = None  # a dark band without yes / no labels: a dimmed or dark board (classify maps the rest)
-            if inp.accepting and inp.player == raw.me:
+            # MD's request reads idle while it still shows the zone banner of our own action: comparing would drop
+            # the shadow, and the cost list right after (Apprentice Illusion Magician's discard) fell to a rule that
+            # discarded Ra
+            zone_banner = self.last_zone is not None and req.kind == "idle" and dialog == "banner"
+            if inp.accepting and inp.player == raw.me and not zone_banner:
                 self.trace.observe(md_request={"kind": req.kind, "candidates": [[c.cid, c.location, c.sequence, c.player]
                                                                                 for c in req.candidates],
                                                "params": req.params, "min": req.min, "max": req.max})  # fmt: skip
