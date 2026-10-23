@@ -502,8 +502,8 @@ class UI:
         MD does not accept (Select stays dark) is unticked and the next one tried. Returns the combination."""
         from itertools import combinations, islice
 
+        cards = self.settled_list_cards()
         img = self.capture()
-        cards = L.list_cards(img)
         if len(cards) < need:
             raise Stuck(f"a list asking for {need} cards shows {len(cards)}")
         two = list_select_state(img, LIST_SELECT_TWO_TEXT) != ""
@@ -524,11 +524,23 @@ class UI:
                 self.click(*cards[i], f"untick #{i + 1}", 0.6)
         raise Stuck(f"no set of {need} of the {len(cards)} list cards lit Select")
 
+    def settled_list_cards(self, tries: int = 8) -> list[XY]:
+        """The list's cards once two captures 0.3 s apart agree: the cards slide in, and a capture during that
+        found one card between two copies (a click on the gap ticked nothing, three times)."""
+        last = L.list_cards(self.capture())
+        for _ in range(tries):
+            self.sleep(0.3)
+            now = L.list_cards(self.capture())
+            if now == last:
+                return now
+            last = now
+        return last
+
     def pick_list_cards(self, indices: Sequence[int], ticked: bool = False) -> list[XY]:
         """Tick ``indices`` (left to right on screen) in MD's card-list panel and press Select; returns the cards
         found in the list. A list with two buttons keeps the panel open after the first: press its right one.
         ``ticked``: the caller already ticked them (and checked them on the information panel)."""
-        cards = L.list_cards(self.capture())
+        cards = self.settled_list_cards()
         if not cards:
             raise Stuck("a card list with no card found")
         bad = [i for i in indices if not 0 <= i < len(cards)]

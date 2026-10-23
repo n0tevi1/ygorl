@@ -74,6 +74,7 @@ class Selection:
         self.regions = regions
         self.address: int | None = None
         self.candidates: dict[int, Pair] = {}
+        self.last: dict = {}  # the last calibration scan, for the trace
 
     def read(self, raw: RawDuel) -> Pair | None:
         """The open card (card id, uid) when the address is known and holds one of the player's cards, else None
@@ -100,7 +101,10 @@ class Selection:
         changed = [a for a, p in found.items() if a in self.candidates and self.candidates[a] != p]
         # the object keeps the card opened before as well: that slot's new value is the open slot's old one
         before = {self.candidates[a] for a in changed}
-        changed = [a for a in changed if found[a] not in before] or changed
+        kept = [a for a in changed if found[a] not in before] or changed
+        self.last = {"hits": {hex(a): list(p) for a, p in found.items()},
+                     "changed": [hex(a) for a in changed], "kept": [hex(a) for a in kept]}  # fmt: skip
+        changed = kept
         self.candidates = found
         if len(changed) == 1:
             self.address = changed[0]

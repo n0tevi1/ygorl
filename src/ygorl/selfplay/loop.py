@@ -501,6 +501,8 @@ class Player:
             if self.selection.opened(raw) is not None:
                 icons = self.ui.open_hand_card(xy, f"hand {self.name(cid)} (after calibrating)")
                 sel = self.selection.opened(raw)
+        if not self.selection.calibrated():
+            self.trace.observe(calibration=self.selection.last)
         if sel is None:
             return None
         self.trace.observe(selected={"want": cid, "got": sel[0], "uid": sel[1], "at": list(xy)})

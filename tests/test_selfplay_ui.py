@@ -187,9 +187,10 @@ def list_panel(n: int) -> tuple[np.ndarray, list[int]]:
 
 def test_list_selection_by_index():
     panel, centres = list_panel(3)
-    ui, mouse, sleeps = make_ui(panel, board())  # the panel closes after Select
+    ui, mouse, sleeps = make_ui(panel, panel, panel, board())  # the panel closes after Select
     assert ui.pick_list_cards([1]) == [(x, 905) for x in centres]
-    assert mouse.clicks == [(centres[1], 905), (1026, 1116)] and sleeps == [0.8, 1.0]
+    # 0.3: a second capture to see the cards have stopped sliding in
+    assert mouse.clicks == [(centres[1], 905), (1026, 1116)] and sleeps == [0.3, 0.8, 1.0]
     assert ui.clicks[0]["why"] == "#2 of 3 cards in the list"
 
 
