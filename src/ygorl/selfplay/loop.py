@@ -41,6 +41,7 @@ from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, load_md_cid, own_d
 from ygorl.md.screen import ScreenError
 from ygorl.md.screen import capture as capture_client
 from ygorl.md.ui import (
+    GY_STRIP_SHOWN,
     MINIMISED_RESTORE,
     PHASE_MENU_CANCEL,
     UI,
@@ -778,10 +779,14 @@ class Player:
         guess = len(grave) - 1 - seq if 0 <= seq < len(grave) else 0  # the strip shows the top card first
         tries = [guess] + [i for i in range(len(grave)) if i != guess]
         self.ui.open_graveyard()
-        for i in tries[:6]:  # the strip shows about six cards without scrolling
-            icons = self.ui.open_graveyard_card(i, "activate", f"graveyard #{i + 1}: looking for {self.name(cid)}")
+        for i in [t for t in tries if t < GY_STRIP_SHOWN]:  # deeper cards need the strip scrolled: not yet
+            icons, shot = self.ui.open_graveyard_card(
+                i, "activate", f"graveyard #{i + 1}: looking for {self.name(cid)}"
+            )
             sel = self.selection.read(self.game.read()) if getattr(self, "selection", None) else None
             self.trace.observe(graveyard={"want": cid, "index": i, "selected": sel and sel[0], "icons": icons})
+            if sel is not None and sel[0] == cid:  # the icon's place was never measured: keep what MD showed
+                np.save(self.out / f"graveyard-{time.strftime('%Y%m%d-%H%M%S')}-{i}.npy", shot)
             if sel is not None and sel[0] != cid:
                 continue  # another card: try the next position
             if sel is None and i != guess:

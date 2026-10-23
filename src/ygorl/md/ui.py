@@ -129,6 +129,7 @@ def minimised(img: np.ndarray) -> bool:
 DECLARE_SEARCH, DECLARE_CLEAR, DECLARE_GO = (1026, 717), (1289, 717), (759, 717)
 # the advisor's Graveyard pile and the strip its viewer opens at the right edge (measured: 2 cards at y 280, 430)
 GY_PILE, GY_STRIP_X, GY_STRIP_Y0, GY_STRIP_STEP = (1600, 812), 1946, 280, 150
+GY_STRIP_SHOWN = 5  # strip positions on screen without scrolling (y 280 .. 880)
 
 
 def declare_box(img: np.ndarray) -> bool:
@@ -450,26 +451,25 @@ class UI:
         the pile's order in memory), :data:`GY_STRIP_STEP` apart."""
         self.click(*GY_PILE, "graveyard", 2.0)
 
-    def open_graveyard_card(self, index: int, kind: str, why: str) -> list[XY]:
+    def open_graveyard_card(self, index: int, kind: str, why: str) -> tuple[list[XY], np.ndarray]:
         """Open the ``index``-th card of the open Graveyard strip (0 = top); returns the icons of command ``kind``
-        it opened (found as icons that appeared with the click anywhere left of the strip, their place never
-        measured, told by their glyph); nothing is clicked on them."""
+        it opened and the capture they were read on (nothing is clicked on them). Only icons that appeared with the
+        click, beside the card (left of the strip, within 220 px of its height), count: the lava's yellow glow
+        passed for Activate icons anywhere on the board, and their clicks did nothing."""
         xy = (GY_STRIP_X, GY_STRIP_Y0 + index * GY_STRIP_STEP)
         before = self.capture()
         self.click(*xy, why, 1.2)
+        after = before
         for _ in range(8):
             after = self.capture()
-            box = (300, 120, GY_STRIP_X - 70, 1060)
-            icons: list[XY] = []
-            for p in L.new_icons(before, after, *box) + L.green_icons(after, *box) + L.blue_icons(after, *box):
-                if is_command_icon(after, *p) and all(abs(p[0] - q[0]) + abs(p[1] - q[1]) > 60 for q in icons):
-                    icons.append(p)
+            box = (1300, max(xy[1] - 220, 0), GY_STRIP_X - 70, min(xy[1] + 220, L.REF_H))
+            icons = [p for p in L.new_icons(before, after, *box) if is_command_icon(after, *p)]
             hits = [p for p in icons if icon_kind(after, *p) == kind]
             if hits:
                 self.wait_still((hits[0][0] - 50, hits[0][1] - 50, hits[0][0] + 50, hits[0][1] + 50), timeout=2.0)
-                return sorted(hits, key=lambda p: abs(p[1] - xy[1]))
+                return sorted(hits, key=lambda p: abs(p[1] - xy[1])), after
             self.sleep(0.3)
-        return []
+        return [], after
 
     def open_hand_card(self, xy: XY, why: str) -> list[XY]:
         return self.open_card(xy, why, hand=True)

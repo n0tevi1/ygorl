@@ -772,6 +772,9 @@ def test_list_pick_by_elimination():
 
 
 def test_graveyard_activation_checks_the_open_card_in_memory():
+    import tempfile
+    from pathlib import Path
+
     """The Graveyard strip shows the top card first; the card opened is read from memory before its Activate icon
     is clicked, and another card is never activated."""
     from types import SimpleNamespace
@@ -787,11 +790,13 @@ def test_graveyard_activation_checks_the_open_card_in_memory():
     state, clicks = {"open": None}, []
     ui = SimpleNamespace(
         open_graveyard=lambda: clicks.append("pile"),
-        open_graveyard_card=lambda i, kind, why: state.update(open=shown[i]) or [(1500, 300 + i)],
+        open_graveyard_card=lambda i, kind, why: (
+            state.update(open=shown[i]) or ([(1500, 300 + i)], np.zeros((2, 2, 3)))
+        ),
         click=lambda x, y, why, pause=0: clicks.append((x, y)),
     )
     player = Player.__new__(Player)
-    player.ui, player.name = ui, str
+    player.ui, player.name, player.out = ui, str, Path(tempfile.mkdtemp())
     player.trace = SimpleNamespace(observe=lambda **k: None)
     player.game = SimpleNamespace(read=lambda: raw)
     player.selection = SimpleNamespace(read=lambda r: (state["open"], 0))
