@@ -540,6 +540,8 @@ def test_unknown_panel_is_not_taken_for_one_of_two_unlearned_spells():
 class NoSelection:
     """Memory cannot tell the open card (still calibrating, and calibration finds nothing)."""
 
+    last: dict = {}
+
     def opened(self, raw):
         return None
 
