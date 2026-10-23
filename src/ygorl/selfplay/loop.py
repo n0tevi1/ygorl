@@ -86,9 +86,20 @@ def capture(window) -> np.ndarray:
 def _progress(raw: RawDuel, inp) -> tuple:
     """What changes in memory while a duel moves on: turn, phase, LP, who holds the input, and where every card is
     (by uid only: nothing about hidden cards is kept)."""
-    return (raw.turn, raw.phase, inp.mode, inp.player,
-            tuple((p.lp, tuple(c.uid if c else 0 for c in p.slots),
-                   tuple((k, tuple(c.uid for c in v)) for k, v in sorted(p.piles.items()))) for p in raw.players))
+    return (
+        raw.turn,
+        raw.phase,
+        inp.mode,
+        inp.player,
+        tuple(
+            (
+                p.lp,
+                tuple(c.uid if c else 0 for c in p.slots),
+                tuple((k, tuple(c.uid for c in v)) for k, v in sorted(p.piles.items())),
+            )
+            for p in raw.players
+        ),
+    )
 
 
 @dataclass

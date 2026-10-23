@@ -220,12 +220,13 @@ trace ◄── 每一步：MD 请求、ygopro 选项、选择、点击、之后
 
 - **输入**：`XSendEvent` 直接发给游戏的 XWayland 窗口，用户自己的鼠标指针不动；每个事件前都重跑单人模式门禁。
   但 Wine 把窗口内的按下当作用户点击，会激活窗口、抢走用户的焦点；所以长时间自博弈应让游戏跑在单独的、不可见的
-  X 显示器上，截图与输入按 `YGORL_MD_DISPLAY` 指向它（缺省 `:0`）。做法见 `tools/md_display.sh`：weston 同时开
-  headless 与 vnc 两个后端、GL 渲染器、kiosk shell，Xwayland 在 `:2`（Steam 启动项 `DISPLAY=:2 %command%`）。
-  headless 输出让 Xwayland 有 DRI3，DXVK 走 GPU（只开 vnc 后端时没有 DRI3，Xvfb 也没有，只能 wined3d CPU 渲染，
-  不可用）；vnc 输出由合成器按损伤区域推送，供人观看（x11vnc 在 Xwayland 上只能整窗轮询，很卡）；kiosk 让游戏
-  全屏铺满 2048×1152 的输出，没有边框、不会落到输出外。游戏内分辨率要设为 2048×1152：窗口被裁掉一部分时 `xwd`
-  只截到可见部分，缩小重采样后面板与图标模板也都不成立，它们只在原生 2048×1152 下测量过。
+  X 显示器上，截图与输入按 `YGORL_MD_DISPLAY` 指向它（缺省 `:0`）。做法见 `tools/md_display.sh`：sway 跑在
+  wlroots 的 headless 后端上，只有一个 2048×1152 输出，Xwayland 在 `:2`（Steam 启动项 `DISPLAY=:2 %command%`），
+  游戏按窗口类名全屏、无边框；wayvnc 推送这个输出供人观看（`vncviewer localhost:5900`，只绑定 127.0.0.1）。
+  试过而不可用的：Xvfb 没有 DRI3，DXVK 只能退到 wined3d CPU 渲染；weston 只开 vnc 后端时也没有 DRI3，开
+  headless + vnc 两个输出时游戏落在 headless 那个上（kiosk 的 app-ids 对 Xwayland 窗口无效），VNC 看到全黑；
+  x11vnc 在 Xwayland 上只能整窗轮询，很卡。游戏内分辨率要设为 2048×1152：窗口被裁掉一部分时 `xwd` 只截到可见
+  部分，缩小重采样后面板与图标模板也都不成立，它们只在原生 2048×1152 下测量过。
 - **坐标**：所有位置记在一个参考坐标系里（2054×1184 窗口、客户区 2048×1152 @ (3, 29)）。截图与点击只针对 Wine 的
   客户区子窗口，点击按实际客户区大小映射，截图重采样回参考坐标系。命令图标（召唤 / 盖放 / 发动 / 攻击 / 确认）在点击卡片
   前后各截一张图、找新出现的圆形图标；列表里的卡由下方蓝色托盘的宽度（每张 158 px）定位。

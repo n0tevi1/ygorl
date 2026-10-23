@@ -80,8 +80,8 @@ Colab恢复工程试验另需已认证的 `google-colab-cli`（当前0.7.2，安
 
 个别工具另有系统依赖：`tools/tsan/check.sh` 需要 ninja、GCC 的 libtsan 与 `setarch`（util-linux）；`tools/check_ygoprodeck.py` 需要能访问
 YGOPRODECK API 的网络；`tools/crosscheck_banlist.py` 需要能访问 YGOPRODECK 与 Yugipedia 的网络（`--from` 离线重跑）。
-`tools/md_display.sh`（Master Duel 自博弈用的无头显示）需要 weston ≥ 13（`sudo apt install weston`，带 headless / vnc 后端与
-Xwayland）与 openssl；观看用支持 VeNCrypt 的 VNC 客户端（如 `sudo apt install tigervnc-viewer`）。CI 与云端会话 hook 另装 ccache 以加速重编。
+`tools/md_display.sh`（Master Duel 自博弈用的无头显示）需要 sway 与 wayvnc（`sudo apt install sway wayvnc`）；观看用任意 VNC
+客户端（如 `sudo apt install tigervnc-viewer`）。
 新增依赖用 `uv add <包名>`（可选组用 `uv add --optional <组> <包名>`）。
 
 ```bash
