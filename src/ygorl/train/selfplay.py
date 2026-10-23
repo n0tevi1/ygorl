@@ -40,6 +40,7 @@ from ygorl.cards.ydk import Deck, parse_ydk
 from ygorl.engine.duel import DuelConfig
 from ygorl.env.pool import GameSpec
 from ygorl.eval.arena import derive_seed
+from ygorl.train.critic import load_allowing_new_heads
 from ygorl.train.lines import LineLibrary
 from ygorl.train.rollout import Assignment
 
@@ -176,7 +177,7 @@ class SnapshotPool:
         self._snaps.clear()
         for s in state["snapshots"]:
             model = factory()
-            model.load_state_dict(s["state"])
+            load_allowing_new_heads(model, s["state"])
             self._snaps[int(s["id"])] = Snapshot(
                 int(s["id"]),
                 int(s["update"]),

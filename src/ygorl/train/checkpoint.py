@@ -167,19 +167,21 @@ class CriticConfig:
     shared_backbone: bool = True
     deck_order: bool = False
     aux: int = 0  # auxiliary heads (train.aux.AUX_TARGETS), 0 = none
+    phi: bool = False  # survival-potential head (train.aux.turn_boundaries, ppo.phi_coef / phi_shape_coef)
 
     @classmethod
     def from_train_config(cls, c: Mapping) -> CriticConfig:
         """From ``TrainConfig.to_dict()``, as stored in a PPO checkpoint's ``config``."""
         return cls(bool(c["privileged_critic"]), int(c["privileged_dim"]), int(c["critic_hidden"]),
-                   bool(c["shared_backbone"]), bool(c.get("critic_deck_order", False)), int(c.get("critic_aux", 0)))  # fmt: skip
+                   bool(c["shared_backbone"]), bool(c.get("critic_deck_order", False)), int(c.get("critic_aux", 0)),
+                   bool(c.get("critic_phi", False)))  # fmt: skip
 
 
 def build_actor_critic(net_config: NetConfig, text: TextFeatures | None, critic: CriticConfig) -> ActorCritic:
     """A freshly initialized actor-critic (CPU, train mode); every ActorCritic is built here."""
     return ActorCritic(net_config, text, privileged=critic.privileged, privileged_dim=critic.privileged_dim,
                        critic_hidden=critic.hidden, shared_backbone=critic.shared_backbone,
-                       deck_order=critic.deck_order, aux_dim=critic.aux)  # fmt: skip
+                       deck_order=critic.deck_order, aux_dim=critic.aux, phi=critic.phi)  # fmt: skip
 
 
 # -- loading ------------------------------------------------------------------------------------------------------

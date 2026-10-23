@@ -96,6 +96,7 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--critic-init", "critic_init", "separate critic on a warm start: actor (trunk copied from the actor, heads "
            "from a PPO checkpoint; #434) or fresh"),
         _f("--critic-aux", "critic_aux", "auxiliary critic heads: 0 = none, 3 = train.aux.AUX_TARGETS (#440)"),
+        _f("--critic-phi", "critic_phi", "survival-potential head on the critic trunk (docs/training.md 8.2)"),
         _f("--critic-deck-order", "critic_deck_order",
            "the privileged critic also sees both players' next 10 draws (docs/encoding.md)"),
         _f("--no-privileged", "privileged_critic", "non-privileged critic (ablation)", negate=True),
@@ -119,6 +120,11 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--ema", "ppo.reference_ema", "reference EMA rate per update"),
         _f("--q-coef", "ppo.q_coef", "Q-head loss coefficient"),
         _f("--aux-coef", "ppo.aux_coef", "auxiliary-head loss coefficient (needs --critic-aux)"),
+        _f("--phi-coef", "ppo.phi_coef", "survival-potential BCE coefficient (needs --critic-phi; docs/training.md 8.2)"),
+        _f("--phi-shape-coef", "ppo.phi_shape_coef", "potential-based shaping with the survival potential at the "
+           "deciding seat's turn boundaries (needs --critic-phi; 0 = off)"),
+        _f("--phi-shape-first-seat-only", "ppo.phi_shape_first_seat_only",
+           "shape only the rows of the seat that moved first"),
         _f("--v-coef", "ppo.v_coef", "V-head loss coefficient"),
         _f("--lr", "ppo.lr"),
         _f("--adam-eps", "ppo.adam_eps"),

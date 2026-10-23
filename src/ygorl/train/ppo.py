@@ -43,8 +43,8 @@ from ygorl.train.advantages import (
     normalize_advantages,
     terminal_returns,
 )
-from ygorl.train.aux import aux_targets
-from ygorl.train.critic import aux_loss, q_loss, v_loss
+from ygorl.train.aux import aux_targets, phi_shaping, turn_boundaries
+from ygorl.train.critic import aux_loss, load_allowing_new_heads, phi_loss, q_loss, v_loss
 from ygorl.train.rollout import Rollout
 
 
@@ -104,6 +104,13 @@ class PPOConfig:
     # is added to the policy loss. 0 = off (updates unchanged); combinable with line_bonus_coef
     line_ce_coef: float = 0.0
     line_ce_weighted: bool = True
+    # survival potential Φ (docs/training.md §8.2; needs a model built with critic_phi): phi_coef weighs the BCE of the
+    # critic's phi head against train.aux.turn_boundaries targets at the deciding seat's turn boundaries; with
+    # phi_shape_coef > 0 each boundary row's reward gets phi_shape_coef * (γ^k Φ(next boundary) − Φ(this one)), Φ = 0
+    # after a finished game (Ng et al. 1999 potential-based shaping), before the estimator runs. 0 = off
+    phi_coef: float = 0.0
+    phi_shape_coef: float = 0.0
+    phi_shape_first_seat_only: bool = False  # shape only the rows of engine player 0 (the seat that moved first)
 
     def __post_init__(self) -> None:
         if self.critic_target not in ("lambda", "terminal"):
@@ -140,6 +147,8 @@ class PPOConfig:
             raise ValueError("line_bonus_coef must be nonnegative")
         if self.line_ce_coef < 0:
             raise ValueError("line_ce_coef must be nonnegative")
+        if self.phi_coef < 0 or self.phi_shape_coef < 0:
+            raise ValueError("phi_coef and phi_shape_coef must be nonnegative")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -307,8 +316,11 @@ class PPOLearner:
         self.line_labels = line_labels
         self._line_stats: dict[str, float] = {}
         self._line_ce: tuple[Tensor, Tensor] | None = None  # [T, B] target candidate (-1: none) and weight
+        self._phi_stats: dict[str, float] = {}
+        self._boundaries = None  # train.aux.TurnBoundaries of the rollout being updated on (phi_coef / phi_shape_coef)
         self.optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, eps=cfg.adam_eps)
         self.updates = 0
+        self.new_heads: list[str] = []  # critic parameters a loaded checkpoint lacked (started fresh)
         self.timing = False  # add time/<section> of each update to its stats (tools/bench_train.py)
 
     def _policy_params(self) -> list[nn.Parameter]:
@@ -378,6 +390,13 @@ class PPOLearner:
         cfg = self.cfg
         self._line_stats = {}
         self._line_ce = None
+        self._phi_stats = {}
+        self._boundaries = None
+        rewards = ro.rewards
+        if cfg.phi_coef > 0 or cfg.phi_shape_coef > 0:
+            self._boundaries = turn_boundaries(ro.obs, ro.players, ro.dones, ro.rewards, ro.truncated)
+        if cfg.phi_shape_coef > 0:
+            rewards = rewards + self.phi_shaping(ro)
         bonus = None
         if self.line_labels is not None and cfg.line_bonus_coef > 0:
             bonus, self._line_stats = self.line_labels.bonus(ro)
@@ -385,7 +404,7 @@ class PPOLearner:
             target, weight, ce_stats = self.line_labels.ce_targets(ro)
             self._line_ce = (target, weight if cfg.line_ce_weighted else (target >= 0).float())
             self._line_stats.update(ce_stats)
-        est = estimate(cfg.estimator, rewards=ro.rewards, dones=ro.dones, players=ro.players, actions=ro.actions,
+        est = estimate(cfg.estimator, rewards=rewards, dones=ro.dones, players=ro.players, actions=ro.actions,
                         action_mask=ro.action_mask, probs=ro.probs, q=ro.q, values=ro.values, gamma=cfg.gamma,
                         lam=cfg.lam, bootstrap_player=ro.bootstrap_player, bootstrap_value=ro.bootstrap_value,
                         bootstrap_q=ro.bootstrap_q, bootstrap_probs=ro.bootstrap_probs,
@@ -400,6 +419,35 @@ class PPOLearner:
             z = terminal_returns(ro.rewards, ro.dones, ro.players, ro.truncated)
             est.q_targets = est.v_targets = z
         return est
+
+    @torch.no_grad()
+    def phi_shaping(self, ro: Rollout) -> Tensor:
+        """``phi_shape_coef *`` the potential-based shaping rewards ``[T, B]`` of :func:`ygorl.train.aux.phi_shaping`,
+        with Φ the sigmoid of the current phi head at the rollout's turn boundaries (one forward pass over them)."""
+        cfg, tb = self.cfg, self._boundaries
+        T, B = ro.shape
+        phi = torch.zeros(T * B)
+        idx = tb.boundary.reshape(-1).nonzero().squeeze(1)
+        if idx.numel():
+            dev = next(self.model.parameters()).device
+            training = self.model.training
+            self.model.eval()
+            obs = trim_padding(ro.obs)
+            outs = []
+            for i in range(0, idx.numel(), max(1, cfg.minibatch_size)):
+                rows = idx[i : i + cfg.minibatch_size].to(dev)
+                out = self.model(_index(obs, rows), _index(ro.privileged, rows))
+                if out.phi is None:
+                    raise ValueError("phi_shape_coef > 0 needs a model with the survival-potential head (critic_phi)")
+                outs.append(torch.sigmoid(out.phi.float()).cpu())
+            self.model.train(training)
+            phi[idx] = torch.cat(outs)
+        rows = (ro.players == 0).cpu() if cfg.phi_shape_first_seat_only else None
+        shaping = cfg.phi_shape_coef * phi_shaping(phi.view(T, B), tb, cfg.gamma, rows)
+        shaped = tb.boundary if rows is None else tb.boundary & rows
+        self._phi_stats = {"phi_shape_rows": int(shaped.sum()), "phi_shape_mean": float(shaping[shaped].mean())
+                           if shaped.any() else 0.0, "phi_mean": float(phi[idx].mean()) if idx.numel() else 0.0}  # fmt: skip
+        return shaping.to(ro.rewards)
 
     def update(self, ro: Rollout, policy: bool = True) -> dict[str, float]:
         """One PPO update on ``ro``. ``policy=False`` (critic warm-up): only the Q / V losses, and only parameters the
@@ -435,6 +483,9 @@ class PPOLearner:
         if cfg.aux_coef > 0:
             at, av = aux_targets(ro.obs, ro.players, ro.dones)
             aux_t, aux_v = at.reshape(n, -1).to(dev), av.reshape(n).to(dev)
+        phi_t = phi_v = None
+        if cfg.phi_coef > 0:
+            phi_t, phi_v = self._boundaries.survive.reshape(n).to(dev), self._boundaries.valid.reshape(n).to(dev)
         # advantage filtering: the rows the minibatches draw from (all of them with adv_keep = 0 or in a critic warm-up)
         if policy and cfg.adv_keep > 0:
             keep = adv.abs() >= torch.quantile(adv.abs(), cfg.adv_keep)
@@ -489,6 +540,12 @@ class PPOLearner:
                 loss = loss + cfg.q_coef * ql + cfg.v_coef * vl + cfg.aux_coef * al
                 if not policy:
                     loss = cfg.q_coef * ql + cfg.v_coef * vl + cfg.aux_coef * al
+                if phi_t is not None:
+                    if out.phi is None:
+                        raise ValueError("phi_coef > 0 needs a model with the survival-potential head (critic_phi)")
+                    pl = phi_loss(out.phi.float(), phi_t[idx], phi_v[idx])
+                    loss = loss + cfg.phi_coef * pl
+                    sums["phi_loss"] += pl.detach().double()
                 laps.lap("forward")
                 kl_now = extra.get("approx_kl")
                 rejected = (
@@ -539,6 +596,12 @@ class PPOLearner:
         stats["rows"], stats["kept_rows"] = n, n_kept
         if aux_v is not None:
             stats["aux_valid_rows"] = int(aux_v.sum())
+        if phi_v is not None:
+            stats["phi_rows"] = int(phi_v.sum())
+            stats["phi_rate"] = float(phi_t[phi_v].mean()) if bool(phi_v.any()) else float("nan")
+        if self._boundaries is not None:
+            stats["phi_boundaries"] = int(self._boundaries.boundary.sum())
+        stats.update(self._phi_stats)
         stats["minibatches"], stats["early_stop"] = steps, int(stopped)
         stats["evaluated_minibatches"], stats["stop_approx_kl"] = checked, stop_kl
         stats["critic_warmup"] = int(not policy)
@@ -573,10 +636,23 @@ class PPOLearner:
                 "optimizer": self.optimizer.state_dict(), "updates": self.updates}  # fmt: skip
 
     def load_state_dict(self, state: dict) -> None:
-        self.model.load_state_dict(state["model"])
-        self.reference.load_state_dict(state["reference"])
-        self.optimizer.load_state_dict(state["optimizer"])
+        """Restore the learner; a checkpoint saved before a new critic head (critic.NEW_HEAD_PREFIXES) existed loads
+        with that head fresh and its optimizer state empty (the head's parameters come last in the model)."""
+        fresh = load_allowing_new_heads(self.model, state["model"])
+        load_allowing_new_heads(self.reference, state["reference"])
+        opt = state["optimizer"]
+        if fresh:
+            names = [k for k, _ in self.model.named_parameters()]
+            n_new = sum(1 for k in names if k in fresh)
+            if sorted(names[len(names) - n_new :]) != sorted(k for k in fresh if k in names):
+                raise ValueError(f"new heads {fresh} are not the model's last parameters; cannot extend the optimizer")
+            group = opt["param_groups"][0]
+            if len(opt["param_groups"]) != 1 or len(group["params"]) != len(names) - n_new:
+                raise ValueError("the checkpoint's optimizer does not match the model without its new heads")
+            opt = {**opt, "param_groups": [{**group, "params": list(range(len(names)))}]}
+        self.optimizer.load_state_dict(opt)
         self.updates = int(state["updates"])
+        self.new_heads = fresh
 
 
 def _explained_variance(pred: Tensor, target: Tensor) -> float:

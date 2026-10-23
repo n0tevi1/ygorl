@@ -103,6 +103,9 @@ class TrainConfig:
     critic_deck_order: bool = False  # the privileged critic also reads both players' next draws (docs/encoding.md)
     # auxiliary critic heads (#440, design R4): 0 = none, else len(train.aux.AUX_TARGETS); trained with ppo.aux_coef
     critic_aux: int = 0
+    # survival-potential head Φ on the critic trunk (docs/training.md §8.2): trained with ppo.phi_coef, shapes rewards
+    # with ppo.phi_shape_coef; a resumed checkpoint without it starts the head fresh
+    critic_phi: bool = False
     ppo: PPOConfig = field(default_factory=PPOConfig)
     selfplay_fraction: float = 0.75  # deals against the current policy; the rest against pool snapshots
     pool_size: int = 8
@@ -428,6 +431,8 @@ class Trainer:
         if saved_net != self.net_config.to_dict():
             raise ValueError("the checkpoint's network does not match the configuration")
         self.learner.load_state_dict(state["learner"])
+        if self.learner.new_heads:
+            self.log(f"critic heads not in the checkpoint start fresh: {self.learner.new_heads}")
         self.league.load_state_dict(state, self._new_model)
         self.schedule.load_state_dict(state["schedule"])
         self.counters.update(state["counters"])

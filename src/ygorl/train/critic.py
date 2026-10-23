@@ -65,6 +65,7 @@ class CriticOutput(NamedTuple):
     aux: Tensor | None = (
         None  # [..., A, K] action-conditioned auxiliary predictions (train.aux), None without aux heads
     )
+    phi: Tensor | None = None  # [...] survival-potential logit (train.aux.turn_boundaries), None without the head
 
 
 class Critic(nn.Module):
@@ -74,7 +75,7 @@ class Critic(nn.Module):
     """
 
     def __init__(self, history_dim: int, action_dim: int, privileged_dim: int = 0, hidden: int = 256,
-                 squash: bool = True, aux_dim: int = 0) -> None:  # fmt: skip
+                 squash: bool = True, aux_dim: int = 0, phi: bool = False) -> None:  # fmt: skip
         super().__init__()
         self.privileged_dim = privileged_dim
         self.trunk = nn.Sequential(_mlp(history_dim + privileged_dim, hidden, hidden), nn.ReLU())
@@ -83,6 +84,10 @@ class Critic(nn.Module):
         # auxiliary heads (design R4 / #440): one unsquashed candidate head per target, predicting short-horizon
         # observables of the taken action (train.aux.aux_targets); the actor never reads them
         self.aux_heads = nn.ModuleList(CandidateQHead(hidden, action_dim, hidden, squash=False) for _ in range(aux_dim))
+        # survival potential Φ (docs/training.md §8.2): a state-only logit that the deciding seat's turn-1-style board
+        # survives the opponent's next turn (train.aux.turn_boundaries); registered last so that adding it to a saved
+        # model only appends parameters (PPOLearner.load_state_dict)
+        self.phi_head = ValueHead(hidden, hidden, squash=False) if phi else None
 
     def forward(self, history: Tensor, candidates: Tensor, action_mask: Tensor,
                 privileged: Tensor | None = None) -> CriticOutput:  # fmt: skip
@@ -94,7 +99,22 @@ class Critic(nn.Module):
         aux = (
             torch.stack([h(ctx, candidates, action_mask) for h in self.aux_heads], -1) if len(self.aux_heads) else None
         )
-        return CriticOutput(self.q_head(ctx, candidates, action_mask), self.v_head(ctx), aux)
+        phi = None if self.phi_head is None else self.phi_head(ctx)
+        return CriticOutput(self.q_head(ctx, candidates, action_mask), self.v_head(ctx), aux, phi)
+
+
+NEW_HEAD_PREFIXES = ("critic.phi_head.",)  # heads a saved actor-critic may lack; loading starts them fresh
+
+
+def load_allowing_new_heads(module: nn.Module, state: dict) -> list[str]:
+    """``module.load_state_dict(state)``, except that parameters under :data:`NEW_HEAD_PREFIXES` missing from
+    ``state`` keep their fresh initialization (a checkpoint saved before the head existed). Returns their names."""
+    missing = [k for k in module.state_dict() if k not in state]
+    if missing and all(k.startswith(NEW_HEAD_PREFIXES) for k in missing):
+        module.load_state_dict(state, strict=False)
+        return missing
+    module.load_state_dict(state)
+    return []
 
 
 def _masked_mean(x: Tensor, mask: Tensor | None) -> Tensor:
@@ -116,6 +136,13 @@ def q_loss(q: Tensor, actions: Tensor, targets: Tensor, mask: Tensor | None = No
 def v_loss(v: Tensor, targets: Tensor, mask: Tensor | None = None) -> Tensor:
     """``0.5 (V(s_t) - target_t)^2`` averaged over ``mask`` (bool, or float weights)."""
     return _masked_mean(0.5 * (v - targets.detach().to(v)) ** 2, mask)
+
+
+def phi_loss(logit: Tensor, targets: Tensor, valid: Tensor) -> Tensor:
+    """Binary cross-entropy of the survival-potential logit against ``targets`` (0 / 1), averaged over ``valid`` rows
+    (0 when there is none)."""
+    bce = nn.functional.binary_cross_entropy_with_logits(logit, targets.detach().to(logit), reduction="none")
+    return _masked_mean(bce, valid)
 
 
 def aux_loss(aux: Tensor, actions: Tensor, targets: Tensor, valid: Tensor) -> Tensor:
