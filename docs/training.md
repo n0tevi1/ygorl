@@ -249,7 +249,11 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
   学习方座位。**自博弈**局双方的每个决策都是一行；**快照对手**局只收学习方的行，对手的决策用快照的 `policy_logits` 采样、
   计入 `Rollout.opponent_decisions`，属于「环境」（§1 的推荐做法）。快照在开局时解析并随局保存，局中被逐出池也不影响。
 - 就绪的决策按「谁来下」分组、每组一次前向：学习方组同时得到 logits、Q、V（行为策略与 critic 值在动作时记录，
-  不再重算）；动作从 softmax 采样（可复现的 `torch.Generator`）。
+  不再重算）；动作从 softmax 采样（可复现的 `torch.Generator`）。每批只与设备同步一次：`collate` 在主机侧算好
+  有效前缀宽度（`nets.batch.Batch.lengths`，`trim_padding` 不再回读设备）、把全部观测键一次上传；学习方的概率、对数概率、
+  Q、V 打包成一次回传；各快照对手的前向先排队、在学习方采样之后一次回传并一次 `multinomial`（逐行消耗生成器，
+  抽样与逐组调用相同）。bf16 下快照对手经由一份 Linear 权重已转成 bf16 的副本前向（autocast 的转换缓存只覆盖带梯度的参数，
+  否则每次前向重转 82 个张量；取值相同，池中快照不动）。
 - 收集器有自己的调度循环，不走整局对弈的对局驱动（`ygorl.env.driver`，见 [evaluation.md](evaluation.md)「批量评估」）：
   列满 `T` 行时要扣住待答决策、还要做卡死检测，这两件事是收集特有的。快照对手与 KL 参考的 logits 与批量评估共用
   `nets.batch.policy_logits`。
