@@ -14,7 +14,9 @@ deck-pool sampling with paired first / second games.
 - **Scripted lines** (``lines`` / ``line_share``, :mod:`ygorl.train.lines`): with probability ``line_share`` a pool
   deal is two scripted games instead: the opponent seat opens with a solver demonstration (its deck, from the
   record's exact start, moving first) and the learner's deck of the pairing plays second; the snapshot takes the
-  seat over once the line ends or breaks. With ``line_share == 0`` no extra random number is drawn.
+  seat over once the line ends or breaks. With ``line_first_share`` a scripted deal is instead, with that probability,
+  two first-seat games: the learner's deck moves first and the demonstration deck plays the line on its turn 2. With
+  ``line_share == 0`` (``line_first_share == 0``) no extra random number is drawn (for the seat).
 - :class:`EvolvedDecks` (#108): the decks an evolution process adds to the pool while training runs, read from a
   deck-pool manifest (``ygorl-deck-pool`` JSON) that the trainer re-reads every few updates. With probability
   ``share`` a deal pairs one probation / active evolved deck (weight x ``(1 - p) ** power``, ``p`` the current
@@ -350,15 +352,19 @@ class EvolvedDecks:
 class SelfPlaySchedule:
     def __init__(self, decks: DeckPool, pool: SnapshotPool, config: DuelConfig | None = None, *,
                  selfplay_fraction: float = 0.75, seed: int = 0, evolved: EvolvedDecks | None = None,
-                 lines: LineLibrary | None = None, line_share: float = 0.0) -> None:  # fmt: skip
+                 lines: LineLibrary | None = None, line_share: float = 0.0,
+                 line_first_share: float = 0.0) -> None:  # fmt: skip
         if not 0 <= selfplay_fraction <= 1:
             raise ValueError("selfplay_fraction must be in [0, 1]")
         if not 0 <= line_share <= 1:
             raise ValueError("line_share must be in [0, 1]")
+        if not 0 <= line_first_share <= 1:
+            raise ValueError("line_first_share must be in [0, 1]")
         self.decks = decks
         self.evolved = evolved
         self.lines = lines if lines is not None and len(lines) else None
         self.line_share = line_share
+        self.line_first_share = line_first_share
         self.pool = pool
         self.config = config or DuelConfig()
         self.selfplay_fraction = selfplay_fraction
@@ -420,15 +426,23 @@ class SelfPlaySchedule:
             self._queue.append(Assignment(spec, opponent, spec.seat_of_deck(side), info))
 
     def _deal_lines(self, seed: int, opponent: int, learner: Deck, evolved: bool) -> None:
-        """Two scripted games on ``learner``: each opens with a line drawn from the library, the learner second."""
+        """Two scripted games on ``learner``, each with a line drawn from the library: the line moves first and the
+        learner second, or (with probability ``line_first_share``, for both games of the deal) the learner first and
+        the line on the opponent's turn 2."""
+        seat = 1
+        if self.line_first_share > 0 and self.rng.random() < self.line_first_share:
+            seat = 0
         for g in (0, 1):
             script = self.lines.sample(self.rng)
-            spec = script.spec(learner, derive_seed(seed, g), self.config)
-            info = {"deck_a": script.deck.name, "deck_b": learner.name, "first": 0, "learner_deck": learner.name,
+            spec = script.spec(learner, derive_seed(seed, g), self.config, learner_seat=seat)
+            a, b = (script.deck, learner) if seat == 1 else (learner, script.deck)
+            info = {"deck_a": a.name, "deck_b": b.name, "first": 0, "learner_deck": learner.name,
                     "line": script.id, "line_name": script.name}  # fmt: skip
+            if seat == 0:
+                info["learner_seat"] = 0
             if evolved:
-                info["evolved"], info["evolved_seat"] = learner.name, 1
-            self._queue.append(Assignment(spec, opponent, 1, info, script))
+                info["evolved"], info["evolved_seat"] = learner.name, seat
+            self._queue.append(Assignment(spec, opponent, seat, info, script))
 
     def state_dict(self) -> dict:
         return {"deals": self.deals, "rng": self.rng.bit_generator.state}

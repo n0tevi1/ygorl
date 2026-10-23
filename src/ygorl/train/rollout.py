@@ -19,7 +19,10 @@ per column ("fixed-length segments with auto-reset").
   ``Rollout.line_occurrence`` (how many times the seat has answered that effect in the game, 1-based; 0 elsewhere),
   which is what the solver-window labels are keyed by (train.line_labels: a plain window count misaligns once the
   learner's own deck gives it prompts the solver's passive responder never saw). ``FinishedGame.line`` records how
-  the line went.
+  the line went. In a first-seat scripted game (``learner_seat`` 0: the learner moves first, the line is played on the
+  opponent's turn 2) only the learner's chain windows of turn 2 carry an effect and an occurrence, so the count
+  starts where the line does, as the solver's responder's did; ``Rollout.line_seat`` is the learner's seat of the
+  scripted game (1: the line moved first; -1 outside scripted games).
 - **Terminal rows**: the result is attached to the column's last row of that game: ``done``; reward +1 / -1
   / 0 from that row's seat. Games cut by a limit or an engine error (:data:`TRUNCATION_REASONS`) are
   **truncations**, not outcomes: ``done`` and ``truncated``, reward 0; the estimator bootstraps them from the
@@ -83,6 +86,11 @@ class FinishedGame:
     line: dict | None = None  # scripted game: LinePlayer.finish() (id, status completed / broken / playing, ...)
 
     @property
+    def line_seat(self) -> int:
+        """The learner's seat of a scripted game (0: it moved first, the line was played on turn 2); -1 otherwise."""
+        return -1 if self.line is None else self.assignment.learner_seat
+
+    @property
     def learner_score(self) -> float | None:
         """Pool games: 1 / 0.5 / 0 for the learner (by the reported winner); None in self-play."""
         a = self.assignment
@@ -121,6 +129,7 @@ class Rollout:
     line_window: Tensor | None = None  # [T, B] the seat's chain-window decisions so far in its game (1-based); else 0
     line_effect: Tensor | None = None  # [T, B] effect (card vocab index) a chain window answers; -1 elsewhere
     line_occurrence: Tensor | None = None  # [T, B] answers to that effect so far in the game (1-based); 0 elsewhere
+    line_seat: Tensor | None = None  # [T, B] the learner's seat of the row's scripted game (0 / 1), -1 without one
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -149,6 +158,7 @@ class _Row:
     line_window: int = 0
     line_effect: int = -1
     line_occurrence: int = 0
+    line_seat: int = -1
 
 
 @dataclass
@@ -326,7 +336,8 @@ class RolloutCollector:
         if assignment.line is not None:
             if opponent is None:
                 raise RuntimeError("a scripted-line game needs a snapshot opponent to continue the line")
-            line = LinePlayer(assignment.line, bool(getattr(self.env, "skip_forced", False)))
+            line = LinePlayer(assignment.line, bool(getattr(self.env, "skip_forced", False)),
+                              first_seat=assignment.learner_seat == 0)  # fmt: skip
         self._slots[env_id] = _Slot(assignment, opponent, line=line)
         self._watch.started(env_id)
         self.games_started += 1
@@ -371,13 +382,17 @@ class RolloutCollector:
                 window = slot.windows
                 # a forced prompt (nothing to activate: the pass is the only choosable row) is not a window the
                 # labels know; the solver's passive responder is only counted where it had a choice too
-                if int((ev.obs["action_mask"] != 0).sum()) > 1:
+                # first seat: only the windows of the line's turn (the opponent's turn 2) are counted
+                first = slot.line is not None and slot.line.first_seat
+                if int((ev.obs["action_mask"] != 0).sum()) > 1 and (not first or (int(g[3]) == 2 and not int(g[2]))):
                     effect = chain_effect(ev.obs)
                     occurrence = slot.occurrences[effect] = slot.occurrences.get(effect, 0) + 1
-            line_id = slot.assignment.line.id if slot.assignment.line is not None else -1
+            scripted = slot.assignment.line is not None
+            line_id = slot.assignment.line.id if scripted else -1
             cols[ev.env_id].append(_Row(ev.obs, ev.privileged, int(ev.player), a, float(chosen[i]), probs[i], q[i],
                                         float(v[i]), line_id=line_id, line_window=window, line_effect=effect,
-                                        line_occurrence=occurrence))  # fmt: skip
+                                        line_occurrence=occurrence,
+                                        line_seat=slot.assignment.learner_seat if scripted else -1))  # fmt: skip
             slot.rows += 1
             slot.rows_here += 1
             self.env.step(ev.env_id, a)
@@ -491,6 +506,7 @@ class RolloutCollector:
             line_window=grid([r.line_window for r in rows], torch.long),
             line_effect=grid([r.line_effect for r in rows], torch.long),
             line_occurrence=grid([r.line_occurrence for r in rows], torch.long),
+            line_seat=grid([r.line_seat for r in rows], torch.long),
         )  # fmt: skip
 
 

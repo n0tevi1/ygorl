@@ -163,6 +163,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--line-demos", "line_demos", "demonstration file (docs/solver.md) whose solved turn-1 lines the opponent "
            "seat opens with in --line-share of the pool games (repeatable)", metavar="JSONL", listing="append"),
         _f("--line-share", "line_share", "share of pool games that start with a scripted demonstration line"),
+        _f("--line-first-share", "line_first_share", "share of the scripted deals in which the learner moves first and "
+           "the demonstration line is played on the opponent's turn 2"),
         _f("--line-labels", "line_labels", "graded hand-trap labels of the scripted lines (handtrap_labels_graded "
            "JSONL); used with --ppo line_bonus_coef", path=True),
         _f("--line-labelled-only", "line_labelled_only", "deal only the scripted lines that carry a label"),

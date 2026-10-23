@@ -58,6 +58,8 @@ def perturbed(key: str):
         base = replace(base, complete_games=True)
     if key == "line_share":
         base = replace(base, line_demos=("demos.jsonl",))
+    if key == "line_first_share":
+        base = replace(base, line_demos=("demos.jsonl",), line_share=0.5)
     if key == "line_labels":
         base = replace(base, line_demos=("demos.jsonl",), line_share=0.5)
     if key == "line_labelled_only":

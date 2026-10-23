@@ -247,3 +247,125 @@ def test_the_trainer_joins_the_labels_and_logs_the_labelled_windows(tmp_path, gr
         TrainConfig(decks=(KASHTIRA,), line_labels=str(graded))
     with pytest.raises(ValueError):
         PPOConfig(line_bonus_coef=-1.0)
+
+
+# ------------------------------------------------------------------------------------------ first seat
+
+
+def first_seat_spec(script, learner=RESPONDER, seed=1, max_decisions=400):
+    """The first-seat scripted game: ``learner`` in load order on seat 0, moving first; the line on seat 1."""
+    spec = script.spec(learner, seed, DuelConfig(max_decisions=max_decisions), learner_seat=0)
+    return replace(spec, deck_a=learner)
+
+
+def drive_first_seat(env, spec, script, *, fire_at=None):
+    """Seat 0 passes (or fires Ash at its ``fire_at``-th Ash window of turn 2), seat 1 passes until its turn, plays the
+    line, then answers with the first legal row (the snapshot's stand-in). Returns the line player, the identities of
+    the learner's turn-2 windows while the line was played, and the turns reached."""
+    env.reset(0, spec)
+    player = LinePlayer(script, env.skip_forced, first_seat=True)
+    ash = env.vocab.index(FIRE) if hasattr(env, "vocab") else None
+    seen, counts, ash_windows, after = [], {}, 0, 0
+    while True:
+        (ev,) = env.recv(1)
+        if ev.result is not None:
+            return player, seen, ev.result
+        obs = ev.obs
+        g = obs["globals"]
+        if ev.player == 1:
+            row = player.act(obs)
+            if row is None:
+                if player.status != "playing":
+                    after += 1
+                    if after > 30:
+                        return player, seen, None
+                env.step(0, passive(obs) if player.status == "playing" else int(np.flatnonzero(obs["action_mask"])[0]))
+                continue
+            env.step(0, row)
+            continue
+        action = passive(obs)
+        if int(g[18]) == MSG_SELECT_CHAIN and int(np.count_nonzero(obs["action_mask"])) > 1 and int(g[3]) == 2:
+            effect = chain_effect(obs)
+            counts[effect] = counts.get(effect, 0) + 1
+            if player.status == "playing":
+                seen.append((effect, counts[effect]))
+            fire = np.flatnonzero((obs["actions"][:, 2] == ash) & (obs["action_mask"] != 0))
+            if len(fire):
+                ash_windows += 1
+                if fire_at is not None and ash_windows == fire_at:
+                    action = int(fire[0])
+        env.step(0, action)
+
+
+def test_first_seat_lines_of_the_ash_records_and_their_window_identities(library, db, vocab):
+    """With the responder deck moving first and passing, the ash records' lines are played on turn 2 and the learner's
+    turn-2 windows have the identities the labels were built with, and both lines complete. Branded's step 28 picks a
+    graveyard card whose sequence differs from the record's in either seat: the second seat (exact keys) breaks
+    there, the first seat matches graveyard cards without their sequence."""
+    env = EncodedVecEnv(1, 1, cards=db, vocab=vocab, privileged=True, event_length=16, skip_forced=True)
+    env.vocab = vocab
+    demos = {d.deck["name"]: d for d in read_jsonl(DEMOS)}
+    for script in library.scripts:
+        player, seen, _ = drive_first_seat(env, first_seat_spec(script), script)
+        expected = window_identities(demos[script.deck.name], cards=db, event_length=16)
+        assert [(vocab.password(e), k) for e, k in seen] == expected
+        assert player.status == "completed" and player.turn == 2
+        if script.deck.name == "branded":
+            second = LinePlayer(script, True)
+            env.reset(0, responder_spec(script))
+            while second.status == "playing":
+                (ev,) = env.recv(1)
+                row = second.act(ev.obs) if ev.player == 0 else passive(ev.obs)
+                if row is not None:
+                    env.step(0, row)
+            assert second.status == "broken" and second.broken_at == 28
+
+
+def test_ash_at_the_first_window_breaks_a_first_seat_line_and_the_seat_plays_on(library, db, vocab):
+    """A learner of 40 Ash moving first fires at its first turn-2 Ash window: branded's line breaks there (the seat is
+    played on by the stand-in, 30 more decisions); sky-striker's first window is the bait of its labels (value 0: the
+    combo recovers) and its line still completes, while Ash at its second window (the starter) breaks it."""
+    env = EncodedVecEnv(1, 1, cards=db, vocab=vocab, privileged=True, event_length=16, skip_forced=True)
+    env.vocab = vocab
+    ashes = Deck((FIRE,) * 40, (), (), "ash")
+    by_name = {s.deck.name: s for s in library.scripts}
+    outcomes = {}
+    for name, fire_at in (("branded", 1), ("sky-striker", 1), ("sky-striker", 2)):
+        script = by_name[name]
+        spec = script.spec(ashes, 3, DuelConfig(max_decisions=400), learner_seat=0)
+        player, seen, result = drive_first_seat(env, spec, script, fire_at=fire_at)
+        assert player.turn == 2 and len(seen) >= fire_at
+        outcomes[name, fire_at] = (player.status, player.broken_at)
+        if player.status == "broken":
+            assert result is None  # the seat kept being asked after the break: the game played on
+    assert outcomes == {("branded", 1): ("broken", 8), ("sky-striker", 1): ("completed", None),
+                        ("sky-striker", 2): ("broken", 13)}  # fmt: skip
+
+
+def test_the_label_join_holds_in_the_first_seat(library, db, vocab, graded):
+    model = tiny_model(vocab)
+    pool = SnapshotPool(2)
+    sid = pool.add(model, update=0)
+    it = iter(range(10**6))
+    scripts = library.scripts
+
+    def next_game():
+        k = next(it)
+        script = scripts[k % len(scripts)]
+        # 40 Ash: the learner still holds one on turn 2 whatever it did on turn 1 (it may summon one)
+        spec = first_seat_spec(script, Deck((FIRE,) * 40, (), (), "ash"), seed=100 + k, max_decisions=120)
+        return Assignment(spec, sid, 0, {"line": script.id}, script)
+
+    env = EncodedVecEnv(2, 1, cards=db, vocab=vocab, privileged=True, event_length=16)
+    ro = RolloutCollector(env, model, next_game, 48, opponents=pool.get, seed=5).collect()
+    T, B = ro.shape
+    assert (ro.line_seat == 0).all() and (ro.players == 0).all()
+    labels = LineLabels.load(graded, library, vocab, cards=db, event_length=16)
+    bonus, stats = labels.bonus(ro)
+    assert stats["line_labelled_rows"] >= 1 and (bonus != 0).any()
+    codes = ro.obs["actions"][..., 2].reshape(T, B, -1)
+    for t, b in (bonus != 0).nonzero().tolist():
+        assert int(ro.obs["globals"].reshape(T, B, -1)[t, b, 3]) == 2  # the opponent's turn 2, where the line is
+        label = labels.table[(int(ro.line_id[t, b]), int(ro.line_effect[t, b]), int(ro.line_occurrence[t, b]))]
+        fired = bool(((codes[t, b] == labels.fire_index) & ro.action_mask[t, b])[int(ro.actions[t, b])])
+        assert float(bonus[t, b]) == (label.fire_bonus if fired else -label.fire_bonus)

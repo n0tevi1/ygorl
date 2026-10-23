@@ -114,6 +114,9 @@ class TrainConfig:
     # seat opens with in line_share of the pool games (the snapshot plays on once the line ends or breaks)
     line_demos: tuple[str, ...] = ()
     line_share: float = 0.0
+    # share of the scripted deals that are first-seat games: the learner's deck moves first and the demonstration deck
+    # plays the line on its turn 2 (pressure to interrupt on turn 1 and on the opponent's turn); 0 = all second-seat
+    line_first_share: float = 0.0
     # graded hand-trap labels of those lines (train.line_labels; the window cache is written next to the file): the
     # learner's labelled chain windows get ppo.line_bonus_coef * bonus on their advantage
     line_labels: str | None = None
@@ -185,6 +188,8 @@ class TrainConfig:
             raise ValueError("num_envs and steps must be at least 1")
         if not 0 <= self.line_share <= 1 or (self.line_share > 0 and not self.line_demos):
             raise ValueError("line_share must be in [0, 1] and needs line_demos when above 0")
+        if not 0 <= self.line_first_share <= 1 or (self.line_first_share > 0 and self.line_share <= 0):
+            raise ValueError("line_first_share must be in [0, 1] and needs a line_share above 0 when above 0")
         if self.line_labels and not (self.line_demos and self.line_share > 0):
             raise ValueError("line_labels needs line_demos and a line_share above 0 (the labels are on those lines)")
         if self.line_labelled_only and not self.line_labels:
@@ -225,12 +230,20 @@ def _mean(xs) -> float | None:
 
 def line_stats(games) -> dict:
     """Scripted-line counts of a rollout's finished games: games, lines completed / broken (and the mean step the
-    broken ones broke at), lines still playing when the game ended (``line_unfinished``)."""
-    lines = [g.line for g in games if g.line is not None]
-    broken = [ln["broken_at"] for ln in lines if ln["status"] == "broken"]
-    return {"line_games": len(lines), "line_completed": sum(ln["status"] == "completed" for ln in lines),
-            "line_broken": len(broken), "line_broken_step": None if not broken else round(_mean(broken), 2),
-            "line_unfinished": sum(ln["status"] == "playing" for ln in lines)}  # fmt: skip
+    broken ones broke at), lines still playing when the game ended (``line_unfinished``); the same for the first-seat
+    games alone (``line_first_*``: the learner moved first, the line was played on turn 2), with the games that
+    passed over leading steps of their line (``line_first_skipped``)."""
+    out = {}
+    for prefix, seat in (("line", None), ("line_first", 0)):
+        lines = [g.line for g in games if g.line is not None and (seat is None or g.line_seat == seat)]
+        broken = [ln["broken_at"] for ln in lines if ln["status"] == "broken"]
+        out.update({f"{prefix}_games": len(lines), f"{prefix}_completed": sum(ln["status"] == "completed" for ln in lines),
+                    f"{prefix}_broken": len(broken),
+                    f"{prefix}_broken_step": None if not broken else round(_mean(broken), 2),
+                    f"{prefix}_unfinished": sum(ln["status"] == "playing" for ln in lines)})  # fmt: skip
+        if seat is not None:
+            out[f"{prefix}_skipped"] = sum(bool(ln.get("skipped")) for ln in lines)
+    return out
 
 
 class Trainer:
@@ -321,7 +334,8 @@ class Trainer:
                 self._reload_deck_pool()
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
                                          selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed,
-                                         evolved=self.evolved, lines=self.lines, line_share=cfg.line_share)  # fmt: skip
+                                         evolved=self.evolved, lines=self.lines, line_share=cfg.line_share,
+                                         line_first_share=cfg.line_first_share)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced, record_actions=True, record_games=cfg.trace_games,
@@ -563,6 +577,10 @@ class Trainer:
                  f"q_loss {stats['q_loss']:.4f}, pool win {record['pool_win_rate']}"
                  + (f", lines {record['line_completed']}/{record['line_games']} completed, {record['line_broken']} "
                     f"broken (mean step {record['line_broken_step']})" if self.lines is not None else "")
+                 + (f", first-seat {record['line_first_completed']}/{record['line_first_games']} completed, "
+                    f"{record['line_first_broken']} broken (mean step {record['line_first_broken_step']}, "
+                    f"{record['line_first_skipped']} skipped leading steps)"
+                    if self.lines is not None and self.cfg.line_first_share > 0 else "")
                  + (f", labelled windows {record['line_labelled_rows']} ({record['line_fire_rows']} fired, mean bonus "
                     f"{record['line_bonus_mean']:.3f})" if "line_labelled_rows" in record else ""))  # fmt: skip
         return record

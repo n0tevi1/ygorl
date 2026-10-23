@@ -50,6 +50,8 @@ LINE_PLAYER = 0  # engine player of the deck under study in every demonstration 
 _UNORDERED_ZONES = (1, 2, 7)  # LOCATION_ENUM of deck, hand, Extra Deck: a card's sequence there says nothing
 _LIST_INDEX_KINDS = (ACTION_KINDS.index("select") + 1, ACTION_KINDS.index("unselect") + 1)
 _CHAINING, _CHAIN_END = EV["chaining"], EV["chain_end"]
+_PILES = (5, 6)  # LOCATION_ENUM of graveyard and banished: a first-seat line matches their cards without the sequence
+_PASS_KIND = ACTION_KINDS.index("pass") + 1
 
 
 def chain_effect(obs) -> int:
@@ -93,6 +95,27 @@ def encoded_action_key(obs, index: int) -> tuple:
     return (decision, kind, code, where, int(a[3]), int(a[4]), int(a[5]), int(a[6]), int(a[7]), value)
 
 
+def _pile_free(key: tuple) -> tuple:
+    """``key`` with the sequence of a graveyard / banished card left out (the order of those piles)."""
+    where = key[3]
+    if where is not None and where[1] in _PILES:
+        return (*key[:3], (where[0], where[1], -1, where[3]), *key[4:])
+    return key
+
+
+def match_loose(obs, key: tuple) -> int | None:
+    """:func:`match_action` with graveyard / banished cards matched without their sequence."""
+    if len(key) < 4 or key[3] is None or key[3][1] not in _PILES:
+        return None
+    want = _pile_free(key)
+    mask = obs["action_mask"]
+    n = min(int(obs["globals"][20]), MAX_OPTIONS)
+    for i in range(n):
+        if mask[i] and _pile_free(encoded_action_key(obs, i)) == want:
+            return i
+    return None
+
+
 def match_action(obs, key: tuple) -> int | None:
     """The first choosable row of ``obs`` with :func:`encoded_action_key` ``key``, or None."""
     mask = obs["action_mask"]
@@ -126,13 +149,20 @@ class LineScript:
     def name(self) -> str:
         return f"{self.deck.name}#{self.hand_index}"
 
-    def spec(self, learner_deck: Deck, seed: int, config: DuelConfig | None = None) -> GameSpec:
-        """The game: the demonstration deck as deck a, moving first, from the record's exact start; ``learner_deck``
-        as deck b, shuffled with ``seed`` as a normal game would shuffle it (the engine's seat 1)."""
+    def spec(self, learner_deck: Deck, seed: int, config: DuelConfig | None = None, learner_seat: int = 1) -> GameSpec:
+        """The game from the record's exact start (core seed words, rule flags, player rules, the demonstration deck in
+        load order). ``learner_seat`` 1 (second seat): the demonstration deck is deck a and moves first, the line is
+        played on turn 1; ``learner_deck`` is deck b. ``learner_seat`` 0 (first seat): ``learner_deck`` is deck a and
+        moves first, the demonstration deck is deck b and plays the line on its turn 2, with its recorded opening hand
+        and one more card drawn. Either way ``learner_deck`` is shuffled with ``seed`` as a normal game would shuffle
+        it on that engine seat (``shuffle_deck(main, seed, seat)``)."""
+        if learner_seat not in (0, 1):
+            raise ValueError("learner_seat must be 0 (first seat) or 1 (second seat)")
         base = config or DuelConfig()
-        learner = replace(learner_deck, main=tuple(shuffle_deck(learner_deck.main, seed, 1)))
+        learner = replace(learner_deck, main=tuple(shuffle_deck(learner_deck.main, seed, learner_seat)))
         cfg = replace(base, rule_flags=self.rule_flags, player=PlayerRules(**self.player), shuffle_decks=False)
-        return GameSpec(seed=seed, deck_a=self.deck, deck_b=learner, first=0, config=cfg, core_seed=self.core_seed)
+        a, b = (self.deck, learner) if learner_seat == 1 else (learner, self.deck)
+        return GameSpec(seed=seed, deck_a=a, deck_b=b, first=0, config=cfg, core_seed=self.core_seed)
 
 
 def line_script(demo: Demonstration, line: int, vocab: CardVocab, *, cards=None, env: Environment | None = None,
@@ -228,22 +258,43 @@ class LinePlayer:
     (``status`` ``"completed"``: every step played; ``"broken"``: no candidate matched, ``broken_at`` the step), after
     which the caller plays the seat itself. With ``skip_forced`` the environment never asks forced decisions, so
     forced steps are passed over.
+
+    ``first_seat`` (the learner moves first, the line is played on the scripted seat's turn 2): the line waits for the
+    scripted seat's own turn (its decisions during the learner's turn 1 return None and the caller plays them, the line
+    stays ``"playing"``) and is matched with the tolerances turn 2 needs against a record of turn 1, in order: a
+    recorded forced step that turn 2 does ask (the drawn card adds a choice) is played instead of passed over; a
+    graveyard / banished card is matched without its sequence (the piles' order can differ); a forced decision (one
+    choosable row) or a chain window with a pass row that matches no step is answered with that row without using a
+    step (``extra``: a prompt turn 1 did not have, e.g. a hand trap's or a quick-play spell's window); at the line's
+    first decision up to ``lead_skip`` leading steps may be passed over to find a match (``skipped``). Completion is
+    noticed at any later decision of the seat. Second-seat lines behave as they always did.
     """
 
-    def __init__(self, script: LineScript, skip_forced: bool) -> None:
+    def __init__(self, script: LineScript, skip_forced: bool, *, first_seat: bool = False, lead_skip: int = 3) -> None:
         self.script = script
         self.skip_forced = skip_forced
+        self.first_seat = first_seat
+        self.lead_skip = lead_skip if first_seat else 0
         self.pos = 0
         self.status = "playing"
         self.broken_at: int | None = None
         self.played = 0
+        self.turn: int | None = None  # turn of the line's first played step
+        self.skipped = 0  # leading steps passed over (first seat)
+        self.extra = 0  # decisions answered outside the line (first seat)
+
+    def _skip_forced_steps(self) -> None:
+        steps = self.script.steps
+        while self.skip_forced and self.pos < len(steps) and steps[self.pos].forced:
+            self.pos += 1
 
     def act(self, obs) -> int | None:
         if self.status != "playing":
             return None
+        if self.first_seat:
+            return self._act_first_seat(obs)
         steps = self.script.steps
-        while self.skip_forced and self.pos < len(steps) and steps[self.pos].forced:
-            self.pos += 1
+        self._skip_forced_steps()
         if self.pos >= len(steps):
             self.status = "completed"
             return None
@@ -251,15 +302,83 @@ class LinePlayer:
         if row is None:
             self.status, self.broken_at = "broken", self.pos
             return None
+        if self.turn is None:
+            self.turn = int(obs["globals"][3])
         self.pos += 1
         self.played += 1
         return row
 
+    def _candidates(self, start: int) -> list[int]:
+        """The steps the decision may answer from ``start``: the recorded forced steps up to the next unforced one."""
+        steps, out, j = self.script.steps, [], start
+        while j < len(steps):
+            out.append(j)
+            if not (self.skip_forced and steps[j].forced):
+                break
+            j += 1
+        return out
+
+    def _act_first_seat(self, obs) -> int | None:
+        steps = self.script.steps
+        candidates = self._candidates(self.pos)
+        if not candidates or (self.skip_forced and steps[candidates[-1]].forced):
+            self.status = "completed"  # every step played (the rest forced, never asked)
+            return None
+        if not int(obs["globals"][2]):  # not the scripted seat's turn: the line has not started yet
+            return None
+        found = self._find(obs, candidates)
+        if found is None:
+            n = min(int(obs["globals"][20]), MAX_OPTIONS)
+            legal = np.flatnonzero(obs["action_mask"][:n])
+            if len(legal) == 1:
+                self.extra += 1
+                return int(legal[0])
+            if int(obs["globals"][18]) == C.MSG_SELECT_CHAIN:
+                passes = [int(i) for i in legal if int(obs["actions"][i][0]) == _PASS_KIND]
+                if passes:
+                    self.extra += 1
+                    return passes[0]
+            if self.played == 0:
+                start = candidates[-1]
+                for _ in range(self.lead_skip):
+                    start += 1
+                    if start >= len(steps):
+                        break
+                    found = self._find(obs, self._candidates(start))
+                    if found is not None:
+                        self.skipped = found[0] - self.pos
+                        break
+        if found is None:
+            self.pos = candidates[-1]
+            self.status, self.broken_at = "broken", self.pos
+            return None
+        j, row = found
+        if self.turn is None:
+            self.turn = int(obs["globals"][3])
+        self.pos = j + 1
+        self.played += 1
+        return row
+
+    def _find(self, obs, candidates: list[int]) -> tuple[int, int] | None:
+        """The candidate step a choosable row matches -- the next unforced step first, then the recorded forced steps
+        before it in order; exactly, else without the pile sequence: (step, row)."""
+        steps = self.script.steps
+        order = candidates[-1:] + candidates[:-1]
+        for match in (match_action, match_loose):
+            for j in order:
+                row = match(obs, steps[j].key)
+                if row is not None:
+                    return j, row
+        return None
+
     def finish(self) -> dict:
-        """The line's outcome for the game's record (``FinishedGame.line``)."""
+        """The line's outcome for the game's record (``FinishedGame.line``): ``seat`` is the learner's seat (1: the
+        line moved first; 0: the learner moved first and the line was played on turn 2), ``turn`` the turn of its
+        first played step."""
         return {"id": self.script.id, "name": self.script.name, "status": self.status, "played": self.played,
-                "steps": len(self.script.steps), "broken_at": self.broken_at}  # fmt: skip
+                "steps": len(self.script.steps), "broken_at": self.broken_at, "seat": 0 if self.first_seat else 1,
+                "turn": self.turn, "skipped": self.skipped, "extra": self.extra}  # fmt: skip
 
 
 __all__ = ["LINE_PLAYER", "LineLibrary", "LinePlayer", "LineScript", "LineStep", "chain_effect", "encoded_action_key",
-           "line_script", "match_action"]  # fmt: skip
+           "line_script", "match_action", "match_loose"]  # fmt: skip
