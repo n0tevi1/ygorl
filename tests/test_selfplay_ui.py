@@ -769,3 +769,38 @@ def test_list_pick_by_elimination():
     req = MDRequest(kind="mode0", mode=0, accepting=False, player=0,
                     candidates=tuple(Candidate(c, i, 0, "grave", i) for i, c in enumerate([11, 22, 33, 22])))  # fmt: skip
     assert player.find_in_list(req, 0) == (1, False)
+
+
+def test_graveyard_activation_checks_the_open_card_in_memory():
+    """The Graveyard strip shows the top card first; the card opened is read from memory before its Activate icon
+    is clicked, and another card is never activated."""
+    from types import SimpleNamespace
+
+    from ygorl.selfplay.loop import Player
+
+    raw = read_duel(build_memory(), BASE, replace(OFF, verified=True, semantics=SEM))
+    grave = [SimpleNamespace(cid=111, uid=1), SimpleNamespace(cid=222, uid=2)]  # memory order: 222 on top
+    me = raw.players[raw.me]
+    raw = replace(raw, players=tuple(replace(p, piles={**p.piles, "grave": tuple(grave)}) if p is me else p
+                                     for p in raw.players))  # fmt: skip
+    shown = [222, 111]  # strip index -> card id
+    state, clicks = {"open": None}, []
+    ui = SimpleNamespace(
+        open_graveyard=lambda: clicks.append("pile"),
+        open_graveyard_card=lambda i, kind, why: state.update(open=shown[i]) or [(1500, 300 + i)],
+        click=lambda x, y, why, pause=0: clicks.append((x, y)),
+    )
+    player = Player.__new__(Player)
+    player.ui, player.name = ui, str
+    player.trace = SimpleNamespace(observe=lambda **k: None)
+    player.game = SimpleNamespace(read=lambda: raw)
+    player.selection = SimpleNamespace(read=lambda r: (state["open"], 0))
+    refused = []
+    player.refused = lambda r, a, why: refused.append(why)
+    action = SimpleNamespace(card=SimpleNamespace(loc=SimpleNamespace(sequence=0)))  # grave[0] = 111
+    player.graveyard_activate(raw, action, 111)
+    assert clicks == ["pile", (1500, 301)] and not refused  # strip #2 holds grave[0]; its icon clicked
+    state["open"], clicks[:] = None, []
+    player.selection = SimpleNamespace(read=lambda r: (222, 0))  # memory says another card is always open
+    player.graveyard_activate(raw, action, 111)
+    assert refused and all(c == "pile" or c[0] != 1500 for c in clicks)  # no icon of another card clicked

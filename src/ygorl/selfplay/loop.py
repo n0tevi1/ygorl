@@ -311,12 +311,11 @@ def searchable(name: str) -> str:
 
 
 def clickable(action) -> bool:
-    """Whether the player can carry ``action`` out: not yet effects activated from the Graveyard or the banished
-    cards (MD opens them through the pile viewer), nor activations that declare a card name (typed text)."""
+    """Whether the player can carry ``action`` out: not yet effects activated from the banished cards (the
+    Graveyard's are, through its viewer: :meth:`Player.graveyard_activate`)."""
     card = action.card
-    if action.kind == "activate" and card is not None:
-        if card.loc.location in (C.LOCATION_GRAVE, C.LOCATION_REMOVED):
-            return False
+    if action.kind == "activate" and card is not None and card.loc.location == C.LOCATION_REMOVED:
+        return False
     return True
 
 
@@ -698,6 +697,8 @@ class Player:
                 if not self.ui.card_command(xy, f"field {self.name(cid)} (again)", "activate", 2.0, kind="activate"):
                     return self.refused(raw, best, f"no Activate for {self.name(cid)} on the field")
             return
+        if where.location == C.LOCATION_GRAVE and best.kind == "activate":
+            return self.graveyard_activate(raw, best, cid)
         if where.location == C.LOCATION_MZONE and best.kind == "reposition":
             # a monster's change-of-position icon: only taken when it is the card's single icon (no glyph measured)
             xy = my_monster_xy(where.sequence)
@@ -767,6 +768,30 @@ class Player:
         if best.kind in ("spsummon", "activate") and self.pending_question():
             return  # still resolving: a cost or a choice is asked first
         raise Stuck(f"{best.kind} {self.name(cid)}: the card is still in hand after the clicks")
+
+    def graveyard_activate(self, raw: RawDuel, best, cid: int) -> None:
+        """An effect activated from our Graveyard (the user: it must be supported): open the Graveyard viewer, open
+        the card (its strip position from the pile order in memory; which card is open is read from memory, the
+        other positions tried if it is another), and click its Activate icon."""
+        grave = raw.players[raw.me].piles["grave"]
+        seq = best.card.loc.sequence
+        guess = len(grave) - 1 - seq if 0 <= seq < len(grave) else 0  # the strip shows the top card first
+        tries = [guess] + [i for i in range(len(grave)) if i != guess]
+        self.ui.open_graveyard()
+        for i in tries[:6]:  # the strip shows about six cards without scrolling
+            icons = self.ui.open_graveyard_card(i, "activate", f"graveyard #{i + 1}: looking for {self.name(cid)}")
+            sel = self.selection.read(self.game.read()) if getattr(self, "selection", None) else None
+            self.trace.observe(graveyard={"want": cid, "index": i, "selected": sel and sel[0], "icons": icons})
+            if sel is not None and sel[0] != cid:
+                continue  # another card: try the next position
+            if sel is None and i != guess:
+                continue  # memory cannot tell, and this is not the position the pile order names
+            if icons:
+                self.ui.click(*icons[0], "activate (graveyard)", 2.0)
+                return
+            break  # the right card (or the one the order names), and MD shows it no Activate
+        self.ui.click(*NEUTRAL_SPOT, "close the graveyard", 0.8)
+        self.refused(raw, best, f"no Activate for {self.name(cid)} in the Graveyard")
 
     def pending_question(self) -> bool:
         """MD is asking something of ours right after a command (a list, a dialog, a field pick), not idle."""
