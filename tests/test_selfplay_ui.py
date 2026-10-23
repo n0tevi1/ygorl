@@ -852,3 +852,26 @@ def test_ra_pays_lp_only_when_it_can_attack():
     assert player.ra_pays_lp(SimpleNamespace(**{**vars(raw), "turn": 3}), ra)
     other = SimpleNamespace(candidates=[SimpleNamespace(cid=8, location="mzone")])
     assert player.ra_pays_lp(raw, other) is None
+
+
+def test_md_offers_masks_actions_the_highlight_rules_out():
+    """A hand card MD does not light has no command; a lit card only its aura's groups (memory, not icons)."""
+    from ygorl.engine import constants as C
+    from ygorl.selfplay.loop import Player
+
+    hand = (SimpleNamespace(cid=1, uid=11), SimpleNamespace(cid=2, uid=12))
+    me = SimpleNamespace(piles={"hand": hand}, slots=[None] * 13)
+    raw = SimpleNamespace(me=0, players=(me, me))
+    player = Player.__new__(Player)
+    player.passwords = {1: 111, 2: 222}
+    player.client = SimpleNamespace(highlighted=lambda r: {11: 0x18})  # group 1 + 2: Summon / Set, no activate
+    player.trace = SimpleNamespace(observe=lambda **k: None)
+    offered = player.md_offers(raw)
+
+    def act(kind, code):
+        return SimpleNamespace(kind=kind, card=SimpleNamespace(code=code, loc=SimpleNamespace(
+            location=C.LOCATION_HAND, sequence=0)))  # fmt: skip
+
+    assert offered(act("summon", 111)) and not offered(act("activate", 111))
+    assert not offered(act("summon", 222))  # not lit at all
+    assert offered(SimpleNamespace(kind="end_phase", card=None))

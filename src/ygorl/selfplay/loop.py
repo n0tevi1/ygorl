@@ -60,6 +60,7 @@ from ygorl.md.panel import PanelBook, name_fits, name_signature, name_words, pan
 from ygorl.md.explore import find_buttons
 from ygorl.md.request import read_request
 from ygorl.md.selection import for_process as selection_for
+from ygorl.md.client import Client, CommandBit, aura_kinds
 from ygorl.md.selection import own_cards, scan_pairs
 from ygorl.selfplay.decide import Decider, policy_scorer
 from ygorl.selfplay.observe import ShadowObserver
@@ -73,6 +74,11 @@ OPTION_OK = (1024, 788)
 
 LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
 RA = 10000010  # The Winged Dragon of Ra
+# the command bits of each action kind (MD's CommandBit; Pendulum activation counts as activate)
+COMMAND_BITS = {"summon": CommandBit.SUMMON, "mset": CommandBit.SETMONST, "sset": CommandBit.SET,
+                "spsummon": CommandBit.SPSUMMON, "activate": CommandBit.ACTION | CommandBit.PENDULUM,
+                "attack": CommandBit.ATTACK,
+                "reposition": CommandBit.TURNATK | CommandBit.TURNDEF | CommandBit.REVERSE}  # fmt: skip
 LIST_PAGES = 40  # the arrow scrolls one card at a time (the Deck's 40 at most)
 
 
@@ -403,6 +409,11 @@ class Player:
         self.ui = UI(self.mouse, self._capture)
         self.game = self.mouse.game
         self.selection = selection_for(self.game.memory, self.game.pid)
+        try:  # MD's client objects (command masks, prompt cards; design 10 「客户端的命令掩码」)
+            self.client = Client.for_process(self.game.memory, self.game.pid)
+        except Exception as exc:  # noqa: BLE001 - without it the screen decides, as before
+            self.client = None
+            print(f"  client: not readable ({exc}); commands judged on screen", flush=True)
         self.cards = default_cards()
         self.passwords = load_md_cid(self.env.artifact_path("md_cid.json"))
         self.prior = OpponentPrior.from_environment(self.env)
@@ -773,7 +784,19 @@ class Player:
         self.trace.observe(icons=icons)
         card = self.cards[best.card.code]
         order = command_order(card.is_monster, kinds.get(best.card.code, set()))
-        if self.ui.choose_command(icons, best.kind, order, self.name(cid)) is None:
+        oc = self.open_command(raw, cid)
+        if oc is not None:
+            want = COMMAND_BITS.get(best.kind, 0)
+            if not oc.mask & want:
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                return self.refused(raw, best, f"{self.name(cid)}: MD's command mask {oc.mask:#x} has no {best.kind}")
+            nth = [i for i, c in enumerate(oc.commands) if want & (1 << c)]
+            if nth and len(icons) == len(oc.commands):
+                # the icons left to right are MD's command list in order: the icon is known, not guessed by glyph
+                self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth[0]})
+                self.ui.click(*sorted(icons)[nth[0]], best.kind, 1.5)
+                icons = None
+        if icons is not None and self.ui.choose_command(icons, best.kind, order, self.name(cid)) is None:
             # an effect's resolve glow can pass for the only icon (Millennium Seeker's Summon refused while The True
             # Name glowed): let the board settle, open the card again and look once more before refusing
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
@@ -811,6 +834,21 @@ class Player:
         if best.kind in ("spsummon", "activate") and self.pending_question():
             return  # still resolving: a cost or a choice is asked first
         raise Stuck(f"{best.kind} {self.name(cid)}: the card is still in hand after the clicks")
+
+    def open_command(self, raw: RawDuel, cid: int):
+        """MD's command mask of the card open now (memory), when it is card ``cid`` of ours; else None."""
+        client = getattr(self, "client", None)
+        if client is None:
+            return None
+        for _ in range(6):
+            try:
+                oc = client.open_command(raw.me)
+            except Exception:  # noqa: BLE001
+                return None
+            if oc is not None and oc.cid == cid:
+                return oc
+            time.sleep(0.25)
+        return None
 
     def graveyard_activate(self, raw: RawDuel, best, cid: int) -> None:
         """An effect activated from our Graveyard (the user: it must be supported): open the Graveyard viewer, open
@@ -882,6 +920,59 @@ class Player:
         if where and where not in ("mzone", "szone"):
             self.activated.add((action.card.code, where))
 
+    def md_offers(self, raw: RawDuel):
+        """A test of whether MD offers an action, from the cards it highlights (memory: the client's command
+        groups per card, :meth:`ygorl.md.client.Client.highlighted`): a hand / field card MD does not light has no
+        command, and a lit card only the commands of its groups. Anything else (phases, Graveyard cards, a
+        highlight not readable yet) passes; masked actions are recorded in the trace."""
+        client = getattr(self, "client", None)
+        lit: dict = {}
+        if client is not None:
+            for _ in range(10):  # MD lights the cards 0.2-2 s after the input mode changes
+                try:
+                    lit = client.highlighted(raw)
+                except Exception:  # noqa: BLE001
+                    lit = {}
+                if lit:
+                    break
+                time.sleep(0.3)
+        if not lit:
+            return lambda action: True
+        me = raw.players[raw.me]
+        masked = []
+
+        def uids(card) -> set:
+            loc = card.loc
+            if loc.location == C.LOCATION_HAND:
+                return {c.uid for c in me.piles["hand"] if self.passwords.get(c.cid) == card.code}
+            if loc.location == C.LOCATION_MZONE and 0 <= loc.sequence < 7:
+                slot = me.slots[loc.sequence]
+            elif loc.location == C.LOCATION_SZONE and 0 <= loc.sequence < 6:
+                slot = me.slots[7 + loc.sequence]
+            else:
+                return set()
+            return {slot.uid} if slot is not None else set()
+
+        def offered(action) -> bool:
+            card = getattr(action, "card", None)
+            if card is None or card.loc.location not in (C.LOCATION_HAND, C.LOCATION_MZONE, C.LOCATION_SZONE):
+                return True
+            ids = uids(card)
+            if not ids:
+                return True
+            kinds = set().union(*(aura_kinds(lit[u]) for u in ids if u in lit)) if ids & set(lit) else set()
+            ok = action.kind in kinds or (action.kind == "reposition" and "flip" in kinds)
+            if not ok:
+                masked.append([action.kind, card.code])
+            return ok
+
+        def record(action) -> bool:
+            ok = offered(action)
+            self.trace.observe(md_masked=masked)
+            return ok
+
+        return record
+
     def decide(self, raw: RawDuel):
         """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""
         from ygorl.advisor.advise import advise
@@ -892,7 +983,9 @@ class Player:
                         samples=self.samples, seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip
         key = (raw.turn, raw.phase)
         no_attacks = (key, ATTACKS_MASKED) in self.forbidden
-        allowed = [g for g in advice.suggestions if (key, _action_key(g.action)) not in self.forbidden
+        offered = self.md_offers(raw)
+        allowed = [g for g in advice.suggestions if offered(g.action)
+                   and (key, _action_key(g.action)) not in self.forbidden
                    and ((raw.turn, "*"), _action_key(g.action)) not in self.forbidden
                    and not (no_attacks and g.action.kind == "attack") and clickable(g.action)]  # fmt: skip
         if not allowed:
@@ -1009,14 +1102,35 @@ class Player:
         if respond:
             self.context = "respond"
 
+    def prompt_list(self) -> list:
+        """The cards MD's open / chain prompt offers (memory, the client's list), [] when not readable."""
+        client = getattr(self, "client", None)
+        if client is None:
+            return []
+        try:
+            raw = self.game.read()
+            if self.request_now(raw).kind not in ("open", "chain"):
+                return []
+            return client.prompt_cards(raw) or []
+        except Exception:  # noqa: BLE001
+            return []
+
     def tick_prompt_card(self, want: int) -> int | None:
         """Tick the card a response prompt offers that the policy means (password ``want``): MD can offer several
         side by side (Sun God Unification and Dark Spell Regeneration: only the first was ever ticked, and the
         prompt passed). Which card is ticked is read from memory; the first one's password when none is ``want``."""
         sel = getattr(self, "selection", None)
         first, first_xy, tried = None, None, set()
+        listed = self.prompt_list()
+        order = []
+        if listed:
+            # the prompt's own list (memory): how many cards and which is where (assumed in the list's order)
+            spots = L.prompt_cards(len(listed))
+            order = [spots[i] for i, c in enumerate(listed) if self.passwords.get(c.cid) == want]
+            order += [xy for xy in spots if xy not in order]
+            self.trace.observe(prompt_list=[c.cid for c in listed])
         for count in range(1, 5):
-            for xy in L.prompt_cards(count):
+            for xy in order if count == 1 and order else [] if order else L.prompt_cards(count):
                 if xy in tried:
                     continue
                 tried.add(xy)
