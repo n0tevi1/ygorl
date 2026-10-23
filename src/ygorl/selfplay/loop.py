@@ -46,6 +46,7 @@ from ygorl.md.ui import (
     UI,
     Stuck,
     command_order,
+    is_command_icon,
     my_monster_xy,
     notice_button,
     opp_monster_xy,
@@ -226,12 +227,28 @@ def declares_a_card(password: int) -> bool:
     return False
 
 
+def searchable(name: str) -> str:
+    """The longest stretch of a card name that the keyboard can type (search matches substrings)."""
+    from ygorl.md.input import GatedMouse
+
+    ok = lambda ch: (ch.isascii() and ch.isalnum()) or ch in GatedMouse.KEYSYMS  # noqa: E731
+    parts, cur = [], ""
+    for ch in name:
+        if ok(ch):
+            cur += ch
+        else:
+            parts.append(cur)
+            cur = ""
+    parts.append(cur)
+    return max(parts, key=len).strip() or name
+
+
 def clickable(action) -> bool:
     """Whether the player can carry ``action`` out: not yet effects activated from the Graveyard or the banished
     cards (MD opens them through the pile viewer), nor activations that declare a card name (typed text)."""
     card = action.card
     if action.kind == "activate" and card is not None:
-        if card.loc.location in (C.LOCATION_GRAVE, C.LOCATION_REMOVED) or declares_a_card(card.code):
+        if card.loc.location in (C.LOCATION_GRAVE, C.LOCATION_REMOVED):
             return False
     return True
 
@@ -481,6 +498,24 @@ class Player:
                     return location, zone
         return "mzone", self.free_zone(raw, "mzone")
 
+    def command_at_zone(self, location: str, zone: int, kind: str, order) -> None:
+        """When the command click did not take, the zone click makes MD place the selected hand card on that zone
+        and ask the command again there (Summon / Set icons above the zone): answer it with the same command."""
+        x, y = L.my_zone(location, zone)
+        self.ui.sleep(0.6)
+        img = self.ui.capture()
+        box = (max(x - 200, 0), max(y - 260, 0), min(x + 200, L.REF_W), y - 60)
+        icons = []
+        for p in sorted(set(L.find_icons(img, *box)) | set(L.blue_icons(img, *box))):
+            if is_command_icon(img, *p) and all(abs(p[0] - q[0]) + abs(p[1] - q[1]) > 40 for q in icons):
+                icons.append(p)  # the two detectors can both report one icon
+        if icons:
+            # the icons fade in: read their glyphs once drawn (a half-faded Summon reads as Set: Chocolate Magician
+            # Girl was Set instead of Summoned)
+            self.ui.wait_still(box, timeout=2.4, tolerance=2.0)
+            self.trace.observe(command_at_zone=icons)
+            self.ui.choose_command(icons, kind, order, "the card on the zone")
+
     def free_zone(self, raw: RawDuel, location: str) -> int:
         """The leftmost free zone (0-4) of ``location`` (mzone / szone): where a summon or Set is placed."""
         slots = raw.players[raw.me].slots
@@ -574,6 +609,7 @@ class Player:
         self.ui.pick_zone(location, zone, f"zone for {best.kind}")
         self.last_zone = (location, zone)
         self._placed(location, zone)
+        self.command_at_zone(location, zone, best.kind, order)
         before = sum(c.cid == cid for c in raw.players[raw.me].piles["hand"])
         for _ in range(10):
             after = self.game.read()
@@ -862,6 +898,10 @@ class Player:
             if pick is None:
                 self.trace.rule("radio-first")  # e.g. Pot of Extravagance: banish 3 (the first row) rather than 6
             self.trace.observe(radio_rows=self.ui.pick_radio(pick or 0))
+        elif kind == "declare":
+            name = self.declare_name(raw)
+            self.trace.rule("declare-most-common-in-deck", name=name)
+            self.ui.declare(searchable(name), self.mouse.type_text)
         elif kind == "minimised":
             self.trace.rule("restore-minimised")
             self.ui.click(*MINIMISED_RESTORE, "restore the minimised panel", 1.5)
@@ -984,6 +1024,17 @@ class Player:
             return None
         self.trace.rule("option-the-policy-activated", description=action.description, pick=tabs[0])
         return tabs[0]
+
+    def declare_name(self, raw: RawDuel) -> str:
+        """The card to declare (The True Name and the like): the card with the most copies left in our Deck (our
+        decklist minus what is visible), the likeliest top card. The policy does not decide it yet."""
+        deck = own_deck(raw, self.passwords, self.cards)
+        me = raw.players[raw.me]
+        seen = Counter(self.passwords.get(c.cid) for z in ("hand", "grave", "removed") for c in me.piles[z])
+        seen += Counter(self.passwords.get(c.cid) for c in me.slots if c is not None)
+        left = Counter(deck.main) - seen
+        best = max(left, key=lambda p: (left[p], p)) if left else next(iter(deck.main))
+        return self.cards[best].name
 
     def find_in_list(self, req, pick: int) -> tuple[int, bool]:
         """The screen position of candidate ``pick`` in MD's card list, and whether it is ticked already.

@@ -123,7 +123,7 @@ def test_hand_card_command_chosen_by_its_glyph(kind, index):
     assert near(icons, ROW)
     target = ui.choose_command(icons, kind, command_order(True, {"summon", "mset"}))
     assert target == icons[index]
-    assert mouse.clicks == [HAND_XY, icons[index]] and sleeps == [0.6, 1.5]
+    assert mouse.clicks == [HAND_XY, icons[index]] and sleeps[0] == 0.6 and sleeps[-1] == 1.5  # (+ fade-in wait)
     ui.pick_zone("mzone", 2, "zone")
     assert mouse.clicks[-1] == L.my_zone("mzone", 2) and sleeps[-1] == 2.5
 
@@ -132,7 +132,7 @@ def test_hand_card_icons_that_come_late_are_polled_for():
     """The icons appear a few captures after the click: found by polling, no second click."""
     ui, mouse, sleeps = make_ui(board(), board(), board(), with_icons(board(), ROW))
     assert near(ui.open_hand_card(HAND_XY, "hand"), ROW)
-    assert mouse.clicks == [HAND_XY] and sleeps == [0.6, 0.3, 0.3]
+    assert mouse.clicks == [HAND_XY] and sleeps[:3] == [0.6, 0.3, 0.3]
 
 
 def test_hand_card_clicked_again_when_nothing_comes():
@@ -167,7 +167,7 @@ def test_field_command_takes_the_icon_above_the_card():
     xy = (1038, 750)
     ui, mouse, sleeps = make_ui(board(), with_icons(board(), [(xy[0], xy[1] - 145)]))
     assert ui.attack(xy, "attacker")
-    assert mouse.clicks[0] == xy and abs(mouse.clicks[1][0] - xy[0]) <= 8 and sleeps == [1.2, 1.8]
+    assert mouse.clicks[0] == xy and abs(mouse.clicks[1][0] - xy[0]) <= 8 and sleeps[0] == 1.2 and sleeps[-1] == 1.8
     ui2, mouse2, _ = make_ui(board())
     assert not ui2.pick_target(xy, "target") and mouse2.clicks == [xy]  # one click, no retry on the field
 
@@ -360,6 +360,7 @@ def _panel(name_width: int, numbers: tuple[str, str, str]) -> np.ndarray:
 
     img = np.full((1184, 2054, 3), 180, np.uint8)
     img[160:420, 30:450] = (8, 12, 14)
+    img[P.RIM_Y, 30:450] = P.RIM_RGB  # the panel's grey top rim (Chinese layout)
     x0, y0, _, y1 = P.NAME_BAND
     img[y0 + 4 : y1 - 4, x0 : x0 + name_width] = 255
     shapes = {"0": [(0, 0, 14, 4), (0, 18, 14, 22), (0, 0, 3, 22), (11, 0, 14, 22)], "1": [(6, 0, 9, 22)],

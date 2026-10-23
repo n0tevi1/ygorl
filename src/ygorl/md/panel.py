@@ -36,10 +36,29 @@ def _white(img: np.ndarray, band) -> np.ndarray:
     return img[y0:y1, x0:x1].max(axis=2) > 180
 
 
+RIM_Y, RIM_RGB = 180, (57, 58, 60)  # the grey rim above the panel's name bar (Chinese client; 205 in English)
+
+
+def rim_y(img: np.ndarray) -> int | None:
+    """The row of the panel's grey top rim, or None (no panel)."""
+    for y in range(150, 260):
+        row = img[y, 80:440].astype(int)
+        if (np.abs(row - np.array(RIM_RGB)).max(axis=1) < 10).mean() > 0.9:
+            return y
+    return None
+
+
+def _shifted(band, img):
+    """``band`` moved with the panel: the English client draws the whole panel (name bar, level / ATK / DEF rows)
+    25 px lower than the Chinese one; the top rim tells by how much."""
+    dy = (rim_y(img) or RIM_Y) - RIM_Y
+    x0, y0, x1, y1 = band
+    return x0, y0 + dy, x1, y1 + dy
+
+
 def panel_open(img: np.ndarray) -> bool:
-    """The information panel is up: a dark body right of the digits and some white name text."""
-    x0, y0, x1, y1 = BODY
-    return bool(img[y0:y1, x0:x1].astype(int).mean() < 45 and _white(img, NAME_BAND).mean() > 0.02)
+    """The information panel is up: its grey top rim and some white name text under it."""
+    return rim_y(img) is not None and bool(_white(img, _shifted(NAME_BAND, img)).mean() > 0.02)
 
 
 HEADER = (380, 175, 440, 192)  # the name bar's colour, right of the name
@@ -49,8 +68,10 @@ def panel_kind(img: np.ndarray) -> str:
     """The card kind the panel's header colour shows: "spell" (teal, measured 44 96 90), "monster" (orange / yellow:
     104 77 58 effect, 104 91 65 normal), "purple" (a Trap, or an Extra Deck monster such as Fusion: 100 58 94), "" else.
     A hand card is never an Extra Deck monster, so "purple" there means a Trap."""
-    x0, y0, x1, y1 = HEADER
-    r, g, b = img[y0:y1, x0:x1].reshape(-1, 3).astype(int).mean(axis=0)
+    x0, y0, x1, y1 = _shifted(HEADER, img)
+    x1 = min(x1, 380)  # the English name bar ends at the attribute icon (x ~390)
+    x0 = min(x0, x1 - 60)
+    r, g, b = img[y0 + 6 : y1 + 6, x0:x1].reshape(-1, 3).astype(int).mean(axis=0)
     if g > r + 25 and b > r + 20:
         return "spell"
     if r > b + 20 and g > b + 10:
@@ -61,7 +82,7 @@ def panel_kind(img: np.ndarray) -> str:
 
 
 def name_signature(img: np.ndarray) -> np.ndarray:
-    return _white(img, NAME_BAND)
+    return _white(img, _shifted(NAME_BAND, img))
 
 
 def same_name(a: np.ndarray, b: np.ndarray, shift: int = 2) -> float:
@@ -124,7 +145,7 @@ class PanelBook:
     # --- reading ---
     def read_number(self, img: np.ndarray, band) -> str:
         text = ""
-        for g in digit_glyphs(img, band):
+        for g in digit_glyphs(img, _shifted(band, img)):
             best, score = "?", 0.0
             for ch, temps in self.digits.items():
                 for t in temps:
@@ -174,7 +195,7 @@ class PanelBook:
         if stats is None:
             return
         for band, value in zip((LEVEL_BAND, ATK_BAND, DEF_BAND), stats, strict=True):
-            text, glyphs = str(value), digit_glyphs(img, band)
+            text, glyphs = str(value), digit_glyphs(img, _shifted(band, img))
             if value < 0 or len(text) != len(glyphs):
                 continue  # "?" ATK, or a split that does not match the number: do not learn from it
             for ch, g in zip(text, glyphs, strict=True):

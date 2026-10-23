@@ -63,8 +63,8 @@ class _XEvent(ctypes.Structure):
                 ("button", ctypes.c_uint), ("same_screen", ctypes.c_int), ("pad", ctypes.c_long * 12)]  # fmt: skip
 
 
-MOTION, PRESS, RELEASE = 6, 4, 5  # X event types
-MASKS = {MOTION: 1 << 6, PRESS: 1 << 2, RELEASE: 1 << 3}  # PointerMotion, ButtonPress, ButtonRelease
+MOTION, PRESS, RELEASE, KEY_PRESS, KEY_RELEASE = 6, 4, 5, 2, 3  # X event types
+MASKS = {MOTION: 1 << 6, PRESS: 1 << 2, RELEASE: 1 << 3, KEY_PRESS: 1 << 0, KEY_RELEASE: 1 << 1}
 BUTTON1_MASK = 1 << 8
 
 
@@ -91,6 +91,20 @@ class WindowPointer:
 
     def move(self, x: int, y: int) -> None:
         self._send(MOTION, x, y)
+
+    def key(self, keysym: str, shift: bool = False) -> None:
+        """One key press and release (``keysym`` an X keysym name: "a", "space", "apostrophe", "BackSpace", ...),
+        sent to the window like the pointer events. The game takes them once a text field has the focus."""
+        self.x11.XStringToKeysym.restype = ctypes.c_ulong
+        ks = self.x11.XStringToKeysym(keysym.encode())
+        code = self.x11.XKeysymToKeycode(ctypes.c_void_p(self.display), ctypes.c_ulong(ks))
+        if not code:
+            raise InputError(f"no keycode for {keysym!r}")
+        state = 1 if shift else 0  # ShiftMask
+        x, y = self.window.x + 10, self.window.y + 10
+        for kind in (KEY_PRESS, KEY_RELEASE):
+            self._send(kind, x, y, state=state, button=code)  # an XKeyEvent: keycode where XButtonEvent has button
+            time.sleep(0.04)
 
     def click(self, x: int, y: int, *, hold: float = 0.06) -> None:
         # hover first: Unity reacted unreliably to a press right after the pointer arrived (list cards, Select)
@@ -134,6 +148,30 @@ class GatedMouse:
 
     def click(self, x: int, y: int) -> None:
         self.pointer.click(*self._check(x, y))
+
+    # characters a card name can hold -> (keysym, shift) on a US layout
+    KEYSYMS = {" ": ("space", False), "'": ("apostrophe", False), "-": ("minus", False), ",": ("comma", False),
+               ".": ("period", False), ":": ("colon", True), "!": ("exclam", True), "&": ("ampersand", True),
+               "?": ("question", True), "/": ("slash", False), '"': ("quotedbl", True), "#": ("numbersign", True),
+               "(": ("parenleft", True), ")": ("parenright", True), "@": ("at", True), "+": ("plus", True)}  # fmt: skip
+
+    def type_text(self, text: str) -> None:
+        """Type ``text`` into the game's focused text field (the Solo gate first, like every click)."""
+        if self.shared_pointer:
+            raise InputError("typing needs window-only input")
+        solo_gate(self.game.read())
+        for ch in text:
+            if ch.isascii() and ch.isalnum():
+                self.pointer.key(ch.lower() if ch.isalpha() else ch, shift=ch.isupper())
+            elif ch in self.KEYSYMS:
+                self.pointer.key(*self.KEYSYMS[ch])
+            else:
+                raise InputError(f"cannot type {ch!r}")
+
+    def backspace(self, n: int) -> None:
+        solo_gate(self.game.read())
+        for _ in range(n):
+            self.pointer.key("BackSpace")
 
 
 class MenuMouse:

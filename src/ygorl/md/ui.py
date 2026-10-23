@@ -123,10 +123,24 @@ def minimised(img: np.ndarray) -> bool:
     return bool(dark > 0.6 and teal > 0.3)
 
 
+DECLARE_SEARCH, DECLARE_CLEAR = (1026, 705), (1284, 688)  # the declare panel's search box and its clear (X) button
+
+
+def declare_box(img: np.ndarray) -> bool:
+    """MD's "declare a card name" panel: a flat grey search box (66 66 66 measured, rows 700-720) across the panel,
+    dark panel on both sides."""
+    bar = img[700:722, 780:1270].reshape(-1, 3).astype(int)
+    grey = (np.abs(bar[:, 0] - bar[:, 2]) < 8) & (bar.min(axis=1) > 40) & (bar.max(axis=1) < 100)
+    sides = img[700:722, 690:710].reshape(-1, 3).astype(int).max(axis=1).mean() < 30
+    return bool(grey.mean() > 0.8 and sides)
+
+
 def screen_dialog(img: np.ndarray) -> str | None:
     """MD UI dialogs that are not engine input states (measured on the 2054x1184 window)."""
     if minimised(img):
         return "minimised"
+    if declare_box(img):
+        return "declare"
     if L.menu_button(img, *L.PHASE_MENU["end"]):
         return "phase_menu"  # MD's phase menu (left open by an interrupted phase change)
     if len(radio_rows(img)) >= 2 and list_select_state(img, RADIO_CONFIRM_TEXT) != "":
@@ -347,6 +361,9 @@ class UI:
             self.click(x, y, why, 1.2)
             icons = L.new_icons(before, self.capture(), *box)
             if icons:
+                xs, ys = [p[0] for p in icons], [p[1] for p in icons]
+                self.wait_still((max(min(xs) - 50, 0), max(min(ys) - 50, 0), min(max(xs) + 50, L.REF_W), max(ys) + 50),
+                                timeout=2.4, tolerance=2.0)  # fmt: skip
                 return icons
             # MD's Confirm icon blinks (about 2 s on, 2 s off) and may already be up from an earlier click:
             # poll for one straight above the card
@@ -372,7 +389,15 @@ class UI:
                 extra = [p for p in L.blue_icons(after, *box) if p[1] < 940 and is_command_icon(after, *p)
                          and all(abs(p[0] - q[0]) > 60 for q in icons)]  # fmt: skip
                 icons = sorted(icons + extra)
+                # only the row above this card: icons left by another card (opened before, slower to fade out
+                # than this one's are to fade in) were taken for this card's
+                icons = [p for p in icons if abs(p[0] - x) <= 220]
                 if icons:
+                    # the icons fade in: wait until they are fully drawn (a half-faded Summon read as Set by its
+                    # glyph colour, and a click on a fading icon was ignored), then report them
+                    xs, ys = [p[0] for p in icons], [p[1] for p in icons]
+                    self.wait_still((max(min(xs) - 50, 0), min(ys) - 50, min(max(xs) + 50, L.REF_W), max(ys) + 50),
+                                    timeout=2.4, tolerance=2.0)  # fmt: skip
                     return icons
                 self.sleep(0.3)
         return []
@@ -386,8 +411,13 @@ class UI:
         to Change Position, and the nearest one was once the wrong one."""
         icons = self.open_card(xy, why_card)
         if kind is not None and icons:
-            img = self.capture()
-            icons = [p for p in icons if icon_kind(img, *p) == kind]
+            found = icons
+            for _ in range(12):  # the icon blinks (about 2 s on, 2 s off): read its glyph on a frame where it is lit
+                img = self.capture()
+                icons = [p for p in found if icon_kind(img, *p) == kind]
+                if icons:
+                    break
+                self.sleep(0.35)
         if not icons:
             return False
         self.click(*min(icons, key=lambda p: abs(p[0] - xy[0])), why, pause)
@@ -450,6 +480,21 @@ class UI:
         self.click(RADIO_ROW_X, rows[index], f"option {index + 1} of {len(rows)}", 0.8)
         self.click(*RADIO_CONFIRM, "confirm", 1.5)
         return len(rows)
+
+    def declare(self, text: str, type_text: Callable[[str], None]) -> list[XY]:
+        """MD's "declare a card name" panel: click the search box, clear it, type ``text`` (``type_text``: the gated
+        keyboard), then pick the first card found and press Select. Returns the cards the search listed."""
+        self.click(*DECLARE_CLEAR, "clear the search box", 0.5)
+        self.click(*DECLARE_SEARCH, "the search box", 0.6)
+        type_text(text)
+        self.clicks.append({"t": round(time.time(), 2), "xy": None, "why": f"typed {text!r}"})
+        for _ in range(10):
+            self.sleep(0.5)
+            if L.list_cards(self.capture()):
+                break
+        else:
+            raise Stuck(f"the declare search for {text!r} listed no card")
+        return self.pick_list_cards([0])
 
     def pick_list_set(self, need: int, order: Sequence[int] | None = None, tries: int = 20) -> tuple[int, ...]:
         """A list that wants ``need`` cards ticked before Select (Fusion Materials): tick a combination of the cards
