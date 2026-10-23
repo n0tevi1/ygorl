@@ -83,6 +83,14 @@ def capture(window) -> np.ndarray:
     return L.reference_image(capture_client(window))
 
 
+def _progress(raw: RawDuel, inp) -> tuple:
+    """What changes in memory while a duel moves on: turn, phase, LP, who holds the input, and where every card is
+    (by uid only: nothing about hidden cards is kept)."""
+    return (raw.turn, raw.phase, inp.mode, inp.player,
+            tuple((p.lp, tuple(c.uid if c else 0 for c in p.slots),
+                   tuple((k, tuple(c.uid for c in v)) for k, v in sorted(p.piles.items()))) for p in raw.players))
+
+
 @dataclass
 class Input:
     mode: int
@@ -384,14 +392,19 @@ class Player:
         return self.cards[pw].name if pw in self.cards else str(cid)
 
     def wait_turn(self, timeout: float = 120) -> tuple[RawDuel, Input, str | None]:
-        """Wait until the client must act: an engine input addressed to it, or one of MD's dialogs (stable ~1 s)."""
-        end, stable, last = time.time() + timeout, 0, None
+        """Wait until the client must act: an engine input addressed to it, or one of MD's dialogs (stable ~1 s).
+        ``timeout`` counts from the last change of the duel in memory: the CPU's own turn can run for minutes of
+        chains and animations (a Red-Eyes turn took over 4), and that is not the player being stuck."""
+        end, stable, last, progress = time.time() + timeout, 0, None, None
         while time.time() < end:
             try:
                 raw, inp = self.game.read(), self.input()
             except MemoryReadError:  # between duels (loading) the state can be gone for a moment
                 time.sleep(1.0)
                 continue
+            now = _progress(raw, inp)
+            if now != progress:
+                progress, end = now, time.time() + timeout
             if raw.finished:  # the engine's own flag: LP reads can catch the obfuscated value mid-update
                 return raw, inp, "over"
             mine = inp.accepting and inp.player == raw.me
