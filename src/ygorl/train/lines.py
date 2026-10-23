@@ -42,12 +42,34 @@ from ygorl.env.encoding import (
     ObservationEncoder,
     canonical_action,
 )
+from ygorl.env.events import CARD as EVENT_CARD, EV, TYPE as EVENT_TYPE
 from ygorl.env.pool import GameSpec
 from ygorl.solver.demo import DemoError, Demonstration, read_jsonl
 
 LINE_PLAYER = 0  # engine player of the deck under study in every demonstration (it moves first; bc.DEMO_PLAYER)
 _UNORDERED_ZONES = (1, 2, 7)  # LOCATION_ENUM of deck, hand, Extra Deck: a card's sequence there says nothing
 _LIST_INDEX_KINDS = (ACTION_KINDS.index("select") + 1, ACTION_KINDS.index("unselect") + 1)
+_CHAINING, _CHAIN_END = EV["chaining"], EV["chain_end"]
+
+
+def chain_effect(obs) -> int:
+    """The effect a MSG_SELECT_CHAIN decision answers, as a card vocab index: the card of the newest ``chaining``
+    event in the observation's window (``events`` / ``event_mask``, oldest first) that no ``chain_end`` follows;
+    0 at an open window (no chain being built: a trigger window after a summon, an end-phase prompt) or without
+    events. Both the learner's rows (``Rollout.line_effect``) and the solver-window labels (train.line_labels)
+    identify a chain window by this effect and by how many times the seat has answered it in the game."""
+    events, mask = obs.get("events"), obs.get("event_mask")
+    if events is None or mask is None:
+        return 0
+    for i in range(len(events) - 1, -1, -1):
+        if not mask[i]:
+            continue
+        kind = int(events[i][EVENT_TYPE])
+        if kind == _CHAIN_END:
+            return 0
+        if kind == _CHAINING:
+            return int(events[i][EVENT_CARD])
+    return 0
 
 
 def encoded_action_key(obs, index: int) -> tuple:
@@ -232,5 +254,5 @@ class LinePlayer:
                 "steps": len(self.script.steps), "broken_at": self.broken_at}  # fmt: skip
 
 
-__all__ = ["LINE_PLAYER", "LineLibrary", "LinePlayer", "LineScript", "LineStep", "encoded_action_key", "line_script",
-           "match_action"]  # fmt: skip
+__all__ = ["LINE_PLAYER", "LineLibrary", "LinePlayer", "LineScript", "LineStep", "chain_effect", "encoded_action_key",
+           "line_script", "match_action"]  # fmt: skip

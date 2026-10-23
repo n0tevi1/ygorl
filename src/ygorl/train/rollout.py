@@ -14,7 +14,12 @@ per column ("fixed-length segments with auto-reset").
   opens with a solver demonstration (:class:`~ygorl.train.lines.LinePlayer` picks the candidate matching each step)
   and is played by the snapshot once the line ends or breaks. The learner's rows carry the line's id
   (``Rollout.line_id``, -1 elsewhere) and ``Rollout.line_window`` (its chain-window decisions of the game, 1-based;
-  0 on other decisions), for joining solver labels later; ``FinishedGame.line`` records how the line went.
+  0 on other decisions); a chain window with a real choice (two or more choosable rows) also carries the identity
+  of the effect it answers, ``Rollout.line_effect`` (:func:`ygorl.train.lines.chain_effect`, -1 elsewhere) and
+  ``Rollout.line_occurrence`` (how many times the seat has answered that effect in the game, 1-based; 0 elsewhere),
+  which is what the solver-window labels are keyed by (train.line_labels: a plain window count misaligns once the
+  learner's own deck gives it prompts the solver's passive responder never saw). ``FinishedGame.line`` records how
+  the line went.
 - **Terminal rows**: the result is attached to the column's last row of that game: ``done``; reward +1 / -1
   / 0 from that row's seat. Games cut by a limit or an engine error (:data:`TRUNCATION_REASONS`) are
   **truncations**, not outcomes: ``done`` and ``truncated``, reward 0; the estimator bootstraps them from the
@@ -42,7 +47,7 @@ from ygorl.engine.constants import MSG_SELECT_CHAIN
 from ygorl.engine.outcome import TRUNCATED
 from ygorl.env.driver import EnvStalled, StallWatch
 from ygorl.nets.batch import policy_logits
-from ygorl.train.lines import LinePlayer
+from ygorl.train.lines import LinePlayer, chain_effect
 
 TRUNCATION_REASONS = TRUNCATED  # games the host stopped: bootstrapped, not terminal (ygorl.engine.outcome)
 
@@ -113,6 +118,8 @@ class Rollout:
     discarded_rows: int = 0  # complete-game mode: rows of truncated games (still charged as decisions)
     line_id: Tensor | None = None  # [T, B] id of the scripted line of the row's game, -1 without one
     line_window: Tensor | None = None  # [T, B] the seat's chain-window decisions so far in its game (1-based); else 0
+    line_effect: Tensor | None = None  # [T, B] effect (card vocab index) a chain window answers; -1 elsewhere
+    line_occurrence: Tensor | None = None  # [T, B] answers to that effect so far in the game (1-based); 0 elsewhere
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -139,6 +146,8 @@ class _Row:
     truncated: bool = False
     line_id: int = -1
     line_window: int = 0
+    line_effect: int = -1
+    line_occurrence: int = 0
 
 
 @dataclass
@@ -149,6 +158,7 @@ class _Slot:
     rows_here: int = 0  # rows of the current game in the column being filled
     line: LinePlayer | None = None  # scripted game: the opponent seat's line
     windows: int = 0  # the learner's chain-window decisions so far in this game
+    occurrences: dict[int, int] = field(default_factory=dict)  # effect (vocab index) -> chain windows answered on it
 
 
 class RolloutCollector:
@@ -349,14 +359,20 @@ class RolloutCollector:
         for i, ev in enumerate(events):
             a = int(actions[i])
             slot = self._slots[ev.env_id]
-            window = 0
+            window, effect, occurrence = 0, -1, 0
             g = ev.obs.get("globals")  # absent on toy environments (train.toy)
             if g is not None and int(g[18]) == MSG_SELECT_CHAIN:
                 slot.windows += 1
                 window = slot.windows
+                # a forced prompt (nothing to activate: the pass is the only choosable row) is not a window the
+                # labels know; the solver's passive responder is only counted where it had a choice too
+                if int((ev.obs["action_mask"] != 0).sum()) > 1:
+                    effect = chain_effect(ev.obs)
+                    occurrence = slot.occurrences[effect] = slot.occurrences.get(effect, 0) + 1
             line_id = slot.assignment.line.id if slot.assignment.line is not None else -1
             cols[ev.env_id].append(_Row(ev.obs, ev.privileged, int(ev.player), a, float(chosen[i]), probs[i], q[i],
-                                        float(v[i]), line_id=line_id, line_window=window))  # fmt: skip
+                                        float(v[i]), line_id=line_id, line_window=window, line_effect=effect,
+                                        line_occurrence=occurrence))  # fmt: skip
             slot.rows += 1
             slot.rows_here += 1
             self.env.step(ev.env_id, a)
@@ -418,6 +434,8 @@ class RolloutCollector:
             bootstrap_value=boot_value, games=games, opponent_decisions=opponent_decisions, seconds=seconds,
             complete_games=complete, line_id=grid([r.line_id for r in rows], torch.long),
             line_window=grid([r.line_window for r in rows], torch.long),
+            line_effect=grid([r.line_effect for r in rows], torch.long),
+            line_occurrence=grid([r.line_occurrence for r in rows], torch.long),
         )  # fmt: skip
 
 

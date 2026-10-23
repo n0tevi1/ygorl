@@ -185,6 +185,18 @@ def test_learner_rows_are_tagged_with_the_line_and_their_chain_window_count(libr
     msg = ro.obs["globals"].reshape(T, B, -1)[:, :, 18]
     assert ((ro.line_window > 0) == (msg == MSG_SELECT_CHAIN)).all()
     assert (ro.line_window > 0).any(), "the lines leave the learner some chain windows"
+    # the effect answered and its occurrence: on chain windows with a real choice only, counted per game and effect
+    choice = (ro.action_mask.sum(-1) > 1) & (msg == MSG_SELECT_CHAIN)
+    assert ((ro.line_occurrence > 0) == choice).all() and ((ro.line_effect >= 0) == choice).all()
+    for b in range(B):
+        counts = {}
+        for t in range(T):
+            if choice[t, b]:
+                e = int(ro.line_effect[t, b])
+                counts[e] = counts.get(e, 0) + 1
+                assert int(ro.line_occurrence[t, b]) == counts[e]
+            if ro.dones[t, b]:
+                counts = {}
     for b in range(B):  # 1, 2, 3 ... within a game, restarting with the next game
         expected = 0
         for t in range(T):
@@ -207,6 +219,9 @@ def test_a_selfplay_rollout_tags_nothing(db, vocab):
     ro = RolloutCollector(env, model, schedule, 8, opponents=schedule.opponent, seed=5).collect()
     assert (ro.line_id == -1).all() and all(g.line is None for g in ro.games)
     assert ((ro.line_window > 0) == (ro.obs["globals"].reshape(8, 2, -1)[:, :, 18] == MSG_SELECT_CHAIN)).all()
+    assert ((ro.line_occurrence > 0) <= (ro.line_window > 0)).all() and (
+        (ro.line_effect >= 0) == (ro.line_occurrence > 0)
+    ).all()
 
 
 # ------------------------------------------------------------------------------------------ schedule
