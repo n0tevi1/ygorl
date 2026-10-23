@@ -73,7 +73,7 @@ OPTION_OK = (1024, 788)
 
 LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
 RA = 10000010  # The Winged Dragon of Ra
-LIST_PAGES = 6  # the arrow scrolls less than a page: 3-4 turns for 9-11 cards
+LIST_PAGES = 40  # the arrow scrolls one card at a time (the Deck's 40 at most)
 
 
 def list_more(img: np.ndarray) -> bool:
@@ -1538,8 +1538,11 @@ class Player:
                 return found[changed[0]]
             return None
 
+        uids_seen: set = set()
         for page in range(LIST_PAGES):
-            for i in range(n):
+            # the arrow scrolls one card (run s28: 14 cards, 6 turns showed only the first 11): after a turn,
+            # only the newly shown cards on the right are ticked, right to left, until one already seen (its uid)
+            for i in range(n) if page == 0 else reversed(range(n)):
                 prev = read_open()
                 if scan["still"] >= 2 and scan["last"] is None and scan["addr"] is None:
                     scan_tick()  # the baseline the next tick is compared against
@@ -1564,6 +1567,10 @@ class Player:
                         got, uid, how = cid, u, "memory"
                 if got is None and not by_uid:
                     got, how = self.panel.identify(img, list(dict.fromkeys(cands)), stats)
+                if page and uid and uid in uids_seen:
+                    self.ui.click(*cards[i], f"untick #{i + 1}", 0.6)
+                    break  # this card and the ones left of it were looked at on an earlier page
+                uids_seen.add(uid)
                 seen[(page, i)], panels[(page, i)] = got, img
                 if got is not None and pw(got) == pw(want) and (not by_uid or uid == want_uid):
                     self.trace.observe(list_check={"want": want, "seen": {f"{k[0]}:{k[1]}": v for k, v in
