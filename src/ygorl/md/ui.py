@@ -609,19 +609,25 @@ class UI:
         two = list_select_state(img, LIST_SELECT_TWO_TEXT) != ""
         box, button = (LIST_SELECT_TWO_TEXT, LIST_SELECT_TWO_BUTTONS) if two else (LIST_SELECT_TEXT, LIST_SELECT)
         order = list(order) if order is not None else list(range(len(cards)))
+        before = [list_card_ticked(img, c) for c in cards]  # blue card art can pass for a badge: only changes count
         for combo in islice(combinations(order, need), tries):
             for i in combo:
-                # one click per card: whether a card is ticked cannot be read reliably (blue card art passes for
-                # the badge), and a second click takes the tick away
                 self.click(*cards[i], f"#{i + 1} of {len(cards)} cards in the list", 1.0)
+                if not before[i] and not list_card_ticked(self.capture(), cards[i]):
+                    # the click was lost (Card Advance's order list took 2 of 5): once more, then go on
+                    self.sleep(0.6)
+                    if not list_card_ticked(self.capture(), cards[i]):
+                        self.click(*cards[i], f"#{i + 1} again (no badge)", 1.0)
             for _ in range(12):  # MD can take a few seconds to light Select after the last tick
                 if list_select_state(self.capture(), box) == "enabled":
                     self.click(*button, f"select {need} cards", 1.5)
                     self._list_open(4.0)
                     return combo
                 self.sleep(0.3)
-            for i in combo:  # MD does not take this set: untick it
-                self.click(*cards[i], f"untick #{i + 1}", 0.6)
+            now = self.capture()
+            for i in combo:  # MD does not take this set: untick it (only the cards that carry a tick)
+                if before[i] or list_card_ticked(now, cards[i]):
+                    self.click(*cards[i], f"untick #{i + 1}", 0.6)
         raise Stuck(f"no set of {need} of the {len(cards)} list cards lit Select")
 
     def settled_list_cards(self, tries: int = 8, trays=L.TRAY_RGBS) -> list[XY]:

@@ -1463,6 +1463,14 @@ class Player:
         # opponent's monster during our own three-Tribute summon, and the click found no Confirm five times)
         if not [xy for xy in lit if not any(near(xy, p) for p in picked)]:
             lit = lit + [xy for xy in self.offered_field_cards(raw) if not any(near(xy, q) for q in lit)]
+        if not [xy for xy in lit if not any(near(xy, p) for p in picked)]:
+            # nothing seen and nothing in the request: every monster on the field not picked yet, opponent's first
+            # (a Tribute's opponent monster sat under the banner, its frame hidden); only one that shows a Confirm
+            # icon is taken (card_command)
+            me, op = raw.players[raw.me], raw.players[1 - raw.me]
+            lit = lit + [opp_monster_xy(s) for s in range(7) if op.slots[s] is not None]
+            lit = lit + [my_monster_xy(s) for s in range(7) if me.slots[s] is not None]
+            self.trace.rule("field-pick-every-monster")
         # cards picked earlier in this selection stay framed: clicking one again would take it back (a three-
         # Tribute summon picked its first Tribute over and over)
         fresh = [xy for xy in lit if not any(near(xy, p) for p in picked)]
