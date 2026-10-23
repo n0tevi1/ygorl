@@ -75,6 +75,8 @@ def option_tab(index: int, count: int) -> tuple[int, int]:
 RESULT_WIN = 1  # DLL_DuelGetDuelResult for the client: 1 won (VICTORY, Confirm -> menus), 2 lost (Retry offered)
 NEUTRAL_SPOT = (1300, 640)  # empty board between the rows: clicking it closes a card left open
 RESULT_RETRY = (743, 1093)  # MD's result screen: Retry (left) and OK (right)
+# the settings gear in a duel, its Retry and the confirmation's Yes: restart a duel the player gave up on
+SETTINGS_GEAR, SETTINGS_RETRY, SETTINGS_RETRY_YES = (66, 95), (298, 979), (1218, 743)
 MAIN, BATTLE, OPEN_PROMPT, CHAIN_PROMPT, SUMMON_PICK, PLACE, FIELD_PICK = 2, 3, 4, 5, 6, 7, 8  # observed modes
 FIELD_PICK_TRIBUTE = 9  # "choose a monster to Tribute" (an effect's tribute: the explorer learned pick + Confirm)
 
@@ -1214,7 +1216,11 @@ class Player:
         # a name the keyboard types whole finds exactly that card; MD's search found nothing for "Ra's Disciple"
         # (its apostrophe is not the ASCII one), so plainly spelled names come first
         plain = lambda p: plain_name(self.cards[p].name)  # noqa: E731
-        ranked = sorted(left, key=lambda p: (plain(p), left[p], p), reverse=True) or list(dict.fromkeys(deck.main))
+        # monsters first: a declare search MD answered with nothing ("Ancient Chant") left the panel answering
+        # nothing to every later search; Millennium Seeker was found
+        monster = lambda p: self.cards[p].is_monster  # noqa: E731
+        ranked = sorted(left, key=lambda p: (plain(p), monster(p), left[p], p), reverse=True)
+        ranked = ranked or list(dict.fromkeys(deck.main))
         return list(dict.fromkeys(self.cards[p].name for p in ranked))
 
     def find_in_list(self, req, pick: int) -> tuple[int, bool]:
@@ -1365,6 +1371,13 @@ class Player:
                        "lp": [raw.players[raw.me].lp, raw.players[1 - raw.me].lp], "turn": raw.turn + 1}  # fmt: skip
             self.trace.game(**summary)
             print(f"=== game {g + 1} summary {summary}", flush=True)
+            if code != 0 and not raw.finished and g + 1 < games:
+                # the player gave up on this duel: restart it from the settings menu and go on with the series
+                try:
+                    self.retry_from_settings()
+                    continue
+                except Stuck as exc:
+                    print(f"  restart from the settings menu failed: {exc}", flush=True)
             if code != 0:
                 return code
             if g + 1 < games:
@@ -1421,6 +1434,25 @@ class Player:
         self.park_pointer()
         self.reset_game_state()
         time.sleep(3.0)
+
+    def retry_from_settings(self) -> None:
+        """Restart a duel the player gave up on: the settings gear, Retry, Yes; then the new duel as after the
+        result screen's Retry (a stage may ask who goes first)."""
+        before = self.game.read()
+        self.ui.click(*SETTINGS_GEAR, "settings: restart the duel the player gave up on", 2.0)
+        self.ui.click(*SETTINGS_RETRY, "retry", 2.0)
+        self.ui.click(*SETTINGS_RETRY_YES, "yes: restart from the beginning", 3.0)
+        self.ui.take_clicks()
+        end = time.time() + 60
+        while time.time() < end:  # the old duel's state lingers a moment: wait for the new one to replace it
+            try:
+                now = self.game.read()
+            except Exception:  # noqa: BLE001 - loading
+                break
+            if _progress(now, Input(0, False, 0)) != _progress(before, Input(0, False, 0)):
+                break
+            time.sleep(1.0)
+        self.restart_duel()
 
     def restart_duel(self, timeout: float = 300) -> None:
         """MD's result screen: press Retry, then wait until a new duel is running (not finished, turn 1)."""
