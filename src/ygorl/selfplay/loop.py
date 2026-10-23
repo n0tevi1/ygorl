@@ -1544,6 +1544,7 @@ class Player:
         for page in range(LIST_PAGES):
             # the arrow scrolls one card (run s28: 14 cards, 6 turns showed only the first 11): after a turn,
             # only the newly shown cards on the right are ticked, right to left, until one already seen (its uid)
+            before_page = len(uids_seen)
             for i in range(n) if page == 0 else reversed(range(n)):
                 prev = read_open()
                 if scan["still"] >= 2 and scan["last"] is None and scan["addr"] is None:
@@ -1580,7 +1581,12 @@ class Player:
                     self.pending_list = (img, req)
                     return i, True
                 self.ui.click(*cards[i], f"untick #{i + 1}", 0.6)
-            if page == LIST_PAGES - 1 or not list_more(self.ui.capture()):
+            # the arrow can read as gone before the last card (run s29: 12 of 13 seen, the 13th the wanted one):
+            # while fewer cards were seen than memory lists, turn once more (a turn showing nothing new ends it)
+            unseen = len(uids_seen - {0}) < len(cands) and 0 not in uids_seen
+            if page and len(uids_seen) == before_page:
+                break  # the turn showed no new card: the list's end
+            if page == LIST_PAGES - 1 or (not list_more(self.ui.capture()) and not unseen):
                 break  # (no page turned after the last one looked at: a guess there clicked an unseen card)
             self.ui.click(*LIST_NEXT, "next cards of the list", 1.2)
             cards = L.list_cards(self.ui.capture())
