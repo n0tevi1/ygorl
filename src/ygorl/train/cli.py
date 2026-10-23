@@ -160,6 +160,9 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            "keep this policy / PPO checkpoint in the opponent pool for the whole run (repeatable)",
            metavar="CKPT", listing="append"),
         _f("--pinned-share", "pinned_share", "share of pool games against pinned opponents"),
+        _f("--line-demos", "line_demos", "demonstration file (docs/solver.md) whose solved turn-1 lines the opponent "
+           "seat opens with in --line-share of the pool games (repeatable)", metavar="JSONL", listing="append"),
+        _f("--line-share", "line_share", "share of pool games that start with a scripted demonstration line"),
         _f("--snapshot-every", "snapshot_every"),
         _f("--pool-sampling", "pool_sampling",
            "pfsp (design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power",

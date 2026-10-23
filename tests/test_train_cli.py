@@ -18,7 +18,8 @@ DECKS = ("a.ydk", "b.ydk")
 # string fields without choices: a valid non-default value each
 STRINGS = {"env": "v1", "text_dir": str(Path("/tmp/feats").resolve()), "bc_prior": "bc.pt", "init_from": "init.pt", "device": "cuda:1",
            "register_matrix": str(Path("/tmp/matrix.json").resolve()), "keep_best_by": "random", "ppo.objective": "pg", "deck_pool": str(Path("/tmp/pool.json").resolve())}  # fmt: skip
-TUPLES = {"eval_opponents": ("random", "greedy", "policy:x.pt"), "pin_opponents": ("a.pt", "b.pt")}
+TUPLES = {"eval_opponents": ("random", "greedy", "policy:x.pt"), "pin_opponents": ("a.pt", "b.pt"),
+          "line_demos": ("a.jsonl", "b.jsonl")}  # fmt: skip
 
 
 def parse(argv, base=None):
@@ -55,6 +56,8 @@ def perturbed(key: str):
         base = replace(base, register_matrix="/tmp/matrix.json")
     if key == "ppo.critic_target":
         base = replace(base, complete_games=True)
+    if key == "line_share":
+        base = replace(base, line_demos=("demos.jsonl",))
     owner = key.partition(".")[0]
     if owner == "net":
         return replace(base, net={**base.net, **{k[4:]: v for k, v in values.items()}})

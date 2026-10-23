@@ -56,6 +56,7 @@ from ygorl.train.checkpoint import (
 from ygorl.train.ppo import PPOConfig, PPOLearner
 from ygorl.train.rollout import Rollout, RolloutCollector, RolloutStalled
 from ygorl.train.league import League
+from ygorl.train.lines import LineLibrary
 from ygorl.train.selfplay import DeckPool, EvolvedDecks, SelfPlaySchedule, SnapshotPool
 
 SMALL_NET = {"d_model": 64, "n_heads": 4, "board_layers": 1, "history_layers": 1}
@@ -108,6 +109,10 @@ class TrainConfig:
     # their share of the pool games; the run's card vocab and event length must match
     pin_opponents: tuple[str, ...] = ()
     pinned_share: float = 0.5
+    # scripted-line opponents (train.lines): demonstration files (docs/solver.md) whose solved plain lines the opponent
+    # seat opens with in line_share of the pool games (the snapshot plays on once the line ends or breaks)
+    line_demos: tuple[str, ...] = ()
+    line_share: float = 0.0
     snapshot_every: int = 10  # updates
     pool_sampling: str = (
         "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
@@ -171,12 +176,15 @@ class TrainConfig:
             raise ValueError("keep_best_by must be one of eval_opponents")
         if self.num_envs < 1 or self.steps < 1:
             raise ValueError("num_envs and steps must be at least 1")
+        if not 0 <= self.line_share <= 1 or (self.line_share > 0 and not self.line_demos):
+            raise ValueError("line_share must be in [0, 1] and needs line_demos when above 0")
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["ppo"] = self.ppo.to_dict()
         d["decks"], d["eval_opponents"] = list(self.decks), list(self.eval_opponents)
         d["pin_opponents"] = list(self.pin_opponents)
+        d["line_demos"] = list(self.line_demos)
         return d
 
     @property
@@ -193,7 +201,7 @@ class TrainConfig:
         known = {f.name for f in fields(cls)}
         d = {k: v for k, v in data.items() if k in known}
         d["ppo"] = PPOConfig.from_dict(d.get("ppo", {}))
-        for key in ("decks", "eval_opponents", "pin_opponents"):
+        for key in ("decks", "eval_opponents", "pin_opponents", "line_demos"):
             if key in d:
                 d[key] = tuple(d[key])
         return cls(**d)
@@ -202,6 +210,16 @@ class TrainConfig:
 def _mean(xs) -> float | None:
     xs = list(xs)
     return statistics.fmean(xs) if xs else None
+
+
+def line_stats(games) -> dict:
+    """Scripted-line counts of a rollout's finished games: games, lines completed / broken (and the mean step the
+    broken ones broke at), lines still playing when the game ended (``line_unfinished``)."""
+    lines = [g.line for g in games if g.line is not None]
+    broken = [ln["broken_at"] for ln in lines if ln["status"] == "broken"]
+    return {"line_games": len(lines), "line_completed": sum(ln["status"] == "completed" for ln in lines),
+            "line_broken": len(broken), "line_broken_step": None if not broken else round(_mean(broken), 2),
+            "line_unfinished": sum(ln["status"] == "playing" for ln in lines)}  # fmt: skip
 
 
 class Trainer:
@@ -276,9 +294,17 @@ class Trainer:
                                         validate=None if env is None else lambda d: [str(v) for v in env.validate_deck(d, self.cards)])  # fmt: skip
             if state is None:
                 self._reload_deck_pool()
+        self.lines = None
+        if cfg.line_demos and cfg.line_share > 0:
+            self.lines = LineLibrary.load(cfg.line_demos, self.vocab, cards=self.cards, env=self.environment)
+            self.log(f"scripted lines: {len(self.lines)} from {len(cfg.line_demos)} file(s) in {self.lines.seconds:.0f} s"
+                     + "".join(f"; left out {p}" for p in self.lines.problems[:10])
+                     + (f"; ... {len(self.lines.problems)} left out" if len(self.lines.problems) > 10 else ""))  # fmt: skip
+            if not len(self.lines):
+                raise ValueError("line_demos has no solved plain line that replays (see the log)")
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
                                          selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed,
-                                         evolved=self.evolved)  # fmt: skip
+                                         evolved=self.evolved, lines=self.lines, line_share=cfg.line_share)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced, record_actions=True, record_games=cfg.trace_games,
@@ -510,13 +536,16 @@ class Trainer:
                   "step_s": round(step_s, 2), "rows_per_s": ro.players.numel() / max(step_s, 1e-9),
                   **{k: round(v, 5) if isinstance(v, float) else v for k, v in stats.items()},
                   "total": dict(c), "pool": len(self.pool),
-                  **({"evolved_games": evolved_games} if self.evolved is not None else {})}  # fmt: skip
+                  **({"evolved_games": evolved_games} if self.evolved is not None else {}),
+                  **(line_stats(ro.games) if self.lines is not None else {})}  # fmt: skip
         with (self.run_dir / "metrics.jsonl").open("a") as f:
             f.write(json.dumps(record) + "\n")
         self.log(f"update {c['updates']}: {record['decisions_per_s']:.0f} decisions/s collect, "
                  f"{record['rows_per_s']:.0f} rows/s overall, games {len(ro.games)} "
                  f"(truncated {record['truncated_games']}), entropy {stats['entropy']:.3f}, kl_ref {stats['kl_ref']:.4f}, "
-                 f"q_loss {stats['q_loss']:.4f}, pool win {record['pool_win_rate']}")  # fmt: skip
+                 f"q_loss {stats['q_loss']:.4f}, pool win {record['pool_win_rate']}"
+                 + (f", lines {record['line_completed']}/{record['line_games']} completed, {record['line_broken']} "
+                    f"broken (mean step {record['line_broken_step']})" if self.lines is not None else ""))  # fmt: skip
         return record
 
     def _diagnostic_record(self, game) -> dict:
@@ -712,4 +741,4 @@ def summarize_metrics(path: str | Path, window: int = 10) -> dict:
             "last": {k: avg(rows[-window:], k) for k in keys}, "total": rows[-1]["total"] if rows else {}}  # fmt: skip
 
 
-__all__ = ["SMALL_NET", "TrainConfig", "Trainer", "evaluate_checkpoint", "summarize_metrics"]
+__all__ = ["SMALL_NET", "TrainConfig", "Trainer", "evaluate_checkpoint", "line_stats", "summarize_metrics"]

@@ -370,6 +370,16 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   词表与事件窗口长度必须与本次运行相同（`Signature.mismatches`，报错写明哪里不同）。用意：自博弈早期的历史快照都接近随机，固定一个会进战斗、会展开的对手让信号更有用
   （Gin Rummy 2026「更强对手的课程」、cjiang1209/yugioh-agent 默认对 greedy 训练）。
 
+- **脚本线对手**（`TrainConfig.line_demos` / `line_share`，`--line-demos JSONL --line-share 0.3`；`ygorl.train.lines`）：池局里以 `line_share` 的概率把一次发局换成两局「脚本线」局：
+  从示范集（[solver.md](solver.md)「示范集格式」，已解出的 `plain` 记录的第一条线）里各抽一条，对手座位用示范的卡组、从记录的精确起点开局
+  （`GameSpec.core_seed` 取记录的 4 个核心种子字、卡组按加载顺序、`rule_flags` 为记录的（含 `DUEL_PSEUDO_SHUFFLE`，整局不洗牌）、主机洗牌关闭），示范卡组先攻；
+  学习方用本次配对里抽到的那套牌、按游戏种子正常洗牌、后攻。对手每个决策选与线下一步**同一动作**的候选行（`encoded_action_key`：决策类型、动作类型、卡、区域、效果串、参数，
+  不看列表下标与等价副本），线结束（第 2 回合开始）或断线（学习方的打断或分歧让下一步没有匹配候选）后由本局的快照对手接手，与普通池局相同。
+  线的键由 Python 参考编码器重放一次得到（每条约 50 ms，训练器启动时一次性加载并记日志）；绑定环境的记录必须与本次 `--env` 相同。
+  学习方的行带 `Rollout.line_id`（示范在库中的编号，非脚本局为 −1）与 `Rollout.line_window`（本局到此为止该座位的连锁窗口决策计数，1 起；非连锁窗口为 0），
+  供之后把求解器标签接到应答窗口上；`FinishedGame.line` 记录线的结局，`metrics.jsonl` 多 `line_games` / `line_completed` / `line_broken` / `line_broken_step` / `line_unfinished` 列。
+  `line_share = 0` 时不多抽随机数，与原来逐位相同。已知的模糊：键不含候选数，若学习方的打断恰好制造了一个与线下一步同键的决策（例如都是「不连锁」），线会错位一步、通常随后断掉。
+
 ### 8.4 评估
 
 `evaluate_checkpoint`：把 checkpoint 作为 `policy:<路径>` agent，在训练对阵上对每个基线（默认 greedy、random）各打
