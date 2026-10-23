@@ -123,8 +123,9 @@ def minimised(img: np.ndarray) -> bool:
     return bool(dark > 0.6 and teal > 0.3)
 
 
-DECLARE_SEARCH, DECLARE_CLEAR = (1026, 705), (1284, 688)  # the declare panel's search box and its clear (X) button
-DECLARE_GO = (759, 717)  # the magnifier left of the box: runs the search (typing alone lists nothing, Return neither)
+# the declare panel's search box, its clear (X) button and the magnifier left of it; the magnifier runs the search
+# while the box has the focus (typing alone lists nothing, Return neither; without the focus it only focuses the box)
+DECLARE_SEARCH, DECLARE_CLEAR, DECLARE_GO = (1026, 717), (1289, 717), (759, 717)
 
 
 def declare_box(img: np.ndarray) -> bool:
@@ -488,11 +489,12 @@ class UI:
     def declare(self, text: str, type_text: Callable[[str], None]) -> list[XY]:
         """MD's "declare a card name" panel: click the search box, clear it, type ``text`` (``type_text``: the gated
         keyboard), then pick the first card found and press Select. Returns the cards the search listed."""
-        self.click(*DECLARE_CLEAR, "clear the search box", 0.5)
-        self.click(*DECLARE_SEARCH, "the search box", 0.6)
+        self.click(*DECLARE_CLEAR, "clear the search box", 0.8)
+        self.click(*DECLARE_SEARCH, "the search box", 0.8)
         type_text(text)
         self.clicks.append({"t": round(time.time(), 2), "xy": None, "why": f"typed {text!r}"})
-        self.click(*DECLARE_GO, "search", 1.0)
+        self.sleep(1.2)  # the keys reach the box a moment later; a search run before then is of a partial name
+        self.click(*DECLARE_GO, "search", 1.5)
         for _ in range(10):
             if L.list_cards(self.capture(), trays=(L.DECLARE_TRAY,)):
                 break
