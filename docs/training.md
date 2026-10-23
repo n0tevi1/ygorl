@@ -383,6 +383,20 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   学习方的行带 `Rollout.line_id`（示范在库中的编号，非脚本局为 −1）与 `Rollout.line_window`（本局到此为止该座位的连锁窗口决策计数，1 起；非连锁窗口为 0），
   供之后把求解器标签接到应答窗口上；`FinishedGame.line` 记录线的结局，`metrics.jsonl` 多 `line_games` / `line_completed` / `line_broken` / `line_broken_step` / `line_unfinished` 列。
   `line_share = 0` 时不多抽随机数，与原来逐位相同。已知的模糊：键不含候选数，若学习方的打断恰好制造了一个与线下一步同键的决策（例如都是「不连锁」），线会错位一步、通常随后断掉。
+- **先攻席脚本线**（`TrainConfig.line_first_share`，`--line-first-share 0.5`）：上面的脚本局里学习方总是后攻，只练对手第 1 回合的应答。
+  以 `line_first_share` 的概率（每次发局抽一次，一局两盘同座位；为 0 时不多抽随机数，发局逐位不变）改发「先攻席」局：学习方的卡组作 deck a 先攻
+  （座位 0，按游戏种子与该座位正常洗牌 `shuffle_deck(main, seed, 0)`），示范卡组作 deck b、按记录的加载顺序（主机洗牌关闭）、
+  记录的核心种子字、`rule_flags`（含伪洗牌）与玩家规则；示范座位起手即记录的 5 张，第 2 回合再抽牌组顶的下一张（测试逐张核对）。
+  线在对手**自己的第 2 回合**才开始（`LinePlayer(first_seat=True)`：对手座位在学习方第 1 回合的决策由快照下，线保持 `playing`），
+  学习方第 1 回合的展开、盖放与手坑都会改变对手的局面，线断后快照接手——先攻席因此终于有一个第 2 回合真会展开的对手，第 1 回合铺妨碍、对方回合用手坑都有回报。
+  第 2 回合与记录的第 1 回合不完全相同，先攻席的匹配多几条容忍（后攻席完全不变）：记录里被 `skip_forced` 跳过的强制步，若这回合因多抽的一张有了选择而被问到，按它的键走；
+  墓地 / 除外的卡不比序号（堆的顺序可能不同）；没有匹配的强制决策（只一行可选）或带「不连锁」行的连锁窗口（手坑、速攻魔法这回合多出的窗口）直接答该行 / 不连锁，不消耗步（`extra`）；
+  线的第一个决策可跳过至多 3 个开头步（`skipped`）。以训练示范集（`lines_train.jsonl` 有标签的线、20 套环境卡组作学习方、学习方与对手第 1 回合都一律 pass）
+  抽 150 局：后攻席 143 局完成，先攻席加容忍前 87 局、加容忍后 125 局；余下的断点多是多抽的那张正是线要从卡组检索的卡、或条件依赖对方场面的效果，属于真分歧。
+  学习方行的 `line_effect` / `line_occurrence` 在先攻席只记对手第 2 回合（线所在的回合）里有真实选择的连锁窗口，与求解器被动应答方的计数口径一致，
+  标签照 `(line_id, 效果, 次数)` 接上（测试：40 张灰流丽的学习方先攻，带标签的窗口行与符号正确）。
+  `Rollout.line_seat`（脚本局里学习方的座位：1 后攻、0 先攻；其它为 −1）与 `FinishedGame.line_seat`；`FinishedGame.line` 多 `seat`、`turn`（线第一步所在回合）、`skipped`、`extra`；
+  `metrics.jsonl` 多 `line_first_games` / `line_first_completed` / `line_first_broken` / `line_first_broken_step` / `line_first_unfinished` / `line_first_skipped`，日志行多一段 first-seat 统计。
 - **应答窗口的身份与求解器标签**（`TrainConfig.line_labels`、`PPOConfig.line_bonus_coef`；`ygorl.train.line_labels`）：学习方用自己的卡组应答，
   它收到的连锁提示未必与求解器的被动应答方（只拿一张灰流丽，密码 14558127）一样多，单纯计数的 `line_window` 会错位；
   于是有真实选择的连锁窗口（MSG_SELECT_CHAIN 且可选行多于一行；强制的「无可发动」提示不算）另记 `Rollout.line_effect`——所应答的效果
