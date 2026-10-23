@@ -25,7 +25,7 @@ OFF = Offsets(state_ptr=0x11F9C50, key_ptr=0x11F9C48, my_player=0x4, player_type
               pile={"hand": 0x1E4, "extra": 0x5A4, "deck": 0x3C4, "grave": 0x7FC, "removed": 0xA54}, pile_stride=4,
               slot_base=0x5C, slot_stride=0x1C, slot_uid=0x2, slot_turn=0x6, slot_face=0x7, slot_chain=0xA,
               removed_face=0xCAC, removed_facedown=0x80, uid_table=0x1BEC, uid_mask=0x1FF, effect_table=0x2BEC, effect_stride=0x10, effect_kind=0x2,
-              effect_uid=0x4, effect_next=0xC, overlay_code=0x3FB, overlay_kind=0x5,
+              effect_uid=0x4, effect_next=0xC, overlay_code=0x3FB, overlay_kind=0x5, player_effects=0x1D0,
               input_mode=0x3CD0, input_accepting=0x3CDC, input_player=0x3D00, list_ptr=0x11F9C30, list_max=0x1,
               list_type=0x2, list_count=0xA, list_marker=0xC, list_item_cid=0x18, list_item_from=0x4C8,
               dialog_type=0x3C94, dialog_mix_count=0x3CA0, dialog_mix=0x3CA4, dialog_choice_count=0x3CB4,
@@ -40,6 +40,14 @@ SEM = {
     "turn_base": 1,
     "normal_summons": 0x30,
     "set_turn": 0x10,
+    # per-turn state, decoded from the recorded Solo duels of 2026-10-22 (offsets_data notes)
+    "attacked": 0x80,
+    "effect_used": 0x80000,
+    "card_activated": 0x1000,
+    "summon_normal": 0x1,
+    "summon_special": 0x4,
+    "summon_flip": 0xA,
+    "special_summons": 0x34,
 }
 
 BEWD, DM, ASH, ZEUS, MAT = 4007, 4041, 13587, 16210, 4844  # MD card ids
@@ -99,7 +107,8 @@ def uid_word(uid: int, flags: int = 0) -> int:
     return (uid & 1) | flags | ((uid >> 1) << 8)
 
 
-def build_memory(*, me=0, turn=3, turn_player=0, phase=2, types=(0, 1), summons=0):
+def build_memory(*, me=0, turn=3, turn_player=0, phase=2, types=(0, 1), summons=0, specials=0, zeus_flags=None,
+                 player_nodes=()):  # fmt: skip
     s = bytearray(0x3C40)
     struct.pack_into("<III", s, 0, 0, 0, 0)
     struct.pack_into("<I", s, OFF.turn, turn)
@@ -112,12 +121,14 @@ def build_memory(*, me=0, turn=3, turn_player=0, phase=2, types=(0, 1), summons=
         struct.pack_into("<H", s, OFF.uid_table + uid * 8, cid)
         return uid
 
-    def slot(p, i, cid, face, sideways=0, chain=0, locked=False):
+    def slot(p, i, cid, face, sideways=0, chain=0, locked=False, flags=None):
         at = p * OFF.player_stride + OFF.slot_base + i * OFF.slot_stride
         struct.pack_into("<HH", s, at, cid, uid_word(put_uid(cid)))
         s[at + OFF.slot_face] = face
         s[at + OFF.slot_turn] = sideways
-        s[at + SEM["locked_byte"]] = SEM["locked"] | 0x0A if locked else 0
+        if flags is None:
+            flags = SEM["locked"] | 0x0A if locked else 0
+        struct.pack_into("<I", s, at + SEM["locked_byte"], flags)
         struct.pack_into("<H", s, at + OFF.slot_chain, chain)
 
     def pile(p, zone, cards):
@@ -136,13 +147,19 @@ def build_memory(*, me=0, turn=3, turn_player=0, phase=2, types=(0, 1), summons=
 
     adv, opp = me, 1 - me
     struct.pack_into("<I", s, adv * OFF.player_stride + SEM["normal_summons"], summons)
+    struct.pack_into("<I", s, adv * OFF.player_stride + SEM["special_summons"], specials)
     for p, lp in ((adv, 8000), (opp, 6100)):
         struct.pack_into("<I", s, p * OFF.player_stride + OFF.lp, lp ^ XOR)
     # advisor: Zeus with one material (node 1 -> unrelated node 2), a face-down Set S/T, two hand cards
     mat = put_uid(MAT)
     node(1, OFF.overlay_code, 0x15, mat, 2)
     node(2, 0x123, 0x05, 0, 0)
-    slot(adv, 5, ZEUS, SEM["faceup"], chain=1, locked=True)
+    slot(adv, 5, ZEUS, SEM["faceup"], chain=1, locked=True, flags=zeus_flags)
+    # the advisor's player effect list: (code, kind, value) nodes from index 10 on, chained in order
+    for k, (code, kind, value) in enumerate(player_nodes):
+        node(10 + k, code, kind, value, 11 + k if k + 1 < len(player_nodes) else 0)
+    if player_nodes:
+        struct.pack_into("<H", s, adv * OFF.player_stride + OFF.player_effects, 10)
     slot(adv, 7, DM, 0)
     pile(adv, "hand", [(BEWD, 0), (ASH, 0)])
     pile(adv, "deck", [(DM, 0)] * 30)
@@ -228,6 +245,71 @@ def test_format_raw_hides_the_opponents_cards():
     assert all(c[1] == "(hidden)" for c in cards[:3]) and cards[3][1] == str(ASH)
 
 
+RECORDED = Path(__file__).resolve().parent / "data" / "md_seeker_once_per_turn.npz"
+MD_CID = Path(__file__).resolve().parents[1] / "environments" / "md-2026-09" / "artifacts" / "md_cid.json"
+SEEKER = 5130393  # Millennium Seeker: its field effect once per turn
+
+
+def recorded_duel(seq: int):
+    """A recorded Solo step (run 20261022-154920): the client's own player block as read then, the opponent and
+    the turn restored from the trace's public view (the recording never held the opponent's block)."""
+    import json
+
+    from ygorl.md.memory import PHASES
+    from ygorl.md.offsets import offsets_file
+
+    z = np.load(RECORDED)
+    public = json.loads(z["public"].tobytes())[str(seq)]
+    off = Offsets.from_json(json.loads(offsets_file(BUILD_23020425).read_text()))
+    s = bytearray(0x3C40)
+    s[: off.player_stride] = z[f"me{seq}"].tobytes()
+    key = z["key"].tobytes().ljust(0x340, b"\0")
+    opp, o = off.player_stride, public["opp"]
+    struct.pack_into("<I", s, opp + off.lp, o["lp"] ^ struct.unpack_from("<H", key)[0])
+    for i, f in enumerate(o["field"]):
+        if f:
+            at = opp + off.slot_base + i * off.slot_stride
+            struct.pack_into("<H", s, at, f[0] or 0xFFFF)  # face-down: some id, never shown
+            s[at + off.slot_face], s[at + off.slot_turn] = f[1], f[2]
+    for zone, n in o["counts"].items():
+        struct.pack_into("<I", s, opp + off.count[zone], n)
+    for i, cid in enumerate(o["grave"]):
+        struct.pack_into("<H", s, opp + off.pile["grave"] + 4 * i, cid)
+    struct.pack_into("<I", s, off.turn, public["turn"] - off.semantics["turn_base"])
+    struct.pack_into("<I", s, off.phase, PHASES.index(public["phase"]))
+    regions = {BASE + off.state_ptr: struct.pack("<Q", STATE), BASE + off.key_ptr: struct.pack("<Q", KEY),
+               STATE: bytes(s), KEY: key}  # fmt: skip
+    return read_duel(BufferMemory(regions), BASE, off), public
+
+
+def test_recorded_once_per_turn_reaches_the_reconstruction():
+    """Millennium Seeker before (seq 39) and after (seq 41, MD refused it) its field effect: the slot flag says the
+    effect was used, and the rebuilt duel no longer offers it."""
+    import random
+
+    from ygorl.advisor.reconstruct import OpponentPrior, build, complete
+    from ygorl.cards.ydk import Deck
+    from ygorl.engine import constants as C
+    from ygorl.engine.duel import default_cards
+    from ygorl.md.memory import load_md_cid, own_deck
+
+    cards, passwords = default_cards(), load_md_cid(MD_CID)
+    prior = OpponentPrior((Deck(main=(89631139,) * 40),), (1.0,))
+    for seq, used in ((39, False), (41, True)):
+        raw, public = recorded_duel(seq)
+        assert (public["refusal"] is not None) == used
+        snap = to_snapshot(raw, passwords)
+        seeker = next(c for c in snap.sides[0].cards if c.password == SEEKER and c.location == "mzone")
+        assert (seeker.summoned, seeker.position_locked, seeker.effect_used) == ("normal", True, used)
+        assert snap.normal_summons == 1 and snap.normal_summoned and not snap.normal_summon_left
+        board = complete(snap, own_deck(raw, passwords, cards), prior, cards, random.Random(0))
+        acts = build(board, C.DUEL_MODE_MR5, cards=cards).point.actions
+        offered = any(a.kind == "activate" and a.card.code == SEEKER and a.card.loc.location == C.LOCATION_MZONE
+                      for a in acts)  # fmt: skip
+        assert offered != used, seq
+        assert not any(a.kind in ("summon", "mset") for a in acts)
+
+
 def test_find_module_and_buildid(tmp_path):
     lib = tmp_path / "steamapps"
     dll = lib / "common" / "Yu-Gi-Oh!  Master Duel" / "masterduel_Data" / "Plugins" / "x86_64" / "duel.dll"
@@ -280,6 +362,47 @@ def test_normal_summoned_from_the_counter():
     off = replace(OFF, verified=True, semantics=SEM)
     assert not to_snapshot(read_duel(build_memory(), BASE, off), PASSWORDS).normal_summoned
     assert to_snapshot(read_duel(build_memory(summons=1), BASE, off), PASSWORDS).normal_summoned
+    # +0x30 counts every summon, +0x34 the Special Summons: a Special Summon alone leaves the Normal Summon
+    only_special = to_snapshot(read_duel(build_memory(summons=1, specials=1), BASE, off), PASSWORDS)
+    assert not only_special.normal_summoned and only_special.normal_summons == 0
+    both = to_snapshot(read_duel(build_memory(summons=3, specials=2), BASE, off), PASSWORDS)
+    assert both.normal_summoned and both.normal_summons == 1
+
+
+@pytest.mark.parametrize("me", [0, 1])
+def test_turn_flags_of_the_advisors_cards(me):
+    """The slot u32 at +0x14 carries the turn: how the monster came, whether it attacked, an effect used."""
+    off = replace(OFF, verified=True, semantics=SEM)
+    zeus = lambda flags: next(c for c in to_snapshot(read_duel(build_memory(me=me, turn_player=me, zeus_flags=flags), BASE, off),  # noqa: E731
+                                                       PASSWORDS).sides[0].cards if c.password == PASSWORDS[ZEUS])  # fmt: skip
+    fresh = zeus(0x00040044)  # Special Summoned this turn, nothing else yet
+    assert (fresh.summoned, fresh.position_locked, fresh.attacked, fresh.effect_used) == ("special", True, False, False)
+    used = zeus(0x000C0044)  # ... and an effect of it activated
+    assert used.effect_used and not used.attacked
+    hit = zeus(0x020220C0)  # summoned an earlier turn, attacked this turn
+    assert (hit.summoned, hit.attacked, hit.position_locked) == ("", True, True)
+    assert zeus(0x0000004A).summoned == "flip" and zeus(0x00000041).summoned == "normal"
+    old = zeus(0)
+    assert (old.summoned, old.attacked, old.effect_used, old.position_locked) == ("", False, False, False)
+
+
+def test_extra_tribute_summons_from_the_player_effect_list():
+    """Effect nodes are coded by the MD card id of their card: Ancient Chant's value-0 node grants the additional
+    Tribute Summon, its value-1 node (the GY effect) and inactive nodes do not; the opponent's list is not read."""
+    from ygorl.md.memory import EXTRA_TRIBUTE_CODES
+
+    off = replace(OFF, verified=True, semantics=SEM)
+    chant, advance = 0x3BE5, 0x2CA1
+    assert chant in EXTRA_TRIBUTE_CODES and advance in EXTRA_TRIBUTE_CODES
+    cases = {(): 0, ((chant, 0x01, 0),): 1, ((chant, 0x01, 1),): 0, ((chant, 0x06, 0),): 0,
+             ((chant, 0x01, 0), (0x123, 0x01, 0), (advance, 0x02, 7)): 2}  # fmt: skip
+    for nodes, extra in cases.items():
+        raw = read_duel(build_memory(player_nodes=nodes, summons=1), BASE, off)
+        assert [e.code for e in raw.players[0].effects] == [n[0] for n in nodes]
+        assert raw.players[1].effects == ()
+        snap = to_snapshot(raw, PASSWORDS)
+        assert snap.extra_tribute_summons == extra
+        assert snap.normal_summon_left == (extra > 0)
 
 
 def test_layout_hand_order_and_positions():
@@ -429,3 +552,19 @@ def test_read_request_locates_the_candidates_through_their_uid():
     mem.regions[STATE + 0x3C40] = bytes(tail)
     pos = read_request(mem, BASE, OFF, raw)
     assert (pos.kind, pos.candidates, pos.choices) == ("position", (), (0x7F,))
+
+
+def test_recording_keeps_only_the_clients_own_effect_nodes():
+    """The recorded state blanks the effect table but keeps the nodes our lists reach: the player list and the
+    lists of our field cards (Zeus's material); a node only the opponent's list reaches stays out."""
+    from ygorl.selfplay.loop import own_effect_nodes
+
+    mem = build_memory(player_nodes=((0x3BE5, 0x01, 0), (0x2CA1, 0x01, 0)))
+    state = bytearray(mem.regions[STATE])
+    at = OFF.effect_table + 40 * OFF.effect_stride  # an opponent node
+    struct.pack_into("<HB", state, at, 0x1368, 1)
+    struct.pack_into("<H", state, OFF.player_stride + OFF.player_effects, 40)
+    kept = own_effect_nodes(bytes(state), 0, OFF)
+    index = sorted((a - OFF.effect_table) // OFF.effect_stride for a in kept)
+    assert index == [1, 2, 10, 11]
+    assert all(kept[a] == bytes(state[a : a + OFF.effect_stride]) for a in kept)

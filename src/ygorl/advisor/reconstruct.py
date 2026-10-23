@@ -13,8 +13,19 @@ Two steps:
   later in the game. The real turn number and who went first are restored in the observation
   (:func:`ygorl.advisor.advise.observe`).
 
-Lost on the way (design 10「重建的已知失真」): the event history, once-per-turn and Normal Summon usage, effect
-states such as equips and targets, and anything mid-chain. Only the advisor's own Main Phase is supported.
+The turn so far (design 10「重建能还原什么」) is applied by the same script when the reconstruction's Main Phase 1
+starts (the core clears per-turn state at the turn's start): summoned / Set / repositioned this turn as card statuses
+(position changes, "Set this turn" Traps), monsters that attacked cannot attack, Normal Summons used, additional
+Tribute Summons granted (as Ancient Chant grants them), and once-per-turn limits spent: an effect used by a card on
+the field, the activation of a face-up Spell / Trap activated this turn, the cards activated this turn that have
+left the field, and the activation of a Spell / Trap whose lasting effect is on the player (``player_effects``)
+while no copy is face-up on the field (it was activated this turn). A spent limit is applied only when it is
+unambiguous: the card has one once-per-turn limit there (or all its limits share one count code); otherwise the
+core keeps offering it and the real game's refusal is the fallback.
+
+Lost on the way (design 10「重建的已知失真」): the event history, which of several once-per-turn effects of one card
+was used, other effects lasting the turn, effect states such as equips and targets, and anything mid-chain. Only
+the advisor's own Main Phase is supported.
 """
 
 from __future__ import annotations
@@ -25,7 +36,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from ygorl import _core
-from ygorl.advisor.snapshot import BoardSnapshot, SnapshotCard
+from ygorl.advisor.snapshot import LOCATIONS, BoardSnapshot, SnapshotCard
 from ygorl.cards.ydk import Deck
 from ygorl.data.environment import PlayerRules
 from ygorl.engine import constants as C
@@ -83,6 +94,9 @@ class Placed:
     owner: int | None = None  # engine player; None = the controller
     materials: tuple[int, ...] = ()
     counters: tuple[tuple[int, int], ...] = ()
+    status: int = 0  # core STATUS_* bits for this turn (summoned / Set / repositioned)
+    attacked: bool = False  # declared an attack this turn
+    spend: str = ""  # once-per-turn use to spend: "effect" (an effect where it is), "activation" (its activation)
 
 
 @dataclass
@@ -127,10 +141,30 @@ def _from_deck(side: int, snapshot: BoardSnapshot, cards: Mapping) -> Counter[in
     return out
 
 
-def _placed(card: SnapshotCard, password: int) -> Placed:
+_SUMMON_STATUS = {"normal": C.STATUS_SUMMON_TURN, "special": C.STATUS_SPSUMMON_TURN,
+                  "flip": C.STATUS_FLIP_SUMMON_TURN, "set": C.STATUS_SET_TURN}  # fmt: skip
+
+
+def turn_state(card: SnapshotCard) -> tuple[int, bool, str]:
+    """(core status bits, attacked, once-per-turn use to spend) of an advisor card for this turn."""
+    status = _SUMMON_STATUS.get(card.summoned, 0)
+    if card.location == "mzone" and card.position_locked and not status:
+        status = C.STATUS_FORM_CHANGED  # locked without a summon this turn: repositioned (or attacked)
+    if card.location == "szone" and card.set_this_turn:
+        status |= C.STATUS_SET_TURN
+    spend = ""
+    if card.card_activated:
+        spend = "activation"  # the activation itself raised the effect flag: no other effect can be told apart
+    elif card.effect_used:
+        spend = "effect"
+    return status, card.attacked, spend
+
+
+def _placed(card: SnapshotCard, password: int, own: bool = False) -> Placed:
     # snapshot sides are (advisor, opponent) and the advisor is engine player 0, so owners map one to one
+    status, attacked, spend = turn_state(card) if own else (0, False, "")
     return Placed(password, card.core_location, card.sequence, card.core_position, card.owner, card.materials,
-                  card.counters)  # fmt: skip
+                  card.counters, status, attacked, spend)  # fmt: skip
 
 
 def complete(snapshot: BoardSnapshot, own_deck: Deck, prior: OpponentPrior, cards: Mapping, rng: random.Random
@@ -157,7 +191,7 @@ def complete(snapshot: BoardSnapshot, own_deck: Deck, prior: OpponentPrior, card
     seen = _from_deck(0, snapshot, cards)
     main_left = Counter(own_deck.main) - seen
     extra_left = Counter(own_deck.extra) - Counter({p: n for p, n in seen.items() if is_extra(p)})
-    board.cards[0].extend(_placed(c, c.password) for c in me.cards)
+    board.cards[0].extend(_placed(c, c.password, own=True) for c in me.cards)
     deck = [p for p, n in main_left.items() for _ in range(n)]
     rng.shuffle(deck)
     if len(deck) < me.deck_count:
@@ -203,15 +237,102 @@ def complete(snapshot: BoardSnapshot, own_deck: Deck, prior: OpponentPrior, card
     return board
 
 
+CARD_ADVANCE = 52112003
+
+# Applied at the start of the reconstruction's Main Phase 1 (the turn start clears per-turn state): statuses, attack
+# bans, Normal Summons used, additional Tribute Summons granted and spent once-per-turn limits of player 0.
+TURN_STATE_LUA = """
+local function ygorl_spend(c,where,activation)
+  local keys,pick={},{}
+  for _,e in ipairs({c:GetOwnEffects()}) do
+    local _,max,code,flag,hopt=e:GetCountLimit()
+    local act=e:IsHasType(EFFECT_TYPE_ACTIVATE)
+    if max and max>0 and act==activation and (act or e:GetRange()&where~=0) then
+      local k=code~=0 and (code..":"..flag..":"..hopt) or tostring(e)
+      if not keys[k] then keys[k]=true pick[#pick+1]=e end
+    end
+  end
+  if #pick==1 then pick[1]:UseCountLimit(0) end
+end
+local function ygorl_where(c)
+  local loc=c:GetLocation()
+  if loc==LOCATION_SZONE then return LOCATION_SZONE|LOCATION_FZONE|LOCATION_PZONE end
+  return loc
+end
+local ygorl_e=Effect.GlobalEffect()
+ygorl_e:SetType(EFFECT_TYPE_FIELD|EFFECT_TYPE_CONTINUOUS)
+ygorl_e:SetCode(EVENT_PHASE_START|PHASE_MAIN1)
+ygorl_e:SetOperation(function(e)
+  for _,t in ipairs(YGORL_TURN.cards) do
+    local c,status,attacked,spend=t[1],t[2],t[3],t[4]
+    if status~=0 then c:SetStatus(status,true) end
+    if attacked then
+      local a=Effect.CreateEffect(c)
+      a:SetType(EFFECT_TYPE_SINGLE)
+      a:SetCode(EFFECT_CANNOT_ATTACK)
+      a:SetReset(RESET_EVENT|RESETS_STANDARD|RESET_PHASE|PHASE_END)
+      c:RegisterEffect(a)
+    end
+    if spend=="effect" then ygorl_spend(c,ygorl_where(c),false) end
+    if spend=="activation" then ygorl_spend(c,0,true) end
+  end
+  for _,t in ipairs(YGORL_TURN.activated) do
+    local c=Duel.GetMatchingGroup(Card.IsCode,0,0xff,0,nil,t[1]):GetFirst()
+    if c then ygorl_spend(c,t[2],(t[2]&LOCATION_ONFIELD)==0 and c:IsSpellTrap()) end
+  end
+  for _,code in ipairs(YGORL_TURN.effects) do  -- a Spell / Trap's lasting effect on the player, the card gone:
+    local g=Duel.GetMatchingGroup(Card.IsCode,0,0xff,0,nil,code)  -- it was activated this turn
+    local c=g:GetFirst()
+    local up=g:IsExists(function(x) return x:IsOnField() and x:IsFaceup() end,1,nil)
+    if c and c:IsSpellTrap() and not up then ygorl_spend(c,0,true) end
+  end
+  local extra=YGORL_TURN.extra
+  local used=YGORL_TURN.summons
+  if YGORL_TURN.advance then  -- Card Advance granted one: no card grants another (IsPlayerCanAdditionalTributeSummon)
+    Duel.RegisterFlagEffect(0,CARD_CARD_ADVANCE,RESET_PHASE|PHASE_END,0,1)
+  end
+  if extra>0 and used>1 then extra=math.max(0,extra-(used-1)) used=1 end
+  for _=1,math.min(used,1) do Duel.IncreaseSummonedCount() end
+  if extra>0 then
+    local s=Effect.GlobalEffect()
+    s:SetType(EFFECT_TYPE_FIELD)
+    s:SetCode(EFFECT_EXTRA_SUMMON_COUNT)
+    s:SetTargetRange(LOCATION_HAND,0)
+    s:SetValue(function() return 0x1 end)  -- not the literal: proc_workaround would raise Card Advance's flag
+    s:SetReset(RESET_PHASE|PHASE_END)
+    Duel.RegisterEffect(s,0)
+    local s2=s:Clone()
+    s2:SetCode(EFFECT_EXTRA_SET_COUNT)
+    Duel.RegisterEffect(s2,0)
+  end
+  e:Reset()
+end)
+Duel.RegisterEffect(ygorl_e,0)
+"""
+
+
 def board_script(board: CompletedBoard) -> str:
-    """The Lua script that puts ``board`` into a fresh duel (``Debug.AddCard`` per card)."""
-    lines = ["-- generated by ygorl.advisor.reconstruct"]
+    """The Lua script that puts ``board`` into a fresh duel (``Debug.AddCard`` per card) and, at the start of its
+    Main Phase 1, the turn so far (``TURN_STATE_LUA``)."""
+    snap = board.snapshot
+    # MD lets Card Advance grant the additional Tribute Summon unless Card Advance itself already did (recorded duels:
+    # accepted after Ancient Chant's grant, refused after its own); ygopro's workaround flag blocks it after any
+    advance = CARD_ADVANCE in {pw for pw, _ in snap.player_effects} or any(p == CARD_ADVANCE for p, _ in snap.activated)
+    lines = ["-- generated by ygorl.advisor.reconstruct",
+             f"YGORL_TURN={{cards={{}},activated={{}},summons={snap.summons_used},"
+             f"extra={snap.extra_tribute_summons},advance={'true' if advance else 'false'},"
+             f"effects={{{','.join(str(pw) for pw in sorted({pw for pw, _ in snap.player_effects}))}}}}}"]  # fmt: skip
+    for pw, where in snap.activated:
+        lines.append(f"table.insert(YGORL_TURN.activated,{{{pw},{LOCATIONS[where]}}})")
     for player in (0, 1):
         for card in board.cards[player]:
             owner = player if card.owner is None else card.owner
             proc = "true" if card.location == C.LOCATION_MZONE else "false"
             lines.append(f"local c=Debug.AddCard({card.password},{owner},{player},{card.location},{card.sequence},"
                          f"{card.position},{proc})")  # fmt: skip
+            if card.status or card.attacked or card.spend:
+                lines.append(f"if c then table.insert(YGORL_TURN.cards,{{c,{card.status},"
+                             f"{'true' if card.attacked else 'false'},\"{card.spend}\"}}) end")  # fmt: skip
             for t, n in card.counters:
                 lines.append(f"if c then Debug.PreAddCounter(c,{t},{n}) end")
             for m in card.materials:  # AddCard on an occupied Monster Zone attaches an Xyz material
@@ -221,7 +342,7 @@ def board_script(board: CompletedBoard) -> str:
             lines.append(f"Debug.AddCard({p},{player},{player},{C.LOCATION_DECK},0,{C.POS_FACEDOWN_DEFENSE})")
         for p in board.extras[player]:
             lines.append(f"Debug.AddCard({p},{player},{player},{C.LOCATION_EXTRA},0,{C.POS_FACEDOWN_DEFENSE})")
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + "\n" + TURN_STATE_LUA
 
 
 @dataclass
@@ -304,4 +425,4 @@ def build(board: CompletedBoard, rule_flags: int, *, cards=None, scripts=None, s
 
 
 __all__ = ["BOARD_SCRIPT", "CompletedBoard", "OpponentPrior", "Placed", "Reconstruction", "ReconstructError",
-           "board_script", "build", "complete"]  # fmt: skip
+           "TURN_STATE_LUA", "board_script", "build", "complete", "turn_state"]  # fmt: skip

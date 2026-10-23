@@ -58,6 +58,12 @@ def test_snapshot_json_roundtrip():
     assert snap.sides[0].hand_count == 4
     assert BoardSnapshot.from_json(snap.to_json()) == snap
     assert load_snapshot(SNAPSHOT).dumps() == snap.dumps()
+    turn = replace(snapshot(me=[SnapshotCard("mzone", BLUE_EYES, 1, summoned="special", position_locked=True,
+                                             attacked=True, effect_used=True),
+                                SnapshotCard("szone", MYSTIC_MINE, 5, card_activated=True, effect_used=True)]),
+                   normal_summons=2, extra_tribute_summons=1, activated=((ASH, "hand"),),
+                   player_effects=((78665705, 0),))  # fmt: skip
+    assert BoardSnapshot.from_json(turn.check().to_json()) == turn
 
 
 @pytest.mark.parametrize(
@@ -74,6 +80,10 @@ def test_snapshot_json_roundtrip():
         (snapshot(me=[SnapshotCard("deck", BLUE_EYES)]), "unknown location"),
         (snapshot(me=[SnapshotCard("hand", BLUE_EYES, materials=(ASH,))]), "only monsters in a Monster Zone"),
         (snapshot(turn=1, went_first=False), "turn 1 is the first player's turn"),
+        (snapshot(me=[SnapshotCard("hand", BLUE_EYES, summoned="normal")]), "summoned must be one of"),
+        (snapshot(me=[SnapshotCard("mzone", BLUE_EYES, 1, summoned="tribute")]), "summoned must be one of"),
+        (snapshot(me=[SnapshotCard("grave", ASH, effect_used=True)]), "describe a card on the field"),
+        (snapshot(activated=((ASH, "field"),)), "is not \\(password, location\\)"),
     ],
 )
 def test_snapshot_rejects_impossible_boards(snap, msg):
@@ -193,6 +203,8 @@ def test_opponent_turn_is_not_supported(cards):
 
 
 def test_masks_what_the_core_cannot_be_told(cards):
+    """The used Normal Summon and the locked position reach the core (it offers neither); the mask stays as a
+    second line and still covers what the core cannot be told (the Battle Phase in Main Phase 2)."""
     me = [SnapshotCard("hand", BLUE_EYES), SnapshotCard("mzone", BLUE_EYES, 1, position_locked=True),
           SnapshotCard("mzone", BLUE_EYES, 2)]  # fmt: skip
     prior = OpponentPrior((load_ydk(MALISS),), (1.0,))
@@ -204,9 +216,13 @@ def test_masks_what_the_core_cannot_be_told(cards):
     for a in rec.point.actions:
         by_kind.setdefault(a.kind, []).append(masked(snap, a))
     assert by_kind["battle_phase"] == [True]
-    assert all(by_kind.get("summon", [True])) and all(by_kind.get("mset", [True]))
+    assert "summon" not in by_kind and "mset" not in by_kind
     repos = {a.card.loc.sequence: masked(snap, a) for a in rec.point.actions if a.kind == "reposition"}
-    assert repos == {1: True, 2: False}
+    assert repos == {2: False}
+    for kind in ("summon", "mset"):  # the mask alone, for a core that offers it anyway
+        hand = next(a for a in build(complete(snapshot(me), Deck((BLUE_EYES,) * 40), prior, cards, random.Random(0)),
+                                     C.DUEL_MODE_MR5, cards=cards).point.actions if a.kind == kind)  # fmt: skip
+        assert masked(snap, hand) and not masked(replace(snap, normal_summoned=False), hand)
 
 
 def test_battle_phase_snapshot_reaches_the_battle_command(cards):
@@ -217,7 +233,7 @@ def test_battle_phase_snapshot_reaches_the_battle_command(cards):
     rec = build(board, C.DUEL_MODE_MR5, cards=cards)
     assert isinstance(rec.point.decision, M.SelectBattleCmd)
     attacks = {a.card.loc.sequence: masked(board.snapshot, a) for a in rec.point.actions if a.kind == "attack"}
-    assert attacks == {1: True, 2: False}
+    assert attacks == {2: False}  # the monster that attacked cannot attack in the core
     assert {a.kind for a in rec.point.actions} >= {"attack", "main2", "end_phase"}
 
 
@@ -260,3 +276,64 @@ def test_a_trap_set_this_turn_is_masked(cards):
         rec = build(board, C.DUEL_MODE_MR5, cards=cards)
         acts = [a for a in rec.point.actions if a.kind == "activate" and a.card.code == mirror_force]
         assert all(masked(board.snapshot, a, cards) == expect for a in acts)
+
+
+# -- the turn so far (design 10「重建能还原什么」) ---------------------------------------------------------------
+
+SEEKER = 5130393  # Millennium Seeker: field effect once per turn
+CHANT = 78665705  # Ancient Chant: activate 1 per turn; grants an additional Tribute Summon
+ADVANCE = 52112003  # Card Advance: grants an additional Tribute Summon unless one was granted already
+RA = 10000010
+RED_EYES = 74677422  # a monster for the Seeker to target in the opponent's GY
+
+
+def _actions(cards, me, op=(), **kw):
+    prior = OpponentPrior((load_ydk(MALISS),), (1.0,))
+    board = complete(snapshot(me, op, **kw).check(), Deck((BLUE_EYES,) * 40), prior, cards, random.Random(0))
+    return build(board, C.DUEL_MODE_MR5, cards=cards).point.actions
+
+
+def test_an_effect_used_this_turn_is_spent_in_the_core(cards):
+    op = [SnapshotCard("grave", RED_EYES)]
+    for used in (False, True):
+        me = [SnapshotCard("mzone", SEEKER, 0, summoned="normal", position_locked=True, effect_used=used)]
+        acts = _actions(cards, me, op, normal_summons=1)
+        assert any(a.kind == "activate" and a.card.code == SEEKER for a in acts) != used
+
+
+def test_an_activation_off_the_field_is_spent_in_the_core(cards):
+    me = [SnapshotCard("hand", CHANT), SnapshotCard("hand", ADVANCE), SnapshotCard("grave", RA)]
+    for activated, chant in (((), True), (((CHANT, "hand"),), False)):
+        acts = {a.card.code for a in _actions(cards, me, activated=activated) if a.kind == "activate"}
+        assert (CHANT in acts) == chant and ADVANCE in acts
+
+
+def test_additional_tribute_summon_granted_this_turn(cards):
+    """One Normal Summon used and one additional Tribute Summon granted: only a Tribute Summon is left."""
+    me = [SnapshotCard("hand", ASH), SnapshotCard("hand", BLUE_EYES), SnapshotCard("mzone", BLUE_EYES, 0),
+          SnapshotCard("mzone", BLUE_EYES, 1)]  # fmt: skip
+    for extra, ns, summons in ((0, 1, set()), (1, 1, {BLUE_EYES}), (1, 2, set()), (1, 0, {ASH, BLUE_EYES})):
+        acts = _actions(cards, me, normal_summons=ns, normal_summoned=ns > 0, extra_tribute_summons=extra)
+        assert {a.card.code for a in acts if a.kind == "summon"} == summons, (extra, ns)
+
+
+def test_grants_on_the_player_as_md_has_them(cards):
+    """Ancient Chant's grant in the player's effect list (the card gone to the GY): Ancient Chant is spent, Card
+    Advance can still be activated (MD accepted it in the recorded duels); after Card Advance's own grant it cannot."""
+    me = [
+        SnapshotCard("hand", CHANT),
+        SnapshotCard("hand", ADVANCE),
+        SnapshotCard("grave", RA),
+        SnapshotCard("grave", CHANT),
+    ]
+    hand = lambda **kw: {a.card.code for a in _actions(cards, me, extra_tribute_summons=1, **kw)  # noqa: E731
+                         if a.kind == "activate" and a.card.loc.location == C.LOCATION_HAND}  # fmt: skip
+    assert hand(player_effects=((CHANT, 0),)) == {ADVANCE}
+    assert hand(player_effects=((ADVANCE, 0),)) == set()
+    assert hand(player_effects=((CHANT, 0), (ADVANCE, 0))) == set()
+
+
+def test_summon_statuses_reach_the_core(cards):
+    me = [SnapshotCard("mzone", BLUE_EYES, 0, summoned="normal", position_locked=True),
+          SnapshotCard("mzone", BLUE_EYES, 1, position_locked=True), SnapshotCard("mzone", BLUE_EYES, 2)]  # fmt: skip
+    assert {a.card.loc.sequence for a in _actions(cards, me) if a.kind == "reposition"} == {2}

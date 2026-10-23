@@ -33,6 +33,14 @@ DLL_NAME = "duel.dll"
 MD_APP_ID = 1449850
 PHASES = ("draw", "standby", "main1", "battle", "main2", "end")  # DLL_DuelGetCurrentPhase values
 STATE_SIZE = 0x3C40  # S .. past the turn/phase fields; covers both player blocks and the uid table
+MAX_NODES = 0x100  # effect-table entries (the DLL's list walks stop at an index >= 0x100)
+ACTIVE_KIND = 6  # an effect node counts while its kind & 0xF is below this (every list walk in duel.dll tests it)
+# Effect nodes are coded by the MD card id of the card whose effect they are. These grant "Tribute Summon 1
+# monster in addition to your Normal Summon / Set" (the summon permission check at duel.dll 0x1800c6238 walks the
+# player's list for them; Ancient Chant only with value 0, its value-1 node is the GY effect): Card Advance, Mithra
+# the Thunder Vassal, Eidos the Underworld Squire, World Legacy - "World Key", Ancient Chant, Advance Force.
+EXTRA_TRIBUTE_CODES: dict[int, int | None] = {0x2CA1: None, 0x2DEC: None, 0x2F3C: None, 0x3938: None, 0x3BE5: 0,
+                                              0x21D3: None}  # fmt: skip
 
 
 class MemoryReadError(OSError):
@@ -153,6 +161,20 @@ def decode_uid(word: int) -> int:
 
 
 @dataclass(frozen=True)
+class RawEffect:
+    """One node of an effect list (``S + effect_table + index * effect_stride``)."""
+
+    index: int
+    code: int  # MD card id of the card whose effect this is (or an engine code)
+    kind: int  # low nibble: duration / state; the node is in force while it is below ACTIVE_KIND
+    value: int  # u32 at +effect_uid: a uid, a card id or an effect index, depending on the code
+
+    @property
+    def active(self) -> bool:
+        return self.kind & 0xF < ACTIVE_KIND
+
+
+@dataclass(frozen=True)
 class RawCard:
     cid: int  # MD card id (= Konami database id)
     uid: int  # unique id of this card in the duel
@@ -163,6 +185,11 @@ class RawCard:
     slot: bytes = b""  # field slots only: the whole slot struct, for flags interpreted via Offsets.semantics
     materials: tuple[int, ...] = ()  # Xyz materials, MD card ids
 
+    def turn_flags(self, off: Offsets) -> int:
+        """The u32 of this turn's flags at slot + locked_byte (summoned / Set / attacked / effect used ...)."""
+        at = off.semantics["locked_byte"]
+        return struct.unpack_from("<I", self.slot, at)[0] if len(self.slot) >= at + 4 else 0
+
 
 @dataclass(frozen=True)
 class RawPlayer:
@@ -171,6 +198,7 @@ class RawPlayer:
     piles: dict[str, tuple[RawCard, ...]]  # PILES -> cards in index order
     counts: dict[str, int]
     header: bytes = b""  # the player block before the field slots, for counters read via Offsets.semantics
+    effects: tuple[RawEffect, ...] = ()  # the player's own effect list, read for the client only (design 10)
 
 
 @dataclass(frozen=True)
@@ -210,6 +238,15 @@ def read_duel(mem: Memory, base: int, off: Offsets) -> RawDuel:
     def card_id(uid: int) -> int:
         return _u16(s, off.uid_table + (uid & off.uid_mask) * 8)
 
+    def effect_list(head: int) -> tuple[RawEffect, ...]:
+        out, seen = [], set()
+        while 0 < head < MAX_NODES and head not in seen:
+            seen.add(head)
+            n = node(head)
+            out.append(RawEffect(head, _u16(n, 0), n[off.effect_kind], _u32(n, off.effect_uid)))
+            head = _u16(n, off.effect_next)
+        return tuple(out)
+
     def materials(head: int) -> tuple[int, ...]:
         out, seen = [], set()
         while head and head not in seen and len(seen) < 4096:
@@ -242,8 +279,10 @@ def read_duel(mem: Memory, base: int, off: Offsets) -> RawDuel:
                                      facedown=z == "removed" and bool(s[blk + off.removed_face + 2 * i] & off.removed_facedown))
                              for i, e in enumerate(entries))  # fmt: skip
         lp = (_u32(s, blk + off.lp) ^ xor_key) & 0xFFFFFFFF
+        # the opponent's list names the cards its effects belong to: never read (what the screen does not show)
+        effects = effect_list(_u16(s, blk + off.player_effects)) if p == me else ()
         players.append(RawPlayer(lp=lp, slots=tuple(slots), piles=piles, counts=counts,
-                                 header=bytes(s[blk : blk + off.slot_base])))  # fmt: skip
+                                 header=bytes(s[blk : blk + off.slot_base]), effects=effects))  # fmt: skip
     return RawDuel(turn=_u32(s, off.turn), phase=_u32(s, off.phase), turn_player=_u32(s, off.turn_player) & 1,
                    me=me, players=(players[0], players[1]), offsets=off,
                    player_types=(_u32(key, off.player_type), _u32(key, off.player_type + 4)),
@@ -295,19 +334,61 @@ def format_raw(raw: RawDuel, names: Mapping[int, str] | None = None) -> str:
             if c is not None:
                 hide = not mine
                 extra = f" face={c.face:#04x} sideways={c.sideways}"
+                if "locked_byte" in raw.offsets.semantics:
+                    extra += f" turn_flags={c.turn_flags(raw.offsets):#x}"
                 mats = f" materials={len(c.materials)}" if c.materials else ""
                 lines.append(f"  {SLOT_NAMES[i]:6} {label(c, hide)}{extra if not hide else ''}{mats}")
         for z in ("hand", "grave", "removed") if mine else ("grave",):
             for c in pl.piles[z]:
                 lines.append(f"  {z:6} {label(c, False)}")
+        for e in pl.effects:
+            lines.append(f"  effect node {e.index}: code {e.code} {names.get(e.code, '?')} value {e.value:#x} "
+                         f"kind {e.kind:#04x}{'' if e.active else ' (inactive)'}")  # fmt: skip
     return "\n".join(lines)
 
 
-def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[int] = frozenset()) -> BoardSnapshot:
+def normal_summons(raw: RawDuel) -> int:
+    """The client's Normal (and Tribute) Summons this turn: every summon minus the Special Summons."""
+    off, me = raw.offsets, raw.players[raw.me]
+    total = _u32(me.header, off.semantics["normal_summons"])
+    special = off.semantics.get("special_summons")
+    return max(0, total - _u32(me.header, special)) if special is not None else total
+
+
+def extra_tribute_summons(raw: RawDuel) -> int:
+    """Additional Tribute Summons granted to the client this turn (active nodes of its effect list)."""
+    n = 0
+    for e in raw.players[raw.me].effects:
+        if e.active and e.code in EXTRA_TRIBUTE_CODES and EXTRA_TRIBUTE_CODES[e.code] in (None, e.value):
+            n += 1
+    return n
+
+
+def player_effects(raw: RawDuel, passwords: Mapping[int, int]) -> tuple[tuple[int, int], ...]:
+    """(password, value) of the effects in force on the client as a player: the active nodes of its effect list
+    whose code is a card id (engine-coded nodes are left out)."""
+    return tuple((passwords[e.code], e.value) for e in raw.players[raw.me].effects if e.active and e.code in passwords)
+
+
+def summon_kind(flags: int, sem: Mapping[str, int]) -> str:
+    """How a monster came to the field this turn, from its slot flags ("" = an earlier turn or unknown)."""
+    for kind, key in (("set", "set_turn"), ("flip", "summon_flip"), ("special", "summon_special"),
+                      ("normal", "summon_normal")):  # fmt: skip
+        mask = sem.get(key)
+        if mask and flags & mask == mask:
+            return kind
+    return ""
+
+
+def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[int] = frozenset(),
+                activated: frozenset[tuple[int, str]] = frozenset()) -> BoardSnapshot:  # fmt: skip
     """The advisor's view (seat 0 = the client) as a :class:`BoardSnapshot`; MD card ids -> passwords.
 
-    ``attacked``: unique ids of the advisor's monsters that already attacked this turn (the caller tracks them;
-    the flag is not decoded from memory yet)."""
+    The turn's state of the advisor's own cards comes from their slot flags (summoned how, attacked, an effect
+    used, Set or activated this turn) and its player block (Normal Summons, additional Tribute Summons granted).
+    ``attacked``: unique ids of monsters the caller saw attack (added to the decoded flag); ``activated``:
+    (password, location) of the cards the caller activated this turn that left the field since (their once-per-turn
+    use is in no slot any more)."""
     off = raw.offsets
     if not off.verified:
         raise SnapshotError(f"duel.dll {off.dll_sha256[:16]} is not verified against the screen yet; "
@@ -335,11 +416,17 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[
             else:
                 pos = "faceup" if faceup else "facedown"
             known = mine or faceup
-            flags = c.slot[off.semantics["locked_byte"]]
-            locked = loc == "mzone" and bool(flags & off.semantics["locked"])
-            set_turn = mine and loc == "szone" and not faceup and bool(flags & off.semantics["set_turn"])
+            sem = off.semantics
+            flags = c.turn_flags(off)
+            locked = loc == "mzone" and bool(flags & sem["locked"])
+            set_turn = mine and loc == "szone" and not faceup and bool(flags & sem["set_turn"])
+            hit = mine and loc == "mzone" and (c.uid in attacked or bool(flags & sem.get("attacked", 0)))
+            used = mine and bool(flags & sem.get("effect_used", 0))
+            card_activated = mine and loc == "szone" and faceup and bool(flags & sem.get("card_activated", 0))
+            summoned = summon_kind(flags, sem) if mine and loc == "mzone" else ""
             cards.append(SnapshotCard(location=loc, sequence=seq, position=pos, position_locked=locked,
-                                      attacked=mine and loc == "mzone" and c.uid in attacked, set_this_turn=set_turn,
+                                      attacked=hit, set_this_turn=set_turn, effect_used=used,
+                                      card_activated=card_activated, summoned=summoned,
                                       password=pw(c.cid) if known else UNKNOWN,
                                       materials=tuple(pw(m) for m in c.materials) if known else ()))  # fmt: skip
         cards += [SnapshotCard("grave", pw(c.cid)) for c in pl.piles["grave"]]
@@ -355,16 +442,18 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[
                                   extra_count=pl.counts["extra"]))  # fmt: skip
     turn = raw.turn + off.semantics["turn_base"]  # duel.dll counts from 0, the screen from 1
     went_first = (turn % 2 == 1) == (raw.turn_player == raw.me)
-    me = raw.players[raw.me]
-    normal_summoned = _u32(me.header, off.semantics["normal_summons"]) > 0
+    ns = normal_summons(raw)
     return BoardSnapshot(turn=turn, phase=PHASES[raw.phase], sides=(sides[0], sides[1]), turn_player=0,
-                         normal_summoned=normal_summoned,
-                         went_first=went_first, source=f"mdmem:{off.dll_sha256[:16]}").check()  # fmt: skip
+                         normal_summoned=ns > 0, normal_summons=ns, extra_tribute_summons=extra_tribute_summons(raw),
+                         activated=tuple(sorted(activated)), player_effects=player_effects(raw, passwords),
+                         went_first=went_first,
+                         source=f"mdmem:{off.dll_sha256[:16]}").check()  # fmt: skip
 
 
-__all__ = ["Attached", "BufferMemory", "GateError", "Memory", "MemoryReadError", "Module", "ProcessMemory", "RawCard", "RawDuel",
-           "RawPlayer", "attach", "decode_uid", "find_module", "find_pid", "format_raw", "ptrace_hint", "read_duel",
-           "load_md_cid", "own_deck", "steam_buildid", "to_snapshot"]  # fmt: skip
+__all__ = ["Attached", "BufferMemory", "EXTRA_TRIBUTE_CODES", "GateError", "Memory", "MemoryReadError", "Module",
+           "ProcessMemory", "RawCard", "RawDuel", "RawEffect", "RawPlayer", "attach", "decode_uid",
+           "extra_tribute_summons", "find_module", "find_pid", "format_raw", "load_md_cid", "normal_summons",
+           "own_deck", "player_effects", "ptrace_hint", "read_duel", "steam_buildid", "summon_kind", "to_snapshot"]  # fmt: skip
 
 
 class GateError(RuntimeError):

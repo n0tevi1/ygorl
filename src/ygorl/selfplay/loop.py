@@ -165,6 +165,26 @@ POSITION_DIALOG, RADIO_DIALOG = 10, 13  # DLL_DuelDlg* dialog types (6 is OPTION
 NEUTRAL = ("notice", "minimised")  # screens that belong to nobody's input: always answered
 
 
+def own_effect_nodes(state: bytes, me: int, off) -> dict[int, bytes]:
+    """{offset in S: node bytes} of the effect-list nodes reachable from our player list head and our field slots'
+    list heads: what our own effects are (kept in the recorded memory; the rest of the table is blanked)."""
+    blk = me * off.player_stride
+    heads = [struct.unpack_from("<H", state, blk + off.player_effects)[0]]
+    for i in range(13):
+        at = blk + off.slot_base + i * off.slot_stride
+        if struct.unpack_from("<H", state, at)[0]:
+            heads.append(struct.unpack_from("<H", state, at + off.slot_chain)[0])
+    out: dict[int, bytes] = {}
+    for head in heads:
+        while 0 < head < 0x100:
+            at = off.effect_table + head * off.effect_stride
+            if at in out or at + off.effect_stride > len(state):
+                break
+            out[at] = bytes(state[at : at + off.effect_stride])
+            head = struct.unpack_from("<H", state, at + off.effect_next)[0]
+    return out
+
+
 def classify(*, mine: bool, ours: bool, accepting: bool, mode: int, dialog_type: int, choices: int,
              screen: str | None, context: str = "", zone_pending: bool = False) -> str:  # fmt: skip
     """What the step must answer (design 10 「识别与执行的系统化」): memory first (who holds the input, the input
@@ -322,6 +342,7 @@ class Player:
                                samples=self.samples)  # in-action decisions rebuilt from the current board  # fmt: skip
         self.panel = PanelBook(self.out / "panel_book.npz")  # learned across runs
         self.attacked: set[int] = set()  # uids that attacked (or could not) in this Battle Phase
+        self.activated: set[tuple[int, str]] = set()  # (password, location) the policy activated off the field
         self.turn_seen = -1
         self.context = ""  # what the last action was, for sub-prompts
         self.responded = None  # the prompt state last answered with an activation
@@ -648,11 +669,22 @@ class Player:
         print(f"  check {action.kind}: MD refused ({why}); masked for this phase", flush=True)
         self.expect = None
 
+    def note_activation(self, action) -> None:
+        """Remember a card activated this turn from off the field (hand, GY, ...): its once-per-turn activation is
+        spent, and once the card is gone no slot flag says so (design 10 「重建能还原什么」)."""
+        from ygorl.advisor.snapshot import LOCATIONS
+
+        if action.kind != "activate" or action.card is None:
+            return
+        where = next((n for n, v in LOCATIONS.items() if v == action.card.loc.location), "")
+        if where and where not in ("mzone", "szone"):
+            self.activated.add((action.card.code, where))
+
     def decide(self, raw: RawDuel):
         """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""
         from ygorl.advisor.advise import advise
 
-        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked))
+        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked), frozenset(self.activated))
         deck = own_deck(raw, self.passwords, self.cards)
         advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
                         samples=self.samples, seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip
@@ -834,10 +866,14 @@ class Player:
             state = bytearray(mem.read(self.state_base, self.STATE_BLOCK))
             me = self.game.read().me
             # the opponent's hidden cards must never leave memory (design 10): blank their player block, the
-            # uid -> card id table and the effect list (it names the cards its effects belong to, face-down too)
+            # uid -> card id table and the effect list (it names the cards its effects belong to, face-down too),
+            # then put back the nodes of our own lists (the player list and our field cards'): our effects
+            own = own_effect_nodes(bytes(state), me, off)
             opp = (1 - me) * off.player_stride
             state[opp : opp + off.player_stride] = bytes(off.player_stride)
             state[off.uid_table : EFFECT_LIST_END] = bytes(EFFECT_LIST_END - off.uid_table)
+            for at, node in own.items():
+                state[at : at + len(node)] = node
             self.trace.save_memory({"S": bytes(state), "K": mem.read(key, 0x400)})
         except Exception:  # noqa: BLE001 - diagnostics only
             pass
@@ -1383,6 +1419,7 @@ class Player:
 
     def reset_game_state(self) -> None:
         self.attacked, self.forbidden, self.recent, self.last_zone = set(), set(), [], None
+        self.activated = set()
         self.recoveries, self.recovery_count = {}, 0
         self.field_picked = ((-1, -1), [])
         self.turn_seen, self.phase_seen, self.expect, self.context = -1, (-1, -1), None, ""
@@ -1428,7 +1465,7 @@ class Player:
                 time.sleep(1.0)
                 self.ui.wait_still()  # e.g. the drawn card flying to the hand: hand positions count it already
             if raw.turn != self.turn_seen:
-                self.turn_seen, self.attacked = raw.turn, set()
+                self.turn_seen, self.attacked, self.activated = raw.turn, set(), set()
             if inp.mode not in (FIELD_PICK, FIELD_PICK_TRIBUTE):
                 self.field_picked = ((-1, -1), [])  # the field selection is over: the next one starts fresh
             me, op = raw.players[raw.me], raw.players[1 - raw.me]
@@ -1464,6 +1501,8 @@ class Player:
                     self.learn_panel(raw)
                     self.learn_list(raw)
                     print(f"  check {self.expect.action.kind}: {'ok' if problem is None else problem}", flush=True)
+                    if problem is None:
+                        self.note_activation(self.expect.action)
                     self.expect = None
                     if problem is not None:
                         raise Stuck(f"the game does not show the policy's action: {problem}")

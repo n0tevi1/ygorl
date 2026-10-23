@@ -9,7 +9,8 @@ opponent), whoever went first in the real game.
 JSON form::
 
     {"turn": 3, "phase": "main1", "turn_player": 0, "went_first": true,
-     "normal_summoned": false,
+     "normal_summoned": false, "normal_summons": 0, "extra_tribute_summons": 0,
+     "activated": [[78665705, "hand"]], "player_effects": [[78665705, 0]],
      "sides": [{"lp": 8000, "deck_count": 33, "extra_count": 15,
                 "cards": [{"location": "hand", "password": 14558127},
                           {"location": "mzone", "sequence": 2, "password": 89631139, "position": "faceup_attack"},
@@ -20,6 +21,14 @@ JSON form::
 Locations: ``hand``, ``mzone`` (sequence 0-4, Extra Monster Zones 5-6), ``szone`` (0-4, Field Zone 5), ``grave``,
 ``removed``, ``extra`` (face-up Pendulum cards only; face-down Extra Deck cards are counted in ``extra_count``).
 Hand, GY and banished cards take their list order; ``sequence`` matters on the field only.
+
+The turn so far (design 10「重建能还原什么」): per card ``summoned`` (normal / special / flip / set this turn),
+``position_locked``, ``attacked``, ``set_this_turn``, ``effect_used`` (an effect of the card was activated this
+turn), ``card_activated`` (a face-up Spell / Trap activated this turn); per snapshot ``normal_summons`` (Normal and
+Tribute Summons this turn), ``extra_tribute_summons`` (additional Tribute Summons granted this turn) and
+``activated`` (cards activated this turn that left the field: their once-per-turn activation is spent) and
+``player_effects`` (password, value) of the effects in force on the advisor as a player, e.g. Ancient Chant's
+additional Tribute Summon (MD keeps them in the player's effect list, coded by the card they come from).
 """
 
 from __future__ import annotations
@@ -52,6 +61,7 @@ POSITIONS: Mapping[str, int] = {
 _ZONES = {"mzone": 7, "szone": 6}  # sequences per side
 PHASES = ("main1", "battle", "main2")  # the advisor's own idle points: Main Phases and the Battle Phase command
 UNKNOWN = 0  # password of a card the advisor cannot see
+SUMMONED = ("", "normal", "special", "flip", "set")  # how a monster came to the field this turn
 
 
 class SnapshotError(ValueError):
@@ -80,6 +90,9 @@ class SnapshotCard:
     position_locked: bool = False  # summoned, Set or repositioned this turn: cannot change position now
     attacked: bool = False  # declared an attack this turn (Battle Phase snapshots): cannot attack again
     set_this_turn: bool = False  # Set this turn (Spell & Trap Zone): a Trap or Quick-Play Spell cannot activate yet
+    effect_used: bool = False  # an effect of this card was activated this turn (its once-per-turn use is spent)
+    card_activated: bool = False  # this face-up Spell / Trap was activated this turn
+    summoned: str = ""  # SUMMONED: how this monster came to the field this turn ("" = an earlier turn)
 
     @property
     def pos(self) -> str:
@@ -117,6 +130,12 @@ class SnapshotCard:
             out["attacked"] = True
         if self.set_this_turn:
             out["set_this_turn"] = True
+        if self.effect_used:
+            out["effect_used"] = True
+        if self.card_activated:
+            out["card_activated"] = True
+        if self.summoned:
+            out["summoned"] = self.summoned
         return out
 
     @classmethod
@@ -124,7 +143,8 @@ class SnapshotCard:
         if not isinstance(data, Mapping):
             raise SnapshotError(f"a card must be an object, not {data!r}")
         unknown = set(data) - {"location", "password", "sequence", "position", "owner", "materials", "counters",
-                               "position_locked", "attacked", "set_this_turn"}  # fmt: skip
+                               "position_locked", "attacked", "set_this_turn", "effect_used", "card_activated",
+                               "summoned"}  # fmt: skip
         if unknown:
             raise SnapshotError(f"unknown card keys {sorted(unknown)}")
         try:
@@ -134,7 +154,10 @@ class SnapshotCard:
                        counters=tuple((int(t), int(n)) for t, n in data.get("counters", ())),
                        position_locked=bool(data.get("position_locked", False)),
                        attacked=bool(data.get("attacked", False)),
-                       set_this_turn=bool(data.get("set_this_turn", False)))  # fmt: skip
+                       set_this_turn=bool(data.get("set_this_turn", False)),
+                       effect_used=bool(data.get("effect_used", False)),
+                       card_activated=bool(data.get("card_activated", False)),
+                       summoned=str(data.get("summoned", "")))  # fmt: skip
         except KeyError:
             raise SnapshotError(f"card without a location: {dict(data)}") from None
         except (TypeError, ValueError) as exc:
@@ -188,6 +211,20 @@ class BoardSnapshot:
     went_first: bool = True  # the advisor played first in the real game
     normal_summoned: bool = False  # the advisor has used its Normal Summon / Set this turn
     source: str = ""  # where the snapshot came from ("manual", "selfplay", "mdmem:<build>")
+    normal_summons: int = 0  # Normal / Tribute Summons and Sets this turn (0 with normal_summoned: one)
+    extra_tribute_summons: int = 0  # additional Tribute Summons granted this turn (Ancient Chant, Card Advance ...)
+    activated: tuple[tuple[int, str], ...] = ()  # (password, location) activated this turn, no longer on the field
+    player_effects: tuple[tuple[int, int], ...] = ()  # (password, value) of card effects in force on the advisor
+
+    @property
+    def summons_used(self) -> int:
+        """Normal Summons / Sets used this turn (``normal_summoned`` alone counts as one)."""
+        return max(self.normal_summons, int(self.normal_summoned))
+
+    @property
+    def normal_summon_left(self) -> bool:
+        """The advisor can still Normal Summon / Set (counting the additional Tribute Summons granted)."""
+        return self.summons_used < 1 + self.extra_tribute_summons
 
     def check(self) -> BoardSnapshot:
         """Raise :class:`SnapshotError` unless the snapshot describes a possible board; return self."""
@@ -201,6 +238,14 @@ class BoardSnapshot:
             raise SnapshotError("turn 1 is the first player's turn")
         if len(self.sides) != 2:
             raise SnapshotError("a snapshot has two sides: (advisor, opponent)")
+        if self.normal_summons < 0 or self.extra_tribute_summons < 0:
+            raise SnapshotError("summon counts must be non-negative")
+        for pw, where in self.activated:
+            if not valid_password(pw) or where not in LOCATIONS:
+                raise SnapshotError(f"activated: ({pw}, {where!r}) is not (password, location)")
+        for pw, _ in self.player_effects:
+            if not valid_password(pw):
+                raise SnapshotError(f"player_effects: invalid card password {pw}")
         for s, side in enumerate(self.sides):
             who = ("advisor", "opponent")[s]
             if side.lp < 1:
@@ -216,6 +261,14 @@ class BoardSnapshot:
         out: dict[str, Any] = {"turn": self.turn, "phase": self.phase, "turn_player": self.turn_player,
                                "went_first": self.went_first, "normal_summoned": self.normal_summoned,
                                "sides": [s.to_json() for s in self.sides]}  # fmt: skip
+        if self.normal_summons:
+            out["normal_summons"] = self.normal_summons
+        if self.extra_tribute_summons:
+            out["extra_tribute_summons"] = self.extra_tribute_summons
+        if self.activated:
+            out["activated"] = [list(a) for a in self.activated]
+        if self.player_effects:
+            out["player_effects"] = [list(e) for e in self.player_effects]
         if self.source:
             out["source"] = self.source
         return out
@@ -224,7 +277,8 @@ class BoardSnapshot:
     def from_json(cls, data: Mapping[str, Any]) -> BoardSnapshot:
         if not isinstance(data, Mapping):
             raise SnapshotError("a snapshot must be a JSON object")
-        unknown = set(data) - {"turn", "phase", "turn_player", "went_first", "normal_summoned", "sides", "source"}
+        unknown = set(data) - {"turn", "phase", "turn_player", "went_first", "normal_summoned", "sides", "source",
+                               "normal_summons", "extra_tribute_summons", "activated", "player_effects"}  # fmt: skip
         if unknown:
             raise SnapshotError(f"unknown snapshot keys {sorted(unknown)}")
         try:
@@ -232,6 +286,10 @@ class BoardSnapshot:
             snap = cls(turn=int(data["turn"]), phase=str(data.get("phase", "main1")), sides=sides,  # type: ignore[arg-type]
                        turn_player=int(data.get("turn_player", 0)), went_first=bool(data.get("went_first", True)),
                        normal_summoned=bool(data.get("normal_summoned", False)),
+                       normal_summons=int(data.get("normal_summons", 0)),
+                       extra_tribute_summons=int(data.get("extra_tribute_summons", 0)),
+                       activated=tuple((int(pw), str(loc)) for pw, loc in data.get("activated", ())),
+                       player_effects=tuple((int(pw), int(v)) for pw, v in data.get("player_effects", ())),
                        source=str(data.get("source", "")))  # fmt: skip
         except KeyError as exc:
             raise SnapshotError(f"snapshot is missing {exc.args[0]!r}") from None
@@ -270,6 +328,10 @@ def _check_card(card: SnapshotCard, side: int, who: str, used: set[tuple[str, in
             raise SnapshotError(f"{where}: a face-up card must be known")
     if card.attacked and card.location != "mzone":
         raise SnapshotError(f"{where}: only monsters in a Monster Zone attack")
+    if card.summoned not in SUMMONED or (card.summoned and card.location != "mzone"):
+        raise SnapshotError(f"{where}: summoned must be one of {SUMMONED[1:]} on a monster in a Monster Zone")
+    if (card.effect_used or card.card_activated) and card.location not in _ZONES:
+        raise SnapshotError(f"{where}: effect_used / card_activated describe a card on the field")
     if card.materials and card.location != "mzone":
         raise SnapshotError(f"{where}: only monsters in a Monster Zone have materials")
 
@@ -334,5 +396,5 @@ def load_snapshot(path: str | Path) -> BoardSnapshot:
         raise SnapshotError(f"{path}: {exc}") from None
 
 
-__all__ = ["BoardSnapshot", "LOCATIONS", "POSITIONS", "SnapshotCard", "SnapshotError", "SnapshotSide", "UNKNOWN",
-           "load_snapshot", "snapshot_from_core"]  # fmt: skip
+__all__ = ["BoardSnapshot", "LOCATIONS", "POSITIONS", "SUMMONED", "SnapshotCard", "SnapshotError", "SnapshotSide",
+           "UNKNOWN", "load_snapshot", "snapshot_from_core"]  # fmt: skip
