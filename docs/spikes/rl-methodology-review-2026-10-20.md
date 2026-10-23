@@ -364,6 +364,11 @@ md-2026-09 的 Vanquish Soul K9 / Yummy / Elfnote × 8 手（求解 10 s，每�
 （Maxx "C" 0.07、Sky Striker Engage 0.12、Fiendsmith's Requiem 0.89、Branded Fusion 1.00）。但把它叠在 G u576 的灰流丽决策上（阈值 0.6）对真实对手是**负**的：对 E2016 0.492 → 0.449，对 G576 0.500 → 0.469，对老师 0.828 → 0.828；
 叠加后 65% 的时点选择留手。求解器标签描述的是求解线，这个群体的展开线和求解线不同，「忍过诱饵」在这些对手面前没有回报。再一次指向：回应信号必须来自训练对局里真的走求解线的对手。
 
+**额外卡组的利用（`turn1_extra.py`，200 留出手）**：先攻第 1 回合终场面里来自额外卡组的怪兽 / 其中有妨害效果的：求解器线 1.04 / **0.81**（135/200 手有），老师 1.00 / 0.54（96），G u576 0.72 / **0.18**（34），R-bonus u640 0.59 / 0.18。
+求解器铺的是 Herald of the Arc Light、Rindbrumm、Fiendsmith's Desirae、S:P Little Knight、Sky Striker Ace = Zero；策略的额外产出是 Yummy★Snatchy、Lollipo★Yummy Way、Red Dragon Archfiend 这类输出件，妨害怪只有 Kewl Tune RS / Ace = Zero / Zalen，S:P 和 Herald 几乎不做。先手把额外卡组当进攻资源，因为群体里没人展开到需要被打断。
+
+**R 的首个读数（u640，64 次更新）**：R-bonus 留出手尺子 **0.720**（浪费 0.26，首次开火时点 1.52，留 11 / 漏 7），L-lines（同样的线对手、系数 0）0.654 / 0.35 / 1.14 = 父模型。信号来自标签项，不是对手压力。
+
 **脚本线对手（#441 第一步，2026-10-23）**：已实现并提交（`train/lines.py`，collector / schedule / trainer 接入，`--line-demos --line-share`）：池对局的一部分从求解示范的精确起手开始，对手席按线走（候选用编码后的动作键匹配），线完成或被打断后由快照接管；学习方的行带 `line_id` / `line_window`。10 个新测试 + 全套测试通过。扩展面板上微调前后不可分（0.899 对 0.902），面板看不到这个维度，尺子看得到。
 
 ### 7.4 回应决策的信号诊断（2026-10-21，`out/claude-scale/critic_probe.py`）
