@@ -233,8 +233,8 @@ def classify(*, mine: bool, ours: bool, accepting: bool, mode: int, dialog_type:
         return "prompt"  # an activate-or-pass prompt panel looks like a list
     if mine and mode == PLACE and (screen == "position" or dialog_type == POSITION_DIALOG):
         return "position"
-    if mine and mode == PLACE and screen == "banner":
-        return "place"
+    if mine and mode == PLACE and screen in ("banner", "panel", None):
+        return "place"  # the zone question can come while a chain's resolve animation still dims the board
     if mine and mode == MAIN and screen == "banner" and zone_pending:
         return "zone_again"  # MD still asks for the zone of our own Summon / Set
     if mine and mode in (MAIN, BATTLE) and screen == "banner":
@@ -599,6 +599,11 @@ class Player:
         hand = [c.cid for c in raw.players[raw.me].piles["hand"]]
         order = L.hand_order(hand, lambda c: self.passwords.get(c, 0), self.cards.get)
         return L.hand_card(order.index(hand.index(cid)), len(hand))
+
+    def zones_outlined(self) -> bool:
+        img = self.ui.capture()
+        return any(yellow_highlight(img, *L.my_zone(loc, z)) or zone_outlined(img, *L.my_zone(loc, z))
+                   for loc in ("mzone", "szone") for z in range(5))  # fmt: skip
 
     def outlined_zone(self, raw: RawDuel) -> tuple[str, int]:
         """The first zone MD outlines for a placement (Monster Zones, then Spell & Trap Zones)."""
@@ -1001,6 +1006,12 @@ class Player:
         """Where to put a card (a summoned monster, or a Spell / Trap an effect places): MD outlines the zones it
         allows; the first outlined one, Monster Zones first, else the first free monster zone."""
         self.trace.rule("zone-first-free")
+        self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)  # a resolve animation can still cover the zones
+        key = (raw.turn, raw.phase, _own_cards(raw))
+        if not self.zones_outlined() and getattr(self, "place_waited", None) != key:
+            self.place_waited = key
+            self.trace.observe(place="no zone outlined yet")
+            return  # nothing to click yet: the loop comes back with the next state (once; then as before)
         location, zone = self.outlined_zone(raw)
         self.ui.pick_zone(location, zone, f"zone for the card ({location})")
         self._placed(location, zone)
@@ -1073,7 +1084,7 @@ class Player:
             for name in self.declare_names(raw)[:6]:
                 self.trace.rule("declare-most-common-in-deck", name=name)
                 try:
-                    self.ui.declare(searchable(name), self.mouse.type_text)
+                    self.ui.declare(searchable(name), self.mouse.type_text, self.mouse.backspace)
                     return
                 except Stuck as exc:
                     self.trace.observe(declare_failed=str(exc))
@@ -1452,20 +1463,24 @@ class Player:
         """Restart a duel the player gave up on: the settings gear, Retry, Yes; then the new duel as after the
         result screen's Retry (a stage may ask who goes first)."""
         before = self.game.read()
-        self.ui.click(*SETTINGS_GEAR, "settings: restart the duel the player gave up on", 2.0)
-        self.ui.click(*SETTINGS_RETRY, "retry", 2.0)
-        self.ui.click(*SETTINGS_RETRY_YES, "yes: restart from the beginning", 3.0)
-        self.ui.take_clicks()
-        end = time.time() + 60
-        while time.time() < end:  # the old duel's state lingers a moment: wait for the new one to replace it
-            try:
-                now = self.game.read()
-            except Exception:  # noqa: BLE001 - loading
-                break
-            if _progress(now, Input(0, False, 0)) != _progress(before, Input(0, False, 0)):
-                break
-            time.sleep(1.0)
-        self.restart_duel()
+        for attempt in range(3):
+            # a focused text box (the declare search) swallows the gear's click: an empty spot takes the focus first
+            self.ui.click(*NEUTRAL_SPOT, "an empty spot (drop the focus)", 1.2)
+            self.ui.click(*SETTINGS_GEAR, "settings: restart the duel the player gave up on", 2.0)
+            self.ui.click(*SETTINGS_RETRY, "retry", 2.0)
+            self.ui.click(*SETTINGS_RETRY_YES, "yes: restart from the beginning", 3.0)
+            self.ui.take_clicks()
+            end = time.time() + 40
+            while time.time() < end:  # the old duel's state lingers a moment: wait for the new one to replace it
+                try:
+                    now = self.game.read()
+                except Exception:  # noqa: BLE001 - loading
+                    return self.restart_duel()
+                if _progress(now, Input(0, False, 0)) != _progress(before, Input(0, False, 0)):
+                    return self.restart_duel()
+                time.sleep(1.0)
+            print(f"  settings restart attempt {attempt + 1}: the duel did not change", flush=True)
+        raise Stuck("the settings menu's Retry did not restart the duel")
 
     def restart_duel(self, timeout: float = 300) -> None:
         """MD's result screen: press Retry, then wait until a new duel is running (not finished, turn 1)."""

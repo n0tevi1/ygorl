@@ -516,11 +516,14 @@ class UI:
         self.click(*RADIO_CONFIRM, "confirm", 1.5)
         return len(rows)
 
-    def declare(self, text: str, type_text: Callable[[str], None]) -> list[XY]:
+    def declare(self, text: str, type_text: Callable[[str], None], erase: Callable[[int], None] = lambda n: None
+                ) -> list[XY]:  # fmt: skip
         """MD's "declare a card name" panel: click the search box, clear it, type ``text`` (``type_text``: the gated
         keyboard), then pick the first card found and press Select. Returns the cards the search listed."""
-        self.click(*DECLARE_CLEAR, "clear the search box", 0.8)
+        # not the clear (X) button: every search after it answered "No applicable cards found" (the one search
+        # that found its card had kept the old text and typed over it)
         self.click(*DECLARE_SEARCH, "the search box", 0.8)
+        erase(40)
         type_text(text)
         self.clicks.append({"t": round(time.time(), 2), "xy": None, "why": f"typed {text!r}"})
         self.sleep(1.2)  # the keys reach the box a moment later; a search run before then is of a partial name
