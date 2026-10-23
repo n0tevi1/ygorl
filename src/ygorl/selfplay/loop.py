@@ -1324,6 +1324,21 @@ class Player:
         cards += [opp_monster_xy(s) for s in range(7) if op.slots[s] is not None]
         return [xy for xy in spots if any(abs(xy[0] - c[0]) + abs(xy[1] - c[1]) < 80 for c in cards)]
 
+    def offered_field_cards(self, raw: RawDuel) -> list[tuple[int, int]]:
+        """Screen positions of the monsters MD's current request offers (memory), own row first."""
+        try:
+            req = self.request_now(raw)
+        except Exception:  # noqa: BLE001 - no readable request: the frames decide
+            return []
+        out = []
+        for c in req.candidates:
+            if c.location == "mzone" and c.sequence is not None and 0 <= c.sequence < 7:
+                slots = raw.players[c.player].slots if c.player in (0, 1) else ()
+                if c.sequence < len(slots) and slots[c.sequence] is not None:
+                    out.append(my_monster_xy(c.sequence) if c.player == raw.me else opp_monster_xy(c.sequence))
+        self.trace.observe(offered_field=out)
+        return sorted(out, key=lambda xy: -xy[1])
+
     def field_pick(self, raw: RawDuel) -> None:
         """Mode 8 outside an attack: pick the highlighted cards one by one and confirm each."""
         episode = (raw.turn, raw.phase)
@@ -1332,6 +1347,11 @@ class Player:
         picked = self.field_picked[1]
         near = lambda a, b: abs(a[0] - b[0]) + abs(a[1] - b[1]) < 40  # noqa: E731
         lit = self.occupied(raw, self.ui.highlighted())
+        # memory first: MD's request names the cards it offers; their slots are clicked whether or not a frame is
+        # seen (the opponent's gold-framed back row hid the yellow frames of a Tribute for Ra - Sphere Mode)
+        for xy in self.offered_field_cards(raw):
+            if not any(near(xy, q) for q in lit):
+                lit.append(xy)
         # cards picked earlier in this selection stay framed: clicking one again would take it back (a three-
         # Tribute summon picked its first Tribute over and over)
         fresh = [xy for xy in lit if not any(near(xy, p) for p in picked)]
