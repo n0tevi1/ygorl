@@ -582,7 +582,9 @@ class Trainer:
                     f"{record['line_first_skipped']} skipped leading steps)"
                     if self.lines is not None and self.cfg.line_first_share > 0 else "")
                  + (f", labelled windows {record['line_labelled_rows']} ({record['line_fire_rows']} fired, mean bonus "
-                    f"{record['line_bonus_mean']:.3f})" if "line_labelled_rows" in record else ""))  # fmt: skip
+                    f"{record['line_bonus_mean']:.3f})" if "line_labelled_rows" in record else "")
+                 + (f", line CE rows {record['line_ce_rows']} ({record['line_ce_fire_targets']} fire targets, loss "
+                    f"{record.get('line_ce_loss', 0.0):.4f})" if "line_ce_rows" in record else ""))  # fmt: skip
         return record
 
     def _diagnostic_record(self, game) -> dict:

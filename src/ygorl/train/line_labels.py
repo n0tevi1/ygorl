@@ -16,7 +16,9 @@ training run replays nothing once the cache is complete.
 bonus for PPO (``PPOConfig.line_bonus_coef``): at a labelled window with an Ash candidate, with ``u_k = values[k] /
 best_without`` and ``m_k = max(u_j, j > k)`` (0 at the last window), the taken action gets ``u_k - m_k`` if it is
 the Ash activation and ``m_k - u_k`` otherwise -- firing is right where this window hurts at least as much as any
-later one, holding is right otherwise. Rows without a label get 0.
+later one, holding is right otherwise. Rows without a label get 0. :meth:`LineLabels.ce_targets` turns the same
+windows into supervised targets instead (``PPOConfig.line_ce_coef``): the activation where ``u_k - m_k > 0``, the
+passive answer otherwise, weighted by ``|u_k - m_k|``.
 """
 
 from __future__ import annotations
@@ -33,8 +35,9 @@ from ygorl.cards.cdb import CardVocab
 from ygorl.data.environment import Environment
 from ygorl.engine.constants import MSG_SELECT_CHAIN
 from ygorl.engine.duel import DuelSession, default_cards
+from ygorl.env.encoding import ACTION_KINDS
 from ygorl.env.observer import PointObserver
-from ygorl.solver.demo import Demonstration, read_jsonl
+from ygorl.solver.demo import PASSIVE_KINDS, Demonstration, read_jsonl
 from ygorl.train.bc import passive_action
 from ygorl.train.lines import LINE_PLAYER, LineLibrary, chain_effect
 
@@ -198,6 +201,27 @@ class LineLabels:
     def __len__(self) -> int:
         return len(self.table)
 
+    def _windows(self, ro):
+        """``(t, b, label, ash)`` of every labelled window row with a choosable ``fire`` candidate, ``ash`` the bool
+        candidate mask of the activation rows, plus the rollout's ``(codes, mask)`` (None when nothing applies)."""
+        ids, effect, occurrence = ro.line_id, ro.line_effect, ro.line_occurrence
+        if ids is None or effect is None or occurrence is None or not self.table or not isinstance(ro.obs, dict):
+            return
+        rows = ((ids >= 0) & (occurrence > 0)).nonzero().tolist()
+        if not rows:
+            return
+        B = ro.shape[1]
+        codes = ro.obs["actions"][..., 2].cpu()  # [T * B, A] card vocab index of every candidate row
+        mask = ro.action_mask.cpu()
+        width = min(codes.shape[1], mask.shape[-1])
+        for t, b in rows:
+            label = self.table.get((int(ids[t, b]), int(effect[t, b]), int(occurrence[t, b])))
+            if label is None:
+                continue
+            ash = (codes[t * B + b, :width] == self.fire_index) & mask[t, b, :width]
+            if bool(ash.any()):
+                yield t, b, label, ash
+
     @torch.no_grad()
     def bonus(self, ro) -> tuple[Tensor, dict[str, float]]:
         """``[T, B]`` bonus of the taken action at every labelled window with a choosable ``fire`` candidate (0
@@ -206,32 +230,46 @@ class LineLabels:
         T, B = ro.shape
         bonus = torch.zeros(T, B)
         stats = {"line_labelled_rows": 0, "line_fire_rows": 0, "line_bonus_mean": 0.0}
-        ids, effect, occurrence = ro.line_id, ro.line_effect, ro.line_occurrence
-        if ids is None or effect is None or occurrence is None or not self.table or not isinstance(ro.obs, dict):
-            return bonus, stats
-        rows = ((ids >= 0) & (occurrence > 0)).nonzero().tolist()
-        if not rows:
-            return bonus, stats
-        codes = ro.obs["actions"][..., 2].cpu()  # [T * B, A] card vocab index of every candidate row
-        mask = ro.action_mask.cpu()
         taken = ro.actions.cpu()
-        width = min(codes.shape[1], mask.shape[-1])
         n = fired = 0
-        for t, b in rows:
-            label = self.table.get((int(ids[t, b]), int(effect[t, b]), int(occurrence[t, b])))
-            if label is None:
-                continue
-            r = t * B + b
-            candidates = (codes[r, :width] == self.fire_index) & mask[t, b, :width]
-            if not bool(candidates.any()):
-                continue
-            fire = bool(candidates[int(taken[t, b])])
+        for t, b, label, ash in self._windows(ro):
+            fire = bool(ash[int(taken[t, b])])
             bonus[t, b] = label.fire_bonus if fire else -label.fire_bonus
             n += 1
             fired += fire
         stats["line_labelled_rows"], stats["line_fire_rows"] = n, fired
         stats["line_bonus_mean"] = float(bonus.sum()) / n if n else 0.0
         return bonus, stats
+
+    @torch.no_grad()
+    def ce_targets(self, ro) -> tuple[Tensor, Tensor, dict[str, float]]:
+        """The supervised targets of ``PPOConfig.line_ce_coef`` at the windows :meth:`bonus` uses: ``[T, B]`` long
+        candidate index (-1 elsewhere) -- the first Ash activation row when ``u_k - later > 0``, else the row's
+        passive answer (the first choosable candidate of a kind in :data:`~ygorl.solver.demo.PASSIVE_KINDS` order;
+        a window without one is skipped) -- and ``[T, B]`` float weight ``|u_k - later|`` (0 elsewhere). Stats:
+        ``line_ce_rows`` (rows with a target), ``line_ce_fire_targets`` (of which the target is the activation)."""
+        T, B = ro.shape
+        target = torch.full((T, B), -1, dtype=torch.long)
+        weight = torch.zeros(T, B)
+        stats = {"line_ce_rows": 0, "line_ce_fire_targets": 0}
+        kinds = passive = None
+        for t, b, label, ash in self._windows(ro):
+            if label.fire_bonus > 0:
+                idx = int(ash.nonzero()[0, 0])
+                stats["line_ce_fire_targets"] += 1
+            else:
+                if kinds is None:
+                    kinds = ro.obs["actions"][..., 0].cpu()  # [T * B, A] action kind + 1 (docs/encoding.md)
+                    passive = [ACTION_KINDS.index(k) + 1 for k in PASSIVE_KINDS]
+                legal = ro.action_mask[t, b, : ash.shape[0]].cpu() & ~ash
+                row = kinds[t * B + b, : ash.shape[0]]
+                idx = next((int(i) for k in passive for i in (legal & (row == k)).nonzero()[:, 0].tolist()), -1)
+                if idx < 0:
+                    continue
+            target[t, b] = idx
+            weight[t, b] = abs(label.fire_bonus)
+            stats["line_ce_rows"] += 1
+        return target, weight, stats
 
 
 __all__ = ["CACHE_FORMAT", "FIRE", "LineLabels", "WindowLabel", "build_window_table", "default_cache", "fire_start",

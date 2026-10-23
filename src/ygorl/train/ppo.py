@@ -95,6 +95,12 @@ class PPOConfig:
     # window with an Ash candidate, line_bonus_coef * (u_k - max later u) is added to the advantage of the taken
     # action (the sign flipped when it held) before the advantages are normalized; 0 = off (rollouts unchanged)
     line_bonus_coef: float = 0.0
+    # the same labels as a supervised term (LineLabels.ce_targets): at each labelled window with an Ash candidate the
+    # target is the activation when u_k - max later u > 0, the passive answer otherwise; line_ce_coef * the mean over
+    # the minibatch's labelled rows of -log π(target), each weighted by |u_k - max later u| (line_ce_weighted; off: 1)
+    # is added to the policy loss. 0 = off (updates unchanged); combinable with line_bonus_coef
+    line_ce_coef: float = 0.0
+    line_ce_weighted: bool = True
 
     def __post_init__(self) -> None:
         if self.critic_target not in ("lambda", "terminal"):
@@ -127,6 +133,8 @@ class PPOConfig:
             raise ValueError("aux_coef must be nonnegative")
         if self.line_bonus_coef < 0:
             raise ValueError("line_bonus_coef must be nonnegative")
+        if self.line_ce_coef < 0:
+            raise ValueError("line_ce_coef must be nonnegative")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -282,7 +290,8 @@ class _Laps:
 
 class PPOLearner:
     """Owns the model's optimizer, the EMA reference policy, the optional BC prior and the optional solver-window
-    labels (``line_labels``, a :class:`ygorl.train.line_labels.LineLabels`; used with ``cfg.line_bonus_coef > 0``)."""
+    labels (``line_labels``, a :class:`ygorl.train.line_labels.LineLabels`; used with ``cfg.line_bonus_coef > 0`` and /
+    or ``cfg.line_ce_coef > 0``)."""
 
     def __init__(self, model: nn.Module, cfg: PPOConfig, prior: nn.Module | None = None, line_labels=None) -> None:
         self.model = model
@@ -292,6 +301,7 @@ class PPOLearner:
         self.prior = None if prior is None else self._frozen(prior)
         self.line_labels = line_labels
         self._line_stats: dict[str, float] = {}
+        self._line_ce: tuple[Tensor, Tensor] | None = None  # [T, B] target candidate (-1: none) and weight
         self.optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, eps=cfg.adam_eps)
         self.updates = 0
         self.timing = False  # add time/<section> of each update to its stats (tools/bench_train.py)
@@ -335,6 +345,14 @@ class PPOLearner:
         return (g[:, 2] == 1) & (g[:, 3] <= turns)
 
     @staticmethod
+    def line_ce(logp: Tensor, target: Tensor, weight: Tensor) -> Tensor:
+        """Mean over the rows with a target (``target >= 0``) of ``weight * -log π(target)``; 0 without one."""
+        has = target >= 0
+        nll = -logp.gather(1, target.clamp(min=0).unsqueeze(1)).squeeze(1)
+        per_row = torch.where(has, weight.to(nll) * nll, torch.zeros((), dtype=nll.dtype, device=nll.device))
+        return per_row.sum() / has.sum().clamp(min=1)
+
+    @staticmethod
     def entropy(logits: Tensor, mask: Tensor) -> Tensor:
         logp = torch.log_softmax(logits, -1)
         return -_masked_mean_rows(logp.exp() * logp, mask).mean()
@@ -349,12 +367,19 @@ class PPOLearner:
     def targets(self, ro: Rollout) -> Estimate:
         """The estimator's targets; with line labels and ``line_bonus_coef > 0`` the per-row label bonus
         (:meth:`ygorl.train.line_labels.LineLabels.bonus`) is added to the raw advantages, which are then
-        normalized as usual (the estimator normalizes itself when there is no bonus: the same operations)."""
+        normalized as usual (the estimator normalizes itself when there is no bonus: the same operations). With
+        ``line_ce_coef > 0`` the supervised targets of the labelled rows (:meth:`~ygorl.train.line_labels.LineLabels.
+        ce_targets`) are kept for :meth:`update`."""
         cfg = self.cfg
         self._line_stats = {}
+        self._line_ce = None
         bonus = None
         if self.line_labels is not None and cfg.line_bonus_coef > 0:
             bonus, self._line_stats = self.line_labels.bonus(ro)
+        if self.line_labels is not None and cfg.line_ce_coef > 0:
+            target, weight, ce_stats = self.line_labels.ce_targets(ro)
+            self._line_ce = (target, weight if cfg.line_ce_weighted else (target >= 0).float())
+            self._line_stats.update(ce_stats)
         est = estimate(cfg.estimator, rewards=ro.rewards, dones=ro.dones, players=ro.players, actions=ro.actions,
                         action_mask=ro.action_mask, probs=ro.probs, q=ro.q, values=ro.values, gamma=cfg.gamma,
                         lam=cfg.lam, bootstrap_player=ro.bootstrap_player, bootstrap_value=ro.bootstrap_value,
@@ -394,6 +419,10 @@ class PPOLearner:
         obs = trim_padding(ro.obs)
         mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]].to(dev)
         n = actions.shape[0]
+        ce_t = ce_w = None
+        if self._line_ce is not None and policy:
+            ce_t, ce_w = (x.reshape(-1).to(dev) for x in self._line_ce)
+            ce_sum = ce_batches = torch.zeros((), dtype=torch.float64, device=dev)
         aux_t = aux_v = None
         if cfg.aux_coef > 0:
             at, av = aux_targets(ro.obs, ro.players, ro.dones)
@@ -439,6 +468,9 @@ class PPOLearner:
                 kl_prior = (self.kl(logits, prior_logits[idx], m, None if prior_rows is None else prior_rows[idx])
                             if prior_logits is not None else torch.zeros(()))  # fmt: skip
                 loss = loss + cfg.kl_ref_coef * kl_ref + cfg.kl_prior_coef * kl_prior
+                if ce_t is not None:
+                    ce = self.line_ce(logp, ce_t[idx], ce_w[idx])
+                    loss = loss + cfg.line_ce_coef * ce
                 ql = q_loss(out.q.float(), actions[idx], q_targets[idx])
                 vl = v_loss(out.v.float(), v_targets[idx])
                 al = torch.zeros((), device=dev)
@@ -473,6 +505,9 @@ class PPOLearner:
                                  *extra.items()):  # fmt: skip
                     # device sums in float64: the same values as summing the floats one by one, without a wait
                     sums[key] += val.detach().double() if isinstance(val, Tensor) else float(val)
+                if ce_t is not None:  # the mean over the minibatches that hold a labelled row
+                    ce_sum = ce_sum + ce.detach().double()
+                    ce_batches = ce_batches + (ce_t[idx] >= 0).any().double()
                 checked += 1
                 laps.lap("bookkeeping")
                 if rejected:
@@ -503,6 +538,8 @@ class PPOLearner:
         if prior_rows is not None:
             stats["kl_prior_rows"] = int(prior_rows.sum())
         stats.update(self._line_stats)
+        if ce_t is not None:
+            stats["line_ce_loss"] = float(ce_sum / ce_batches.clamp(min=1))
         stats.update(laps.stats())
         return stats
 

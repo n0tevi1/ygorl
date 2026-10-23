@@ -7,6 +7,7 @@ sky-striker's first window is a bait (value 0 of 3), its second the starter; bra
 two take everything.
 """
 
+import copy
 import json
 import shutil
 from dataclasses import replace
@@ -234,7 +235,7 @@ def test_the_trainer_joins_the_labels_and_logs_the_labelled_windows(tmp_path, gr
                       privileged_dim=8, critic_hidden=16, max_decisions=60, eval_every=0, checkpoint_every=0,
                       snapshot_every=0, torch_threads=1, collect_threads=1, seed=4, selfplay_fraction=0.0,
                       line_demos=(str(DEMOS),), line_share=1.0, line_labels=str(graded),
-                      ppo=PPOConfig(line_bonus_coef=0.5, epochs=1))  # fmt: skip
+                      ppo=PPOConfig(line_bonus_coef=0.5, line_ce_coef=0.5, epochs=1))  # fmt: skip
     logs = []
     trainer = Trainer(cfg, tmp_path / "run", log=logs.append)
     assert len(trainer.line_labels) == 5 and trainer.learner.line_labels is trainer.line_labels
@@ -242,11 +243,140 @@ def test_the_trainer_joins_the_labels_and_logs_the_labelled_windows(tmp_path, gr
     trainer.pool.add(trainer.model, update=0)
     rec = trainer.step()
     assert rec["line_games"] >= 1 and rec["line_labelled_rows"] >= 1 and "labelled windows" in logs[-1]
+    assert rec["line_ce_rows"] >= 1 and "line_ce_loss" in rec and "line CE rows" in logs[-1]
     assert TrainConfig.from_dict(cfg.to_dict()).line_labels == str(graded)
     with pytest.raises(ValueError):
         TrainConfig(decks=(KASHTIRA,), line_labels=str(graded))
     with pytest.raises(ValueError):
         PPOConfig(line_bonus_coef=-1.0)
+
+
+# ------------------------------------------------------------------------------------------ PPO supervised term
+
+
+@pytest.fixture(scope="module")
+def labelled(library, db, vocab, tmp_path_factory):
+    """A scripted rollout with labelled rows, its labels and the model that collected it."""
+    path = tmp_path_factory.mktemp("ce") / "graded.jsonl"
+    shutil.copyfile(GRADED, path)
+    model, col = scripted_collector(db, vocab, library.scripts)
+    ro = col.collect()
+    labels = LineLabels.load(path, library, vocab, cards=db, event_length=16)
+    return model, ro, labels
+
+
+class OneRow:
+    """``labels`` with only the first CE target of a rollout kept."""
+
+    def __init__(self, labels):
+        self.labels = labels
+
+    def ce_targets(self, ro):
+        target, weight, stats = self.labels.ce_targets(ro)
+        first = (target >= 0).flatten().nonzero()[0, 0]
+        keep = torch.zeros(target.numel(), dtype=torch.bool)
+        keep[first] = True
+        keep = keep.reshape(target.shape)
+        return torch.where(keep, target, -1), torch.where(keep, weight, 0.0), {**stats, "line_ce_rows": 1}
+
+
+def ce_learner(model, labels=None, **kw):
+    base = {"epochs": 1, "minibatch_size": 4096, "target_kl": None}
+    return PPOLearner(model, PPOConfig(**{**base, **kw}), line_labels=labels)
+
+
+def logp_rows(model, ro):
+    from ygorl.nets.policy import trim_padding
+
+    model.eval()
+    obs = trim_padding(ro.obs)
+    return torch.log_softmax(PPOLearner(model, PPOConfig())._score(model, obs, ro.actions.numel()), -1)
+
+
+def test_the_ce_targets_hold_at_the_bait_and_fire_at_the_starter(library, labelled):
+    _, ro, labels = labelled
+    T, B = ro.shape
+    target, weight, stats = labels.ce_targets(ro)
+    _, bonus_stats = labels.bonus(ro)
+    assert target.shape == weight.shape == (T, B) and target.dtype == torch.long
+    assert stats["line_ce_rows"] == int((target >= 0).sum()) > 0
+    assert stats["line_ce_rows"] <= bonus_stats["line_labelled_rows"]
+    assert ((target < 0) <= (weight == 0)).all()
+    kinds = ro.obs["actions"][..., 0].reshape(T, B, -1)
+    codes = ro.obs["actions"][..., 2].reshape(T, B, -1)
+    sky = next(s.id for s in library.scripts if s.deck.name == "sky-striker")
+    seen, fires = set(), 0
+    for t, b in (target >= 0).nonzero().tolist():
+        label = labels.table[(int(ro.line_id[t, b]), int(ro.line_effect[t, b]), int(ro.line_occurrence[t, b]))]
+        k = int(target[t, b])
+        assert bool(ro.action_mask[t, b, k]) and float(weight[t, b]) == abs(label.fire_bonus)
+        if label.fire_bonus > 0:  # the starter: fire here
+            assert int(codes[t, b, k]) == labels.fire_index
+            fires += 1
+        else:  # a bait (a later window hurts more) or a tie: hold
+            assert int(kinds[t, b, k]) in PASSIVE and int(codes[t, b, k]) != labels.fire_index
+            assert (float(weight[t, b]) > 0) == (label.later > label.u)
+        if int(ro.line_id[t, b]) == sky:
+            seen.add((label.u, label.later))
+    assert fires == stats["line_ce_fire_targets"]
+    # sky-striker's bait (u 0, a later window takes everything) holds with weight 1, its starter fires with weight 1
+    for t, b in (target >= 0).nonzero().tolist():
+        if int(ro.line_id[t, b]) == sky:
+            label = labels.table[(sky, int(ro.line_effect[t, b]), int(ro.line_occurrence[t, b]))]
+            assert float(weight[t, b]) == 1.0 and (int(codes[t, b, int(target[t, b])]) == labels.fire_index) == (
+                label.u == 1.0
+            )
+    assert seen  # the rollout reached a sky-striker window
+
+
+def test_the_ce_term_is_zero_without_labelled_rows_and_off_by_default(labelled, vocab):
+    model, ro, labels = labelled
+    logp = torch.log_softmax(torch.randn(5, 4), -1)
+    none = PPOLearner.line_ce(logp, torch.full((5,), -1), torch.ones(5))
+    assert float(none) == 0.0 and not torch.isnan(none)
+    one = PPOLearner.line_ce(logp, torch.tensor([-1, 2, -1, -1, -1]), torch.tensor([0.0, 0.5, 0.0, 0.0, 0.0]))
+    assert float(one) == pytest.approx(-0.5 * float(logp[1, 2]))
+
+    def run(labels, **kw):
+        m = copy.deepcopy(model)
+        learner = ce_learner(m, labels, **kw)
+        torch.manual_seed(3)
+        stats = learner.update(ro)
+        return stats, [p.detach().clone() for p in m.parameters()]
+
+    base_stats, base_params = run(None)
+    for lbl, kw in ((labels, {}), (LineLabels({}, vocab.index(FIRE)), {"line_ce_coef": 1.0})):
+        stats, params = run(lbl, **kw)
+        assert all(torch.equal(a, b) for a, b in zip(base_params, params))
+        for key in ("loss", "policy_loss", "entropy", "kl_ref", "q_loss", "v_loss", "grad_norm"):
+            assert stats[key] == base_stats[key], key
+        if kw:
+            assert stats["line_ce_rows"] == 0 and stats["line_ce_loss"] == 0.0
+        else:
+            assert "line_ce_rows" not in stats and "line_ce_loss" not in stats
+
+
+def test_one_step_of_the_ce_term_raises_the_target_probability(labelled):
+    model, ro, labels = labelled
+    one = OneRow(labels)
+    target, _, _ = one.ce_targets(ro)
+    r = int((target >= 0).flatten().nonzero()[0, 0])
+    k = int(target.flatten()[r])
+    T, B = ro.shape
+    before = float(logp_rows(model, ro)[r, k])
+    after = {}
+    for coef in (0.0, 5.0):
+        m = copy.deepcopy(model)
+        learner = ce_learner(m, one, line_ce_coef=coef, lr=1e-2, entropy_coef=0.0, kl_ref_coef=0.0)
+        torch.manual_seed(3)
+        stats = learner.update(ro)
+        after[coef] = float(logp_rows(m, ro)[r, k])
+        if coef:
+            assert stats["line_ce_rows"] == 1 and stats["line_ce_loss"] > 0
+            assert stats["line_ce_fire_targets"] >= 0
+    assert after[5.0] > after[0.0] and after[5.0] > before
+    with pytest.raises(ValueError):
+        PPOConfig(line_ce_coef=-1.0)
 
 
 # ------------------------------------------------------------------------------------------ first seat

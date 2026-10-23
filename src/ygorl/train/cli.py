@@ -166,10 +166,14 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--line-first-share", "line_first_share", "share of the scripted deals in which the learner moves first and "
            "the demonstration line is played on the opponent's turn 2"),
         _f("--line-labels", "line_labels", "graded hand-trap labels of the scripted lines (handtrap_labels_graded "
-           "JSONL); used with --ppo line_bonus_coef", path=True),
+           "JSONL); used with --line-bonus-coef / --line-ce-coef", path=True),
         _f("--line-labelled-only", "line_labelled_only", "deal only the scripted lines that carry a label"),
         _f("--line-bonus-coef", "ppo.line_bonus_coef", "advantage bonus at labelled chain windows of scripted lines: "
            "coef * (u_k - max later u), sign by the taken action (0 = off)"),
+        _f("--line-ce-coef", "ppo.line_ce_coef", "supervised term at the same labelled windows: coef * mean -log pi "
+           "of the solver's choice (Ash where u_k > max later u, else pass), weighted by |u_k - max later u| (0 = off)"),
+        _f("--no-line-ce-weighted", "ppo.line_ce_weighted", "every labelled row of --line-ce-coef weighs 1 (ties "
+           "included) instead of |u_k - max later u|", negate=True),
         _f("--snapshot-every", "snapshot_every"),
         _f("--pool-sampling", "pool_sampling",
            "pfsp (design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power",
