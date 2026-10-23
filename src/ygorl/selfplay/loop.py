@@ -1084,7 +1084,7 @@ class Player:
             for name in self.declare_names(raw)[:6]:
                 self.trace.rule("declare-most-common-in-deck", name=name)
                 try:
-                    self.ui.declare(searchable(name), self.mouse.type_text, self.mouse.backspace)
+                    self.ui.declare(searchable(name), self.mouse.type_text, self.mouse.backspace, self.mouse.enter)
                     return
                 except Stuck as exc:
                     self.trace.observe(declare_failed=str(exc))
@@ -1240,9 +1240,7 @@ class Player:
         # a name the keyboard types whole finds exactly that card; MD's search found nothing for "Ra's Disciple"
         # (its apostrophe is not the ASCII one), so plainly spelled names come first
         plain = lambda p: plain_name(self.cards[p].name)  # noqa: E731
-        # monsters first: a declare search MD answered with nothing ("Ancient Chant") left the panel answering
-        # nothing to every later search; Millennium Seeker was found
-        monster = lambda p: self.cards[p].is_monster  # noqa: E731
+        monster = lambda p: self.cards[p].is_monster  # noqa: E731 - monsters first: found by MD every time
         ranked = sorted(left, key=lambda p: (plain(p), monster(p), left[p], p), reverse=True)
         ranked = ranked or list(dict.fromkeys(deck.main))
         return list(dict.fromkeys(self.cards[p].name for p in ranked))

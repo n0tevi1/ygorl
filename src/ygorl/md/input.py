@@ -176,6 +176,10 @@ class GatedMouse:
         for _ in range(n):
             self.pointer.key("BackSpace")
 
+    def enter(self) -> None:
+        solo_gate(self.game.read())
+        self.pointer.key("Return")
+
 
 class MenuMouse:
     """Window-relative clicks between two Solo duels (:mod:`ygorl.md.menu`), where MD has freed the duel state and

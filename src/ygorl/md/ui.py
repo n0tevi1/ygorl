@@ -123,8 +123,9 @@ def minimised(img: np.ndarray) -> bool:
     return bool(dark > 0.6 and teal > 0.3)
 
 
-# the declare panel's search box, its clear (X) button and the magnifier left of it; the magnifier runs the search
-# while the box has the focus (typing alone lists nothing, Return neither; without the focus it only focuses the box)
+# the declare panel's search box, its clear (X) button and the magnifier left of it. The search runs on Return while
+# the box has the keyboard focus, which takes a second click (the first only frames the box: keys typed then went
+# nowhere); the magnifier and a click elsewhere run nothing
 DECLARE_SEARCH, DECLARE_CLEAR, DECLARE_GO = (1026, 717), (1289, 717), (759, 717)
 
 
@@ -516,18 +517,21 @@ class UI:
         self.click(*RADIO_CONFIRM, "confirm", 1.5)
         return len(rows)
 
-    def declare(self, text: str, type_text: Callable[[str], None], erase: Callable[[int], None] = lambda n: None
-                ) -> list[XY]:  # fmt: skip
+    def declare(self, text: str, type_text: Callable[[str], None], erase: Callable[[int], None] = lambda n: None,
+                enter: Callable[[], None] = lambda: None) -> list[XY]:  # fmt: skip
         """MD's "declare a card name" panel: click the search box, clear it, type ``text`` (``type_text``: the gated
         keyboard), then pick the first card found and press Select. Returns the cards the search listed."""
         # not the clear (X) button: every search after it answered "No applicable cards found" (the one search
         # that found its card had kept the old text and typed over it)
         self.click(*DECLARE_SEARCH, "the search box", 0.8)
+        self.click(*DECLARE_SEARCH, "the search box (the focus)", 0.8)
         erase(40)
         type_text(text)
         self.clicks.append({"t": round(time.time(), 2), "xy": None, "why": f"typed {text!r}"})
         self.sleep(1.2)  # the keys reach the box a moment later; a search run before then is of a partial name
-        self.click(*DECLARE_GO, "search", 1.5)
+        enter()
+        self.clicks.append({"t": round(time.time(), 2), "xy": None, "why": "Return: search"})
+        self.sleep(1.5)
         for _ in range(10):
             if L.list_cards(self.capture(), trays=(L.DECLARE_TRAY,)):
                 break

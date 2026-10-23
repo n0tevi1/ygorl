@@ -186,16 +186,17 @@ def list_panel(n: int) -> tuple[np.ndarray, list[int]]:
 
 
 def test_declare_runs_the_search_and_picks_from_the_grey_tray():
-    """Typing alone lists nothing: the magnifier runs the search; its results sit on a grey tray."""
-    from ygorl.md.ui import DECLARE_GO
+    """Typing alone lists nothing: Return runs the search (in a box focused by a second click); its results sit on
+    a grey tray."""
+    from ygorl.md.ui import DECLARE_SEARCH
 
     panel, centres = list_panel(1)
     panel[820:1060][np.all(panel[820:1060] == L.TRAY_RGB, axis=2)] = L.DECLARE_TRAY
     ui, mouse, _ = make_ui(panel)
-    typed = []
-    assert ui.declare("Dark Magician", typed.append) == [(centres[0], 905)]
-    assert typed == ["Dark Magician"] and DECLARE_GO in mouse.clicks
-    assert mouse.clicks.index(DECLARE_GO) < mouse.clicks.index((centres[0], 905))
+    typed, entered = [], []
+    assert ui.declare("Dark Magician", typed.append, enter=lambda: entered.append(1)) == [(centres[0], 905)]
+    assert typed == ["Dark Magician"] and entered == [1]
+    assert mouse.clicks[:2] == [DECLARE_SEARCH, DECLARE_SEARCH]
 
 
 def test_list_selection_by_index():
