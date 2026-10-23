@@ -1469,13 +1469,21 @@ class Player:
             theirs = [p for p in fresh if p[1] < 640]
             xy = (theirs or fresh)[0]
             self.trace.rule("field-pick-opponent-first" if theirs else "field-pick-first")
-        if not self.ui.card_command(xy, "highlighted card", "confirm"):
-            raise Stuck("no Confirm icon above the selected card")
-        picked.append(xy)
+        for target in [xy] + [q for q in fresh if q != xy]:
+            if self.ui.card_command(target, "highlighted card", "confirm"):
+                picked.append(target)
+                return
+            # no Confirm on this one (Millennium Seeker, framed among three Tribute candidates): another
+            self.trace.observe(field_pick_no_confirm=list(target))
+            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+        raise Stuck("no Confirm icon above any selected card")
 
     # --- loop -----------------------------------------------------------------------------------------------
     def record_stuck(self, why: str) -> Path:
         d = self.out / f"stuck-{time.strftime('%Y%m%d-%H%M%S')}"
+        n = 1
+        while d.exists():  # two records in one second (a recovery that failed at once) ended the series
+            d, n = self.out / f"stuck-{time.strftime('%Y%m%d-%H%M%S')}-{n}", n + 1
         d.mkdir(parents=True)
         np.save(d / "screen.npy", self.ui.capture())
         for i, frame in enumerate(self.ui.evidence):

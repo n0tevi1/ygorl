@@ -279,6 +279,9 @@ ygorl_e:SetOperation(function(e)
   for _,t in ipairs(YGORL_TURN.activated) do
     local c=Duel.GetMatchingGroup(Card.IsCode,0,0xff,0,nil,t[1]):GetFirst()
     if c then ygorl_spend(c,t[2],(t[2]&LOCATION_ONFIELD)==0 and c:IsSpellTrap()) end
+    -- "you can only activate 1 <card> per turn" across a card's effects is a player flag keyed by the card's id in
+    -- the scripts (Ancient Chant's Graveyard effect checks it): the activation this turn set it
+    if not Duel.HasFlagEffect(0,t[1]) then Duel.RegisterFlagEffect(0,t[1],RESET_PHASE|PHASE_END,0,1) end
   end
   for _,code in ipairs(YGORL_TURN.effects) do  -- a Spell / Trap's lasting effect on the player, the card gone:
     local g=Duel.GetMatchingGroup(Card.IsCode,0,0xff,0,nil,code)  -- it was activated this turn
