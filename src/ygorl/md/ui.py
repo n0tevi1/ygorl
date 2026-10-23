@@ -551,6 +551,12 @@ class UI:
         bad = [i for i in indices if not 0 <= i < len(cards)]
         if bad or not indices:
             raise Stuck(f"list entries {list(indices)} asked for, {len(cards)} cards in the list")
+        if len(cards) == 1 and list_select_state(self.capture(), LIST_SELECT_TWO_TEXT) == "enabled":
+            # "select an optional effect to activate" comes with its one card ticked and Select lit: a click on the
+            # card would untick it (the player did, three times, and Select stayed dark)
+            self.click(*LIST_SELECT_TWO_BUTTONS, "select (the card is ticked already)", 1.5)
+            self._list_open(3.0)
+            return cards
         for again in ("", " (again: the tick did not register)"):
             for i in [] if ticked and not again else indices:
                 nth = "first" if i == 0 else f"#{i + 1}"

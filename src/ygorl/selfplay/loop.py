@@ -1067,9 +1067,15 @@ class Player:
                 self.trace.rule("radio-first")  # e.g. Pot of Extravagance: banish 3 (the first row) rather than 6
             self.trace.observe(radio_rows=self.ui.pick_radio(pick or 0))
         elif kind == "declare":
-            name = self.declare_name(raw)
-            self.trace.rule("declare-most-common-in-deck", name=name)
-            self.ui.declare(searchable(name), self.mouse.type_text)
+            # MD does not list every name ("Ancient Chant": "No applicable cards found"): the next one then
+            for name in self.declare_names(raw)[:6]:
+                self.trace.rule("declare-most-common-in-deck", name=name)
+                try:
+                    self.ui.declare(searchable(name), self.mouse.type_text)
+                    return
+                except Stuck as exc:
+                    self.trace.observe(declare_failed=str(exc))
+            raise Stuck("no declarable name found among the Deck's cards")
         elif kind == "minimised":
             self.trace.rule("restore-minimised")
             self.ui.click(*MINIMISED_RESTORE, "restore the minimised panel", 1.5)
@@ -1195,8 +1201,11 @@ class Player:
         return tabs[0]
 
     def declare_name(self, raw: RawDuel) -> str:
-        """The card to declare (The True Name and the like): the card with the most copies left in our Deck (our
-        decklist minus what is visible), the likeliest top card. The policy does not decide it yet."""
+        return self.declare_names(raw)[0]
+
+    def declare_names(self, raw: RawDuel) -> list[str]:
+        """The cards to declare (The True Name and the like), best first: the cards with the most copies left in our
+        Deck (our decklist minus what is visible), the likeliest top card. The policy does not decide it yet."""
         deck = own_deck(raw, self.passwords, self.cards)
         me = raw.players[raw.me]
         seen = Counter(self.passwords.get(c.cid) for z in ("hand", "grave", "removed") for c in me.piles[z])
@@ -1205,8 +1214,8 @@ class Player:
         # a name the keyboard types whole finds exactly that card; MD's search found nothing for "Ra's Disciple"
         # (its apostrophe is not the ASCII one), so plainly spelled names come first
         plain = lambda p: plain_name(self.cards[p].name)  # noqa: E731
-        best = max(left, key=lambda p: (plain(p), left[p], p)) if left else next(iter(deck.main))
-        return self.cards[best].name
+        ranked = sorted(left, key=lambda p: (plain(p), left[p], p), reverse=True) or list(dict.fromkeys(deck.main))
+        return list(dict.fromkeys(self.cards[p].name for p in ranked))
 
     def find_in_list(self, req, pick: int) -> tuple[int, bool]:
         """The screen position of candidate ``pick`` in MD's card list, and whether it is ticked already.
