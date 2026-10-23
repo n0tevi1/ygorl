@@ -212,10 +212,11 @@ def appeared_discs(before: np.ndarray, after: np.ndarray, x0: int, y0: int, x1: 
 
 TRAY_RGB, CARD_STEP = (37, 66, 143), 158  # MD's card-list tray colour and card pitch (reference pixels)
 TRAY_RGBS = (TRAY_RGB, (163, 26, 25))  # blue: own cards; red: the opponent's (a Monster Reborn target in their GY)
+DECLARE_TRAY = (171, 171, 171)  # grey: the cards a "declare a card name" search found
 LIST_CARD_Y = 905  # the middle of a listed card's art: y 960, near its lower edge, did not always register a tick
 
 
-def list_cards(img: np.ndarray) -> list[tuple[int, int]]:
+def list_cards(img: np.ndarray, trays: Sequence[tuple[int, int, int]] = TRAY_RGBS) -> list[tuple[int, int]]:
     """Centres of the cards shown in MD's card-list panel, left to right.
 
     The cards sit on flat trays (blue for own cards, red for the opponent's) whose strip just below them (y ~1030-1060) is unbroken; a tray is
@@ -226,7 +227,7 @@ def list_cards(img: np.ndarray) -> list[tuple[int, int]]:
     for y in range(1030, 1062, 2):
         row = img[y].astype(int)
         tray = np.zeros(len(row), bool)
-        for rgb in TRAY_RGBS:
+        for rgb in trays:
             tray |= (np.abs(row - np.array(rgb)) < 22).all(axis=1)
         padded = np.concatenate([[False], tray, [False]])
         edges = np.flatnonzero(padded[1:] != padded[:-1])

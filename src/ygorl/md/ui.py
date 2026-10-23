@@ -124,6 +124,7 @@ def minimised(img: np.ndarray) -> bool:
 
 
 DECLARE_SEARCH, DECLARE_CLEAR = (1026, 705), (1284, 688)  # the declare panel's search box and its clear (X) button
+DECLARE_GO = (759, 717)  # the magnifier left of the box: runs the search (typing alone lists nothing, Return neither)
 
 
 def declare_box(img: np.ndarray) -> bool:
@@ -488,13 +489,14 @@ class UI:
         self.click(*DECLARE_SEARCH, "the search box", 0.6)
         type_text(text)
         self.clicks.append({"t": round(time.time(), 2), "xy": None, "why": f"typed {text!r}"})
+        self.click(*DECLARE_GO, "search", 1.0)
         for _ in range(10):
-            self.sleep(0.5)
-            if L.list_cards(self.capture()):
+            if L.list_cards(self.capture(), trays=(L.DECLARE_TRAY,)):
                 break
+            self.sleep(0.5)
         else:
             raise Stuck(f"the declare search for {text!r} listed no card")
-        return self.pick_list_cards([0])
+        return self.pick_list_cards([0], trays=(L.DECLARE_TRAY,))
 
     def pick_list_set(self, need: int, order: Sequence[int] | None = None, tries: int = 20) -> tuple[int, ...]:
         """A list that wants ``need`` cards ticked before Select (Fusion Materials): tick a combination of the cards
@@ -524,23 +526,23 @@ class UI:
                 self.click(*cards[i], f"untick #{i + 1}", 0.6)
         raise Stuck(f"no set of {need} of the {len(cards)} list cards lit Select")
 
-    def settled_list_cards(self, tries: int = 8) -> list[XY]:
+    def settled_list_cards(self, tries: int = 8, trays=L.TRAY_RGBS) -> list[XY]:
         """The list's cards once two captures 0.3 s apart agree: the cards slide in, and a capture during that
         found one card between two copies (a click on the gap ticked nothing, three times)."""
-        last = L.list_cards(self.capture())
+        last = L.list_cards(self.capture(), trays)
         for _ in range(tries):
             self.sleep(0.3)
-            now = L.list_cards(self.capture())
+            now = L.list_cards(self.capture(), trays)
             if now == last:
                 return now
             last = now
         return last
 
-    def pick_list_cards(self, indices: Sequence[int], ticked: bool = False) -> list[XY]:
+    def pick_list_cards(self, indices: Sequence[int], ticked: bool = False, trays=L.TRAY_RGBS) -> list[XY]:
         """Tick ``indices`` (left to right on screen) in MD's card-list panel and press Select; returns the cards
         found in the list. A list with two buttons keeps the panel open after the first: press its right one.
         ``ticked``: the caller already ticked them (and checked them on the information panel)."""
-        cards = self.settled_list_cards()
+        cards = self.settled_list_cards(trays=trays)
         if not cards:
             raise Stuck("a card list with no card found")
         bad = [i for i in indices if not 0 <= i < len(cards)]
