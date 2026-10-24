@@ -769,6 +769,21 @@ class Player:
             # a monster's change-of-position icon: only taken when it is the card's single icon (no glyph measured)
             xy = my_monster_xy(where.sequence)
             icons = self.ui.open_card(xy, f"field {self.name(cid)}")
+            oc = self.open_command(raw, cid)
+            want = COMMAND_BITS["reposition"]
+            if oc is not None and not oc.mask & want:
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                return self.refused(
+                    raw, best, f"{self.name(cid)}: MD's command mask {oc.mask:#x} has no position change"
+                )
+            if oc is not None and not icons:
+                # MD offers it (memory) but no icon was seen yet: the board can still be animating; look again
+                self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+                icons = self.ui.open_card(xy, f"field {self.name(cid)} (again: MD offers the position change)")
+            nth = [i for i, c in enumerate(oc.commands) if want & (1 << c)] if oc is not None else []
+            if nth and len(icons) == len(oc.commands):
+                self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth[0]})
+                icons = [sorted(icons)[nth[0]]]
             if len(icons) > 1:
                 # beside an Activate icon (Millennium Seeker): the one that is not Activate
                 img = self.ui.capture()
