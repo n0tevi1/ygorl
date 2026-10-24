@@ -259,7 +259,8 @@ def list_cards(img: np.ndarray, trays: Sequence[tuple[int, int, int]] = TRAY_RGB
             tray |= (np.abs(row - np.array(rgb)) < 22).all(axis=1)
         padded = np.concatenate([[False], tray, [False]])
         edges = np.flatnonzero(padded[1:] != padded[:-1])
-        runs = [(int(a), int(b - a)) for a, b in zip(edges[::2], edges[1::2], strict=True) if b - a >= CARD_STEP - 40]
+        # (an optional effect's one-card list draws a narrower tray: 102 px, "Select a optional effect to activate")
+        runs = [(int(a), int(b - a)) for a, b in zip(edges[::2], edges[1::2], strict=True) if b - a >= CARD_STEP - 70]
         if sum(w for _, w in runs) > sum(w for _, w in best):
             best = runs
     cards = []
