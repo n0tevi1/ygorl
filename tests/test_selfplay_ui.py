@@ -875,3 +875,32 @@ def test_md_offers_masks_actions_the_highlight_rules_out():
     assert offered(act("summon", 111)) and not offered(act("activate", 111))
     assert not offered(act("summon", 222))  # not lit at all
     assert offered(SimpleNamespace(kind="end_phase", card=None))
+
+
+def test_list_card_found_from_the_client_list():
+    """The client's list (memory, the screen's order) names the wanted card's position; one tick, read back."""
+    import struct
+
+    from ygorl.md.client import PromptCard
+    from ygorl.selfplay.loop import Player
+
+    cards = [(600 + 158 * i, 905) for i in range(3)]
+    entries = [PromptCard(5, 0, 15, 0, 50), PromptCard(0, 1, 16, 0, 0), PromptCard(7, 0, 15, 1, 70)]
+    state, clicks = {"open": (5, 50)}, []
+    at = {cards[i]: (e.cid, e.uid) for i, e in enumerate(entries)}
+
+    def click(x, y, why, pause=0):
+        clicks.append((x, y))
+        state["open"] = at.get((x, y), state["open"])
+
+    player = Player.__new__(Player)
+    player.ui = SimpleNamespace(click=click)
+    player.game = SimpleNamespace(read=lambda: None)
+    player.client = SimpleNamespace(list_cards=lambda raw, places=False: (8, entries))
+    player.selection = SimpleNamespace(
+        address=1, memory=SimpleNamespace(read=lambda a, n: struct.pack("<II", *state["open"]))
+    )
+    player.passwords = {5: 555, 7: 777}
+    player.trace = SimpleNamespace(observe=lambda **k: None)
+    assert player.find_by_client_list(7, 0, cards) == 2 and clicks == [cards[2]]
+    assert player.find_by_client_list(9, 0, cards) is None  # not listed: the tick-and-read search decides

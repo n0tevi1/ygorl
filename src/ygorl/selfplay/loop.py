@@ -29,7 +29,7 @@ from collections import Counter
 import subprocess
 import time
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -60,7 +60,7 @@ from ygorl.md.ui import (
 )
 from ygorl.md.panel import PanelBook, name_fits, name_signature, name_words, panel_kind
 from ygorl.md.explore import find_buttons
-from ygorl.md.request import read_request
+from ygorl.md.request import Candidate, _locate, read_request
 from ygorl.md.selection import for_process as selection_for
 from ygorl.md.client import Client, CommandBit, aura_kinds
 from ygorl.md.selection import own_cards, scan_pairs
@@ -82,6 +82,7 @@ COMMAND_BITS = {"summon": CommandBit.SUMMON, "mset": CommandBit.SETMONST, "sset"
                 "spsummon": CommandBit.SPSUMMON, "activate": CommandBit.ACTION | CommandBit.PENDULUM,
                 "attack": CommandBit.ATTACK,
                 "reposition": CommandBit.TURNATK | CommandBit.TURNDEF | CommandBit.REVERSE}  # fmt: skip
+LIST_SHOWN = 6  # cards a list shows at once
 LIST_PAGES = 40  # the arrow scrolls one card at a time (the Deck's 40 at most)
 
 
@@ -1482,6 +1483,10 @@ class Player:
                 req = self.request_now(raw, list_shown=True)
             stale = len(req.candidates) < shown
             if stale:
+                # the client holds the list MD shows (memory): its own cards are the candidates (Millennium
+                # Revelation's cost list read stale and a rule sent Obelisk while the policy meant Ra)
+                req, stale = self.request_from_client_list(raw, req, shown)
+            if stale:
                 # (a choice without a list whose check is not modelled, e.g. Millennium Revelation's hand card;
                 # Apprentice Illusion Magician's discard read a stale list until its check was, design 10)
                 self.trace.observe(list_request={"stale": [[c.cid, c.location, c.sequence] for c in req.candidates],
@@ -1651,6 +1656,72 @@ class Player:
         print(f"  list: MD does not display {self.cards[password].name if password in self.cards else password}"
               f" ({location}); learned", flush=True)  # fmt: skip
 
+    def request_from_client_list(self, raw: RawDuel, req, shown: int):
+        """``req`` with the candidates of the client's list (memory) when that list is the one on screen (as many
+        cards); (req, still stale)."""
+        client = getattr(self, "client", None)
+        try:
+            got = client.list_cards(raw, places=True) if client is not None else None
+        except Exception:  # noqa: BLE001
+            got = None
+        if not got or len(got[1]) != shown or any(e.player == raw.me and not e.uid for e in got[1]):
+            return req, True
+        cands = []
+        for e in got[1]:
+            if e.player != raw.me:
+                cands.append(Candidate(0, 0, e.player, "", None))  # the opponent's: a place, never read
+                continue
+            p, loc, seq = _locate(raw, e.uid)
+            cands.append(Candidate(e.cid, e.uid, p, loc, seq))
+        self.trace.observe(list_request={"from": "client list", "candidates": [[c.cid, c.location, c.sequence]
+                                                                                for c in cands]})  # fmt: skip
+        return replace(req, candidates=tuple(cands)), False
+
+    def find_by_client_list(self, want: int, want_uid: int, cards: list) -> int | None:
+        """The screen position of the wanted card from the client's own list (memory; its order is the screen's,
+        checked on run s33's lists), ticked and confirmed by the open-card read; None when the list does not tell
+        or the tick does not confirm it (then every card is ticked and read). A list longer than the screen is
+        scrolled with its arrow, one card per turn, until the card is the rightmost shown."""
+        client, selection = getattr(self, "client", None), getattr(self, "selection", None)
+        if client is None or selection is None or selection.address is None or not cards:
+            return None
+        try:
+            got = client.list_cards(self.game.read(), places=True)
+        except Exception:  # noqa: BLE001
+            return None
+        if not got:
+            return None
+        entries, n = got[1], len(cards)
+        if len(entries) < n or (len(entries) > n and n < LIST_SHOWN):
+            return None  # not the list on screen
+        pw = lambda cid: self.passwords.get(cid, cid)  # noqa: E731
+        hits = [
+            j for j, e in enumerate(entries) if e.cid and (e.uid == want_uid if want_uid else pw(e.cid) == pw(want))
+        ]
+        if not hits:
+            return None
+        j = hits[0]
+        turns = max(0, j - n + 1)
+        for _ in range(turns):
+            self.ui.click(*LIST_NEXT, "next cards of the list (to the card the client lists)", 1.2)
+        pos = j - turns
+        try:
+            prev = selection.memory.read(selection.address, 8)
+        except Exception:  # noqa: BLE001
+            prev = None
+        self.ui.click(*cards[pos], f"#{pos + 1} of {n}: the card the client lists", 0.9)
+        try:
+            cid, uid = struct.unpack("<II", selection.memory.read(selection.address, 8))
+        except Exception:  # noqa: BLE001
+            cid, uid = 0, 0
+        ok = pw(cid) == pw(want) and (not want_uid or uid == want_uid)
+        self.trace.observe(list_check={"want": want, "by": "client list", "index": j, "turns": turns, "ok": ok,
+                                       "changed": prev is not None and prev[:8] != struct.pack("<II", cid, uid)})  # fmt: skip
+        if ok:
+            return pos
+        self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
+        return None  # (scrolled: the card the client named is on screen, where the tick-and-read search finds it)
+
     def find_in_list(self, req, pick: int) -> tuple[int, bool]:
         """The screen position of candidate ``pick`` in MD's card list, and whether it is ticked already.
 
@@ -1675,6 +1746,10 @@ class Player:
         by_uid = len({c.location for c in copies}) > 1 and want_uid != 0
         if n <= 1 or (len({pw(c) for c in cands}) <= 1 and not by_uid):
             return 0, False  # one card, or only copies of one card: any position is the wanted card
+        direct = self.find_by_client_list(want, want_uid if by_uid else 0, cards)
+        if direct is not None:
+            self.pending_list = (self.ui.capture(), req)
+            return direct, True
         stats = {c: self.card_stats(c) for c in set(cands)}
         seen: dict = {}
         panels = {}

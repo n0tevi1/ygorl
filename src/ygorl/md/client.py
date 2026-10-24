@@ -426,7 +426,7 @@ class Client:
             return self._cards(self._data(grouped), raw) if grouped else []
         return None
 
-    def list_cards(self, raw: RawDuel) -> tuple[int, list[PromptCard]] | None:
+    def list_cards(self, raw: RawDuel, places: bool = False) -> tuple[int, list[PromptCard]] | None:
         """(list type, cards) of the card list MD's client holds now, any list type (a select list of a search,
         a cost, a target), own cards in list order; None when there is none. Observed alongside the player's own
         tick-and-read identification until its order is known to be the screen's (design 10)."""
@@ -435,7 +435,7 @@ class Client:
         h, f = self.heap, self.classes["CardSelectionList"].fields
         for sel in self.objects("CardSelectionList"):
             grouped = h.u64(sel + f["m_GroupedDataList"])
-            return h.i32(sel + f["m_ListType"]), self._cards(self._data(grouped), raw) if grouped else []
+            return h.i32(sel + f["m_ListType"]), self._cards(self._data(grouped), raw, places) if grouped else []
         return None
 
     def _data(self, lst: int, depth: int = 0) -> list[int]:
@@ -449,12 +449,16 @@ class Client:
                 out += self._data(item, depth + 1)
         return out
 
-    def _cards(self, items: list[int], raw: RawDuel) -> list[PromptCard]:
+    def _cards(self, items: list[int], raw: RawDuel, places: bool = False) -> list[PromptCard]:
+        """Own cards of a list; ``places``: the opponent's entries kept too, as places only (card id and uid 0:
+        their card ids are never read), so positions in the list stay the screen's."""
         d, status = self.classes["ListCardData"].fields, self.classes["CardStatus"]
         out = []
         for item in items:
             s = decode_status(self.heap, item + d["cardstatus"], status)
             if s["player"] != raw.me:
+                if places:
+                    out.append(PromptCard(0, s["player"], s["position"], s["index"], 0))
                 continue
             uid = uid_at(raw, s["player"], s["position"], s["index"])
             out.append(PromptCard(self.heap.i32(item + d["cardid"]), s["player"], s["position"], s["index"], uid))
