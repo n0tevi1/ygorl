@@ -1175,7 +1175,9 @@ class Player:
             return
         me0, me1 = exp.before.players[exp.before.me], now.players[now.me]
         stays = any(c is not None and c.uid == target for c in now.players[1 - now.me].slots[:7])
-        if me1.lp < me0.lp and stays:
+        if me1.lp < me0.lp and stays and getattr(self, "attack_expected_win", True):
+            # only a battle the shown values said we win (a loss the values foresaw tells nothing new: flagging
+            # it redirected the next attack into a stronger monster and lost the duel)
             self.strong_targets = getattr(self, "strong_targets", set()) | {(now.turn, target)}
             self.trace.observe(strong_target=target)
             print("  battle: the target survived and we took damage; no more attacks into it this turn", flush=True)
@@ -1262,6 +1264,7 @@ class Player:
         power = shown[card.uid][0] if card.uid in shown else (self.cards[pw].attack if pw in self.cards else 0)
         targets = []
         strong = getattr(self, "strong_targets", set())
+        self._values = {}
         for s, c in enumerate(opp.slots[:7]):
             if c is None or (raw.turn, c.uid) in strong:
                 continue
@@ -1270,6 +1273,9 @@ class Player:
             if c.face and c.uid in shown:
                 value = shown[c.uid][1] if c.sideways else shown[c.uid][0]
             targets.append((value < power, value if value < power else -value, s))
+            values = getattr(self, "_values", {})
+            values[s] = value
+            self._values = values
         if not targets and any(c is not None for c in opp.slots[:7]):
             # every monster it could attack beat an attack of ours this turn: not again
             return self.refused(raw, best, "every target survived an attack of ours this turn")
@@ -1292,6 +1298,7 @@ class Player:
                 self.trace.sub("target", by="rule", rule="target-most-valuable-beaten", slot=s)
             self.trace.observe(target_slot=s)
             self.attack_target_uid = opp.slots[s].uid if opp.slots[s] is not None else 0
+            self.attack_expected_win = getattr(self, "_values", {}).get(s, 0) < power
             if not self.ui.pick_target(opp_monster_xy(s), f"target {s}"):
                 raise Stuck("no Confirm icon above the attack target")
         self.context = f"attack lp {opp.lp}"
