@@ -296,6 +296,8 @@ def classify(*, mine: bool, ours: bool, accepting: bool, mode: int, dialog_type:
         return "place"  # the zone question can come while a chain's resolve animation still dims the board
     if mine and mode == MAIN and screen == "banner" and zone_pending:
         return "zone_again"  # MD still asks for the zone of our own Summon / Set
+    if mine and mode in (MAIN, BATTLE) and screen == "position" and dialog_type != POSITION_DIALOG:
+        screen = None  # a position question only when memory asks one: a drawn card's reveal passed for it
     if mine and mode in (MAIN, BATTLE) and screen == "banner":
         screen = None  # the engine waits for a command: no banner question is pending (the opponent's ATK / DEF
         # numbers on a dark board passed for a banner's text)
@@ -748,6 +750,10 @@ class Player:
                 xy = L.my_zone("szone", where.sequence)
             else:
                 raise Stuck("no position measured for the Field Zone yet")
+            if self.activate_by_mask(raw, best, cid, xy):
+                return
+            if getattr(self, "mask_refused", False):
+                return
             if not self.ui.card_command(xy, f"field {self.name(cid)}", "activate", 2.0, kind="activate"):
                 # a draw reveal or an effect's animation can cover the field: settle and look once more
                 self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
@@ -866,6 +872,37 @@ class Player:
         if best.kind in ("spsummon", "activate") and self.pending_question():
             return  # still resolving: a cost or a choice is asked first
         raise Stuck(f"{best.kind} {self.name(cid)}: the card is still in hand after the clicks")
+
+    def activate_by_mask(self, raw: RawDuel, best, cid: int, xy) -> bool:
+        """A field card's Activate judged by MD's command mask (memory): refused when the mask has no Activate
+        (``self.mask_refused``), else its icon clicked by command index (looked for again after the board settles
+        when not seen yet; Obelisk's Activate was refused twice as not seen while MD offered it). False when the
+        mask is not readable or the icon not matched: the glyph search decides."""
+        self.mask_refused = False
+        if getattr(self, "client", None) is None:
+            return False
+        icons = self.ui.open_card(xy, f"field {self.name(cid)}")
+        oc = self.open_command(raw, cid)
+        if oc is None:
+            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+            return False
+        want = COMMAND_BITS["activate"]
+        if not oc.mask & want:
+            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+            self.mask_refused = True
+            self.refused(raw, best, f"{self.name(cid)}: MD's command mask {oc.mask:#x} has no Activate")
+            return False
+        nth = [i for i, c in enumerate(oc.commands) if want & (1 << c)]
+        if len(icons) != len(oc.commands):
+            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+            self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+            icons = self.ui.open_card(xy, f"field {self.name(cid)} (again: MD offers Activate)")
+        if nth and len(icons) == len(oc.commands):
+            self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth[0]})
+            self.ui.click(*sorted(icons)[nth[0]], "activate", 2.0)
+            return True
+        self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+        return False
 
     def open_command(self, raw: RawDuel, cid: int):
         """MD's command mask of the card open now (memory), when it is card ``cid`` of ours; else None."""
