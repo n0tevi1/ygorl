@@ -299,7 +299,7 @@ def classify(*, mine: bool, ours: bool, accepting: bool, mode: int, dialog_type:
         return "place"  # the zone question can come while a chain's resolve animation still dims the board
     if mine and mode == MAIN and screen == "banner" and zone_pending:
         return "zone_again"  # MD still asks for the zone of our own Summon / Set
-    if mine and mode in (MAIN, BATTLE) and screen == "position" and dialog_type != POSITION_DIALOG:
+    if screen == "position" and dialog_type != POSITION_DIALOG and not (mine and mode == PLACE):
         screen = None  # a position question only when memory asks one: a drawn card's reveal passed for it
     if mine and mode in (MAIN, BATTLE) and screen == "banner":
         screen = None  # the engine waits for a command: no banner question is pending (the opponent's ATK / DEF
@@ -896,6 +896,22 @@ class Player:
                 self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
                 return self.refused(raw, best, f"{self.name(cid)}: MD's command mask {oc.mask:#x} has no {best.kind}")
             nth = [i for i, c in enumerate(oc.commands) if want & (1 << c)]
+            if nth and len(icons) > len(oc.commands):
+                # more icons than commands: a field card's glow in the icon band (a Special Summon clicked
+                # Red-Eyes Archfiend's glow off the row): keep the icons on the row the others share
+                row_y = sorted(p[1] for p in icons)[len(icons) // 2]
+                icons = [p for p in icons if abs(p[1] - row_y) <= 20]
+            if nth and len(icons) != len(oc.commands):
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+                icons = self.ui.open_hand_card(xy, f"hand {self.name(cid)} (again: {len(oc.commands)} commands)")
+                if len(icons) > len(oc.commands):
+                    row_y = sorted(p[1] for p in icons)[len(icons) // 2]
+                    icons = [p for p in icons if abs(p[1] - row_y) <= 20]
+                if len(icons) != len(oc.commands) and best.kind == "spsummon":
+                    # Special Summon has no glyph of its own: never guessed when MD's command list is known
+                    self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                    return self.refused(raw, best, f"{len(icons)} icons for {len(oc.commands)} commands")
             if nth and len(icons) == len(oc.commands):
                 # the icons left to right are MD's command list in order: the icon is known, not guessed by glyph
                 self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth[0]})
@@ -1931,6 +1947,14 @@ class Player:
         except Exception:  # noqa: BLE001
             cid, uid = 0, 0
         ok = pw(cid) == pw(want) and (not want_uid or uid == want_uid)
+        if not ok and prev is not None and prev[:8] == struct.pack("<II", cid, uid):
+            # the open-card read did not move with the tick (it held no card: a stale address): the client's
+            # order is the screen's (checked since run s33), so its place stands; the stale address is dropped
+            # (Ra - Sphere Mode was ticked right, then a guess sent The Winged Dragon of Ra instead)
+            selection.address = None
+            self.trace.observe(list_check={"want": want, "by": "client list (unconfirmed: no open-card read)",
+                                           "index": j, "turns": turns})  # fmt: skip
+            return pos
         self.trace.observe(list_check={"want": want, "by": "client list", "index": j, "turns": turns, "ok": ok,
                                        "changed": prev is not None and prev[:8] != struct.pack("<II", cid, uid)})  # fmt: skip
         if not ok:
