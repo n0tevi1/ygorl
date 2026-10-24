@@ -22,14 +22,12 @@ are compared game by game (``paired``: mean score difference with its standard e
   uv run --no-sync python tools/first_seat_line_eval.py CKPT [CKPT_B] --demos LINES.jsonl [--min-hand 40] \\
       [--games-per-line 2] [--opponent CKPT] [--line-recovery FIRE.jsonl] [--greedy] [--json] [--out report.json]
 
-``--line-recovery`` is passed to ``LineLibrary.load(..., recovery=)`` (the T6 recovery lines) when the library
-supports it, and ignored with a note otherwise.
+``--line-recovery`` (repeatable) is passed to ``LineLibrary.load(..., recovery=)`` (the T6 recovery lines).
 """
 
 from __future__ import annotations
 
 import argparse
-import inspect
 import json
 import math
 import sys
@@ -106,7 +104,7 @@ def line_completed(player) -> bool:
     return all(player.skip_forced and s.forced for s in rest)
 
 
-def load_library(paths: Sequence[str], vocab, cards, environment, recovery: str | None, *, min_hand: int = 0,
+def load_library(paths: Sequence[str], vocab, cards, environment, recovery: Sequence[str], *, min_hand: int = 0,
                  max_hand: int = 10**9, scratch: Path | None = None):  # fmt: skip
     """The line library of the plain records of ``paths`` with ``min_hand <= hand_index < max_hand`` (filtered into
     ``scratch`` first: keying a line replays it, so only the lines in range are keyed)."""
@@ -127,12 +125,8 @@ def load_library(paths: Sequence[str], vocab, cards, environment, recovery: str 
         paths = kept
 
     kwargs = {}
-    if recovery:
-        if "recovery" in inspect.signature(LineLibrary.load).parameters:
-            kwargs["recovery"] = recovery
-        else:
-            print(f"note: LineLibrary.load has no recovery= parameter yet (T6); --line-recovery {recovery} ignored",
-                  file=sys.stderr)  # fmt: skip
+    if recovery:  # LineLibrary.load(recovery=) takes an iterable of fire-record files (T6)
+        kwargs["recovery"] = list(recovery)
     return LineLibrary.load(paths, vocab, cards=cards, env=environment, **kwargs)
 
 
@@ -284,7 +278,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=None, help="at most N lines (file order)")
     p.add_argument("--games-per-line", type=int, default=2)
     p.add_argument("--opponent", default=None, help="checkpoint playing the line seat after the line (default: CKPT A)")
-    p.add_argument("--line-recovery", default=None, help="T6 recovery lines (fire records), if the library supports it")
+    p.add_argument("--line-recovery", action="append", default=[], help="T6 recovery lines (fire records); repeatable")
     p.add_argument("--env", default="md-2026-09")
     p.add_argument(
         "--decks", default=None, help="directory of learner .ydk decks (default: the environment's meta decks)"

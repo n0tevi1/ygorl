@@ -496,7 +496,7 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   P(在第 k 个窗口发动 | 到达且之前没发动)。窗口与 `Rollout.line_window` 相同：对手回合 2 上有两个以上可选行的 MSG_SELECT_CHAIN；
   发动 = 选了非让过行。所有 ckpt 打同一批局（同样的线、卡组顺序、种子），采样决策的均匀数由（局种子、席位、该席位的决策序号）派生（公共随机数），
   所以两个 ckpt 可以逐局配对（`paired`：得分差与标准误、各自更好的局数、完成率差）。`--line-recovery FIRE.jsonl` 透传给
-  `LineLibrary.load(..., recovery=)`（T6 恢复线；库还不支持时提示后忽略）。
+  `LineLibrary.load(..., recovery=)`（T6 恢复线，可重复）。
 
 ```bash
 uv run --no-sync python tools/handtrap_ruler.py out/claude-scale/handtrap/full_fire8.jsonl CKPT --min-hand 40 [--json]
