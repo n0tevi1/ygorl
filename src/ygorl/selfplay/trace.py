@@ -84,6 +84,7 @@ class Trace:
     screen_every: int = 0  # save the reference-frame capture every N steps (0: only on demand)
     rec: dict | None = None
     last: dict | None = None  # the last record written (for stuck records)
+    rules: Counter = field(default_factory=Counter)  # rule-made decisions of the duel under way (a fallback count)
 
     def __post_init__(self) -> None:
         self.out = Path(self.out)
@@ -126,6 +127,7 @@ class Trace:
 
     def rule(self, rule: str, **detail) -> None:
         """A hard-coded rule decided this step (prompt, dialog, field pick, ...)."""
+        self.rules[rule] += 1
         self._decide({"by": "rule", "rule": rule, **detail})
 
     def shadow(self, dialog: str, pick: int, **detail) -> None:
@@ -167,8 +169,10 @@ class Trace:
         self._current()["refusal"] = {"action": action.kind, "card": _card(action), "reason": reason}
 
     def game(self, **summary) -> None:
-        """One duel's outcome (several per trace with --games)."""
-        self._write({"kind": "game", "t": round(time.time(), 2), **summary})
+        """One duel's outcome (several per trace with --games), with the rules that decided in it (each a fallback
+        where no policy decision was available: the count to drive down)."""
+        self._write({"kind": "game", "t": round(time.time(), 2), **summary, "rules": dict(self.rules)})
+        self.rules = Counter()
 
     def stuck(self, why: str, record: str | None = None) -> None:
         rec = self._current()

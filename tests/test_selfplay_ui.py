@@ -921,3 +921,35 @@ def test_prompt_card_named_by_the_client_list_when_the_open_card_read_is_empty()
     player.passwords = {15841: 5130393}
     player.trace = SimpleNamespace(observe=lambda **k: None)
     assert player.tick_prompt_card(5130393) == 5130393 and clicks == [L.PROMPT_CARD]
+
+
+def test_failure_masks_the_action_for_the_turn_once_handled():
+    """A command without effect (cause known) masks that action for the whole turn and lets the policy decide
+    again; an unknown cause goes to the generic recovery."""
+    from ygorl.selfplay.loop import Failure, Player, _action_key
+
+    player = Player.__new__(Player)
+    player.forbidden, player.attacked = set(), {7}
+    player.attacker = (7, 10000010)
+    player.trace = SimpleNamespace(observe=lambda **k: None)
+    player.ui = SimpleNamespace(click=lambda *a, **k: None, wait_still=lambda *a, **k: True)
+    action = SimpleNamespace(
+        kind="attack", card=SimpleNamespace(code=10000010, loc=SimpleNamespace(location=4, sequence=0))
+    )
+    raw = SimpleNamespace(turn=3)
+    assert player.handle_failure(Failure("command-no-effect", "no click had an effect", action), raw)
+    assert ((3, "*"), _action_key(action)) in player.forbidden and 7 not in player.attacked
+    assert not player.handle_failure(Failure("something-else", "?", action), raw)
+
+
+def test_took_effect_reads_memory_changes():
+    """A click took effect when memory's input or board moved, or one of MD's dialogs came up."""
+    from ygorl.selfplay.loop import Player
+
+    states = iter([((2, True), "b"), ((7, True), "b")])
+    player = Player.__new__(Player)
+    player.snapshot_state = lambda: next(states)
+    player.ui = SimpleNamespace(dialog=lambda: None)
+    assert player.took_effect(((2, True), "b"), timeout=1.0)
+    player.snapshot_state = lambda: ((2, True), "b")
+    assert not player.took_effect(((2, True), "b"), timeout=0.3)

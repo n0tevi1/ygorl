@@ -159,6 +159,15 @@ class Input:
     player: int
 
 
+class Failure(Stuck):
+    """A step that did not have its effect, with its cause (design 10 「失败按原因恢复」): the recovery handles the
+    cause (masks the action for the turn, re-reads, takes the next option) instead of blind clicks."""
+
+    def __init__(self, cause: str, message: str, action=None) -> None:
+        super().__init__(f"{cause}: {message}")
+        self.cause, self.action = cause, action
+
+
 @dataclass
 class Expectation:
     """What the policy chose and the board it chose on, checked against memory once the action has resolved."""
@@ -859,6 +868,10 @@ class Player:
         if where.location == C.LOCATION_MZONE and best.kind == "reposition":
             # a monster's change-of-position icon: only taken when it is the card's single icon (no glyph measured)
             xy = my_monster_xy(where.sequence)
+            if self.command_by_mask(raw, best, cid, xy, "reposition"):
+                return
+            if getattr(self, "mask_refused", False):
+                return
             icons = self.ui.open_card(xy, f"field {self.name(cid)}")
             oc = self.open_command(raw, cid)
             want = COMMAND_BITS["reposition"]
@@ -933,7 +946,26 @@ class Player:
             if nth and len(icons) == len(oc.commands):
                 # the icons left to right are MD's command list in order: the icon is known, not guessed by glyph
                 self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth[0]})
-                self.ui.click(*sorted(icons)[nth[0]], best.kind, 1.5)
+                before = self.snapshot_state()
+                self.ui.click(*sorted(icons)[nth[0]], best.kind, 0.5)
+                if not self.took_effect(before):
+                    # checked in memory at once: no effect, so the card is opened again and its icon clicked once
+                    # more (never a third time: the cause is reported)
+                    self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                    self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+                    again = self.ui.open_hand_card(xy, f"hand {self.name(cid)} (again: the click had no effect)")
+                    if len(again) > len(oc.commands):
+                        row_y = sorted(p[1] for p in again)[len(again) // 2]
+                        again = [p for p in again if abs(p[1] - row_y) <= 20]
+                    if len(again) != len(oc.commands) or self.open_hand_cid(raw) not in (cid, None):
+                        self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                        raise Failure("command-no-effect", f"{best.kind} {self.name(cid)} from the hand", best)
+                    before = self.snapshot_state()
+                    self.ui.click(*sorted(again)[nth[0]], f"{best.kind} (again)", 0.5)
+                    if not self.took_effect(before):
+                        self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                        raise Failure("command-no-effect", f"{best.kind} {self.name(cid)} from the hand", best)
+                self.ui.sleep(1.0)
                 icons = None
         if icons is not None and self.ui.choose_command(icons, best.kind, order, self.name(cid)) is None:
             # an effect's resolve glow can pass for the only icon (Millennium Seeker's Summon refused while The True
@@ -981,6 +1013,27 @@ class Player:
     def activate_by_mask(self, raw: RawDuel, best, cid: int, xy) -> bool:
         return self.command_by_mask(raw, best, cid, xy, "activate")
 
+    def snapshot_state(self) -> tuple:
+        """What a command changes when MD takes it (memory): the input (mode, accepting) and the board."""
+        try:
+            raw, inp = self.game.read(), self.input()
+        except MemoryReadError:
+            return (None, None)
+        return ((inp.mode, inp.accepting), _board_key(raw.players[raw.me], raw.players[1 - raw.me]))
+
+    def took_effect(self, before: tuple, timeout: float = 3.0) -> bool:
+        """Whether a click just made had its effect: memory's input or board moved away from ``before``
+        (:meth:`snapshot_state`), or one of MD's dialogs came up; polled for ``timeout`` seconds."""
+        end = time.time() + timeout
+        while time.time() < end:
+            now = self.snapshot_state()
+            if now[0] is not None and (now[0] != before[0] or now[1] != before[1]):
+                return True
+            if self.ui.dialog() not in (None, "phase_menu"):
+                return True
+            time.sleep(0.25)
+        return False
+
     def command_by_mask(self, raw: RawDuel, best, cid: int, xy, kind: str) -> bool:
         """A field card's command (activate, attack) judged by MD's command mask (memory): refused when the mask
         lacks it (``self.mask_refused``), else its icon clicked by command index. Icons blink and a badge can pass
@@ -1025,17 +1078,34 @@ class Player:
                     icons = seen
                     break
                 self.ui.sleep(0.35)
-        how = "seen"
-        if len(icons) == n:
-            target = sorted(icons)[nth]
-        else:
-            # the place by the command index (measured: Seeker's two icons at about x -86 / +86, y -150)
-            target = (round(xy[0] + (nth - (n - 1) / 2) * FIELD_ICON_STEP), xy[1] + FIELD_ICON_DY)
-            how = "computed"
-        self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth,
-                                         "icons_seen": len(icons), "how": how})  # fmt: skip
-        self.ui.click(*target, kind, 2.0)
-        return True
+        computed = (round(xy[0] + (nth - (n - 1) / 2) * FIELD_ICON_STEP), xy[1] + FIELD_ICON_DY)
+        # each click is checked in memory within seconds; one without effect is followed by the next way to reach
+        # the icon (never the same one twice): the icon seen, its computed place, the card opened again
+        tries = ([("seen", sorted(icons)[nth])] if len(icons) == n else []) + [
+            ("computed", computed),
+            ("reopened", None),
+        ]
+        done = []
+        for how, target in tries:
+            if target is None:
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+                again = [p for p in self.ui.open_card(xy, f"field {self.name(cid)} (again)")
+                         if min(abs(p[0] - e) for e in expect) <= 45]  # fmt: skip
+                target = sorted(again)[nth] if len(again) == n else computed
+            if target in done:
+                continue
+            done.append(target)
+            before = self.snapshot_state()
+            self.ui.click(*target, kind, 0.5)
+            ok = self.took_effect(before)
+            self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth,
+                                             "icons_seen": len(icons), "how": how, "took": ok,
+                                             "tried": [list(t) for t in done]})  # fmt: skip
+            if ok:
+                return True
+        self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+        raise Failure("command-no-effect", f"{kind} {self.name(cid)}: no click on its icon had an effect", best)
 
     def open_command(self, raw: RawDuel, cid: int):
         """MD's command mask of the card open now (memory), when it is card ``cid`` of ours; else None."""
@@ -2435,7 +2505,9 @@ class Player:
                 time.sleep(0.5)
                 result = self._result()
             summary = {"game": g + 1, "exit": code, "finished": raw.finished, "result": result,
-                       "lp": [raw.players[raw.me].lp, raw.players[1 - raw.me].lp], "turn": raw.turn + 1}  # fmt: skip
+                       "lp": [raw.players[raw.me].lp, raw.players[1 - raw.me].lp], "turn": raw.turn + 1,
+                       "rule_decisions": sum(self.trace.rules.values()),
+                       "failures": sum(getattr(self, "failures", {}).values())}  # fmt: skip
             self.trace.game(**summary)
             print(f"=== game {g + 1} summary {summary}", flush=True)
             if code != 0 and not raw.finished and g + 1 < games:
@@ -2563,6 +2635,29 @@ class Player:
 
     MAX_RECOVERIES_PER_STATE, MAX_RECOVERIES_PER_DUEL = 4, 30
 
+    MAX_FAILURES_PER_TURN = 6
+
+    def handle_failure(self, exc: Failure, raw: RawDuel) -> bool:
+        """A failure with a known cause (design 10 「失败按原因恢复」): the action that had no effect is masked for the
+        rest of the turn (never tried the same way again), the card closed, and the policy decides again; False
+        (the generic recovery) when the cause is unknown or too many failed this turn."""
+        self.failures = getattr(self, "failures", {})
+        n = self.failures.get(raw.turn, 0) + 1
+        self.failures[raw.turn] = n
+        self.trace.observe(failure={"cause": exc.cause, "message": str(exc), "count": n})
+        print(f"  FAILURE ({exc.cause}, {n} this turn): {exc}", flush=True)
+        if exc.cause not in ("command-no-effect", "action-no-effect") or exc.action is None:
+            return False
+        if n > self.MAX_FAILURES_PER_TURN:
+            return False
+        self.forbidden.add(((raw.turn, "*"), _action_key(exc.action)))
+        if exc.action.kind == "attack" and getattr(self, "attacker", None):
+            self.attacked.discard(self.attacker[0])
+        self.expect, self.recent = None, []
+        self.ui.click(*NEUTRAL_SPOT, "close what is open", 0.8)
+        self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+        return True
+
     def recover(self, why: str, raw: RawDuel, inp: Input, dialog: str | None, state) -> bool:
         """Self-recovery after a failure (design 10): record it, then escalate per state — (1) mask the action that
         led here, close what may be open, let the screen settle and decide again; (2) answer the shown dialog
@@ -2620,6 +2715,7 @@ class Player:
     def reset_game_state(self) -> None:
         self.attacked, self.forbidden, self.recent, self.last_zone = set(), set(), [], None
         self.strong_targets, self.spent_effects = set(), set()
+        self.failures = {}
         self.activated = set()
         self.recoveries, self.recovery_count = {}, 0
         self.field_picked = ((-1, -1), [])
@@ -2716,11 +2812,15 @@ class Player:
                     if problem is None:
                         self.note_activation(self.expect.action)
                         self.note_battle(self.expect, raw)
-                    self.expect = None
+                    failed, self.expect = self.expect.action, None
                     if problem is not None and problem.startswith("attack") and getattr(self, "attacker", None):
                         self.attacked.discard(self.attacker[0])  # it did not attack: it still may
                     if problem is not None:
-                        raise Stuck(f"the game does not show the policy's action: {problem}")
+                        # with the action: the recovery masks it for the turn (it was cleared before, and Ra's
+                        # attack that never happened was chosen again eight times)
+                        raise Failure(
+                            "action-no-effect", f"the game does not show the policy's action: {problem}", failed
+                        )
                 mine = inp.accepting and inp.player == raw.me
                 kind = classify(mine=mine, ours=inp.player == raw.me, accepting=inp.accepting, mode=inp.mode,
                                 dialog_type=req.dialog_type, choices=len(req.choices), screen=dialog,
@@ -2731,6 +2831,11 @@ class Player:
                     self.dialog(raw, kind)  # MD's own dialogs (yesno, option, list, radio, phase_menu, ...)
                 else:
                     getattr(self, handler)(raw, inp)
+            except Failure as exc:  # a step without its effect, with its cause: handled by cause, no blind clicks
+                if self.handle_failure(exc, raw):
+                    continue
+                if not self.recover(str(exc), raw, inp, dialog, state):
+                    return 3
             except Exception as exc:  # Stuck, or anything unexpected inside a step: recover, do not die
                 why = str(exc) if isinstance(exc, Stuck) else f"{type(exc).__name__}: {exc}"
                 if not isinstance(exc, (Stuck, MemoryReadError)):
