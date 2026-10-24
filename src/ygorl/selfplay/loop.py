@@ -43,6 +43,7 @@ from ygorl.md.screen import capture as capture_client
 from ygorl.md.ui import (
     COIN_OK,
     COIN_RINGS,
+    GY_ICON,
     GY_STRIP_SHOWN,
     MINIMISED_RESTORE,
     PHASE_MENU_CANCEL,
@@ -78,6 +79,7 @@ OPTION_OK = (1024, 788)
 
 LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
 RA = 10000010  # The Winged Dragon of Ra
+FIELD_ICON_STEP, FIELD_ICON_DY = 172, -150  # a field card's command icons: apart, and above the card
 SLIFER = 10000020  # Slifer the Sky Dragon
 HAND_LOCATION = 13  # MD's location number of the hand (the client's lists)
 # the command bits of each action kind (MD's CommandBit; Pendulum activation counts as activate)
@@ -957,10 +959,15 @@ class Player:
         raise Stuck(f"{best.kind} {self.name(cid)}: the card is still in hand after the clicks")
 
     def activate_by_mask(self, raw: RawDuel, best, cid: int, xy) -> bool:
-        """A field card's Activate judged by MD's command mask (memory): refused when the mask has no Activate
-        (``self.mask_refused``), else its icon clicked by command index (looked for again after the board settles
-        when not seen yet; Obelisk's Activate was refused twice as not seen while MD offered it). False when the
-        mask is not readable or the icon not matched: the glyph search decides."""
+        return self.command_by_mask(raw, best, cid, xy, "activate")
+
+    def command_by_mask(self, raw: RawDuel, best, cid: int, xy, kind: str) -> bool:
+        """A field card's command (activate, attack) judged by MD's command mask (memory): refused when the mask
+        lacks it (``self.mask_refused``), else its icon clicked by command index. Icons blink and a badge can pass
+        for one (Ra's attack clicked Blaze Cannon's badge; Millennium Seeker's Activate was refused twice while
+        offered): when the icons seen do not match the command list, the card is opened again, and failing that
+        the icon's place is computed from the command index (one icon above the card, two at x -86 / +86).
+        False when the mask is not readable: the glyph search decides."""
         self.mask_refused = False
         if getattr(self, "client", None) is None:
             return False
@@ -969,23 +976,29 @@ class Player:
         if oc is None:
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
             return False
-        want = COMMAND_BITS["activate"]
+        want = COMMAND_BITS[kind]
         if not oc.mask & want:
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
             self.mask_refused = True
-            self.refused(raw, best, f"{self.name(cid)}: MD's command mask {oc.mask:#x} has no Activate")
+            self.refused(raw, best, f"{self.name(cid)}: MD's command mask {oc.mask:#x} has no {kind}")
             return False
-        nth = [i for i, c in enumerate(oc.commands) if want & (1 << c)]
-        if len(icons) != len(oc.commands):
+        nth = [i for i, c in enumerate(oc.commands) if want & (1 << c)][0]
+        n = len(oc.commands)
+        if len(icons) != n:
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
             self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
-            icons = self.ui.open_card(xy, f"field {self.name(cid)} (again: MD offers Activate)")
-        if nth and len(icons) == len(oc.commands):
-            self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth[0]})
-            self.ui.click(*sorted(icons)[nth[0]], "activate", 2.0)
-            return True
-        self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
-        return False
+            icons = self.ui.open_card(xy, f"field {self.name(cid)} (again: MD offers {kind})")
+        how = "seen"
+        if len(icons) == n:
+            target = sorted(icons)[nth]
+        else:
+            # the place by the command index (measured: Seeker's two icons at about x -86 / +86, y -150)
+            target = (round(xy[0] + (nth - (n - 1) / 2) * FIELD_ICON_STEP), xy[1] + FIELD_ICON_DY)
+            how = "computed"
+        self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth,
+                                         "icons_seen": len(icons), "how": how})  # fmt: skip
+        self.ui.click(*target, kind, 2.0)
+        return True
 
     def open_command(self, raw: RawDuel, cid: int):
         """MD's command mask of the card open now (memory), when it is card ``cid`` of ours; else None."""
@@ -1024,6 +1037,17 @@ class Player:
                 continue  # another card: try the next position
             if sel is None and i != guess:
                 continue  # memory cannot tell, and this is not the position the pile order names
+            oc = self.open_command(raw, cid) if sel is not None else None
+            if oc is not None:
+                # memory: MD's command mask for the open Graveyard card decides, not the glyph (lava passed
+                # for two Activate icons, and the click did nothing)
+                self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands)})
+                if not oc.mask & COMMAND_BITS["activate"]:
+                    icons = []
+                elif icons:
+                    icons = [min(icons, key=lambda p: abs(p[0] - GY_ICON[0]) + abs(p[1] - GY_ICON[1]))]
+                else:
+                    icons = [GY_ICON]  # offered: its measured place above the pile
             if icons:
                 self.ui.click(*icons[0], "activate (graveyard)", 2.0)
                 return
@@ -1233,7 +1257,12 @@ class Player:
         if not targets and any(c is not None for c in opp.slots[:7]):
             # every monster it could attack beat an attack of ours this turn: not again
             return self.refused(raw, best, "every target survived an attack of ours this turn")
-        if not self.ui.attack(my_monster_xy(slot), f"attacker {self.name(card.cid)}"):
+        if self.command_by_mask(raw, best, card.cid, my_monster_xy(slot), "attack"):
+            pass
+        elif getattr(self, "mask_refused", False):
+            self.attacked.discard(card.uid)
+            return None
+        elif not self.ui.attack(my_monster_xy(slot), f"attacker {self.name(card.cid)}"):
             # the previous battle can still be animating (a second Ra's Disciple was refused while it glowed ready
             # to attack): let the board settle and try once more
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
@@ -2590,6 +2619,8 @@ class Player:
                         self.note_activation(self.expect.action)
                         self.note_battle(self.expect, raw)
                     self.expect = None
+                    if problem is not None and problem.startswith("attack") and getattr(self, "attacker", None):
+                        self.attacked.discard(self.attacker[0])  # it did not attack: it still may
                     if problem is not None:
                         raise Stuck(f"the game does not show the policy's action: {problem}")
                 mine = inp.accepting and inp.player == raw.me
