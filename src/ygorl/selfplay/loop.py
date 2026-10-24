@@ -2205,7 +2205,14 @@ class Player:
                 else:
                     return  # MD took the tributes: the summoned monster glowing in their zone is not another pick
             lit = set(self.ui.highlighted())
-            mine = [(s, c) for s, c in enumerate(me.slots[:7]) if c and my_monster_xy(s) in lit and s not in taken]
+            # frames found off the measured spot (Apprentice Illusion Magician's at (644, 739) for (650, 750)) count
+            # within 80 px; the monsters MD's request offers (memory) count too: an exact match missed one, and the
+            # lowest-ATK rule tributed a 2500 monster instead of a 2000 one
+            near = lambda xy: any(abs(xy[0] - p[0]) + abs(xy[1] - p[1]) < 80 for p in lit)  # noqa: E731
+            offered = set(self.offered_field_cards(self.game.read())) if n == 0 else set()
+            mine = [(s, c) for s, c in enumerate(me.slots[:7])
+                    if c and (near(my_monster_xy(s)) or my_monster_xy(s) in offered) and s not in taken]  # fmt: skip
+            self.trace.observe(tribute_candidates=[s for s, _ in mine], tribute_lit=sorted(lit))
             if not mine:
                 return
             xy = self.field_target(self.game.read(), {my_monster_xy(s) for s, _ in mine})
