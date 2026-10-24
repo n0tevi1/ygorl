@@ -98,6 +98,24 @@ def test_window_counterfactual_probe(ckpt, tmp_path):
     assert all(x["recovery_mismatch"] == 0 for x in r["rows"])
 
 
+def test_window_counterfactual_probe_joins_the_fire_records_of_a_hand(ckpt, tmp_path):
+    """Several fire records of one hand (a graded run's levels): every record's windows are used, the first record
+    recovering a window gives its line; one record per line, the last first, changes nothing here."""
+    split = tmp_path / "split_fire.jsonl"
+    with open(FIRE) as src, open(split, "w") as dst:
+        for line in src:
+            rec = json.loads(line)
+            for ln in reversed(rec["lines"]):
+                dst.write(json.dumps({**rec, "lines": [ln]}) + "\n")
+    args = [GRADED, ckpt, "--min-hand", "0", "--rollouts", "1", "--workers", "1"]
+    whole = window_counterfactual_probe.main([*args, "--demos", DEMOS, FIRE, "--out", str(tmp_path / "a.json")])
+    parts = window_counterfactual_probe.main([*args, "--demos", DEMOS, str(split), "--out", str(tmp_path / "b.json")])
+    assert parts["windows_with_recovery"] == whole["windows_with_recovery"] >= 1
+    assert [r["has_recovery"] for r in parts["rows"]] == [r["has_recovery"] for r in whole["rows"]]
+    assert sum(r["recovery_followed"] for r in parts["rows"]) >= 1
+    assert all(r["recovery_mismatch"] == 0 for r in parts["rows"])
+
+
 def test_turn1_board_modes(ckpt, tmp_path):
     r = _twice(turn1_board_modes.main, [DEMOS, "--ckpt", ckpt, "--hands", "2", "--samples", "3", "--min-hand", "0",
                                         "--max-hand", "100", "--workers", "1"], tmp_path)  # fmt: skip

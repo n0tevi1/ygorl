@@ -15,6 +15,7 @@ import json
 import re
 import shutil
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -295,15 +296,22 @@ def solve_hand(job: HandJob, *, cards=None, scripts: _core.ScriptDirectory | Non
 
 
 def solve_fire(job: HandJob, base: Demonstration, fire: int, *, cards=None,
-               scripts: _core.ScriptDirectory | None = None) -> Demonstration:  # fmt: skip
-    """The ``--fire`` variant of a solved hand: the opponent plays ``fire`` at every legal window of its best line."""
+               scripts: _core.ScriptDirectory | None = None, targets: Sequence[str] | None = None) -> Demonstration:  # fmt: skip
+    """The ``--fire`` variant of a solved hand: the opponent plays ``fire`` at every legal window of its best line.
+
+    ``targets``: rebuild a board that CONTAINS these cards (one level of a graded hand-trap label: a smaller board
+    than the line's own, ``--target ... --target-subset``) instead of the line's own final board; the record's
+    ``targets`` are then the level's, and its lines (recovery lines, ``LineLibrary.load(recovery=)``) reach it."""
+    level = parse_targets(targets) if targets else ()
     demo = replace(
-        base, variant="fire", fire=fire, status="pending", error="", start=None, lines=[], rejected=[], solver={}
-    )
+        base, variant="fire", fire=fire, status="pending", error="", start=None, lines=[], rejected=[], solver={},
+        targets=[t.to_arg() for t in level] if level else list(base.targets),
+    )  # fmt: skip
     if not base.lines:
         demo.status, demo.error = "skipped", "the plain opening has no verified line to test"
         return demo
-    scratch = Path(job.scratch) / f"fire_{fire}"
+    suffix = f"_{hashlib.sha256(' '.join(demo.targets).encode()).hexdigest()[:10]}" if level else ""
+    scratch = Path(job.scratch) / f"fire_{fire}{suffix}"
     scratch.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
     try:
@@ -315,7 +323,7 @@ def solve_fire(job: HandJob, base: Demonstration, fire: int, *, cards=None,
         rep.to_yrpx(reference, names=(base.deck["name"], PASSIVE_OPPONENT.name), **_engine_kwargs(cards, scripts))
         request = SolveRequest(template=reference, fire=fire, fire_ms=job.fire_ms, solve_ms=job.solve_ms,
                                threads=job.threads, seed=job.solver_seed, max_written=max(4, 2 * job.lines),
-                               max_rollouts=job.max_rollouts)  # fmt: skip
+                               max_rollouts=job.max_rollouts, targets=tuple(level))  # fmt: skip
         timeout = job.timeout_s if job.timeout_s is not None else job.solve_ms / 1000 + 120 + job.fire_ms / 1000 * 12
         run = run_solver(request, Workdir.create(job.workdir), scratch / "out", binary=job.binary, timeout=timeout)
         demo.solver = _solver_meta(run, request)

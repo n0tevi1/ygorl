@@ -127,6 +127,12 @@ for point, action in iter_steps(demo, 0):
 
 每个手坑一条记录（`variant = "fire"`，`fire = 密码`），`solver.windows` / `solver.converted` 为可发动时点数与成功恢复的时点数；输出的每条线对应某个成功恢复的时点。
 
+分级标签的一级（`solve_fire(job, base, fire, targets=[...])`，2026-10-24）：不要求恢复原终场，而是恢复一个**包含**给定目标卡的场面
+（`--target … --target-subset`，例如阻断阶梯里较小的一级）；记录的 `targets` 换成这一级，线的验证也按这一级检查。
+`out/claude-scale/handtrap_labels_graded.py --recovery-out` 用它对每手的每一级求解，并把有恢复时点的 fire 记录按级别从高到低写出，
+可直接作为 `LineLibrary.load(recovery=[...])` 的恢复线（同一窗口取第一条，即发动后还能到达的最高一级）。
+`ygorl.train.line_labels.fire_windows(fire_record)` 按分级标签的编号（沿线第 k 个可发动该手坑的对手决策）给出每个恢复时点用的是哪条线。
+
 注意（求解器行为）：`--fire` 在参考线「第 `target_at` 个应答之后、尚未处理」时取目标场面，如果参考线恰好停在最后一次召唤的应答上（求解器自己的输出就是这样），
 取到的是空场面，随后的对齐检查失败（「discovery pass does not reach the board」）。先把线补完到回合结束再交给 `--fire` 可以避开这个问题，这也是转换默认补完回合的原因之一。
 

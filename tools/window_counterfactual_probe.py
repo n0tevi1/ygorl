@@ -13,7 +13,9 @@ Once Ash has resolved the line is broken, and the combo seat is played by one of
 
 - ``snapshot``: the policy ``--opponent`` (default CKPT), sampled;
 - ``recovery``: the solver's recovery line for the window where Ash was fired (``variant="fire"`` records of
-  ``--demos``: the line that fires Ash at that window and still reaches the board), else the snapshot;
+  ``--demos``: the line that fires Ash at that window and still reaches the board; with several fire records of a
+  hand, e.g. the levels of a graded run's ``--recovery-out``, the first record recovering the window), else the
+  snapshot;
 - ``best_of``: the snapshot rollouts again, the value of a branch being its worst rollout for the learner (the
   ``branch_opponent_best_of`` stand-in for a recovery line).
 
@@ -63,28 +65,16 @@ def passive(point) -> int:
     return passive_action(point)
 
 
-def recovery_lines(fire_demo, env, cards) -> dict[int, list[int]]:
-    """window -> the actions (both seats, from the fire start) of the first verified fire line firing Ash there."""
-    from ygorl.engine.duel import DuelSession
+def recovery_lines(fire_demos, env, cards) -> dict[int, list[int]]:
+    """window -> the actions (both seats, from the fire start) of the first verified fire line firing Ash there, over
+    the hand's fire records in file order (a graded run writes its levels highest first: the line that reaches the
+    best board left after firing there; :func:`ygorl.train.line_labels.fire_windows`)."""
+    from ygorl.train.line_labels import fire_windows
 
     out: dict[int, list[int]] = {}
-    for ln in fire_demo.lines:
-        session = DuelSession(fire_demo.replay(None).duel(env, cards=cards))
-        window = 0
-        try:
-            for step, idx in enumerate(ln.actions):
-                point = session.point
-                if point is None:
-                    break
-                if point.player == 1 and ash_index(point) is not None:
-                    window += 1
-                    a = point.actions[idx]
-                    if a.card is not None and a.card.code == FIRE:
-                        out.setdefault(window, list(ln.actions))
-                        break
-                session.act(idx)
-        finally:
-            session.close()
+    for fd in fire_demos:
+        for window, k in fire_windows(fd, cards=cards, env=env).items():
+            out.setdefault(window, list(fd.lines[k].actions))
     return out
 
 
@@ -210,9 +200,7 @@ def _init(args: dict) -> None:
 
 def probe_hand(hand: dict) -> list[dict]:
     ctx = _CTX
-    ctx["recovery"][hand["id"]] = (
-        recovery_lines(hand["fire_demo"], ctx["env"], ctx["cards"]) if hand["fire_lines"] else {}
-    )
+    ctx["recovery"][hand["id"]] = recovery_lines(hand["fire_demos"], ctx["env"], ctx["cards"])
     rows = []
     for k in range(1, hand["windows"] + 1):
         runs = {(mode, b): [] for mode in ("snapshot", "recovery") for b in (True, False)}
@@ -257,7 +245,7 @@ def load_hands(
             if d.variant == "plain" and d.status == "solved" and d.lines:
                 plain.setdefault(key, d)
             elif d.variant == "fire" and d.lines and d.status == "solved":
-                fires.setdefault(key, d)
+                fires.setdefault(key, []).append(d)
     hands = []
     for key in sorted(labels):
         rec = labels[key]
@@ -270,12 +258,13 @@ def load_hands(
             continue
         base = plain[key]
         start = fire_start(base)
-        fd = fires.get(key)
-        fire_demo = start if fd is None else _with_start(fd, start)
+        fds = [_with_start(fd, start) for fd in fires.get(key, [])]
+        fire_demo = fds[0] if fds else start  # the game starts where the fire lines do
+        fds = [fd for fd in fds if fd.start == fire_demo.start]
         p0 = [i for i, pl in zip(base.lines[0].actions, base.lines[0].players) if pl == 0]
         hands.append({"id": len(hands), "deck": key[0], "hand_index": key[1], "windows": w, "p0": p0,
                       "u": [values[k] / best for k in range(1, w + 1)], "fire_demo": fire_demo,
-                      "fire_lines": fd is not None})  # fmt: skip
+                      "fire_demos": fds, "fire_lines": bool(fds)})  # fmt: skip
         if limit and len(hands) >= limit:
             break
     return hands

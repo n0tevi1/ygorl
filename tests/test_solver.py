@@ -138,7 +138,9 @@ def test_solve_request_arguments(tmp_path):
         and "--no-ref" not in fargs
         and "--deck" not in fargs
     )
-    assert "--max-rollouts" not in fargs
+    assert "--max-rollouts" not in fargs and "--target" not in fargs  # the line's own board
+    level = SolveRequest(template=Path("line.yrpX"), fire=ASH_BLOSSOM, targets=(TargetCard.parse("48452496@hand"),))
+    assert "--fire 14558127 --fire-bake --target 48452496@hand --target-subset" in " ".join(level.args(wd, tmp_path))
     counted = SolveRequest(template=Path("line.yrpX"), fire=ASH_BLOSSOM, max_rollouts=500).args(wd, tmp_path / "o")
     assert "--max-rollouts 500" in " ".join(counted)
     with pytest.raises(ValueError, match="target"):
@@ -353,6 +355,33 @@ def test_solver_failures_become_error_records(db, tmp_path):
     assert demo.solver["returncode"] == 3 and not demo.lines
     missing = solve_hand(HandJob(targets=("99999999",), **common), cards=db)  # checked before the solver runs
     assert missing.status == "error" and "99999999" in missing.error
+
+
+FAKE_FIRE_SOLVER = """#!/bin/sh
+echo "$@" > "$(dirname "$0")/argv"
+echo '@event {"type":"fireVerdict","windows":2,"converted":0}'
+exit 0
+"""
+
+
+def test_solve_fire_at_a_graded_level_posts_the_level_as_a_subset_target(db, tmp_path):
+    from ygorl.solver import HandJob, solve_fire
+
+    data = Path(__file__).parent / "data" / "line_recovery.jsonl"
+    base = next(d for d in read_jsonl(data) if d.variant == "plain")
+    job = HandJob(deck_path=tmp_path / "deck.ydk", hand_index=base.hand_index, hand_seed=base.hand_seed, targets=(),
+                  workdir=tmp_path / "wd", scratch=tmp_path / "s", solve_ms=1000, fire_ms=1000,
+                  binary=_fake_solver(tmp_path, FAKE_FIRE_SOLVER))  # fmt: skip
+    level = ["14558127@hand", "89631139"]
+    demo = solve_fire(job, base, ASH_BLOSSOM, cards=db, targets=level)
+    argv = (tmp_path / "argv").read_text()
+    assert (
+        "--fire 14558127 --fire-bake" in argv and "--target 14558127@hand --target 89631139@atk --target-subset" in argv
+    )
+    assert demo.variant == "fire" and demo.targets == ["14558127@hand", "89631139@atk"]
+    assert demo.status == "unsolved" and demo.solver["windows"] == 2 and not demo.lines
+    plain = solve_fire(job, base, ASH_BLOSSOM, cards=db)  # without a level: the line's own board, no --target
+    assert "--target" not in (tmp_path / "argv").read_text() and plain.targets == base.targets
 
 
 def test_batch_planning_and_resume(tmp_path, monkeypatch):
