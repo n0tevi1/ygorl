@@ -791,7 +791,7 @@ def test_graveyard_activation_checks_the_open_card_in_memory():
     ui = SimpleNamespace(
         open_graveyard=lambda: clicks.append("pile"),
         open_graveyard_card=lambda i, kind, why: (
-            state.update(open=shown[i]) or ([(1500, 300 + i)], np.zeros((2, 2, 3)))
+            state.update(open=shown[i]) or ([(1624, 690 + i)], np.zeros((2, 2, 3)))
         ),
         click=lambda x, y, why, pause=0: clicks.append((x, y)),
         capture=lambda: np.zeros((2, 2, 3)),
@@ -807,11 +807,11 @@ def test_graveyard_activation_checks_the_open_card_in_memory():
     player.forbidden = set()
     action = SimpleNamespace(card=SimpleNamespace(loc=SimpleNamespace(sequence=0)))  # grave[0] = 111
     player.graveyard_activate(raw, action, 111)
-    assert clicks == ["pile", (1500, 301)] and not refused  # strip #2 holds grave[0]; its icon clicked
+    assert clicks == ["pile", (1624, 691)] and not refused  # strip #2 holds grave[0]; its icon clicked
     state["open"], clicks[:] = None, []
     player.selection = SimpleNamespace(read=lambda r: (222, 0))  # memory says another card is always open
     player.graveyard_activate(raw, action, 111)
-    assert refused and all(c == "pile" or c[0] != 1500 for c in clicks)  # no icon of another card clicked
+    assert refused and all(c == "pile" or c[0] != 1624 for c in clicks)  # no icon of another card clicked
 
 
 def test_prompt_cards_sit_side_by_side():

@@ -216,7 +216,9 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
     hand_uids = {c.uid for c in me0.piles["hand"] if c.cid == cid and c.uid}
 
     def arrived(loc, **kw):
-        return any(c.uid in hand_uids and all(getattr(c, k) == v for k, v in kw.items()) for c in _cards(me1, loc))
+        # on either field: Ra - Sphere Mode is summoned to the opponent's (a false alarm once)
+        return any(c.uid in hand_uids and all(getattr(c, k) == v for k, v in kw.items())
+                   for c in _cards(me1, loc) + _cards(op1, loc))  # fmt: skip
 
     if kind == "summon":
         ok = left_hand and (count(me1, "mzone", face=1, sideways=0) > count(me0, "mzone", face=1, sideways=0)
@@ -1064,20 +1066,7 @@ class Player:
         if len(icons) != n:
             # the card is open (memory says so): its icons blink, so look again over a blink cycle rather than
             # clicking the card again, which closed it (Ra's attack was then clicked on nothing eight times)
-            y0, y1 = xy[1] + FIELD_ICON_DY - 60, xy[1] + FIELD_ICON_DY + 60
-            for _ in range(12):
-                img = self.ui.capture()
-                box = (min(expect) - 70, y0, max(expect) + 70, y1)
-                found = L.find_icons(img, *box) + L.blue_icons(img, *box) + L.green_icons(img, *box)
-                found = [p for p in found if min(abs(p[0] - e) for e in expect) <= 45]
-                seen = []
-                for p in sorted(found):
-                    if all(abs(p[0] - q[0]) > 60 for q in seen):
-                        seen.append(p)
-                if len(seen) == n:
-                    icons = seen
-                    break
-                self.ui.sleep(0.35)
+            icons = self.blinking_icons(xy, expect) or icons
         computed = (round(xy[0] + (nth - (n - 1) / 2) * FIELD_ICON_STEP), xy[1] + FIELD_ICON_DY)
         # each click is checked in memory within seconds; one without effect is followed by the next way to reach
         # the icon (never the same one twice): the icon seen, its computed place, the card opened again
@@ -1092,8 +1081,11 @@ class Player:
                 self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
                 again = [p for p in self.ui.open_card(xy, f"field {self.name(cid)} (again)")
                          if min(abs(p[0] - e) for e in expect) <= 45]  # fmt: skip
+                again = again if len(again) == n else self.blinking_icons(xy, expect)
+                # after the card was opened again, its icon is clicked even where an earlier click went (that one
+                # may have landed while the card was closed: Obelisk's attack failed four turns in a row)
                 target = sorted(again)[nth] if len(again) == n else computed
-            if target in done:
+            elif target in done:
                 continue
             done.append(target)
             before = self.snapshot_state()
@@ -1104,8 +1096,30 @@ class Player:
                                              "tried": [list(t) for t in done]})  # fmt: skip
             if ok:
                 return True
+        try:  # what the screen showed, for the next look at why no click took
+            np.save(self.out / f"command-failure-{time.strftime('%Y%m%d-%H%M%S')}.npy", self.ui.capture())
+        except Exception:  # noqa: BLE001
+            pass
         self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
         raise Failure("command-no-effect", f"{kind} {self.name(cid)}: no click on its icon had an effect", best)
+
+    def blinking_icons(self, xy, expect: list[int]) -> list:
+        """The open field card's icons where its command list puts them (``expect``: their x), looked for over a
+        blink cycle (about 4 s); [] when not all of them were seen at once."""
+        n = len(expect)
+        y0, y1 = xy[1] + FIELD_ICON_DY - 60, xy[1] + FIELD_ICON_DY + 60
+        box = (min(expect) - 70, y0, max(expect) + 70, y1)
+        for _ in range(12):
+            img = self.ui.capture()
+            found = L.find_icons(img, *box) + L.blue_icons(img, *box) + L.green_icons(img, *box)
+            seen = []
+            for p in sorted(p for p in found if min(abs(p[0] - e) for e in expect) <= 45):
+                if all(abs(p[0] - q[0]) > 60 for q in seen):
+                    seen.append(p)
+            if len(seen) == n:
+                return seen
+            self.ui.sleep(0.35)
+        return []
 
     def open_command(self, raw: RawDuel, cid: int):
         """MD's command mask of the card open now (memory), when it is card ``cid`` of ours; else None."""
@@ -1162,6 +1176,10 @@ class Player:
                     icons = [min(icons, key=lambda p: abs(p[0] - GY_ICON[0]) + abs(p[1] - GY_ICON[1]))]
                 else:
                     icons = [GY_ICON]  # offered: its measured place above the pile
+            else:
+                # no command mask for a Graveyard card (the viewer does not set it): only an icon at the measured
+                # place counts (lava glow 84 px off it passed for Ancient Chant's Activate again)
+                icons = [p for p in icons if abs(p[0] - GY_ICON[0]) + abs(p[1] - GY_ICON[1]) <= 40]
             if icons:
                 self.ui.click(*icons[0], "activate (graveyard)", 2.0)
                 return
