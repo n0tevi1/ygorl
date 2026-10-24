@@ -1,4 +1,4 @@
-"""Read-only self-audit of a Solo player run (design 10 「自审」): the checks a human auditor made on every run's trace.
+"""Read-only self-audit of a Solo player run (design 10 「自审」): the checks a human auditor made on each trace.
 
 Each check reads only the trace (:mod:`ygorl.selfplay.trace`): a step's ``observed`` notes and the memory digest
 before and after it (the next step's ``memory``). The card database and the MD card id -> password map name the cards
@@ -248,6 +248,10 @@ class _Game:
                 refusals.setdefault((rec.get("turn"), r.get("action"), r.get("card"), r.get("reason")), []).append(rec)
             if (c := rec.get("check")) is not None and not c.get("ok", True):
                 failed.setdefault((rec.get("turn"), c.get("action"), c.get("card")), []).append(rec)
+            if o.get("menu") == "turn_order":
+                self.add("info", rec, "rule-accepted", "turn-order menu answered by the script (known, accepted)")
+            if isinstance(fl := o.get("failure"), dict):  # a failure by known cause, recovered by masking the action
+                recoveries.setdefault(f"failure: {fl.get('cause')}", []).append(rec)
             if (rv := o.get("recovery")) is not None:
                 recoveries.setdefault(str(rv.get("why")), []).append(rec)
             self.check_selected(rec, o)
