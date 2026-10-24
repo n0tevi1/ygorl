@@ -22,7 +22,10 @@ per column ("fixed-length segments with auto-reset").
   the line went. In a first-seat scripted game (``learner_seat`` 0: the learner moves first, the line is played on the
   opponent's turn 2) only the learner's chain windows of turn 2 carry an effect and an occurrence, so the count
   starts where the line does, as the solver's responder's did; ``Rollout.line_seat`` is the learner's seat of the
-  scripted game (1: the line moved first; -1 outside scripted games).
+  scripted game (1: the line moved first; -1 outside scripted games). When the learner activates a card at such a
+  window and the script has a recovery line for it (:class:`~ygorl.train.lines.RecoveryLine`), the line player
+  switches to that line (:meth:`~ygorl.train.lines.LinePlayer.interrupt`); ``FinishedGame.line`` then counts the
+  switch (``recoveries``).
 - **Terminal rows**: the result is attached to the column's last row of that game: ``done``; reward +1 / -1
   / 0 from that row's seat. Games cut by a limit or an engine error (:data:`TRUNCATION_REASONS`) are
   **truncations**, not outcomes: ``done`` and ``truncated``, reward 0; the estimator bootstraps them from the
@@ -51,7 +54,7 @@ from ygorl.engine.constants import MSG_SELECT_CHAIN
 from ygorl.engine.outcome import TRUNCATED
 from ygorl.env.driver import EnvStalled, StallWatch
 from ygorl.nets.batch import policy_logits
-from ygorl.train.lines import LinePlayer, chain_effect
+from ygorl.train.lines import CHAIN_KIND, LinePlayer, chain_effect
 
 TRUNCATION_REASONS = TRUNCATED  # games the host stopped: bootstrapped, not terminal (ygorl.engine.outcome)
 
@@ -83,7 +86,8 @@ class FinishedGame:
     truncated: bool  # cut by a limit / error: not a win or a loss for training
     learner_rows: int  # training rows the game contributed (across rollouts)
     result: dict
-    line: dict | None = None  # scripted game: LinePlayer.finish() (id, status completed / broken / playing, ...)
+    line: dict | None = None  # scripted game: LinePlayer.finish() (id, status completed / broken / playing /
+    # recovering, ...; with recovery lines also recoveries, recovered_at, recovery_window)
 
     @property
     def line_seat(self) -> int:
@@ -387,6 +391,9 @@ class RolloutCollector:
                 if int((ev.obs["action_mask"] != 0).sum()) > 1 and (not first or (int(g[3]) == 2 and not int(g[2]))):
                     effect = chain_effect(ev.obs)
                     occurrence = slot.occurrences[effect] = slot.occurrences.get(effect, 0) + 1
+                    # the learner's activation at a window of the line: a recovery line takes over, if there is one
+                    if slot.line is not None and int(ev.obs["actions"][a][0]) == CHAIN_KIND:
+                        slot.line.interrupt(effect, occurrence, int(ev.obs["actions"][a][2]))
             scripted = slot.assignment.line is not None
             line_id = slot.assignment.line.id if scripted else -1
             cols[ev.env_id].append(_Row(ev.obs, ev.privileged, int(ev.player), a, float(chosen[i]), probs[i], q[i],

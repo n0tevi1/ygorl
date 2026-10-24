@@ -120,6 +120,10 @@ class TrainConfig:
     # share of the scripted deals that are first-seat games: the learner's deck moves first and the demonstration deck
     # plays the line on its turn 2 (pressure to interrupt on turn 1 and on the opponent's turn); 0 = all second-seat
     line_first_share: float = 0.0
+    # --fire demonstration files of those lines' hands (train.lines recovery lines): when the learner's hand trap hits a
+    # chain window the combo recovers from, the opponent seat switches to the solver's recovery line instead of
+    # breaking and handing the seat to the snapshot; () = off
+    line_recovery: tuple[str, ...] = ()
     # graded hand-trap labels of those lines (train.line_labels; the window cache is written next to the file): the
     # learner's labelled chain windows get ppo.line_bonus_coef * bonus on their advantage
     line_labels: str | None = None
@@ -193,6 +197,8 @@ class TrainConfig:
             raise ValueError("line_share must be in [0, 1] and needs line_demos when above 0")
         if not 0 <= self.line_first_share <= 1 or (self.line_first_share > 0 and self.line_share <= 0):
             raise ValueError("line_first_share must be in [0, 1] and needs a line_share above 0 when above 0")
+        if self.line_recovery and not (self.line_demos and self.line_share > 0):
+            raise ValueError("line_recovery needs line_demos and a line_share above 0 (it recovers those lines)")
         if self.line_labels and not (self.line_demos and self.line_share > 0):
             raise ValueError("line_labels needs line_demos and a line_share above 0 (the labels are on those lines)")
         if self.line_labelled_only and not self.line_labels:
@@ -204,6 +210,7 @@ class TrainConfig:
         d["decks"], d["eval_opponents"] = list(self.decks), list(self.eval_opponents)
         d["pin_opponents"] = list(self.pin_opponents)
         d["line_demos"] = list(self.line_demos)
+        d["line_recovery"] = list(self.line_recovery)
         return d
 
     @property
@@ -220,7 +227,7 @@ class TrainConfig:
         known = {f.name for f in fields(cls)}
         d = {k: v for k, v in data.items() if k in known}
         d["ppo"] = PPOConfig.from_dict(d.get("ppo", {}))
-        for key in ("decks", "eval_opponents", "pin_opponents", "line_demos"):
+        for key in ("decks", "eval_opponents", "pin_opponents", "line_demos", "line_recovery"):
             if key in d:
                 d[key] = tuple(d[key])
         return cls(**d)
@@ -231,11 +238,13 @@ def _mean(xs) -> float | None:
     return statistics.fmean(xs) if xs else None
 
 
-def line_stats(games) -> dict:
+def line_stats(games, recovery: bool = False) -> dict:
     """Scripted-line counts of a rollout's finished games: games, lines completed / broken (and the mean step the
     broken ones broke at), lines still playing when the game ended (``line_unfinished``); the same for the first-seat
     games alone (``line_first_*``: the learner moved first, the line was played on turn 2), with the games that
-    passed over leading steps of their line (``line_first_skipped``)."""
+    passed over leading steps of their line (``line_first_skipped``). With ``recovery`` (TrainConfig.line_recovery)
+    also the lines that switched to a recovery line (``line_recovered``) and how many of those completed it
+    (``line_recovered_completed``); a line still recovering at the end counts as unfinished."""
     out = {}
     for prefix, seat in (("line", None), ("line_first", 0)):
         lines = [g.line for g in games if g.line is not None and (seat is None or g.line_seat == seat)]
@@ -246,6 +255,11 @@ def line_stats(games) -> dict:
                     f"{prefix}_unfinished": sum(ln["status"] == "playing" for ln in lines)})  # fmt: skip
         if seat is not None:
             out[f"{prefix}_skipped"] = sum(bool(ln.get("skipped")) for ln in lines)
+        if recovery:
+            recovered = [ln for ln in lines if ln.get("recoveries")]
+            out[f"{prefix}_unfinished"] += sum(ln["status"] == "recovering" for ln in lines)
+            out.update({f"{prefix}_recovered": len(recovered),
+                        f"{prefix}_recovered_completed": sum(ln["status"] == "completed" for ln in recovered)})  # fmt: skip
     return out
 
 
@@ -307,12 +321,19 @@ class Trainer:
             prior = loaded.net.to(self.device)
         self.lines = self.line_labels = None
         if cfg.line_demos and cfg.line_share > 0:
-            self.lines = LineLibrary.load(cfg.line_demos, self.vocab, cards=self.cards, env=self.environment)
+            self.lines = LineLibrary.load(cfg.line_demos, self.vocab, cards=self.cards, env=self.environment,
+                                          recovery=cfg.line_recovery, event_length=cfg.event_length)  # fmt: skip
             self.log(f"scripted lines: {len(self.lines)} from {len(cfg.line_demos)} file(s) in {self.lines.seconds:.0f} s"
                      + "".join(f"; left out {p}" for p in self.lines.problems[:10])
                      + (f"; ... {len(self.lines.problems)} left out" if len(self.lines.problems) > 10 else ""))  # fmt: skip
             if not len(self.lines):
                 raise ValueError("line_demos has no solved plain line that replays (see the log)")
+            if cfg.line_recovery:
+                rp = self.lines.recovery_problems
+                self.log(f"recovery lines: {self.lines.recovery_windows} windows on "
+                         f"{sum(bool(s.recovery) for s in self.lines.scripts)} lines from {len(cfg.line_recovery)} "
+                         f"file(s)" + "".join(f"; left out {p}" for p in rp[:5])
+                         + (f"; ... {len(rp)} left out" if len(rp) > 5 else ""))  # fmt: skip
             if cfg.line_labels:
                 self.line_labels = LineLabels.load(cfg.line_labels, self.lines, self.vocab, cards=self.cards,
                                                    env=self.environment, event_length=cfg.event_length, log=self.log)  # fmt: skip
@@ -573,7 +594,7 @@ class Trainer:
                   **{k: round(v, 5) if isinstance(v, float) else v for k, v in stats.items()},
                   "total": dict(c), "pool": len(self.pool),
                   **({"evolved_games": evolved_games} if self.evolved is not None else {}),
-                  **(line_stats(ro.games) if self.lines is not None else {})}  # fmt: skip
+                  **(line_stats(ro.games, bool(self.cfg.line_recovery)) if self.lines is not None else {})}  # fmt: skip
         with (self.run_dir / "metrics.jsonl").open("a") as f:
             f.write(json.dumps(record) + "\n")
         self.log(f"update {c['updates']}: {record['decisions_per_s']:.0f} decisions/s collect, "
@@ -582,6 +603,8 @@ class Trainer:
                  f"q_loss {stats['q_loss']:.4f}, pool win {record['pool_win_rate']}"
                  + (f", lines {record['line_completed']}/{record['line_games']} completed, {record['line_broken']} "
                     f"broken (mean step {record['line_broken_step']})" if self.lines is not None else "")
+                 + (f", {record['line_recovered']} recovered ({record['line_recovered_completed']} completed)"
+                    if "line_recovered" in record else "")
                  + (f", first-seat {record['line_first_completed']}/{record['line_first_games']} completed, "
                     f"{record['line_first_broken']} broken (mean step {record['line_first_broken_step']}, "
                     f"{record['line_first_skipped']} skipped leading steps)"

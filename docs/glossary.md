@@ -99,7 +99,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | piece | 阻断件 | 卡组里能作为求解器目标的场上阻断怪兽（`blocking.Piece`） |
 | window counterfactual advantage / `branch_value` | 窗口反事实优势 | 在打断窗口同槽位快照，打 / 不打各推演到对手回合结束，用 critic 截断后的差作该窗口的优势或 Q 目标（spikes/first-seat-interruption-plan-2026-10-24.md §5.1） |
 | prefix start / `Position` | 前缀起局 / 局面 | 用种子 + 动作前缀在环境里重放到某个局面（如回合 1 结束）再开始训练（同上 §5.2） |
-| recovery line | 恢复线 | 对手的线在某时点被打断后，求解器（`--fire`）找到的到达原终场的续线；脚本线对手被打断时改走它（同上 §5.3） |
+| recovery line / `RecoveryLine` | 恢复线 | 对手的线在某时点被打断后，求解器（`--fire`）找到的到达原终场的续线；按（线，窗口身份 =（被回应效果，次数），打断卡）索引，脚本线对手被学习方在该时点打断时改走它（`LinePlayer.interrupt`，状态 `recovering`；同上 §5.3，training.md §8.3） |
 | reactive line | 反应式线 | 按学习者实际回合 1 场面重新求解的对手回合 2 线（同上 §5.3） |
 | bait line | 诱饵线 | 先用可恢复的次要起手骗打断、再出真起手的对手线（同上 §5.5） |
 | bait window / breaking window | 诱饵时点 / 动点 | 求解器灰流丽标签里，打了对手仍能恢复原终场的时点 / 打了就铺不出原场面的时点（`tools/handtrap_ruler.py`，training.md §8.4.1） |
