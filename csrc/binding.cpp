@@ -417,17 +417,23 @@ PYBIND11_MODULE(_core, m) {
         .def("step", &PyDecisionState::step, py::arg("index"))
         .def_property_readonly("done", &PyDecisionState::done);
 
+    py::class_<host::HostDuel::Snapshot, std::shared_ptr<host::HostDuel::Snapshot>>(
+        m, "HostSnapshot", "Opaque step-wise state of one HostDuel game (HostDuel.snapshot); restorable only into that game.")
+        .def_property_readonly("nbytes", &host::HostDuel::Snapshot::nbytes);
+
     py::class_<host::HostDuel>(m, "HostDuel", "A duel driven entirely in C++: tracker, actions and encoder.")
         .def(py::init([](std::shared_ptr<CardDatabase> cards, std::shared_ptr<ScriptDirectory> scripts,
-                         const std::vector<uint32_t>& vocab, size_t event_length, bool selection_history, uint32_t cancel_budget, bool attack_history) {
-                 auto h = std::make_unique<host::HostDuel>(cards, scripts, std::make_shared<host::Vocab>(vocab));
+                         const std::vector<uint32_t>& vocab, size_t event_length, bool selection_history, uint32_t cancel_budget, bool attack_history,
+                         bool snapshots) {
+                 auto h = std::make_unique<host::HostDuel>(cards, scripts, std::make_shared<host::Vocab>(vocab), snapshots);
                  h->set_event_length(event_length);
                  h->set_selection_history(selection_history);
                  h->set_attack_history(attack_history);
                  h->set_cancel_budget(cancel_budget);
                  return h;
              }),
-             py::arg("cards"), py::arg("scripts"), py::arg("vocab"), py::arg("event_length") = 0, py::arg("selection_history") = false, py::arg("cancel_budget") = 32, py::arg("attack_history") = false)
+             py::arg("cards"), py::arg("scripts"), py::arg("vocab"), py::arg("event_length") = 0, py::arg("selection_history") = false, py::arg("cancel_budget") = 32, py::arg("attack_history") = false,
+             py::arg("snapshots") = false)
         .def("start", [](host::HostDuel& h, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1, py::tuple t2,
                          DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
             auto p1 = to_player(t1), p2 = to_player(t2);
@@ -460,19 +466,37 @@ PYBIND11_MODULE(_core, m) {
             }
             return privileged_dict(p);
         }, "Training-only opponent ground truth (docs/encoding.md); never feed it to the actor.")
-        .def("result", [](host::HostDuel& h) { return outcome_dict(h.tracker().outcome()); });
+        .def("result", [](host::HostDuel& h) { return outcome_dict(h.tracker().outcome()); })
+        .def("snapshot", [](host::HostDuel& h) {
+            std::shared_ptr<const host::HostDuel::Snapshot> snap;
+            {
+                py::gil_scoped_release release;
+                snap = h.snapshot();
+            }
+            return std::const_pointer_cast<host::HostDuel::Snapshot>(snap);
+        }, "Copy the game's step-wise state (core, tracker, event history) at the current decision (T1).")
+        .def("restore", [](host::HostDuel& h, const host::HostDuel::Snapshot& snap) {
+            py::gil_scoped_release release;
+            h.restore(snap);
+        }, py::arg("snapshot"), "Return to a snapshot of this game (ValueError for another game's).")
+        .def_property_readonly("snapshots_enabled", &host::HostDuel::snapshots_enabled)
+        .def("arena_escapes", &host::HostDuel::arena_escapes, py::call_guard<py::gil_scoped_release>())
+        .def("arena_bytes", &host::HostDuel::arena_bytes, py::call_guard<py::gil_scoped_release>());
 
     py::class_<host::HostPool>(m, "HostPool",
         "Vectorized env with the step loop, action states and encoder in C++ (env i on thread i % threads).")
         .def(py::init([](size_t num_envs, size_t num_threads, std::shared_ptr<CardDatabase> cards,
                          std::shared_ptr<ScriptDirectory> scripts, const std::vector<uint32_t>& vocab, bool privileged,
-                         size_t event_length, bool skip_forced, bool selection_history, uint32_t cancel_budget, bool attack_history) {
+                         size_t event_length, bool skip_forced, bool selection_history, uint32_t cancel_budget, bool attack_history,
+                         bool snapshots) {
                  return std::make_unique<host::HostPool>(num_envs, num_threads, cards, scripts,
                                                          std::make_shared<host::Vocab>(vocab), privileged,
-                                                         event_length, skip_forced, selection_history, cancel_budget, attack_history);
+                                                         event_length, skip_forced, selection_history, cancel_budget, attack_history,
+                                                         snapshots);
              }),
              py::arg("num_envs"), py::arg("num_threads"), py::arg("cards"), py::arg("scripts"), py::arg("vocab"),
-             py::arg("privileged") = false, py::arg("event_length") = 0, py::arg("skip_forced") = false, py::arg("selection_history") = false, py::arg("cancel_budget") = 32, py::arg("attack_history") = false)
+             py::arg("privileged") = false, py::arg("event_length") = 0, py::arg("skip_forced") = false, py::arg("selection_history") = false, py::arg("cancel_budget") = 32, py::arg("attack_history") = false,
+             py::arg("snapshots") = false)
         .def("reset", [](host::HostPool& p, int env, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1,
                          py::tuple t2, DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
             host::PoolJob job;
@@ -504,7 +528,17 @@ PYBIND11_MODULE(_core, m) {
             }
             return out;
         }, py::arg("min_results") = 1, py::arg("timeout_ms") = -1)
-        .def("pending", &host::HostPool::pending);
+        .def("pending", &host::HostPool::pending)
+        .def("snapshot", &host::HostPool::snapshot, py::arg("env"), py::call_guard<py::gil_scoped_release>(),
+             "Queue a snapshot of env's current decision; returns its id at once (recv returns the observation).")
+        .def("restore", &host::HostPool::restore, py::arg("env"), py::arg("id"), py::call_guard<py::gil_scoped_release>(),
+             "Queue a return to snapshot id of env's current game (ValueError otherwise); recv returns its observation.")
+        .def("release", &host::HostPool::release, py::arg("env"), py::arg("id"), py::call_guard<py::gil_scoped_release>(),
+             "Free snapshot id of env now.")
+        .def("snapshot_count", &host::HostPool::snapshot_count, py::call_guard<py::gil_scoped_release>())
+        .def("snapshot_bytes", &host::HostPool::snapshot_bytes, py::call_guard<py::gil_scoped_release>())
+        .def("arena_escapes", &host::HostPool::arena_escapes,
+             "Allocations that escaped the arenas of the pool's duels (must be 0 for exact snapshots).");
 
     bind_event_history(m);
 

@@ -217,7 +217,7 @@ core.restore(snap)        # 回到快照时刻，之后的消息流与从头重�
 
 验证：`tests/test_snapshot.py`（恢复后续跑与不中断的消息流逐字节一致、多快照乱序恢复、从快照分叉走不同应答与全新重放一致、跨局拒绝、恢复耗时 < 重放 1/5；把恢复改成空操作时其中 3 项失败，作为阳性对照）；`uv run python tools/check_snapshots.py --games 200` 在随机时刻拍快照、先跑出去若干步再恢复，全局比对并记录耗时，数字见 [benchmarks.md](benchmarks.md)。
 
-`_core.Duel` 的快照只覆盖规则核心。Python 侧的 `engine.duel.DuelSession` 把一局改成逐步推进（`point` / `act(idx)`，课程模式的主机代答照常在内部完成），它的 `snapshot()` / `restore()` 同时保存核心快照与 `DuelTracker` 的深拷贝，可直接在任意 agent 步分叉；分支探索（T2.9）的 rollout 已改用它。C++ 步进环境（`HostDuel` / `HostPool`）的追踪器快照尚未实现。
+`_core.Duel` 的快照只覆盖规则核心。Python 侧的 `engine.duel.DuelSession` 把一局改成逐步推进（`point` / `act(idx)`，课程模式的主机代答照常在内部完成），它的 `snapshot()` / `restore()` 同时保存核心快照与 `DuelTracker` 的深拷贝，可直接在任意 agent 步分叉；分支探索（T2.9）的 rollout 已改用它。C++ 步进环境（`HostDuel` / `HostPool` / `EncodedVecEnv`）的快照见下文「步进环境快照」。
 
 ## 向量化环境（`ygorl.env`，T2.1）
 
@@ -247,3 +247,24 @@ core.restore(snap)        # 回到快照时刻，之后的消息流与从头重�
 - 课程模式（[curriculum.md](curriculum.md)）目前只在 Python 主机（`Duel.run` / `VecDuelEnv`）里实现；`curriculum` 不是 `full` 或 `augmented_start=True` 的规格会被 `EncodedVecEnv.reset` 以 `NotImplementedError` 拒绝，而不是悄悄按完整对局运行。
 
 Python 侧 `ygorl.env.encoded.EncodedVecEnv` 负责把 `GameSpec` 转成种子与加卡顺序（与 `Duel` 共用主机洗牌），`play(specs, choose)` 用于测试与基准。`tests/test_host_pool.py` 检查它与 `Duel.run` 在相同动作序列下逐局一致、线程数不影响结果、上限同样生效。吞吐基准见 [benchmarks.md](benchmarks.md)（`tools/bench_throughput.py`）。
+
+### 步进环境快照（T1）
+
+训练循环里的同槽位分支（窗口反事实、回合 1 候选评估）需要在 C++ 步进环境里直接拍快照，而不必每次从种子重放：
+
+```python
+env = EncodedVecEnv(num_envs, snapshots=True)
+...                          # recv 到 env e 的某个决策
+sid = env.snapshot(e)        # 作业：立即返回 id；recv 返回的事件是不变的当前观测
+...                          # 在 e 上走任意分支，可以一直走到终局
+env.restore(e, sid)          # 作业：recv 返回的事件 = 拍快照时的观测，逐字节相同
+env.release(e, sid)          # 立即释放（不是作业，也不产生事件）
+```
+
+- **内容**：`HostDuel::Snapshot` = 核心 arena 镜像（`Duel::snapshot`，含包装层日志缓冲）+ `Tracker` 的深拷贝（当前决策的 `DecisionState`（多选拆步的中间状态）、撤销规则计数、应答日志、局数与上限计数都在里面；`unique_ptr<DecisionState>` 换成按值深拷贝的 `DeepPtr`）+ `EventHistory` 的拷贝。`HostDuel` 其余成员（卡表、词表、事件窗口长度等配置）在一局内不变。恢复后观测（含事件流、`privileged=True` 时的特权张量）与拍快照时逐字节相同，之后的对局（结果、应答日志）与不中断的对局逐字节相同。`record_actions` / `record_games` 记录的动作轨迹随快照一起回退。
+- **作业**：`HostPool` 的快照与恢复和 `step` 一样在拥有该槽位的工作线程上执行，槽位在事件被 `recv` 取走前保持 busy，因此不会与 `step` 重入。`snapshot` 要求槽位空闲且处于进行中对局的决策点（否则 `RuntimeError`），id 在提交时就分配并返回，所以事件本身不带 id。释放只改快照表，直接在调用线程完成。
+- **限制**：快照只能恢复回拍下它的那一局、那个槽位。别的槽位、同槽位后来 `reset` 出的新局、别的 `HostDuel` 都报 `ValueError`（池在提交时按「槽位 + 该槽位的 reset 次数」检查，`HostDuel::restore` 再按 arena id 检查；arena id 从不复用）；失败的恢复不改变任何状态。所以一个局面的多个分支只能在同一槽位里依次跑，跨槽位起局要从种子重放。开 `snapshots=True` 后终局的对局留在槽位里（不再立即销毁），直到下一次 `reset`，所以分支打到终局后仍能恢复。快照不会被隐式释放（`reset` 也不释放），调用方负责 `release`；`snapshot_count()` / `snapshot_bytes()` 报告存量，`arena_escapes()` 汇总全池（必须为 0）。
+- **内存**：开 arena 后每个槽位的核心常驻约 3.2 MiB（实测中位数，p90 3.5、最大 4.5 MiB），每个存活的快照再占一份同样大小的镜像（追踪器与事件流的拷贝只有几 KiB）。1,024 个槽位各留 1 个快照约 6.5 GiB 主机内存。
+- **耗时**：`HostDuel.restore` 中位数 0.067 ms（快照 3.31 MiB；核心镜像拷回占绝大部分）（`tests/test_host_snapshot.py::test_host_duel_restore_is_fast`，2026-10-24 AI Max+ 395；阈值 1 ms）。
+
+验证：`tests/test_host_snapshot.py`——随机时刻拍快照、随机走 1–40 步（或走到终局）再恢复，观测（含事件与特权张量）逐字节相同、之后跑完的结果与应答日志与不中断的对局相同（`skip_forced` 开 / 关各一次）；多快照乱序恢复、终局后恢复；跨槽位 / 跨局 / 跨 `HostDuel` 恢复报错；线程数不影响结果；`arena_escapes() == 0`；释放后快照字节与进程 RSS 回落；恢复耗时。阳性对照：把 `HostDuel::restore` 改成空操作时10 项里 8 项失败；只恢复核心、不恢复追踪器与事件流时 7 项失败。

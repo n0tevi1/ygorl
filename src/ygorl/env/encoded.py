@@ -51,7 +51,7 @@ class EncodedVecEnv:
     def __init__(self, num_envs: int, num_threads: int | None = None, cards=None, scripts=None,
                  vocab: CardVocab | None = None, privileged: bool = False,
                  event_length: int = DEFAULT_EVENT_LENGTH, skip_forced: bool = False,
-                 record_actions: bool = False, selection_history: bool = False, cancel_budget: int = 32, attack_history: bool = False, record_games: bool = False) -> None:  # fmt: skip
+                 record_actions: bool = False, selection_history: bool = False, cancel_budget: int = 32, attack_history: bool = False, record_games: bool = False, snapshots: bool = False) -> None:  # fmt: skip
         """``privileged=True`` is training mode: events also carry ``privileged`` (opponent ground truth).
 
         The default (inference mode) never computes it. Evaluation and play must use the default.
@@ -66,6 +66,9 @@ class EncodedVecEnv:
         carry ``action_indices`` for replay with the same ``skip_forced`` setting; healthy wins discard the trace.
         ``record_games=True`` enables recording for every outcome, plus per-action ``action_model_updates``.
         The caller sets ``trace_model_update`` before collection; None means an unspecified model version.
+        ``snapshots=True`` enables :meth:`snapshot` / :meth:`restore` / :meth:`release` (docs/engine.md
+        「步进环境快照」): every game's core lives in a private arena (about 3 MiB more per env, plus about 3 MiB per
+        live snapshot), and a finished game stays restorable in its env until the next reset.
         """
         if type(cancel_budget) is not int or cancel_budget not in (0, 1, 4, 32):
             raise ValueError("cancel_budget must be 0, 1, 4 or 32")
@@ -78,7 +81,8 @@ class EncodedVecEnv:
             raise ValueError("selection history requires a nonempty event window")
         self._pool = _core.HostPool(num_envs, threads, self.cards.to_core(),
                                     scripts if scripts is not None else default_scripts(), passwords,
-                                    privileged, event_length, skip_forced, selection_history, cancel_budget, attack_history)  # fmt: skip
+                                    privileged, event_length, skip_forced, selection_history, cancel_budget, attack_history,
+                                    snapshots)  # fmt: skip
         self.num_envs = num_envs
         self.num_threads = threads
         self.privileged = privileged
@@ -90,6 +94,9 @@ class EncodedVecEnv:
         self.trace_model_update: int | None = None
         self._action_traces: dict[int, list[int]] | None = {} if record_actions or record_games else None
         self._action_updates: dict[int, list[int | None]] = {}
+        self.snapshots = snapshots
+        # Per snapshot id: the env's action trace / model updates when it was taken (restored with it).
+        self._snapshot_traces: dict[int, tuple[list[int] | None, list[int | None] | None]] = {}
 
     def reset(self, env_id: int, spec: GameSpec) -> None:
         if spec.config.curriculum != "full" or spec.config.augmented_start:
@@ -113,6 +120,48 @@ class EncodedVecEnv:
             self._action_traces[env_id].append(int(action))
         if self.record_games:
             self._action_updates[env_id].append(self.trace_model_update)
+
+    def snapshot(self, env_id: int) -> int:
+        """Queue a snapshot of ``env_id``'s current decision and return its id.
+
+        Like :meth:`step` it is a job: the env stays busy until :meth:`recv` returns its event, the unchanged
+        current observation. The env must be idle at a decision of a running game (RuntimeError otherwise).
+        """
+        sid = self._pool.snapshot(env_id)
+        trace = self._action_traces.get(env_id) if self._action_traces is not None else None
+        updates = self._action_updates.get(env_id) if self.record_games else None
+        self._snapshot_traces[sid] = (
+            None if trace is None else list(trace),
+            None if updates is None else list(updates),
+        )
+        return sid
+
+    def restore(self, env_id: int, sid: int) -> None:
+        """Queue a return of ``env_id`` to snapshot ``sid``; :meth:`recv` then returns the observation it was taken at
+        (byte for byte). Only snapshots of the env's current game restore, finished or not: a snapshot of another env
+        or of an earlier game raises ValueError. The snapshot stays valid until :meth:`release`."""
+        self._pool.restore(env_id, sid)
+        trace, updates = self._snapshot_traces[sid]
+        if self._action_traces is not None and trace is not None:
+            self._action_traces[env_id] = list(trace)
+        if self.record_games and updates is not None:
+            self._action_updates[env_id] = list(updates)
+
+    def release(self, env_id: int, sid: int) -> None:
+        """Free snapshot ``sid`` of ``env_id`` (immediately; no event). Snapshots are never freed implicitly."""
+        self._pool.release(env_id, sid)
+        self._snapshot_traces.pop(sid, None)
+
+    def snapshot_count(self) -> int:
+        return self._pool.snapshot_count()
+
+    def snapshot_bytes(self) -> int:
+        """Bytes held by the live snapshots' core images (the tracker copies add a few KiB each)."""
+        return self._pool.snapshot_bytes()
+
+    def arena_escapes(self) -> int:
+        """Allocations that escaped the arenas of this env's duels; must stay 0 for exact snapshots."""
+        return self._pool.arena_escapes()
 
     def recv(self, min_events: int = 1, timeout: float | None = None) -> list[EncodedEvent]:
         timeout_ms = -1 if timeout is None else int(timeout * 1000)
