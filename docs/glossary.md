@@ -105,6 +105,9 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | bait window / breaking window | 诱饵时点 / 动点 | 求解器灰流丽标签里，打了对手仍能恢复原终场的时点 / 打了就铺不出原场面的时点（`tools/handtrap_ruler.py`，training.md §8.4.1） |
 | ruler R1 / R2 / R2b | 尺子 R1 / R2 / R2b | 留出手（40–49）上的固定行为读数：R1 回合 1 打断数，R2 手坑评分 / 浪费率 / 漏打，R2b 诱饵在前子集上的 P(打 \| 诱饵) 与 P(打 \| 动点)（training.md §8.4.1） |
 | first-seat line evaluation | 先手线评估 | 学习者先攻、对手回合 2 按求解线走（断线后由固定 ckpt 接手）的配对评估：线完成率、胜率、窗口开火分布（`tools/first_seat_line_eval.py`） |
+| line break / break cause | 断线 / 断线原因 | 脚本线对手在某一步找不到匹配候选而交给快照策略；原因分三类：学习者在线的回合打断（`learner_interrupt`）、先手局回合 2 开头容差匹配失败（`turn2_start`）、其它（`tools/line_break_census.py`，同上 §6 P0a） |
+| board key | 场面键 | 回合 1 终场的离散化：学习者场上怪兽与魔陷（密码，表侧 / 盖放）加墓地、除外的多重集合；反应式线缓存按它命中（`tools/turn1_board_modes.py`，同上 §5.3、§6 P0c） |
+| cross-fitting | 交叉拟合 | 把评估样本分两半，一半选候选、另一半估它的值，再交换取均值，去掉「选最好的」带来的乐观偏差（PR #167；`tools/turn1_exit_pilot.py`，同上 §6 P0d） |
 | ExIt / turn-1 expert iteration | 专家迭代 / 回合 1 专家迭代 | 同一手牌采样多个回合 1 展开，按对手线失败率打分，取组内优者加权蒸馏回策略（同上 §5.4） |
 
 ## 组牌与评估
