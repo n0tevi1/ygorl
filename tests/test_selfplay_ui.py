@@ -904,3 +904,20 @@ def test_list_card_found_from_the_client_list():
     player.trace = SimpleNamespace(observe=lambda **k: None)
     assert player.find_by_client_list(7, 0, cards) == 2 and clicks == [cards[2]]
     assert player.find_by_client_list(9, 0, cards) is None  # not listed: the tick-and-read search decides
+
+
+def test_prompt_card_named_by_the_client_list_when_the_open_card_read_is_empty():
+    """An open prompt listing one hand card: the client's list names it even when the open-card read gives
+    nothing (a stale address on a duel's first step passed Millennium Seeker's free Summon)."""
+    from ygorl.md.client import PromptCard
+    from ygorl.selfplay.loop import Player
+
+    clicks = []
+    player = Player.__new__(Player)
+    player.ui = SimpleNamespace(click=lambda x, y, why, pause=0: clicks.append((x, y)))
+    player.game = SimpleNamespace(read=lambda: None)
+    player.selection = SimpleNamespace(address=1, read=lambda raw: None)
+    player.prompt_list = lambda: [PromptCard(15841, 0, 13, 2, 9)]
+    player.passwords = {15841: 5130393}
+    player.trace = SimpleNamespace(observe=lambda **k: None)
+    assert player.tick_prompt_card(5130393) == 5130393 and clicks == [L.PROMPT_CARD]

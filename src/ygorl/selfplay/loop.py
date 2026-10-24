@@ -1442,14 +1442,18 @@ class Player:
             order = [spots[i] for i, c in enumerate(listed) if self.passwords.get(c.cid) == want]
             order += [xy for xy in spots if xy not in order]
             self.trace.observe(prompt_list=[c.cid for c in listed])
-            if sel is None or sel.address is None:
-                # the open-card read is not calibrated yet (a duel's first step): the client's list (memory) names
-                # the card at each place; Millennium Seeker's free Summon was passed for want of the read
-                self.ui.click(*order[0], "tick the offered card (the client's list names it)", 0.8)
-                got_pw = self.passwords.get(listed[spots.index(order[0])].cid)
-                self.prompted = listed[spots.index(order[0])].cid
-                self.trace.observe(prompt_card={"want": want, "got": got_pw, "by": "client list"})
-                return got_pw
+            # the client's list (memory) names the card at each place: tick the meant one; the open-card read only
+            # overrides it when it names another card of ours (an uncalibrated or stale read, None, does not:
+            # Millennium Seeker's free Summon was passed twice for want of that read)
+            self.ui.click(*order[0], "tick the offered card (the client's list names it)", 0.8)
+            cid = listed[spots.index(order[0])].cid
+            got = sel.read(self.game.read()) if sel is not None and sel.address is not None else None
+            if got is not None and got[0] != cid:
+                cid = got[0]
+            self.prompted = cid
+            got_pw = self.passwords.get(cid)
+            self.trace.observe(prompt_card={"want": want, "got": got_pw, "by": "client list", "read": got and got[0]})
+            return got_pw
         for count in range(1, 5):
             for xy in order if count == 1 and order else [] if order else L.prompt_cards(count):
                 if xy in tried:
