@@ -96,6 +96,12 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `interruption` | 阻断点 / 妨害 | 能在对手回合打断对手的一张卡：场上表侧的诱发即时效果、盖放的陷阱或速攻魔法、手里的手坑、墓地的诱发即时效果，效果须无效或能处理对手的卡（`ygorl.solver.blocking`，solver.md「阻断场面」） |
 | blocking board | 阻断场面 | 先攻第 1 回合结束时阻断点多的场面；求解器示范的自动目标（solver.md） |
 | piece | 阻断件 | 卡组里能作为求解器目标的场上阻断怪兽（`blocking.Piece`） |
+| window counterfactual advantage / `branch_value` | 窗口反事实优势 | 在打断窗口同槽位快照，打 / 不打各推演到对手回合结束，用 critic 截断后的差作该窗口的优势或 Q 目标（spikes/first-seat-interruption-plan-2026-10-24.md §5.1） |
+| prefix start / `Position` | 前缀起局 / 局面 | 用种子 + 动作前缀在环境里重放到某个局面（如回合 1 结束）再开始训练（同上 §5.2） |
+| recovery line | 恢复线 | 对手的线在某时点被打断后，求解器（`--fire`）找到的到达原终场的续线；脚本线对手被打断时改走它（同上 §5.3） |
+| reactive line | 反应式线 | 按学习者实际回合 1 场面重新求解的对手回合 2 线（同上 §5.3） |
+| bait line | 诱饵线 | 先用可恢复的次要起手骗打断、再出真起手的对手线（同上 §5.5） |
+| ExIt / turn-1 expert iteration | 专家迭代 / 回合 1 专家迭代 | 同一手牌采样多个回合 1 展开，按对手线失败率打分，取组内优者加权蒸馏回策略（同上 §5.4） |
 
 ## 组牌与评估
 

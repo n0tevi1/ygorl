@@ -1,0 +1,358 @@
+# 先手「制造断点」与「打断」：研究、规划与设计（2026-10-24）
+
+范围：只做研究与设计，不实现训练功能，也不跑 GPU 训练。目标是让先手学会两件事：回合 1 摆出能打断对手的场面（制造断点），以及在对手回合 2 挑对时点打断。
+背景数字见 [rl-methodology-review-2026-10-20.md](rl-methodology-review-2026-10-20.md) §6.2–§6.4、§7.3b–§7.5 与 #439–#443。
+基准脚本是 `tools/bench_prefix_fork.py`（本次新增，只用 CPU）。
+
+## 0. 结论先行
+
+1. **能直接复用的开源对局复制：没有。** ygoenv（sbl1996/ygo-agent）和 envpool 都不能复制或快照对局状态。唯一能用的机制是 ygo-combo-solver 的 arena，**我们已经移植并验收过（T2.8，#20 已关闭）**。还缺的是把它接进 C++ 步进环境 `HostDuel` / `HostPool`，工作量是几百行 C++，不需要换框架。
+2. **分叉很便宜，从种子重放也不贵。** 实测 77 条求解线、18 套牌，重放到回合 1 结束（回合 2 第一个决策）的中位数是 20 ms，其中 16 ms 是建局本身，跟普通 reset 一样要付。快照恢复中位数 0.40 ms，其中核心部分 0.13 ms。快照只能恢复回拍下它的那一局，所以 A/D 的多个分支要在**同一个槽位里依次跑**，跨槽位起局就用重放。
+3. **诊断要补一条。** 回合 2 的对手线一旦被打断，就交给快照策略接手。而这个策略几乎展不开连招：G 只有 6% 能到达求解器目标，前瞻 oracle 的一致率只有 0.57。按 #441 的记录，先手脚本局里 G u576 有 80–84% 的线被打断。结果是**任何一次打断都会把对手变弱**，训练信号因此奖励「有机会就打」，这和每个 ckpt 都在窗口 1 打灰流丽的表现一致。所以 A（窗口反事实）**必须配上合格的「恢复」对手**，否则反事实差值会系统性地偏向「打」。
+4. **推荐的第一步**：先做 §6 的阶段 0，纯 CPU，约 1–2 天，同时开工 T1（C++ `HostDuel` 快照）。阶段 0 的 P0b 用现有 Python `DuelSession` 快照和已有的灰流丽恢复线（`--fire` 变体），离线检查窗口反事实与求解器标签的一致性。目标是一致率 ≥ 0.75、平局 ≤ 15%；达到才接进训练循环（A + T6 恢复线），达不到就先修恢复对手。
+
+## 1. 复用调查（研究问题 1）
+
+| 项目 | 一手来源 | 有没有对局状态复制 | 结论 |
+|---|---|---|---|
+| sbl1996/ygo-agent 的 `ygoenv` | 仓库 `dbf5142`（2024-08-16）：`ygoenv/ygoenv/ygopro/ygopro.h`（5.4k 行）、`edopro/edopro.h` | **没有**。全仓 grep `clone/snapshot/save_state/restore/fork`，只在 `mcts/core/array.h` 找到数组 `Clone()` 和线程池注释。`EDOProEnv::Reset()` 每局 `OCG_CreateDuel` 从头建局 | 不能复用为分叉环境 |
+| ygo-agent 的 `mcts/`（AlphaZero 树） | `mcts/mcts/alphazero/alphazero.py`：靠 `env.from_state_list(states)` / `env.step(states, actions)` 推进状态；`mcts/core/state.py` 里的 `State` 只是一个 numpy int 数组 | 这是给能把状态编码成小数组的玩具环境写的通用树，**ygoenv 没有实现** `from_state_list`；README 的 TODO 里还列着「MCTS Planning」 | 不能复用。核心也不同：ygoenv 用的是 Fluorohydride 核心，edopro 后端已不维护（见 [01-engine.md](../design/01-engine.md) R6） |
+| sail-sg/envpool | 仓库 `envpool/core/*.h`：`Env<Spec>` 只有 `Reset/Step`、异步 send/recv | **没有**状态保存/恢复接口 | 我们的 `HostPool` 已经是 envpool 同构的接口（[03-play-policy.md](../design/03-play-policy.md)），没有可再借的 |
+| edo9300 ygopro-core `ocgapi.h` | `third_party/ygopro-core/ocgapi.h` | 没有 `OCG_DuelClone` 一类的 API（只有 Create/Destroy/NewCard/Start/Process/GetMessage/SetResponse/LoadScript/Query*） | — |
+| 96jonesa/ygo-combo-solver（上游名 Armytille） | `arena.h`（`e0c7221`）头注释：*"The OCG API offers no state cloning, and a hand-written serialiser is out of reach: at a MSG_SELECT_*, Lua coroutines sit suspended … So we do not save the game, we save THE MEMORY."* 每线程一个 arena，原地址恢复，快照不跨线程 | **有**：整块内存镜像 | **已移植**：`csrc/arena.{h,cpp}`、`_core.Duel(snapshots=True)`、`DuelSession.snapshot/restore`。T2.8 验收：200 局 1,000 次恢复，消息流 0 处不一致，恢复/重放 0.012（[benchmarks.md](../benchmarks.md)「快照恢复 vs 重放」） |
+| 其它（网络检索「ygopro-core clone snapshot MCTS」） | 只找到 ygo-agent 镜像、论坛帖、非 YGO 的综述 | 没有找到第二个实现 | — |
+
+为什么不能走「序列化」：暂停在 `MSG_SELECT_*` 时，Lua 协程停在效果处理的中间，栈和 upvalue 都在里面。按字段序列化要穷尽核心与脚本的全部状态，做不到（这一点和求解器作者的判断一致）。
+内存镜像是唯一可行的办法，它的代价是**快照绑定在拍下它的那个 arena 槽位上**：指针是绝对地址，换个槽位恢复就要重定位，所以不支持。
+
+**结论：不引入外部 env 框架。** 在我们自己的 `HostDuel` / `HostPool` 上补齐快照与前缀起局（§5.2、任务 T1/T2）即可，这也符合 CLAUDE.md「不要引入其它运行时或框架」的约束。
+
+## 2. 现状盘点：已有的、可复用的、缺的
+
+| 组件 | 位置 | 状态 | 对本计划的用处 |
+|---|---|---|---|
+| arena 快照（核心） | `csrc/arena.*`、`core_backend.h` `Duel::snapshot/restore` | 已落地（T2.8，#20 已关闭） | A、D 的同槽位分支 |
+| Python 逐步对局 + 快照 | `engine/duel.py` `DuelSession.snapshot/restore`（核心镜像 + `DuelTracker` 深拷贝） | 已落地 | 阶段 0 的离线工具可以直接用 |
+| 分支 API | `engine/branch.py` `fork(replay, t)`、`Branch.try_all` | 已落地，rollout 已改走快照 | 离线反事实、调试 |
+| C++ 步进环境快照 | `csrc/host.h` `HostDuel`（`core_` + `Tracker`（含 `unique_ptr<DecisionState>`）+ `EventHistory`） | **缺**（engine.md 明说「追踪器快照尚未实现」） | 训练循环内分叉的前提（T1） |
+| C++ 前缀起局 | `PoolJob` 只有 `reset`（种子 + 卡组）或 `action` | **缺** | 从回合 1 结束起局（T2） |
+| 脚本线对手 | `train/lines.py`（`LineScript`、`LinePlayer`，含先手容差）；`rollout.py` `_act_line`；`selfplay.py` `_deal_lines` | 已落地，两席位 | A 的确定性对手；C/E 的载体 |
+| 灰流丽时点标签 + 恢复线 | `out/claude-scale/handtrap/graded.jsonl`、`labels*.jsonl`（`variant="fire"` 记录的 `lines` 是每个可恢复时点的恢复线）；`train/line_labels.py` 按（被回应效果，次数）连接 | 已落地，只覆盖后手席位 | P0b 的标准答案；T6 的恢复对手 |
+| 每行加优势 / 监督项的接口 | `ppo.py` `PPOLearner.targets()`：`line_bonus` 在归一化前加到原始优势上；`line_ce` 是带权交叉熵 | 已落地 | A 的优势、D 的蒸馏项可以照这个模式接 |
+| 求解器封装 | `solver/combo_solver.py`、`solve_fire`、`blocking.py`、`continuation.py`（普通洗牌、`--start` 前缀续接） | 已落地（子进程） | C 的再求解、E 的诱饵线 |
+| 尺子 | `out/claude-scale/turn1_board.py`（回合 1 打断数）、`handtrap_eval.py`（手坑评分）、`panel.py`（扩展面板，含先后手） | 已落地 | 每阶段的验收 |
+| 旧分支 `claude/timing-search`（PR #167，未合并） | `tools/timing_search.py`、`tools/interruption_effect.py`：重放到回合 2，用公共随机数对比「第 j 个机会打」和「每个合法打断 × 对手每个动作」 | 研究工具，基于从头重放 | **结论可复用**：对自博弈对手，时点的 oracle 余量只有 +2 pp，但**打对咽喉点**有 +3.7 pp（逐局面 +6.6 ± 3.3）；策略在 92% 的线里开火，只有 53% 打在咽喉点上，偏爱打起手和「对手还没出牌」。咽喉点和打法的分类可以直接沿用到 P0b 的报告里 |
+| 旧分支 `claude/turn1-value`（PR #159，未合并） | `tools/turn1_value.py`：配对对比「回合 1 换人打」 | 研究工具 | **结论**：BC 老师把回合 1 打断数从 0.68 提到 1.43，先手胜率只 +1.9 pp（不显著）。和 §7.3b「混合体亏 13 pp」一起说明：**只看件数的回合 1 目标不涨胜率**，D 的评估必须看对手线是否失败 |
+| 旧分支 `claude/solver-teacher` | 已合并进 main（阻断线示范 + BC 先验） | — | D 的候选来源之一（只当候选，不当目标） |
+| PR #163（`claude/offline-vn`，未合并） | 离线价值网络 | 研究结论 | critic 在分叉状态上的动作间差只有 0.005，π 加权后的价值网差 0.015，都远小于一步不一致（5–6×）。说明**单点决策不能靠 critic 的 Q 差**，需要用 rollout 测出来（A 的动机） |
+
+## 3. 实测：前缀起局与分叉的代价（B 的数字）
+
+命令：`uv run --no-sync python tools/bench_prefix_fork.py out/claude-scale/handtrap/lines_train.jsonl --lines 80 --envs 64 --threads 16`。
+2026-10-24，本机 AI Max+ 395（32 线程），**测量期间负载 19–32**（其它会话在训练），绝对值偏保守。
+样本是 77 条求解线、18 套牌（另有 3 条因撤销规则遮住示范动作而跳过）；先手按线走，后手被动；「回合 1 结束」= 回合 2 的第一个决策。
+
+| 项 | 中位数 | p90 | 最大 |
+|---|---:|---:|---:|
+| 回合 1 的步数（agent 步） | 52 | 92 | 131 |
+| Python `DuelSession` 建局 + 重放到回合 1 结束 | **20.4 ms** | 28.2 | 32.9 |
+| 　其中建局并跑到第一个决策（加载脚本、加卡） | 16.4 ms | 22.2 | 24.9 |
+| 　同上但开 arena（`snapshots=True`） | 19.7 ms | 27.0 | 33.6 |
+| `DuelSession.snapshot()`（核心镜像 + 追踪器深拷贝） | 0.51 ms | 0.72 | 1.28 |
+| `DuelSession.restore()` | **0.40 ms** | 0.57 | 0.77 |
+| 只算核心：`Duel.snapshot()` / `restore()` | 0.17 / **0.13 ms** | 0.88 / 0.17 | 1.35 / 0.25 |
+| arena 已用（≈ 快照大小） | 3.2 MiB | 3.5 | 4.5 |
+| C++ `EncodedVecEnv`（1 槽 1 线程）reset + 按线走到回合 1 结束 | 29.6 ms | 40.3 | 74.2 |
+| C++ 从回合 2 开始随机打到回合 3（不含网络；30 步） | 5.7 ms | 11.3 | 29.0 |
+| C++ 前缀起局吞吐（64 槽、16 线程） | **194 个/秒**（10,000 决策/秒） | | |
+
+读法：
+- **重放的成本几乎全在建局。** 线本身 52 步只占 4 ms（Python）或约 8 ms（C++，每步约 0.16 ms，含编码与 Python 往返）。任何新局都要付 16 ms 建局，所以「从回合 1 结束起局」比普通 reset 只多 25–50%。在训练里，每 1,024 局最多多花约 5 CPU 秒，分到 16 个工作线程上可以忽略。
+- **同槽位恢复比重放快约 50×**（0.40 ms 对 20 ms）。C++ 里不用拷 Python 追踪器，估计能降到 0.2 ms 左右。
+- **限制**：快照只能恢复到同一局，所以「一个局面分 K 份并行」做不到。可行的做法有两种：同槽位依次分支（A：K=2，每个分支打完对手回合约 6 ms 引擎时间加网络前向），或在 K 个槽位里各自重放（D 的候选评估，每份 20–30 ms）。
+- 内存：开 arena 后每局常驻约 3.2 MiB，每多一个快照再加 3.2 MiB。1,024 槽各留 1 个快照约 6.5 GiB 主机内存（假设：Colab L4 高内存规格够用；本机足够）。
+
+## 4. 文献与方法的适用性（研究问题 2）
+
+| 方法 | 要点 | 在「对手回合 2 的单个打断窗口」上 | 在「先手回合 1 展开」上 |
+|---|---|---|---|
+| Vine 采样（Schulman 等 2015，TRPO §5.2）；VinePPO（Kazemnejad 等 2024，arXiv:2410.01679） | 从轨迹上的状态复位，对多个动作做 rollout，用蒙特卡洛估值代替 critic；用公共随机数降方差。VinePPO 指出在稀疏奖励下 critic 的信用分配很差，改用中间状态的 MC 估值后明显变好 | **直接适用**：窗口少（每局约 4 个）、动作少（打 / 不打 / 换卡），复位便宜（0.13–0.4 ms）。我们的 critic 在窗口上的动作差只有约 0.005（PR #163、§7.4），正是 VinePPO 描述的情形 | 可用于评估回合 1 的终局面（D） |
+| 组内基线：GRPO（Shao 等 2024，arXiv:2402.03300）、RLOO（Kool 等 2019；Ahmadian 等 2024） | 同一起点多条样本，用组内均值作基线 | A 的 K 个分支本身就是一个组：优势 = 本分支值 − π 加权的组均值 | **最合适**：同一手牌的 N 个回合 1 样本，按「对手线失败率」做组内相对优势（scaling.md T11 已把 GRPO 限定在回合 1 展开） |
+| 反事实基线 COMA（Foerster 等 2018） | 固定其它因素，只把自己的动作边缘化，得到优势 | A 等于用模拟器做的 MC 版 COMA：对手线固定（脚本，确定性），只换本窗口的动作 | — |
+| 公共随机数 PEGASUS（Ng & Jordan 2000） | 固定随机种子比较策略 | 分支之间共用学习者与快照对手的采样种子（`branch.try_all` 已经这么做） | 同一组 M 个对手手牌和种子评估所有候选 |
+| 专家迭代 ExIt（Anthony 等 2017）、AlphaZero（Silver 等 2018） | 搜索出比策略更好的动作分布，再蒸馏回策略 | — | **适用但要改评估器**：回合 1 期间学习者的信息并不完全（对手手牌未知，对手可能在回合 1 打手坑）。评估要对对手手牌采样（PIMC）。策略融合（Frank & Basin 1998；Long 等 2010）的风险在于每个世界各自选最优；办法是**每个候选在全部 M 个对手样本上取平均后再选**，并且回合 2 的回应由真实策略来打（不用 oracle） |
+| AWR（Peng 等 2019）、MPO（Abdolmaleki 等 2018） | 按优势指数加权做监督，再加 KL 信赖域 | — | D 的蒸馏形式。候选来自策略自己的支撑集，所以 KL 小，可以避开「BC 老师亏 13 pp」那种分布外目标 |
+| 从演示或中间状态起局：Salimans & Chen 2018（arXiv:1812.03381）、Go-Explore（Ecoffet 等 2021）、反向课程（Florensa 等 2017） | 从靠近关键决策的状态开局，提高稀疏奖励的样本效率 | B 的依据：从「回合 2 开始」起局，样本全部落在回应窗口附近 | — |
+| 基于势的塑形（Ng 等 1999） | — | 已试过，负效应（§6.4），本计划不再用 | — |
+
+小结：窗口反事实就是 vine / COMA 式的 MC 优势，前提是对手在「被打断后」与「没被打断时」都打出合理的线。否则估出来的是「打断 × 对手变弱」的混合效应（§0 第 3 条）。
+
+## 5. 设计
+
+### 5.0 总体数据流
+
+```
+发局（selfplay._deal_lines）──► HostPool 槽位 ──► 学习者回合 1（正常采样，行进 PPO）
+                                   │
+                                   ├─(B) 可选：prefix 起局，直接从回合 2 开始（局面库：学习者近期的回合 1 局面 / 求解器局面）
+                                   ▼
+                       对手回合 2：LinePlayer 按线走（C：反应式线；T6：被打断后换恢复线）
+                                   │ 学习者窗口（有打断候选）
+                                   ├─(A) snapshot → 分支「打」→ 推演到回合 3 → V₁ → restore
+                                   │      分支「不打」→ 推演到回合 3 → V₀ → restore → 走真实采样动作
+                                   ▼
+                       Rollout 行（branch_value[a] / branch_valid）──► PPOLearner.targets()：优势与 Q 目标
+(D) 离线 / 每 64 次更新：同一手牌 N 个回合 1 候选 × M 个对手线 → 组内优势 → turn1_exit 数据集 → 加权 CE + KL
+(E) 线库：诱饵在前、真起手在后的线（求解器约束 + fire 分级）→ 按份额发局
+```
+
+### 5.1 A：窗口反事实优势
+
+**哪些窗口算数**：学习者的 `MSG_SELECT_CHAIN` 决策，满足三个条件：
+(a) 至少一个非 pass 的可选候选（「打断候选」）；
+(b) 在脚本线局的对手回合里：先手席位 `turn == 2`，后手席位 `turn == 1`；
+(c) 按 `branch_fraction` 抽样（默认 1.0，即只要满足条件都分）。
+自博弈局默认不分，因为对手不确定，CRN 只能部分配对；做成选项。
+
+**分支集合**：`pass` 加上按 π 概率排前 `branch_k − 1` 的打断候选，默认 K = 2，即「打 π 最想打的那张」和「不打」。
+
+**推演**：同槽位 `snapshot → step(候选) → 推进 → 停在视界 → 取值 → restore`，所有分支跑完后再走真实采样的动作。分支里：
+- 学习者：当前模型，使用分支专用的 `torch.Generator`，种子 = hash(窗口 id, 推演号)，各候选共用（CRN）；
+- 对手：`LinePlayer` 的状态在快照时 `copy.copy` 一份，恢复时还原。线没断时零网络开销；线断了，有恢复线（T6）就走恢复线，没有就由快照策略接手（用分支种子）；
+- **视界**：学习者在回合 3 的第一个决策（先手）/ 回合 2 的第一个决策（后手），或对局结束。取值：学习者视角的 critic V（特权 critic，设计 I9），对局结束则取 ±1；
+- 可选 `branch_rollouts M > 1`：每个候选推演 M 次取均值；
+- 可选 `branch_opponent_best_of`：对手取 M 次里对学习者最不利的一次。这是没有恢复线时的替代，用来抵消快照策略恢复能力弱的偏差。
+
+**写进 Rollout**：新增 `branch_value [T,B,A]`（未分支的格子填 NaN）和 `branch_valid [T,B]`。分支内的决策**不进训练行**。
+
+**优势与 Q 目标**（`ppo.py`，与 VRPO 共存）：
+- 对 `branch_valid` 行：Â = V_b(a_taken) − Σ_{a∈分支集} π̃(a)·V_b(a)，其中 π̃ 是 π 在分支集上的重新归一化（COMA 式基线）。
+  - 如果真实动作不在分支集里（K < 候选数时可能发生），这一行的 Â 退回 VRPO。
+- `branch_mode = "replace"`：用 Â 替换这一行的 VRPO 原始优势。
+- `branch_mode = "add"`：原始优势加上 `branch_coef · Â`。
+- 以上都发生在归一化之前，与 `line_bonus` 完全同一个位置（`PPOLearner.targets`）。
+- `branch_q_coef > 0` 时，这一行分支集内每个动作的 Q 目标改为 (1−w)·λ 目标 + w·V_b(a)，w = `branch_q_coef`。这直接给 Q 头在窗口上的动作差提供监督，即 #441 的「在线 R3」。
+- VRPO 的其它行不变。PPO 比率裁剪照常用行为策略的 log π。
+
+**要改的文件与函数**：
+- `csrc/host.{h,cpp}`、`host_pool.{h,cpp}`、`binding.cpp`、`env/encoded.py`：见 T1；
+- `train/rollout.py`：`_Slot` 加 `branch: _BranchState | None`。`_collect` 的分派里，处于分支态的槽位走 `_act_branch`：学习者事件合入同一次前向，但用分支生成器采样、不记行；对手事件照旧分组。新增 `BranchConfig`；
+- `train/lines.py`：`LinePlayer.copy()` / `restore(state)`；
+- `train/ppo.py`：`PPOConfig.branch_mode / branch_coef / branch_q_coef`，以及 `targets()` 中的合并；
+- `train/trainer.py`、`train/cli.py`：`--branch-windows`、`--branch-k`、`--branch-mode`、`--branch-coef`、`--branch-q-coef`、`--branch-fraction`；
+- `docs/training.md` 补一节；`docs/glossary.md` 补术语（本次已加）。
+
+**代价估计**（128×128 一次更新 16,384 行；数字来自 §3 与 [benchmarks.md](../benchmarks.md)「收集循环」：学习者一行前向约 0.21 ms，快照对手一行约 0.85 ms）：
+- 每次更新约有 25 局先手脚本局和更多后手脚本局（#441 记录）。按每局约 2 个有打断候选的窗口算，E ≈ 100–200 个窗口；
+- 每个窗口 K = 2 个分支，每个分支约 30 个引擎决策（6 ms，在工作线程上并行）、约 4 个学习者前向行、0–15 个快照对手行（线完好时为 0）；
+- 网络开销每个窗口约 2 ×（4 × 0.21 + 15 × 0.85）≈ 27 ms（最坏情况）。E = 200 时每次更新多约 5 s，对 30 s 左右的整步约 +15–20%，在 #441 的 ≤ 30% 预算内；
+- 有恢复线（T6）时，对手前向大部分省掉，降到 < 5%。
+
+**风险**：
+1. 恢复偏差（§0 第 3 条）：没有 T6 时 A 会强化「早打」。这也是 38c63e5 修正后 R3「主要强化早打」的同一个机制。缓解：先过 P0b；默认要求窗口所在的线有恢复线才分支（`--branch-require-recovery`）。
+2. critic 截断：如果 V 在回合 3 起点也分辨不出「对手展开成功 / 失败」，差值就只是噪声。P0b 同时报 V 差和场面分（对手终场阻断点、攻击力和）两种截断，并对比真实终局。
+3. 先手席位没有标签真值：灰流丽标签是对着后手席位的线算的，先手回合 2 的局面不同。P0b 用后手标签校准，先手只看面板。
+
+**验收**：见 §6 阶段 2。
+
+### 5.2 B：前缀起局与低成本分叉
+
+三条路的比较：
+
+| 路线 | 一次的成本（实测） | 能跨槽位 | 依赖 | 用于 |
+|---|---|---|---|---|
+| 从种子重放（已有 `fork`；C++ 版 = 带 `prefix` 的 reset） | 20 ms（Python）/ 30 ms（C++ 单线程），其中 16 ms 是建局；吞吐 194 个/秒（16 线程） | **能** | 确定性（已验证）；`skip_forced` 与 `cancel_budget` 必须和记录时一致 | 从局面库起局（C 的延迟反应、D 的评估） |
+| arena 快照（T2.8） | 0.13 ms 恢复（核心）/ 0.40 ms（Python 含追踪器）；3.2 MiB 一份 | **不能**（只能同一局） | T1：`HostDuel` 快照 | 同槽位依次分支（A；D 的 N 个候选 × M 次评估） |
+| 其它：进程 `fork()` 写时复制 | 毫秒级 | 能（跨进程） | 与工作线程池、GPU 进程冲突 | 不采用 |
+| 其它：字段序列化 | — | — | Lua 协程状态无法序列化 | 不可行 |
+| 其它：跨槽位拷贝 + 指针重定位 | — | — | 要改分配器，所有指针都要可重定位 | 不采用 |
+
+**接口**（T1 + T2）：
+
+```text
+HostDuel(cards, scripts, vocab, snapshots=false)
+HostDuel::Snapshot  { shared_ptr<const DuelSnapshot> core; Tracker tracker; EventHistory events; bool started; }
+HostDuel::snapshot() -> shared_ptr<const HostDuel::Snapshot>     // 只能在决策点上拍
+HostDuel::restore(const Snapshot&)                                // 校验来自同一局
+
+PoolJob.kind ∈ {reset, step, snapshot, restore, release}；PoolJob.prefix: vector<uint32_t>（reset 后在工作线程上连续应用，不回传中间事件）
+HostPool(…, snapshots=false)；snapshot(env) -> 事件携带 snapshot_id；restore(env, id) -> 事件 = 恢复后的观测（与拍快照时逐字节相同）
+EncodedVecEnv.reset(env_id, spec, prefix=None)；.snapshot(env_id)；.restore(env_id, sid)；.release(env_id, sid)；.responses(env_id) -> list[bytes]
+```
+
+- `Tracker` 需要深拷贝构造（`unique_ptr<DecisionState>` 拷一份；`DecisionState` 全是值成员，可以默认拷贝）；`EventHistory` 加拷贝构造（`events_` 是 `shared_ptr`，要深拷）；`UndoRules` 是值类型。
+- 快照与恢复作为作业在拥有该局的工作线程上执行。保证不会和 `step` 重入，与现有「槽位在结果被 recv 之前保持 busy」的规则一致。
+- `responses(env_id)`：导出到目前为止的应答日志，`Replay(spec, responses)` 可以写成 `.yrpX`，供 C 的求解器使用。
+- **局面库**（`train/positions.py`，新增）：`Position{spec, prefix(actions), skip_forced, cancel_budget, origin, update}`，以 JSONL 保存；`sample()` 按份额发局，复用 `_deal_lines` 的接法。
+
+### 5.3 C：反应式对手
+
+先说清楚现在的问题：先手脚本局里，线是按空场求解的。学习者的场面只在两种情况下有影响：先手容差匹配失败而断线（`broken`），或学习者真的发动了打断。断线后对手由快照策略接手，几乎展不开（§0 第 3 条）。
+所以要的东西是：**对手在知道学习者场面之后（C1），以及被打断之后（C0），仍然走一条合格的线。**
+
+两层方案：
+
+- **C0 恢复线（便宜，先做，即 T6）**：
+  - 灰流丽：被打断时，如果求解器 `--fire` 产出了该时点的恢复线（`variant="fire"`，按（线，时点）索引），`LinePlayer` 就切换到恢复线继续；没有恢复线，说明该时点就是「破场」，交给快照策略接手。这个结果本身是对的。
+  - 其它打断（场上无效、陷阱）：没有现成的恢复线。离线批量对线库里每条线、每个学习者常见打断（按牌组统计的高频打断卡），用 `solve_fire --fire <密码>` 生成，同 #439 流程。代价约每条线 6–20 s，772 条线 × 3 张卡 ≈ 4–13 CPU 小时，可以夜间跑完。
+- **C1 按学习者实际场面再求解（贵，异步）**：
+  - **能力缺口**：求解器有 `--player <0|1>`（优化哪一方的回合）、`--start <replay>` 和 `--turns`（README 选项表），但「从一份含学习者回合 1 的 `.yrpX` 出发，替玩家 1 搜索回合 2」**没有验证过**（假设，T7a 先做 spike）。目标沿用该线在空场上的终场（子集匹配），所以求解结果回答的是「学习者的场面下，对手还能不能到达原来的终场」。搜索里学习者是被动的（求解器的对手只放弃连锁），学习者的打断仍由真实对局里的 `LinePlayer` 断线机制和 C0 处理。
+  - **预算**：求解每手约 6 s（阻断目标，10 s 预算，§7.3b）到 45–60 s（spike 级预算）。不能在线同步跑。
+  - **异步 + 缓存**：位置键 = hash(先手 `Replay` 的起始身份 + 回合 1 应答序列)，或者更粗一级的「场面键」= (对手线 id, 学习者场上 / 盖卡 / 墓地的卡片密码多重集合, 对手手牌)。
+    - 求解服务 `ygorl.solver.service`：多进程，`nice 19`，有界队列，按键去重，结果写进 JSONL 缓存（续跑契约同 `solve_openings`）。
+    - 训练侧在先手脚本局进入回合 2 时，按 `resolve_fraction` 把（局面、键）入队。
+    - 命中缓存时对手改走反应式线，未命中走原线。另外，已求解的局面作为**前缀起局**（B）按 `reactive_share` 重新发出：学习者从回合 2 开始，只训练回应窗口。
+  - **吞吐**：16 进程、10 s 预算 ≈ 1.6 次求解/秒，约每分钟 100 次；本机 128×128 大约 1 次更新/分钟，一次更新约 25 局先手脚本局，入队有余量。但它和环境工作线程争 CPU（本机已经满载），需要限核。
+  - **更便宜的替代（C1'）**：不调求解器，在同槽位快照上对对手做「线库内选择」。同一个对手手牌有多条求解线（不同目标、恢复线），各试一次（每次约 6 ms 引擎时间 + 学习者前向），挑对学习者最不利的一条。这是对手侧的最优选择，不调求解器，成本 ≈ A 的一个窗口。
+  - **对场面键命中率的依赖**：同一手牌下，学习者回合 1 场面的分布有多集中，P0c 会测。
+
+**风险**：求解器搜索里学习者被动，搜出的线可能正好撞上学习者的速攻打断，于是又断。这没关系，断了就交给 C0。求解器的目标是「原终场」，不含「解场 / 斩杀」，所以对手在 C1 下可能比真实玩家保守（假设，接受）。
+
+### 5.4 D：回合 1 专家迭代（ExIt）
+
+- **起点**：学习者卡组 d、手牌种子 s（先手席位）。对手样本是 M 份（对手卡组、手牌、线）。默认 M = 8，从线库抽，所有候选共用（CRN）。
+- **候选**：N 个回合 1 轨迹。用当前策略（温度 1）采样 N − 1 条；如果这手有求解器阻断线，加上它作为第 N 条（只当候选，不当目标）。
+  - 实现：每手在一个槽位开局（对手用被动占位卡组），回合 1 起点拍快照，依次恢复、采样 N 次，记录每次的回合 1 动作序列（前缀）。
+- **评估**：对手卡组和手牌在建局时就定了，**不同对手样本不能共享一个快照**。所以每个（候选 i，对手样本 m）都是一次前缀起局：用对手 m 的卡组建局，重放候选 i 的回合 1 动作（B，20–30 ms）。如果同一对局要推演多次（M 个随机种子），就在该槽位拍快照后依次恢复。总成本是 N·M 次重放 ≈ 16 × 8 × 25 ms ≈ 3.2 CPU 秒每手。
+  - 前提：学习者回合 1 的动作序列与对手卡组、核心种子都无关。每条对手线都带着自己记录的核心种子；脚本线局开着 `DUEL_PSEUDO_SHUFFLE`，所以回合 1 里剩下的随机只有掷币、骰子和随机选择。另外，如果对手在回合 1 发动了手坑（例如灰流丽），前缀也会失配。这两种失配都从该对手样本的评估里剔除，失配率单独报告。失配率高（> 10%）就改成对每个对手样本重新采样候选，成本 ×M。
+  - 对手按线走（C0 恢复线；有 C1 缓存就用 C1）；学习者用当前策略回应（不用 oracle），推演到回合 3 起点，或在线完成 / 断线后多走 `k` 步就截断；
+  - 分数 J_i = mean_m [V(回合 3 起点) 或终局 ±1]，附带记录「对手线失败率」= 线没完成、或对手终场阻断点 / 攻击力和低于原终场的比例。
+- **目标**：组内优势 Â_i = (J_i − mean J)/std J（GRPO 式），权重 w_i ∝ exp(Â_i/β)（AWR，β = 1）。只保留至少有一个候选 Â > 0.5 的手，避免把噪声蒸馏进去。
+- **蒸馏**：把被选候选的回合 1 每一步写成（观测，动作，权重）数据集，`train/turn1_exit.py`（新增，仿照 `line_labels.ce_targets`）。在 PPO 里加 `turn1_exit_coef · Σ w·(−log π)`，加上已有的 KL 到 EMA 参考，只作用在回合 1 的行上（`prior_rows` 的同一套判别逻辑）。每 64 次更新用新 ckpt 重新生成一轮（迭代）。
+- **成本**：2,000 手一轮 ≈ 2,000 × 3.2 s ≈ 1.8 CPU 小时的重放与引擎时间（16 核约 7 分钟）。学习者前向约 2,000 × 128 × 4 ≈ 100 万行 × 0.21 ms ≈ 3.5 GPU 分钟。线断后的对手前向用截断规避（断线后 `k = 0`，直接取 V）。
+- **与已失败的 P-prior / BC 老师的区别**：
+  - 目标来自策略自己的样本（支撑集内），所以 KL 小；
+  - 打分看的是「对手线在学习者真实回应下是否失败」，不看件数；
+  - 求解器阻断线只有赢了才会被选上。
+  - 已知证据（PR #159、§7.3b）说明只看件数的目标会亏，所以 D 必须先过 P0d 的离线交叉验证门槛。
+
+### 5.5 E：诱饵线库
+
+- **现状**：留出手里只有 16 手「第 1 个时点是诱饵、动点在后」（§7.3b），训练线里这类线太少，「忍过诱饵」得不到压力。
+- **生成**：
+  - 对线库中每套牌，先用 `blocking` 的统计找出「可恢复的起手效果」：灰流丽标签里 u = 0 的时点对应的效果，例如 Maxx "C" 的 P(破场) = 0.07、Sky Striker Engage 0.12。
+  - 再让求解器在保持原终场目标的前提下，加约束 `--resolve "<诱饵卡>:1"` 或 `--summon 1:<诱饵卡>`，使线先用这张卡开动。
+  - 对产出的线跑 `solve_fire` 分级，**只保留**第 1 个灰流丽时点可恢复（打了白打）、后面某个时点打了就破场的线。
+  - 成本与 C0 的离线批量同级（每条线 10–30 s）。
+- **发局**：`--line-bait-share p`，按份额优先发诱饵线（`LineLibrary.dealable` 的加权版）。配合 C0 恢复线：在诱饵点开火 → 对手走恢复线 → 学习者吃亏；忍住 → 在动点开火 → 破场。A 再把这个差别变成逐窗口的信用。
+- **风险**：求解器约束可能让线变长或解不出（预算放宽到 30 s）。诱饵线占比太高会教出「永远忍」（R3 曾出现过度忍住），所以份额从 0.25 开始，并且监控「漏打」。
+
+## 6. 分阶段实验计划
+
+起点 ckpt：**LL-local u1088**（`out/claude-scale/ab1/LL-local/checkpoints/update_001088.pt`；强锚点 0.573、先手 0.774、后手 0.861、差 +8.7 pp，是目前最强）。
+规模：本机 128×128（回合边界在一段内完整）或 Colab 1024×16，同一阶段内的臂规模一致。每 64 次更新读一次，验收看末 4 个检查点均值（单点噪声约 ±2 pp）。
+尺子：R1 = `turn1_board.py` 留出手（40–49）回合 1 打断数（现 1.06–1.22）；R2 = `handtrap_eval.py` 留出手评分 / 浪费率 / 漏打（现 0.62–0.66 / 0.35–0.38）；R2b = 诱饵在前的子集上 P(打 | 诱饵) 与 P(打 | 动点)（现 0.65 / 0.98，新增指标）；面板 = 扩展面板先手胜率、先后手差、强锚点、对老师。
+
+| 阶段 | 内容 | 臂 / 方法 | 规模 | 验收（通过才进入下一阶段） |
+|---|---|---|---|---|
+| 0（CPU，1–2 天） | P0a 断线普查 | LL u1088 在先手 / 后手脚本局各 512 局：断线位置（回合 2 开头容差失败 / 学习者打断 / 其它）、断线后对手胜率、每局窗口数 | 只收集，不更新 | 报告即可。若「断线后学习者胜率 ≫ 线完成时」，就确认了 §0 第 3 条 |
+| 0 | P0b 窗口反事实与标签的一致性 | 留出手的灰流丽时点（graded.jsonl，hands 40–49）：用 `DuelSession` 快照做打 / 不打两个分支，K = 1、M = 4 CRN。断线后的对手分三种：(i) 快照策略，(ii) 求解器恢复线，(iii) 快照策略 best-of-4。截断分两种：critic V 和场面分 | 262 个时点 × 3 × 2 | (ii) 的一致率 ≥ 0.75、平局 ≤ 15%，且 (i) 显示偏向「打」。否则 A 不进训练，先补 C0 |
+| 0 | P0c 场面集中度 | 固定 50 手先手手牌，每手采样 32 次回合 1，统计终场「场面键」的分布 | — | 前 3 个场面覆盖 ≥ 50% 的手占多数，C1 才走缓存命中路线；否则 C1 只做前缀起局 |
+| 0 | P0d D 的离线余量 | 100 手留出手牌，N = 16、M = 8。按 PR #167 的做法，一半 M 选候选，另一半 M 估值（交叉拟合），再在真实对局里对 G u576 和线对手配对比较 | — | 交叉拟合余量 ≥ +5 pp 先手胜率（与 #167 的门槛相同），否则 D 搁置 |
+| 1（基础设施） | T1、T2、T4、T5、T6 | 编码子代理并行 | — | 各任务的测试；在线分叉的吞吐开销 ≤ 30%（K = 2，按 §5.1 的窗口条件） |
+| 2 | A + 恢复线 | CTRL（LL 续跑，两席位线）；A0 = CTRL + T6 恢复线；A1 = A0 + 窗口反事实（`replace`，K = 2）；A1q = A0 + 只做 Q 目标（`branch_q_coef 0.5`） | 512 次更新 | A1 对 CTRL：R2 ≥ 0.70、浪费 ≤ 0.28、漏打不超过 CTRL 的 1.5 倍；R2b 的 P(打 \| 诱饵) ≤ 0.5；先手 +2 pp；强锚点不低于 CTRL −1 pp。A0 单独读出 T6 的贡献 |
+| 3 | D | D1 = 阶段 2 的最好臂 + 回合 1 ExIt（每 64 次更新一轮，`turn1_exit_coef 0.3`） | 512 次更新 | R1 ≥ 1.5，额外卡组妨害怪 ↑（`turn1_extra.py`）；先手比阶段 2 最好臂 +3 pp；先后手差 ≤ 6 pp；强锚点不低于 −2 pp |
+| 4 | C1 | C1 = 最好臂 + 反应式线（缓存命中走反应式；`reactive_share 0.25` 前缀起局） | 512 次更新 | 先手 +2 pp；对老师不降；求解服务不拖慢收集超过 15% |
+| 5 | E | E1 = 最好臂 + `line_bait_share 0.25` | 512 次更新 | R2b：P(打 \| 诱饵) ≤ 0.4 且 P(打 \| 动点) ≥ 0.9；R2 不降；漏打不升 |
+
+每个阶段都要报吞吐（行/秒、分支开销）。阶段 2 起，验收必须有 ≥ 2 个种子才写入结论（P4 流程约束）。
+
+## 7. 风险汇总
+
+| 风险 | 影响 | 缓解 / 检测 |
+|---|---|---|
+| 恢复偏差：被打断后的对手太弱 | A 强化早打（与现在的毛病同向） | T6 恢复线；P0b 的 (i) 与 (ii) 对比；`--branch-require-recovery` |
+| critic 在回合 3 起点分不出对手展开的成败 | Â 只是噪声 | P0b 同时报 critic 截断和场面分截断；必要时推演到终局（成本约 ×3） |
+| 训练人群和面板人群不一样（§7.3b：查表在真实对手上是负的） | 尺子涨、面板不涨 | 面板有一票否决（强锚点 −1 / −2 pp）；保留自博弈局 0.5 |
+| 求解器不支持从回合 2 局面替玩家 1 搜索 | C1 落空 | T7a spike 先验证；退回 C1'（线库内选择） |
+| 内存：每槽常驻 3.2 MiB + 每个快照 3.2 MiB | 1,024 槽约 6.5 GiB | 每槽最多 1 个活快照；用完就 release |
+| 先手容差下的线和恢复线对不上 | 恢复线在先手席位频繁断 | P0a 普查断线原因；先手恢复线用同样的容差匹配 |
+| D 蒸馏出「件数多但无效」的场面（P-prior 的老问题） | 面板下降 | P0d 的门槛；KL 锚；只蒸馏组内显著优的手 |
+| 诱饵线份额过高 | 过度忍住、漏打 | 份额 0.25 起步；监控漏打 |
+| 本机 CPU 被其它训练占满（测量时负载 19–32） | 求解服务、分支吞吐不稳 | 限核；吞吐结论只在空载机器或 Colab 上下 |
+
+## 8. 给实现子代理的任务清单
+
+每项都可以单独交给一个编码子代理。约定：在独立的 git worktree 上工作；`uv run --no-sync`；提交前跑 `tools/presubmit.sh`；新增概念先补 `docs/glossary.md`。
+
+**T1 C++ 步进环境快照**（无依赖；B 与 A 的前提）
+- 输入：`csrc/host.{h,cpp}`、`event_encoder.h`、`host_pool.{h,cpp}`、`binding.cpp`、`src/ygorl/env/encoded.py`。
+- 输出：
+  - `HostDuel(…, snapshots)`；`HostDuel::snapshot()/restore()`（核心 arena 镜像 + `Tracker` 深拷贝 + `EventHistory` 拷贝）；
+  - `HostPool` 的快照、恢复、释放三种作业（恢复后回传当前观测）；
+  - `EncodedVecEnv(snapshots=True)` 与 `.snapshot(env_id) / .restore(env_id, sid) / .release(env_id, sid)`；
+  - `docs/engine.md` 删掉「追踪器快照尚未实现」，补一节。
+- 测试（`tests/test_host_snapshot.py`）：
+  - 在随机时刻拍快照 → 随机走 1–40 步 → 恢复 → 观测（含事件、特权张量）逐字节相同，后续跑完与不中断的对局逐字节相同（结果、应答日志）；
+  - 多快照乱序恢复；跨局恢复报错；`arena_escapes() == 0`；线程数不影响结果；release 后内存回落；
+  - 恢复耗时 < 1 ms（记录中位数）；
+  - 阳性对照：把恢复改成空操作时测试失败。
+
+**T2 前缀起局与应答导出**（依赖 T1 的作业类型改造，可以并行起草）
+- 输出：`PoolJob.prefix`（reset 后在工作线程上连续应用，不回传中间事件；中途终局就回传终局）；`EncodedVecEnv.reset(env_id, spec, prefix=None)`；`EncodedVecEnv.responses(env_id)`；`ygorl.train.positions`（`Position` 数据类、JSONL 读写、`PositionLibrary.sample`）。
+- 测试：
+  - 带前缀的 reset 与逐步 `step(prefix)` 的最终观测逐字节相同（`skip_forced` 开 / 关各测一次）；
+  - 前缀越界（动作非法）报 `ValueError`；
+  - `responses()` 构造出的 `Replay` 能用 `Replay.play` 重放到同一局面；
+  - 用 `tools/bench_prefix_fork.py` 对比 C++ 前缀起局耗时（期望 ≈ 建局 + 0.16 ms × 步数）。
+
+**T3 阶段 0 离线工具**（无依赖，只用 Python `DuelSession`）
+- `tools/line_break_census.py`（P0a）：给 ckpt 与线库，跑先手 / 后手脚本局（用 `RolloutCollector` 只收集，或 `EncodedVecEnv` + `LinePlayer` + 策略），输出断线位置与原因分布、断线前后的胜率、每局窗口数，格式为 JSON。
+- `tools/window_counterfactual_probe.py`（P0b）：输入 `graded.jsonl` 和 ckpt；对 hands ≥ 40 的每个灰流丽时点做打 / 不打分支；断线后的对手 ∈ {snapshot, recovery, best_of_M}；截断 ∈ {critic, board}；输出一致率、平局率、按模式的混淆矩阵、每个时点的 ΔV。
+- `tools/turn1_board_modes.py`（P0c）和 `tools/turn1_exit_pilot.py`（P0d，交叉拟合余量，CRN）。
+- 测试：在 2 手小样本上跑通的冒烟测试（`tests/test_tools_smoke.py` 里加用例）；同样输入、同样种子两次运行的结果完全相同。
+
+**T4 收集器内窗口分支**（依赖 T1）
+- 修改 `train/rollout.py`（`BranchConfig`、`_BranchState`、`_act_branch`、`Rollout.branch_value / branch_valid`）、`train/lines.py`（`LinePlayer` 状态拷贝与还原）、`train/toy.py`（玩具环境加快照，供测试用）。
+- 测试：
+  - 玩具环境上已知最优动作的窗口，分支值的符号正确；
+  - 分支不改变主对局：关闭与开启分支，同种子下的主对局行逐位相同（分支用独立生成器）；
+  - 线状态在恢复后与快照时相同；
+  - `branch_fraction = 0` 时 Rollout 与现在逐位相同。
+
+**T5 PPO 接入**（依赖 T4 的 Rollout 字段）
+- 修改 `train/ppo.py`（`PPOConfig.branch_mode / branch_coef / branch_q_coef`，`targets()` 合并，统计项 `branch_rows`、`branch_adv_mean`、`branch_fire_share`）、`train/trainer.py`、`train/cli.py`、`docs/training.md`。
+- 测试：
+  - 手工构造的 Rollout 上，`replace` / `add` 两种模式的优势与 Q 目标等于公式结果；
+  - 真实动作不在分支集里时退回 VRPO；
+  - 系数为 0 时更新与现在逐位相同。
+
+**T6 恢复线**（无 C++ 依赖）
+- 修改 `train/lines.py`：`LineLibrary.load(…, recovery=FIRE_JSONL)` 按（线 id，时点身份 =（被回应效果，次数），打断卡密码）索引恢复线；`LinePlayer` 在线被学习者的打断破坏时，如果有对应的恢复线就切换过去（`status = "recovering"`），没有就照旧结束。
+- 修改 `train/rollout.py` 和 `FinishedGame.line`：记录恢复次数。
+- 测试：用一条已知可恢复的灰流丽时点，学习者在该点打灰流丽后，对手按恢复线到达原终场；在不可恢复的时点打，对手交给快照策略。先手容差下同样成立。
+
+**T7 求解器反应式服务**
+- T7a spike（无依赖）：用 `--player 1 --start <含学习者回合 1 的 .yrpX>`，以该线原终场为子集目标，验证求解器能否替玩家 1 搜回合 2，并在我们的核心里重放验证。输出半页结论，写进本文档 §5.3。
+- T7b（依赖 T2、T7a 通过）：`ygorl.solver.service`（多进程队列、按键去重、JSONL 缓存、manifest 续跑），`rollout.py` 的入队钩子（`resolve_fraction`），`selfplay.py` 的 `reactive_share` 前缀发局。
+- 测试：用假求解器测队列、缓存与去重；命中与未命中路径的发局正确；服务挂掉时训练照常进行（只是没有命中）。
+
+**T8 回合 1 专家迭代**（依赖 T1、T2；P0d 通过后才开工）
+- 新增 `tools/turn1_exit.py`（生成：N 个候选、M 个对手、CRN，按 §5.4 输出数据集）和 `train/turn1_exit.py`（数据集与 `ce_targets` 式接口）；`ppo.py` 加 `turn1_exit_coef`；`trainer.py` 每 `turn1_exit_every` 次更新调用一次生成器（子进程）。
+- 测试：玩具设定下组内优势与权重的计算；只有回合 1 的行受影响；系数为 0 时逐位不变。
+
+**T9 诱饵线生成**（依赖 T6 的恢复线格式）
+- 新增 `tools/bait_lines.py`：统计可恢复的效果 → 带约束求解 → `solve_fire` 分级 → 只留「首个时点可恢复、后面某个时点破场」的线，输出到 `lines_bait.jsonl`。`selfplay.py` 加 `line_bait_share`。
+- 测试：用 2 手小样本的冒烟测试（需要求解器二进制，CI 跳过）；分级筛选逻辑的单元测试（用合成的标签）。
+
+**T10 尺子补充**（无依赖）
+- 在 `handtrap_eval.py` 的同一逻辑上加 R2b（诱饵在前的子集），并移进仓库，成为 `tools/handtrap_ruler.py`。
+- 加一个「先手对着线对手」的配对评估：学习者先手、对手按线走（含 T6 恢复线），报线完成率、学习者胜率、窗口开火分布。
+- 测试：固定种子下的输出和现有 `handtrap_eval.py` 在 R2 上一致。
+
+推荐的派发顺序：T1、T3、T6、T10 并行 → P0 读出 → T2、T4、T5 → 阶段 2 → 视 P0d 做 T8 / 视 T7a 做 T7b → T9。
+
+## 9. 假设与未验证事项
+
+- 求解器 `--player 1 --start` 能从回合 2 局面搜索（§5.3，T7a 验证）。
+- 回合 3 起点的 critic V 能反映「对手回合展开成功 / 失败」（P0b 验证；如果不能，就改用场面分截断或推演到终局）。
+- 每次更新的窗口数 E ≈ 100–200、每个窗口快照对手行 ≤ 15，来自 #441、`interrupt_usage.py` 的数字推算，T4 落地后实测。
+- §3 的数字是在机器负载 19–32 下测的。网络前向的单价沿用 2026-10-22 的 benchmarks（GPU 当时也被占用）。
+- 恢复线只覆盖灰流丽；其它打断的恢复线需要按 C0 离线生成，成本按 #439 的每手 6–20 s 外推。
+- 本文档不改变 `docs/design/` 的设计。如果 A / D 进入主线，先在 [03-play-policy.md](../design/03-play-policy.md) 的 I2（优势估计）下补一节，再改代码。
+
+## 附：来源
+
+- 仓库与代码：sbl1996/ygo-agent `dbf5142`（`ygoenv/`、`mcts/`、README）；sail-sg/envpool（`envpool/core/`）；96jonesa/ygo-combo-solver `e0c7221`（`arena.h`、README 选项表）；本仓库 `csrc/arena.*`、`csrc/host.h`、`engine/branch.py`、`train/lines.py`、`train/rollout.py`、`train/ppo.py`。
+- 议题与 PR：#20、#439、#440、#441、#442、#443；PR #159、#163、#167。
+- 文献：Schulman 等 2015（TRPO，vine）；Kazemnejad 等 2024（VinePPO，arXiv:2410.01679）；Shao 等 2024（GRPO，arXiv:2402.03300）；Kool 等 2019（REINFORCE 多样本基线）；Ahmadian 等 2024（RLOO）；Foerster 等 2018（COMA）；Ng & Jordan 2000（PEGASUS）；Anthony 等 2017（ExIt）；Silver 等 2018（AlphaZero）；Frank & Basin 1998、Long 等 2010（PIMC 的策略融合）；Peng 等 2019（AWR，arXiv:1910.00177）；Abdolmaleki 等 2018（MPO）；Salimans & Chen 2018（arXiv:1812.03381）；Ecoffet 等 2021（Go-Explore）；Florensa 等 2017（反向课程）；Ng 等 1999（势能塑形）。
