@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import random
 import time
+from dataclasses import replace
 
 
 from ygorl.md import layout as L
 from ygorl.md.memory import MemoryReadError, RawDuel, own_deck, to_snapshot
+from ygorl.md.request import Candidate
 from ygorl.md.ui import (
     Stuck,
     my_monster_xy,
@@ -145,6 +147,13 @@ class BattleMixin:
             req = self.request_now(raw)
         except Exception:  # noqa: BLE001 - no request: the rule decides
             return None
+        spots = self.lit_candidates(raw, lit)
+        if spots and not any(c.location in ("mzone", "szone") for c in req.candidates):
+            # memory's request names no field card (a Tribute's check has no list, or it is stale): the cards MD
+            # frames, read from memory at their places, are the candidates (a Tribute for Obelisk fell to a rule
+            # that never takes the opponent's monster Soul Crossing allows)
+            req = replace(req, candidates=tuple(c for c, _ in spots))
+            self.trace.observe(field_candidates=[[c.cid, c.player, c.sequence] for c, _ in spots])
         pick = self.lockstep("list", raw, req)
         if pick is None:
             return None
@@ -162,18 +171,34 @@ class BattleMixin:
             return None
         return near[0]
 
+    def lit_candidates(self, raw: RawDuel, lit) -> list:
+        """(candidate, spot) for every monster card MD frames: its player / zone / sequence and card from memory."""
+        out = []
+        for player, spot in ((raw.me, my_monster_xy), (1 - raw.me, opp_monster_xy)):
+            slots = raw.players[player].slots
+            for s in range(7):
+                c = slots[s]
+                xy = spot(s)
+                if c is None or not any(abs(xy[0] - q[0]) + abs(xy[1] - q[1]) < 80 for q in lit):
+                    continue
+                cid = c.cid if (player == raw.me or c.face) else 0  # an opponent's face-down card: a place only
+                out.append((Candidate(cid, c.uid, player, "mzone", s), xy))
+        return out
+
     def pick_tributes(self, raw: RawDuel) -> None:
         """Tributes: the policy's picks through the shadow; without a shadow, highlighted monsters of the advisor's,
         lowest ATK first. Each is confirmed, until none is left highlighted."""
         me = raw.players[raw.me]
         taken: set = set()  # slots picked already: they stay framed, and a click would take the pick back
         for n in range(3):
-            if n:
-                for _ in range(8):  # the input mode flickers while a pick animates (a third Tribute for Ra was lost)
-                    if self.input().mode == FIELD_PICK:
-                        break
-                    time.sleep(0.25)
-                else:
+            # the input mode flickers while a pick animates (a third Tribute for Ra was lost); the first pick waits
+            # too, longer (a request read before MD is in field-pick mode is stale: the shadow was dropped)
+            for _ in range(8 if n else 20):
+                if self.input().mode == FIELD_PICK:
+                    break
+                time.sleep(0.25)
+            else:
+                if n:
                     return  # MD took the tributes: the summoned monster glowing in their zone is not another pick
             lit = set(self.ui.highlighted())
             # frames found off the measured spot (Apprentice Illusion Magician's at (644, 739) for (650, 750)) count
@@ -183,15 +208,25 @@ class BattleMixin:
             offered = set(self.offered_field_cards(self.game.read())) if n == 0 else set()
             mine = [(s, c) for s, c in enumerate(me.slots[:7])
                     if c and (near(my_monster_xy(s)) or my_monster_xy(s) in offered) and s not in taken]  # fmt: skip
-            self.trace.observe(tribute_candidates=[s for s, _ in mine], tribute_lit=sorted(lit))
-            if not mine:
+            # the opponent's framed monsters too (Soul Crossing lets one be tributed)
+            theirs = [s for s in range(7) if raw.players[1 - raw.me].slots[s] is not None
+                      and near(opp_monster_xy(s)) and ("op", s) not in taken]  # fmt: skip
+            self.trace.observe(tribute_candidates=[s for s, _ in mine], tribute_theirs=theirs, tribute_lit=sorted(lit))
+            if not mine and not theirs:
                 return
-            xy = self.field_target(self.game.read(), {my_monster_xy(s) for s, _ in mine})
+            spots = {my_monster_xy(s) for s, _ in mine} | {opp_monster_xy(s) for s in theirs}
+            xy = self.field_target(self.game.read(), spots)
             if xy is not None:
                 if not self.ui.card_command(xy, "tribute (policy)", "confirm tribute", 2.0):
                     raise Stuck("no Confirm icon above the tribute")
-                taken |= {s for s, _ in mine if my_monster_xy(s) == xy}
+                taken |= {
+                    s for s, _ in mine if abs(my_monster_xy(s)[0] - xy[0]) + abs(my_monster_xy(s)[1] - xy[1]) < 80
+                }
+                taken |= {("op", s) for s in theirs
+                          if abs(opp_monster_xy(s)[0] - xy[0]) + abs(opp_monster_xy(s)[1] - xy[1]) < 80}  # fmt: skip
                 continue
+            if not mine:
+                return  # only the opponent's are framed and no policy decision: not taken by a rule
             self.trace.rule("tribute-lowest-atk")
 
             def atk(c):

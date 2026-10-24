@@ -254,6 +254,11 @@ class ShadowObserver:
                         self.shadow = None
                         return None, {**record, "desync": f"the shadow stopped ({shadow.stopped})"}
                     record["ygo"] = type(point.decision).__name__
+            if dialog == "yesno" and isinstance(point.decision, M.SelectTribute):
+                # MD asks "Tribute Summon?" (its own confirmation, message 335) before the Tributes the shadow is
+                # already asking: yes, and the shadow stays for the Tribute picks (it was dropped, and a rule
+                # tributed Dark Magician instead of the opponent's monster)
+                return 0, {**record, "pick": 0, "by": "tribute-confirmation"}
             if not isinstance(point.decision, DIALOG_DECISIONS.get(dialog, ())):
                 pick, how = self._tolerated(dialog, req, passwords)
                 if pick is not None:  # MD asks what the shadow answered already: the shadow stays

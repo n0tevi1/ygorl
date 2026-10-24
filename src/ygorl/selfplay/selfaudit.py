@@ -231,6 +231,8 @@ class _Game:
         for i, rec in enumerate(self.steps):
             d, o = rec.get("decision") or {}, rec.get("observed") or {}
             pc = o.get("prompt_card") or {}
+            self.prev_lockstep = getattr(self, "this_lockstep", None)  # (the shadow dropped a step before the pick)
+            self.this_lockstep = o.get("lockstep")
             if d.get("by") == "policy" and d.get("card"):
                 last_card = d["card"]
             elif d.get("by") == "shadow" and isinstance(d.get("action"), list) and len(d["action"]) > 1:
@@ -283,7 +285,17 @@ class _Game:
                          rule=rule, card=card)  # fmt: skip
                 return
         if rule in ("tribute-lowest-atk", "field-pick-own-lowest-atk"):
-            return  # checked by check_tributes against the board
+            o = rec.get("observed") or {}
+            lock = o.get("lockstep") or getattr(self, "prev_lockstep", None) or {}
+            if lock.get("ygo") == "SelectTribute":
+                # the shadow had reached the Tributes, so the policy could have picked them: a rule did (run s53:
+                # Dark Magician tributed while Soul Crossing allowed the opponent's monster)
+                theirs = o.get("tribute_theirs") or [xy for xy in (o.get("offered_field") or []) if xy[1] < 640]
+                self.add("major" if theirs else "minor", rec, "tribute-by-rule",
+                         f"a rule picked the Tributes though the shadow asked them ({lock.get('desync') or 'dropped'})"
+                         + (": the opponent's monster offered was not considered" if theirs else ""),
+                         rule=rule, theirs=theirs)  # fmt: skip
+            return  # otherwise checked by check_tributes against the board
         if rule == "prompt-respond-hand-trigger":
             k = self.ctx.card(self.ctx.pw(card)) or self.ctx.card(card)  # the rule records an MD card id
             if k is not None and not k.is_monster:
