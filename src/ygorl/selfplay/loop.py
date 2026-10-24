@@ -219,6 +219,11 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
         up = lambda pl: sum(1 for c in _cards(pl, "mzone") if c.face)  # noqa: E731
         changed = (op1.lp, me1.lp, len(_cards(op1, "mzone")), len(_cards(me1, "mzone")), up(op1)) != (
             op0.lp, me0.lp, len(_cards(op0, "mzone")), len(_cards(me0, "mzone")), up(op0))  # fmt: skip
+        if not changed and act.card is not None and 0 <= act.card.loc.sequence < 7:
+            # a 0-ATK direct attack (Slifer with an empty hand) changes no LP: the attacker's own slot still records
+            # the attack (its turn flags: attack declared)
+            a0, a1 = me0.slots[act.card.loc.sequence], me1.slots[act.card.loc.sequence]
+            changed = a0 is not None and a1 is not None and a0.uid == a1.uid and a0.slot != a1.slot
         return None if changed else "attack: nothing changed (no damage, no monster left the field or turned up)"
     if kind in ("activate", "spsummon"):
         if _board_key(me0, op0) == _board_key(me1, op1):
@@ -674,7 +679,15 @@ class Player:
                 xy = L.my_zone(location, zone)
                 if yellow_highlight(img, *xy) or zone_outlined(img, *xy):
                     return location, zone
-        return "mzone", self.free_zone(raw, "mzone")
+        # no outline seen: the card MD places (its request names it, a mix entry of kind 5) tells the row (Dark
+        # Spell Regeneration's Spell was clicked toward a Monster Zone)
+        try:
+            cid = next((v for k, v in self.request_now(raw).params if k == 5), 0)
+        except Exception:  # noqa: BLE001
+            cid = 0
+        card = self.cards.get(self.passwords.get(cid, 0))
+        location = "szone" if card is not None and not card.is_monster else "mzone"
+        return location, self.free_zone(raw, location)
 
     def command_at_zone(self, location: str, zone: int, kind: str, order) -> None:
         """When the command click did not take, the zone click makes MD place the selected hand card on that zone
@@ -977,6 +990,23 @@ class Player:
 
         return record
 
+    def still_attacks(self, raw: RawDuel) -> bool:
+        """Whether the policy's top Battle Phase action on ``raw`` is an attack by the attacker of the replay."""
+        from ygorl.advisor.advise import advise
+
+        uid, code = self.attacker
+        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked - {uid}), frozenset(self.activated))
+        try:
+            advice = advise(snap, own_deck(raw, self.passwords, self.cards), self.policy, self.prior,
+                            self.env.rule_flags, cards=self.cards, samples=self.samples,
+                            seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip
+        except Exception as exc:  # noqa: BLE001
+            self.trace.observe(replay=f"no decision: {type(exc).__name__}: {exc}")
+            return False
+        top = advice.suggestions[0].action if advice.suggestions else None
+        self.trace.observe(replay={"top": [top.kind, top.card.code if top and top.card else 0] if top else None})
+        return top is not None and top.kind == "attack" and top.card is not None and top.card.code == code
+
     def decide(self, raw: RawDuel):
         """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""
         from ygorl.advisor.advise import advise
@@ -1047,6 +1077,7 @@ class Player:
             if not self.ui.pick_target(opp_monster_xy(s), f"target {s}"):
                 raise Stuck("no Confirm icon above the attack target")
         self.context = f"attack lp {opp.lp}"
+        self.attacker = (card.uid, best.card.code)
 
     def prompt(self, raw: RawDuel, inp: Input) -> None:
         """Chain / open-timing prompts: the policy through the shadow (inside our action), else through a rebuild
@@ -1058,7 +1089,7 @@ class Player:
         # ("You drew card(s). Activate?" of Palladium Oracle Mahad, a free Special Summon, was passed)
         respond = (theirs and phase == "battle") or (not theirs and phase in ("draw", "standby", "end"))
         self.respond_card = None  # set by a rebuild below, not left over from an earlier one
-        pick = None if theirs else self.lockstep("prompt", raw, lambda: self.request_now(raw))
+        pick = None if theirs else self.lockstep("prompt", raw, lambda: self.prompt_request(raw))
         if pick is None:
             pick = self.rebuilt("respond", raw)
         if pick is not None:
@@ -1140,6 +1171,16 @@ class Player:
         if isinstance(got, tuple):
             got = {"type": got[0], "cards": [[c.cid, c.location, c.index, c.uid] for c in got[1]]}
         self.trace.observe(client_list=got)
+
+    def prompt_request(self, raw: RawDuel):
+        """MD's request with the prompt's offered cards as candidates (memory: the client's list; the engine's
+        request holds none for open prompts, and the shadow's "pass" once answered a prompt for another card:
+        Obelisk's End Phase send was cancelled)."""
+        req = self.request_now(raw)
+        listed = self.prompt_list()
+        if listed and not req.candidates:
+            req = replace(req, candidates=tuple(Candidate(c.cid, c.uid, c.player, "", None) for c in listed))
+        return req
 
     def prompt_list(self) -> list:
         """The cards MD's open / chain prompt offers (memory, the client's list), [] when not readable."""
@@ -1464,6 +1505,11 @@ class Player:
                 # card from the Deck to your hand?" of The True Name): take it
                 pick = 0
                 self.trace.rule("yesno-yes-own-effect")
+            elif pick is None and self.context.startswith("attack") and getattr(self, "attacker", None):
+                # a replay ("the opponent's monsters changed: continue the attack?"): the policy on the new board,
+                # its attacker not counted as having attacked: yes when it still attacks with it
+                pick = 0 if self.still_attacks(raw) else 1
+                self.trace.rule("replay-by-policy", attack=pick == 0)
             elif pick is None:
                 self.trace.rule("yesno-no")
             self.ui.yesno(pick == 0)

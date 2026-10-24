@@ -345,6 +345,8 @@ class ShadowObserver:
                     out.setdefault(1, i)
                 elif a.card is not None and (offered is None or passwords.get(offered.cid) == a.card.code):
                     out.setdefault(0, i)
+            if offered is not None and 0 not in out:
+                return {}  # MD offers a card the shadow cannot activate here: its "pass" is not about this card
             return out
         if dialog == "position":
             values = {acts[i].value: i for i in choosable}
