@@ -302,7 +302,11 @@ def classify(*, mine: bool, ours: bool, accepting: bool, mode: int, dialog_type:
     if mine and mode == MAIN and screen == "banner" and zone_pending:
         return "zone_again"  # MD still asks for the zone of our own Summon / Set
     if screen == "position" and dialog_type != POSITION_DIALOG and not (mine and mode == PLACE):
-        screen = None  # a position question only when memory asks one: a drawn card's reveal passed for it
+        # a position question only when memory asks one: a drawn card's reveal and an opponent's summon cut-in
+        # passed for it; with no input taken it is an animation to wait out, not a screen to explore
+        if not accepting:
+            return "settle"
+        screen = None
     if mine and mode in (MAIN, BATTLE) and screen == "banner":
         screen = None  # the engine waits for a command: no banner question is pending (the opponent's ATK / DEF
         # numbers on a dark board passed for a banner's text)
