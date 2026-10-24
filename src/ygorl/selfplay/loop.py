@@ -78,6 +78,7 @@ OPTION_OK = (1024, 788)
 
 LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
 RA = 10000010  # The Winged Dragon of Ra
+SLIFER = 10000020  # Slifer the Sky Dragon
 HAND_LOCATION = 13  # MD's location number of the hand (the client's lists)
 # the command bits of each action kind (MD's CommandBit; Pendulum activation counts as activate)
 COMMAND_BITS = {"summon": CommandBit.SUMMON, "mset": CommandBit.SETMONST, "sset": CommandBit.SET,
@@ -1156,8 +1157,10 @@ class Player:
         """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""
         from ygorl.advisor.advise import advise
 
-        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked), frozenset(self.activated),
-                           self.field_stats(raw))  # fmt: skip
+        stats = self.field_stats(raw)
+        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked), frozenset(self.activated), stats)
+        # recorded: what the rebuild restores (auditors could not tell otherwise)
+        self.trace.observe(field_stats={str(u): list(v) for u, v in stats.items()})
         deck = own_deck(raw, self.passwords, self.cards)
         advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
                         samples=self.samples, seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip
@@ -1199,7 +1202,8 @@ class Player:
             raise Stuck(f"the policy attacks with an empty zone {slot}")
         self.attacked.add(card.uid)
         pw = self.passwords.get(card.cid)
-        power = self.cards[pw].attack if pw in self.cards else 0
+        shown = self.field_stats(raw)  # memory: what MD shows (equips included); the database values else
+        power = shown[card.uid][0] if card.uid in shown else (self.cards[pw].attack if pw in self.cards else 0)
         targets = []
         strong = getattr(self, "strong_targets", set())
         for s, c in enumerate(opp.slots[:7]):
@@ -1207,6 +1211,8 @@ class Player:
                 continue
             k = self.cards.get(self.passwords.get(c.cid)) if c.face else None
             value = (k.defense if c.sideways else k.attack) if k is not None else 1500  # face-down: average guess
+            if c.face and c.uid in shown:
+                value = shown[c.uid][1] if c.sideways else shown[c.uid][0]
             targets.append((value < power, value if value < power else -value, s))
         if not targets and any(c is not None for c in opp.slots[:7]):
             # every monster it could attack beat an attack of ours this turn: not again
@@ -1791,10 +1797,15 @@ class Player:
         hand = [c.cid for c in me.piles["hand"]]
 
         def strength(cid):
-            k = self.cards.get(self.passwords.get(cid))
+            pw = self.passwords.get(cid)
+            k = self.cards.get(pw)
             if k is None or not k.is_monster:
                 return -1
-            return k.attack if k.attack >= 0 else 1000 * k.level  # "?" ATK: count the level
+            if pw == SLIFER:
+                return 1000 * (len(hand) - 1)  # 1000 per card in hand once it has left it
+            if k.attack < 0:
+                return 0  # another "?" ATK (Ra: its tributes' total, unknown here): not ahead of a known one
+            return k.attack
 
         guessed = sorted(range(len(hand)), key=lambda i: strength(hand[i]), reverse=True)
         order = list(dict.fromkeys([L.hand_card(L.hand_order(hand, lambda c: self.passwords.get(c, 0),
