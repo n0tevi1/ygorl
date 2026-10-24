@@ -586,10 +586,51 @@ class Player:
         """Check that the opened hand card is ``cid`` (the hand order on screen is MD's own): from memory
         (:mod:`ygorl.md.selection`) once the open-card object is found, else on the information panel."""
         hand = [c.cid for c in raw.players[raw.me].piles["hand"]]
+        told = self.verify_by_client(raw, cid, xy, icons)
+        if told is not None:
+            return told
         told = self.verify_by_memory(raw, cid, xy, icons)
         if told is not None:
             return told
         return self.verify_on_panel(raw, cid, xy, icons, hand)
+
+    def open_hand_cid(self, raw: RawDuel, before=None) -> int | None:
+        """The card id of the hand card MD has open now (memory: the client's CommandOperation, no calibration);
+        None when not readable. ``before``: a (location, index, cid) read before the click, which must change."""
+        client = getattr(self, "client", None)
+        if client is None:
+            return None
+        for _ in range(6):
+            try:
+                oc = client.open_command(raw.me)
+            except Exception:  # noqa: BLE001
+                return None
+            if oc is not None and oc.location == HAND_LOCATION and oc.cid and (oc.location, oc.index, oc.cid) != before:
+                return oc.cid
+            time.sleep(0.25)
+        return None
+
+    def verify_by_client(self, raw: RawDuel, cid: int, xy, icons):
+        """The opened hand card told by the client's open command (memory, needs no calibration: a duel's first
+        hand card fell to the information panel, which could not name Millennium Revelation); the other hand
+        positions are opened when it is another card. None when the client cannot tell."""
+        got = self.open_hand_cid(raw)
+        if got is None:
+            return None
+        self.trace.observe(selected={"want": cid, "got": got, "by": "client", "at": list(xy)})
+        if got == cid:
+            return icons
+        hand = raw.players[raw.me].piles["hand"]
+        for i in range(len(hand)):
+            pos = L.hand_card(i, len(hand))
+            if pos == xy:
+                continue
+            found = self.ui.open_hand_card(pos, f"hand #{i + 1}: looking for {self.name(cid)}")
+            got = self.open_hand_cid(raw)
+            if got == cid:
+                self.trace.observe(selected={"want": cid, "found_at": i, "by": "client"})
+                return found
+        return None  # the memory read and the panel decide
 
     def verify_by_memory(self, raw: RawDuel, cid: int, xy, icons):
         """The open card read from memory; calibrates first if needed (opens another hand card, then this one
