@@ -506,6 +506,7 @@ class PPOLearner:
         model.train()
         sums: dict[str, float] = defaultdict(float)
         steps, checked = 0, 0
+        nonfinite_loss, nonfinite_grad = 0, 0
         grad_sum, stop_kl = 0.0, 0.0
         stopped = False
         for _ in range(cfg.epochs):
@@ -545,8 +546,12 @@ class PPOLearner:
                         raise ValueError("phi_coef > 0 needs a model with the survival-potential head (critic_phi)")
                     pl = phi_loss(out.phi.float(), phi_t[idx], phi_v[idx])
                     loss = loss + cfg.phi_coef * pl
-                    sums["phi_loss"] += pl.detach().double()
                 laps.lap("forward")
+                if not bool(torch.isfinite(loss)):
+                    # A NaN / inf loss would poison every parameter through clip_grad_norm_ (the total norm scales
+                    # all gradients): skip the minibatch entirely, neither stepped nor averaged into the stats.
+                    nonfinite_loss += 1
+                    continue
                 kl_now = extra.get("approx_kl")
                 rejected = (
                     policy and cfg.target_kl is not None and kl_now is not None and float(kl_now) > 1.5 * cfg.target_kl
@@ -560,14 +565,18 @@ class PPOLearner:
                             p.grad = None  # Adam skips these parameters: the policy does not move
                     laps.lap("backward")
                     grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
-                    self.optimizer.step()
+                    if bool(torch.isfinite(grad_norm)):
+                        self.optimizer.step()
+                        grad_sum = grad_sum + grad_norm.double()  # read once after the loop, not per minibatch
+                        steps += 1
+                    else:  # finite loss, overflowing gradient: the step is skipped, the forward stats still count
+                        self.optimizer.zero_grad(set_to_none=True)
+                        nonfinite_grad += 1
                     laps.lap("optimizer")
-                    grad_sum = grad_sum + grad_norm.double()  # read once after the loop, not per minibatch
-                    steps += 1
                 # Forward diagnostics include a rejected batch; grad_norm counts only applied steps.
                 for key, val in (("loss", loss), ("policy_loss", policy_loss), ("entropy", ent), ("kl_ref", kl_ref),
                                  ("kl_prior", kl_prior), ("q_loss", ql), ("v_loss", vl), ("aux_loss", al),
-                                 *extra.items()):  # fmt: skip
+                                 *extra.items(), *((("phi_loss", pl),) if phi_t is not None else ())):  # fmt: skip
                     # device sums in float64: the same values as summing the floats one by one, without a wait
                     sums[key] += val.detach().double() if isinstance(val, Tensor) else float(val)
                 if ce_t is not None:  # the mean over the minibatches that hold a labelled row
@@ -578,10 +587,15 @@ class PPOLearner:
                 if rejected:
                     stopped, stop_kl = True, float(kl_now)
                     break
+        if steps:
+            self._check_finite_parameters()
         self.updates += 1
         self.update_reference()
         laps.lap("ema")
         stats = {k: float(v) / checked for k, v in sums.items()}
+        for key in ("loss", "policy_loss", "entropy", "kl_ref", "kl_prior", "q_loss", "v_loss", "aux_loss"):
+            stats.setdefault(key, float("nan"))  # every minibatch was non-finite
+        stats["nonfinite_minibatches"], stats["nonfinite_grad_minibatches"] = nonfinite_loss, nonfinite_grad
         stats["grad_norm"] = float(grad_sum) / steps if steps else 0.0
         taken_q = ro.q.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1).reshape(-1)
         stats["q_explained_var"] = _explained_variance(taken_q, q_targets)
@@ -613,6 +627,17 @@ class PPOLearner:
             stats["line_ce_loss"] = float(ce_sum / ce_batches.clamp(min=1))
         stats.update(laps.stats())
         return stats
+
+    @torch.no_grad()
+    def _check_finite_parameters(self) -> None:
+        """Raise naming the first non-finite parameter (one device sync), rather than let NaN weights fail later in a
+        rollout's sampling."""
+        named = list(self.model.named_parameters())
+        finite = torch.stack([torch.isfinite(p).all() for _, p in named])
+        if not bool(finite.all()):
+            name = named[int((~finite).nonzero()[0])][0]
+            raise RuntimeError(f"PPO update {self.updates + 1}: parameter {name!r} became non-finite after an "
+                               "optimizer step (finite loss and gradient norm); stopping before the next rollout")  # fmt: skip
 
     @torch.no_grad()
     def update_reference(self) -> None:

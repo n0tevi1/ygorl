@@ -606,3 +606,82 @@ def test_response_weight_scales_opponent_turn_rows_only():
     assert np.isfinite(stats["loss"])
     with pytest.raises(ValueError):
         PPOConfig(response_weight=0.0)
+
+
+def _nim_rollout():
+    torch.manual_seed(0)
+    model = NimModel(max_pile=15)
+    ro = RolloutCollector(
+        NimEnv(4, max_pile=15), model, nim_games(np.random.default_rng(0)), num_steps=16, seed=0
+    ).collect()
+    return model, ro
+
+
+def test_a_minibatch_with_a_non_finite_loss_is_skipped(monkeypatch):
+    """A NaN advantage on one row: the minibatch holding it (one per epoch) is neither stepped nor averaged into the
+    stats, the parameters stay finite and the skip is reported."""
+    model, ro = _nim_rollout()
+    learner = PPOLearner(model, PPOConfig(epochs=2, minibatch_size=16, target_kl=None))
+    prepare = learner.objective.prepare
+
+    def poisoned(rollout, est):
+        adv = prepare(rollout, est).clone()
+        adv.view(-1)[5] = float("nan")
+        return adv
+
+    monkeypatch.setattr(learner.objective, "prepare", poisoned)
+    before = copy.deepcopy(model.state_dict())
+    stats = learner.update(ro)
+    n_batches = 2 * ro.players.numel() // 16
+    assert stats["nonfinite_minibatches"] == 2 and stats["nonfinite_grad_minibatches"] == 0
+    assert stats["minibatches"] == stats["evaluated_minibatches"] == n_batches - 2
+    assert all(torch.isfinite(p).all() for p in model.parameters())
+    assert any(not torch.equal(v, model.state_dict()[k]) for k, v in before.items())  # the other batches stepped
+    for key in ("loss", "policy_loss", "entropy", "kl_ref", "q_loss", "v_loss", "approx_kl", "clip_frac", "grad_norm"):
+        assert np.isfinite(stats[key]), key
+
+
+def test_every_minibatch_non_finite_is_a_zero_step_update():
+    model, ro = _nim_rollout()
+    ro.rewards[0, 0] = float("nan")  # normalization spreads it to every advantage
+    learner = PPOLearner(model, PPOConfig(epochs=2, minibatch_size=16, target_kl=None))
+    before = copy.deepcopy(model.state_dict())
+    stats = learner.update(ro)
+    assert stats["minibatches"] == stats["evaluated_minibatches"] == 0
+    assert stats["nonfinite_minibatches"] == 2 * ro.players.numel() // 16
+    assert all(torch.equal(v, model.state_dict()[k]) for k, v in before.items())
+    assert np.isnan(stats["entropy"]) and stats["grad_norm"] == 0
+
+
+def test_a_non_finite_gradient_norm_skips_the_step(monkeypatch):
+    model, ro = _nim_rollout()
+    learner = PPOLearner(model, PPOConfig(epochs=1, minibatch_size=16, target_kl=None))
+    clip, calls = torch.nn.utils.clip_grad_norm_, []
+
+    def overflow_once(params, max_norm):
+        norm = clip(params, max_norm)
+        calls.append(1)
+        return torch.full_like(norm, float("inf")) if len(calls) == 1 else norm
+
+    monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", overflow_once)
+    stats = learner.update(ro)
+    assert stats["nonfinite_grad_minibatches"] == 1 and stats["nonfinite_minibatches"] == 0
+    assert stats["minibatches"] == len(calls) - 1 and stats["evaluated_minibatches"] == len(calls)
+    assert np.isfinite(stats["grad_norm"]) and all(torch.isfinite(p).all() for p in model.parameters())
+
+
+def test_a_parameter_turned_non_finite_by_the_step_raises(monkeypatch):
+    model, ro = _nim_rollout()
+    learner = PPOLearner(model, PPOConfig(epochs=1, minibatch_size=16, target_kl=None))
+    step = learner.optimizer.step
+    name, param = list(model.named_parameters())[-1]
+
+    def corrupt(*args, **kw):
+        out = step(*args, **kw)
+        with torch.no_grad():
+            param.view(-1)[0] = float("nan")
+        return out
+
+    monkeypatch.setattr(learner.optimizer, "step", corrupt)
+    with pytest.raises(RuntimeError, match=name):
+        learner.update(ro)

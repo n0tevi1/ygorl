@@ -1,6 +1,7 @@
 """Survival potential Φ and potential-based shaping at turn boundaries (docs/training.md §8.2, #442)."""
 
 import copy
+import math
 from pathlib import Path
 
 import pytest
@@ -260,3 +261,22 @@ def test_a_learner_without_the_head_resumes_into_one_with_it(duels):
     assert new.updates == old.updates and new.new_heads and all(k.startswith("critic.phi_head.") for k in new.new_heads)
     new.cfg = PPOConfig(epochs=1, minibatch_size=4096, target_kl=None, phi_coef=0.5)
     assert new.update(ro)["phi_rows"] > 0  # Adam steps the new head along with the restored parameters
+
+
+def test_a_nan_phi_target_skips_its_minibatch_and_keeps_the_weights_finite(duels):
+    n, ro = duels
+    m = model(n, phi=True)
+    lr = learner(m, phi_coef=0.5, phi_shape_coef=0.1, phi_shape_first_seat_only=True, minibatch_size=64)
+    targets = lr.targets
+
+    def poisoned(rollout):
+        est = targets(rollout)
+        lr._boundaries.survive[tuple(lr._boundaries.valid.nonzero()[0].tolist())] = float("nan")
+        return est
+
+    lr.targets = poisoned
+    torch.manual_seed(3)
+    stats = lr.update(ro)
+    assert stats["nonfinite_minibatches"] == 1 and stats["minibatches"] == stats["evaluated_minibatches"] >= 1
+    assert all(torch.isfinite(p).all() for p in m.parameters())
+    assert math.isfinite(stats["phi_loss"]) and math.isfinite(stats["loss"])

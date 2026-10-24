@@ -589,7 +589,10 @@ class Trainer:
                  + (f", labelled windows {record['line_labelled_rows']} ({record['line_fire_rows']} fired, mean bonus "
                     f"{record['line_bonus_mean']:.3f})" if "line_labelled_rows" in record else "")
                  + (f", line CE rows {record['line_ce_rows']} ({record['line_ce_fire_targets']} fire targets, loss "
-                    f"{record.get('line_ce_loss', 0.0):.4f})" if "line_ce_rows" in record else ""))  # fmt: skip
+                    f"{record.get('line_ce_loss', 0.0):.4f})" if "line_ce_rows" in record else "")
+                 + (f", SKIPPED {stats['nonfinite_minibatches']} non-finite-loss / {stats['nonfinite_grad_minibatches']} "
+                    "non-finite-gradient minibatches" if stats.get("nonfinite_minibatches")
+                    or stats.get("nonfinite_grad_minibatches") else ""))  # fmt: skip
         return record
 
     def _diagnostic_record(self, game) -> dict:
