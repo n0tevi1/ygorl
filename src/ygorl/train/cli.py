@@ -173,6 +173,9 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--line-share", "line_share", "share of pool games that start with a scripted demonstration line"),
         _f("--line-first-share", "line_first_share", "share of the scripted deals in which the learner moves first and "
            "the demonstration line is played on the opponent's turn 2"),
+        _f("--line-recovery", "line_recovery", "--fire demonstration file of the --line-demos hands (variant fire, "
+           "solved): when the learner's hand trap hits a window the combo recovers from, the opponent seat plays the "
+           "solver's recovery line instead of breaking (repeatable)", metavar="JSONL", listing="append"),
         _f("--line-labels", "line_labels", "graded hand-trap labels of the scripted lines (handtrap_labels_graded "
            "JSONL); used with --line-bonus-coef / --line-ce-coef", path=True),
         _f("--line-labelled-only", "line_labelled_only", "deal only the scripted lines that carry a label"),

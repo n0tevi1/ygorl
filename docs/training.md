@@ -446,6 +446,24 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   何时用它：实验 R 里优势加成（系数 1.0，每次 16,384 行只有约 20 行带标签）能推动应答策略但来回摆（留出 ruler 0.720、0.579、0.682、0.692、0.542，父 0.664），
   因为加成只改所取动作的优势、经归一化与 PPO 截断后方向取决于当次是否恰好发动、步长随批里其它优势浮动；监督项直接把每个标签行拉向求解器的选择，不依赖所取动作，
   方向每次一致，更适合标签稀疏、想要稳定收敛到「诱饵不交、起手必交」的场合；代价是它不看对局结果，标签错了会被照单全收，且 `adv_keep` 的 `rows` 模式下被筛掉的标签行不进更新。
+- **恢复线**（`TrainConfig.line_recovery`，`--line-recovery JSONL`，可重复；`LineLibrary.load(…, recovery=…)`；T6，[spikes/first-seat-interruption-plan-2026-10-24.md](spikes/first-seat-interruption-plan-2026-10-24.md) §5.3 C0）：
+  没有它时，学习方一打断，对手的线往往断掉、交给几乎展不开连招的快照策略，任何打断都显得有用，训练信号偏向「有机会就打」。
+  求解器的 `--fire` 记录（`variant="fire"`、`status="solved"`；例如 `out/claude-scale/handtrap/full_fire8.jsonl`）对 plain 线的每个「打了 combo 仍能恢复」的灰流丽窗口给出一条恢复线：
+  应答方在该窗口发动手坑，combo 重建目标盘面。加载时按（deck 名，手牌序号，`hand_seed`，手牌）把 fire 记录接到线库里的线，逐条重放 fire 线（`lines.recovery_line`）：
+  用与标签相同的口径记下手坑所在窗口的身份（被回应的效果、应答方第几次在有真实选择的连锁提示里回应它，`chain_effect`），
+  核对手坑之前 combo 座位的动作与 plain 线第 0 条逐个相同，把手坑之后 combo 座位的每一步编成与线相同的键（`RecoveryLine.steps`）。
+  按（效果词表下标，次数，手坑词表下标）索引，挂在 `LineScript.recovery` 上；同一窗口多条 fire 线只留第一条；重放失败（多为步被掩码遮住的撤销）的记在 `LineLibrary.recovery_problems` 并写日志。
+  对局中，学习方在线所在的、有真实选择的连锁窗口（即带 `line_effect` / `line_occurrence` 的行；先攻席只数对手第 2 回合）发动一张卡（动作类型 `chain`）时，
+  收集器调用 `LinePlayer.interrupt(效果, 次数, 卡)`：若脚本对该窗口与该卡有恢复线且线仍在 `playing`，就**立即**改走恢复线（`status = "recovering"`，同样的匹配与先攻席容忍），
+  之后照常 `completed` 或 `broken`（断后快照接手）；没有恢复线（该时点打了就破场）时什么也不变，线照旧往下走、断了交给快照。恢复中的线不再二次切换。
+  `FinishedGame.line` 在有恢复线的脚本上多 `recoveries`（0 或 1）、`recovered_at`（切换时线的步号）、`recovery_window`（`[效果, 次数, 卡]`），切换后 `status` / `broken_at` 说的是恢复线的步；
+  开了 `line_recovery` 时 `metrics.jsonl` 多 `line_recovered` / `line_recovered_completed`（先攻席另有 `line_first_*`），局终时仍在 `recovering` 的线算进 `line_unfinished`，日志行多一段 recovered 统计。
+  不传 `line_recovery` 时脚本不带恢复线，`interrupt` 直接返回、`finish()` 与统计的键不变，与原来逐位相同。
+  覆盖（`lines_train.jsonl` 772 条线 + `full_fire8.jsonl`）：243 条线、323 个（线，窗口）有恢复线，221 条 fire 线因撤销步重放失败被略去；线库只含手 0–39，留出的手 40–49 没有恢复线。
+  只覆盖灰流丽；其它打断的恢复线需按 C0 离线用 `solve_fire --fire <密码>` 生成。切换是在打断发生时立即进行，而不是等原线断掉：原线在诱饵窗口（如灰流丽打 Maxx "C"）常常还能继续匹配，
+  恢复线则是求解器从打断后局面出发的续线，两者都到原终场时以恢复线为准。
+  普查（上面的线库，学习方 40 张灰流丽、只在该窗口发动、其余一律 pass，`skip_forced`）：后攻席 323 个窗口里 317 个切换后走完恢复线，303 个与不打断时的终场场面相同；不带恢复线时同一打断让原线在 277 个窗口断掉。先攻席 306 个切换（其余窗口在该局没出现）、256 个走完。先攻席收集时对手座位第 1 回合由快照下，它可能已用掉恢复线要用的卡（例如对灰流丽连锁的 Maxx "C"），恢复线随之断掉、快照接手。
+  测试（`tests/test_line_recovery.py`，数据 `tests/data/line_recovery.jsonl`：三手的 plain 与灰流丽 fire 记录）：可恢复窗口在两席位、两种 `skip_forced` 下切换并到达原终场场面，不带恢复线时原线在该处断；不可恢复窗口照旧断、与不带恢复线时逐项相同；收集器、统计与训练器日志。
 
 ### 8.4 评估
 

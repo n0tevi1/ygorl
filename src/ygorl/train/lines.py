@@ -15,6 +15,15 @@ description, value), independent of where the candidate sits in the list and of 
 (docs/encoding.md 「等价动作去重」). The keys are computed once per record by replaying the line with the Python
 reference encoder (:class:`ygorl.env.encoding.ObservationEncoder`, element for element the C++ encoder of
 ``EncodedVecEnv``), and matched against the environment's rows at acting time.
+
+Recovery lines (``LineLibrary.load(..., recovery=...)``, docs/training.md §8.3 「恢复线」): the solver's ``--fire``
+records (``variant="fire"``) hold, for every chain window of a line at which the responder's hand trap does not stop
+the combo, a line that fires the hand trap there and rebuilds the board. Each one is keyed by the line, the window's
+identity (the effect it answers and its occurrence, :func:`chain_effect`, as the solver-window labels are) and the
+hand trap, and its steps after the hand trap are kept (:class:`RecoveryLine`). When the learner activates that card
+at that window of a scripted game, the :class:`LinePlayer` switches to the recovery line (``status`` ``"recovering"``)
+instead of playing on into a break; without a recovery line for the window (the hand trap breaks the board there),
+nothing changes: the line plays on and the snapshot takes over once it breaks.
 """
 
 from __future__ import annotations
@@ -43,6 +52,7 @@ from ygorl.env.encoding import (
     canonical_action,
 )
 from ygorl.env.events import CARD as EVENT_CARD, EV, TYPE as EVENT_TYPE
+from ygorl.env.observer import PointObserver
 from ygorl.env.pool import GameSpec
 from ygorl.solver.demo import DemoError, Demonstration, read_jsonl
 
@@ -52,6 +62,7 @@ _LIST_INDEX_KINDS = (ACTION_KINDS.index("select") + 1, ACTION_KINDS.index("unsel
 _CHAINING, _CHAIN_END = EV["chaining"], EV["chain_end"]
 _PILES = (5, 6)  # LOCATION_ENUM of graveyard and banished: a first-seat line matches their cards without the sequence
 _PASS_KIND = ACTION_KINDS.index("pass") + 1
+CHAIN_KIND = ACTION_KINDS.index("chain") + 1  # an activation at a chain window (encoded action kind)
 
 
 def chain_effect(obs) -> int:
@@ -133,6 +144,23 @@ class LineStep:
 
 
 @dataclass(frozen=True)
+class RecoveryLine:
+    """The solver's continuation of a line after the responder's hand trap at one chain window (a ``--fire`` line)."""
+
+    effect: int  # vocab index of the effect the window answers (0: an open window), as Rollout.line_effect
+    occurrence: int  # the responder's answers to that effect so far, 1-based, as Rollout.line_occurrence
+    card: int  # vocab index of the hand trap (the learner's activation row carries it in column 2)
+    password: int  # the hand trap's password
+    at: int  # the line's steps the scripted seat played before the hand trap (the fire line's own prefix)
+    steps: tuple[LineStep, ...]  # the scripted seat's decisions from the hand trap on
+    source: str = ""  # file of the fire record
+
+    @property
+    def key(self) -> tuple[int, int, int]:
+        return (self.effect, self.occurrence, self.card)
+
+
+@dataclass(frozen=True)
 class LineScript:
     """One demonstration line, ready for the scripted seat: the start position and the seat's steps in order."""
 
@@ -144,6 +172,7 @@ class LineScript:
     player: dict  # PlayerRules of the record
     steps: tuple[LineStep, ...]  # the scripted seat's decisions of the line (other seat's steps left out)
     source: str = ""  # file the record came from
+    recovery: tuple[RecoveryLine, ...] = ()  # recovery lines by window and hand trap (LineLibrary.load(recovery=))
 
     @property
     def name(self) -> str:
@@ -165,6 +194,70 @@ class LineScript:
         return GameSpec(seed=seed, deck_a=a, deck_b=b, first=0, config=cfg, core_seed=self.core_seed)
 
 
+def _line_step(obs, idx: int, step: int) -> LineStep:
+    """The :class:`LineStep` of demonstrated action ``idx`` at encoded observation ``obs`` (line step ``step``)."""
+    if idx >= MAX_OPTIONS:
+        raise DemoError(f"step {step}: action {idx} is beyond the {MAX_OPTIONS} encoded rows")
+    rep = canonical_action(obs, idx)
+    if not obs["action_mask"][rep]:
+        raise DemoError(f"step {step}: the demonstrated action is hidden by the mask (an undo)")
+    forced = int(np.count_nonzero(obs["action_mask"])) == 1
+    return LineStep(encoded_action_key(obs, rep), forced)
+
+
+def recovery_line(fire: Demonstration, line: int, plain: Demonstration, vocab: CardVocab, *, cards=None,
+                  env: Environment | None = None, event_length: int = 64, source: str = "") -> RecoveryLine:  # fmt: skip
+    """Replay ``fire.lines[line]`` (a ``--fire`` line: the responder fires ``fire.fire`` at one chain window of
+    ``plain``'s line and the combo rebuilds) and keep what the scripted seat does from the hand trap on.
+
+    The window is identified as :func:`ygorl.train.line_labels.window_identities` does: by the effect it answers and
+    by how many of the responder's chain prompts with a real choice (two or more choosable rows) answered that effect
+    so far. The scripted seat's actions before the hand trap must be the first ones of ``plain``'s line 0 (the line
+    the fire record tested); :class:`DemoError` otherwise, and when the responder never activates the hand trap."""
+    if fire.start is None or plain.start is None:
+        raise DemoError("the record has no start position")
+    if fire.start["core_seed"] != plain.start["core_seed"] or (fire.start["decks"]["a"] != plain.start["decks"]["a"]):
+        raise DemoError("the fire record does not start where the plain line does")
+    cards = cards if cards is not None else default_cards()
+    ln = fire.lines[line]
+    session = DuelSession(fire.replay(line).duel(env, cards=cards))
+    observer = PointObserver(cards, vocab, event_length)
+    plain_ours = [i for i, p in zip(plain.lines[0].actions, plain.lines[0].players) if p == LINE_PLAYER]
+    before: list[int] = []
+    steps: list[LineStep] = []
+    counts: dict[int, int] = {}
+    window: tuple[int, int] | None = None
+    try:
+        for step, idx in enumerate(ln.actions):
+            point = session.point
+            if point is None:
+                raise DemoError(f"step {step}: the duel stopped before the line ended")
+            if not 0 <= idx < len(point.actions):
+                raise DemoError(f"step {step}: action {idx} is not one of the {len(point.actions)} actions")
+            if point.player == LINE_PLAYER:
+                if window is None:
+                    before.append(idx)
+                else:
+                    steps.append(_line_step(observer.encode(point, session.core), idx, step))
+            elif window is None and point.decision.TYPE == C.MSG_SELECT_CHAIN and len(point.choosable) > 1:
+                effect = chain_effect(observer.encode(point, session.core))
+                counts[effect] = counts.get(effect, 0) + 1
+                card = point.actions[idx].card
+                if card is not None and card.code == fire.fire:
+                    window = (effect, counts[effect])
+            observer.on_decision(point, idx)
+            session.act(idx)
+            if session.tracker.result.retries:
+                raise DemoError(f"step {step}: the engine answered MSG_RETRY")
+    finally:
+        session.close()
+    if window is None:
+        raise DemoError(f"the responder never activates {fire.fire}")
+    if before != plain_ours[: len(before)]:
+        raise DemoError("the fire line leaves the plain line before the hand trap")
+    return RecoveryLine(window[0], window[1], vocab.index(fire.fire), int(fire.fire), len(before), tuple(steps), source)
+
+
 def line_script(demo: Demonstration, line: int, vocab: CardVocab, *, cards=None, env: Environment | None = None,
                 scripts=None, id: int = 0, source: str = "") -> LineScript:  # fmt: skip
     """Replay ``demo.lines[line]`` with the reference encoder and key every step of :data:`LINE_PLAYER`."""
@@ -182,14 +275,7 @@ def line_script(demo: Demonstration, line: int, vocab: CardVocab, *, cards=None,
             if point is None:
                 raise DemoError(f"step {step}: the duel stopped before the line ended")
             if point.player == LINE_PLAYER:
-                if idx >= MAX_OPTIONS:
-                    raise DemoError(f"step {step}: action {idx} is beyond the {MAX_OPTIONS} encoded rows")
-                obs = encoder.encode(point, session.core)
-                rep = canonical_action(obs, idx)
-                if not obs["action_mask"][rep]:
-                    raise DemoError(f"step {step}: the demonstrated action is hidden by the mask (an undo)")
-                forced = int(np.count_nonzero(obs["action_mask"])) == 1
-                steps.append(LineStep(encoded_action_key(obs, rep), forced))
+                steps.append(_line_step(encoder.encode(point, session.core), idx, step))
             session.act(idx)
             if session.tracker.result.retries:
                 raise DemoError(f"step {step}: the engine answered MSG_RETRY")
@@ -204,11 +290,14 @@ def line_script(demo: Demonstration, line: int, vocab: CardVocab, *, cards=None,
 class LineLibrary:
     """The scripted lines of one or more demonstration files (solved ``plain`` records, their first line), keyed
     and ready to deal. Records that do not replay are left out with a note in ``problems``; the ids of the rest
-    are their order over the files."""
+    are their order over the files. With ``recovery`` files, every script carries the recovery lines of its record's
+    solved ``--fire`` records (:class:`RecoveryLine`); the fire lines that do not join are noted in
+    ``recovery_problems``."""
 
     def __init__(self, scripts: Sequence[LineScript], problems: Sequence[str] = ()) -> None:
         self.scripts = list(scripts)
         self.problems = list(problems)
+        self.recovery_problems: list[str] = []
         self.seconds = 0.0
         self.dealable: list[int] | None = (
             None  # ids `sample` draws from; None = every script (TrainConfig.line_labelled_only)
@@ -216,24 +305,66 @@ class LineLibrary:
 
     @classmethod
     def load(cls, paths: Iterable[str | Path], vocab: CardVocab, *, cards=None, env: Environment | None = None,
-             variant: str = "plain") -> LineLibrary:  # fmt: skip
+             variant: str = "plain", recovery: Iterable[str | Path] = (), event_length: int = 64) -> LineLibrary:  # fmt: skip
+        """``recovery``: demonstration files with ``--fire`` records (``variant="fire"``) of the same hands; each solved
+        fire line becomes a recovery line of the script of its hand (:func:`recovery_line`; ``event_length``: the event
+        window the window's effect is read from, as the collector's)."""
         t0 = time.perf_counter()
+        recovery = list(recovery)
         scripts, problems = [], []
+        plain: dict[str, list[tuple[int, Demonstration]]] = {}
         for path in paths:
             for demo in read_jsonl(path):
                 if demo.variant != variant or demo.status != "solved" or not demo.lines:
                     continue
-                if demo.environment is not None and (env is None or env.version != demo.environment["version"]):
-                    problems.append(f"{path}: {demo.deck['name']} hand {demo.hand_index}: recorded in environment "
-                                    f"{demo.environment['version']}, the run uses {env.version if env else None}")  # fmt: skip
+                if not _same_environment(demo, env, problems, path):
                     continue
                 try:
                     scripts.append(line_script(demo, 0, vocab, cards=cards, env=env, id=len(scripts), source=str(path)))
                 except (DemoError, ValueError) as exc:
                     problems.append(f"{path}: {demo.deck['name']} hand {demo.hand_index}: {exc}")
+                    continue
+                if recovery:
+                    plain.setdefault(scripts[-1].name, []).append((scripts[-1].id, demo))
         lib = cls(scripts, problems)
+        if recovery:
+            lib._join_recovery(recovery, plain, vocab, cards=cards, env=env, event_length=event_length)
         lib.seconds = time.perf_counter() - t0
         return lib
+
+    def _join_recovery(self, paths: Iterable[str | Path], plain: dict[str, list[tuple[int, Demonstration]]],
+                       vocab: CardVocab, *, cards, env, event_length: int) -> None:  # fmt: skip
+        found: dict[int, dict[tuple[int, int, int], RecoveryLine]] = {}
+        problems = self.recovery_problems
+        for path in paths:
+            for fire in read_jsonl(path):
+                if fire.variant != "fire" or fire.fire is None or fire.status != "solved" or not fire.lines:
+                    continue
+                name = f"{fire.deck['name']}#{fire.hand_index}"
+                bases = [
+                    (i, d) for i, d in plain.get(name, ()) if d.hand_seed == fire.hand_seed and d.hand == fire.hand
+                ]
+                if not bases or not _same_environment(fire, env, problems, path):
+                    continue
+                for k in range(len(fire.lines)):
+                    errors = []
+                    for sid, base in bases:
+                        try:
+                            rec = recovery_line(fire, k, base, vocab, cards=cards, env=env, event_length=event_length,
+                                                source=str(path))  # fmt: skip
+                        except (DemoError, ValueError) as exc:
+                            errors.append(str(exc))
+                            continue
+                        found.setdefault(sid, {}).setdefault(rec.key, rec)  # the first line of a window is kept
+                    if len(errors) == len(bases):
+                        problems.append(f"{path}: {name} fire {fire.fire} line {k}: {errors[0]}")
+        for sid, recs in found.items():
+            self.scripts[sid] = replace(self.scripts[sid], recovery=tuple(recs.values()))
+
+    @property
+    def recovery_windows(self) -> int:
+        """Recovery lines over the library (one per line, window and hand trap)."""
+        return sum(len(s.recovery) for s in self.scripts)
 
     def __len__(self) -> int:
         return len(self.scripts)
@@ -249,6 +380,15 @@ class LineLibrary:
                 raise ValueError("no dealable line (line_labelled_only with no labelled line)")
             return self.scripts[self.dealable[int(rng.integers(len(self.dealable)))]]
         return self.scripts[int(rng.integers(len(self.scripts)))]
+
+
+def _same_environment(demo: Demonstration, env: Environment | None, problems: list[str], path) -> bool:
+    """False (with a note in ``problems``) for a record bound to another environment than the run's."""
+    if demo.environment is not None and (env is None or env.version != demo.environment["version"]):
+        problems.append(f"{path}: {demo.deck['name']} hand {demo.hand_index}: recorded in environment "
+                        f"{demo.environment['version']}, the run uses {env.version if env else None}")  # fmt: skip
+        return False
+    return True
 
 
 class LinePlayer:
@@ -268,10 +408,16 @@ class LinePlayer:
     step (``extra``: a prompt turn 1 did not have, e.g. a hand trap's or a quick-play spell's window); at the line's
     first decision up to ``lead_skip`` leading steps may be passed over to find a match (``skipped``). Completion is
     noticed at any later decision of the seat. Second-seat lines behave as they always did.
+
+    Recovery (:meth:`interrupt`, the script's :attr:`LineScript.recovery`): when the learner activates a hand trap at
+    a chain window for which the script has a recovery line, the player switches to that line's steps (``status``
+    ``"recovering"``, matched with the same tolerances) and then completes or breaks it like the line itself; a
+    window without a recovery line changes nothing. A recovering line is not switched again.
     """
 
     def __init__(self, script: LineScript, skip_forced: bool, *, first_seat: bool = False, lead_skip: int = 3) -> None:
         self.script = script
+        self.steps = script.steps  # the steps being played: the line's, or a recovery line's once switched
         self.skip_forced = skip_forced
         self.first_seat = first_seat
         self.lead_skip = lead_skip if first_seat else 0
@@ -282,18 +428,37 @@ class LinePlayer:
         self.turn: int | None = None  # turn of the line's first played step
         self.skipped = 0  # leading steps passed over (first seat)
         self.extra = 0  # decisions answered outside the line (first seat)
+        self.recovery = {r.key: r for r in script.recovery}
+        self.recoveries = 0  # switches to a recovery line
+        self.recovered_at: int | None = None  # the line's step at which the switch happened
+        self.recovery_window: tuple[int, int, int] | None = None  # (effect, occurrence, card) of the switch
+
+    def interrupt(self, effect: int, occurrence: int, card: int) -> bool:
+        """The learner activated ``card`` (vocab index) at the chain window ``(effect, occurrence)`` of this game
+        (``Rollout.line_effect`` / ``line_occurrence``): switch to the recovery line of that window, if the script
+        has one and the line is still being played. True when it switched."""
+        if self.status != "playing" or not self.recovery:
+            return False
+        rec = self.recovery.get((effect, occurrence, card))
+        if rec is None:
+            return False
+        self.recovered_at, self.recovery_window = self.pos, rec.key
+        self.steps, self.pos = rec.steps, 0
+        self.status = "recovering"
+        self.recoveries += 1
+        return True
 
     def _skip_forced_steps(self) -> None:
-        steps = self.script.steps
+        steps = self.steps
         while self.skip_forced and self.pos < len(steps) and steps[self.pos].forced:
             self.pos += 1
 
     def act(self, obs) -> int | None:
-        if self.status != "playing":
+        if self.status not in ("playing", "recovering"):
             return None
         if self.first_seat:
             return self._act_first_seat(obs)
-        steps = self.script.steps
+        steps = self.steps
         self._skip_forced_steps()
         if self.pos >= len(steps):
             self.status = "completed"
@@ -310,7 +475,7 @@ class LinePlayer:
 
     def _candidates(self, start: int) -> list[int]:
         """The steps the decision may answer from ``start``: the recorded forced steps up to the next unforced one."""
-        steps, out, j = self.script.steps, [], start
+        steps, out, j = self.steps, [], start
         while j < len(steps):
             out.append(j)
             if not (self.skip_forced and steps[j].forced):
@@ -319,7 +484,7 @@ class LinePlayer:
         return out
 
     def _act_first_seat(self, obs) -> int | None:
-        steps = self.script.steps
+        steps = self.steps
         candidates = self._candidates(self.pos)
         if not candidates or (self.skip_forced and steps[candidates[-1]].forced):
             self.status = "completed"  # every step played (the rest forced, never asked)
@@ -362,7 +527,7 @@ class LinePlayer:
     def _find(self, obs, candidates: list[int]) -> tuple[int, int] | None:
         """The candidate step a choosable row matches -- the next unforced step first, then the recorded forced steps
         before it in order; exactly, else without the pile sequence: (step, row)."""
-        steps = self.script.steps
+        steps = self.steps
         order = candidates[-1:] + candidates[:-1]
         for match in (match_action, match_loose):
             for j in order:
@@ -374,11 +539,19 @@ class LinePlayer:
     def finish(self) -> dict:
         """The line's outcome for the game's record (``FinishedGame.line``): ``seat`` is the learner's seat (1: the
         line moved first; 0: the learner moved first and the line was played on turn 2), ``turn`` the turn of its
-        first played step."""
-        return {"id": self.script.id, "name": self.script.name, "status": self.status, "played": self.played,
-                "steps": len(self.script.steps), "broken_at": self.broken_at, "seat": 0 if self.first_seat else 1,
-                "turn": self.turn, "skipped": self.skipped, "extra": self.extra}  # fmt: skip
+        first played step. A script with recovery lines adds ``recoveries`` (switches to a recovery line, 0 or 1),
+        ``recovered_at`` (the line's step at the switch) and ``recovery_window`` (``[effect, occurrence, card]``);
+        after a switch ``status`` / ``broken_at`` are about the recovery line's steps (``played`` counts both), and a game that
+        ends during it is ``"recovering"``."""
+        out = {"id": self.script.id, "name": self.script.name, "status": self.status, "played": self.played,
+               "steps": len(self.script.steps), "broken_at": self.broken_at, "seat": 0 if self.first_seat else 1,
+               "turn": self.turn, "skipped": self.skipped, "extra": self.extra}  # fmt: skip
+        if self.script.recovery:
+            out.update(recoveries=self.recoveries, recovered_at=self.recovered_at,
+                       recovery_window=list(self.recovery_window) if self.recovery_window else None)  # fmt: skip
+        return out
 
 
-__all__ = ["LINE_PLAYER", "LineLibrary", "LinePlayer", "LineScript", "LineStep", "chain_effect", "encoded_action_key",
+__all__ = ["CHAIN_KIND", "LINE_PLAYER", "LineLibrary", "LinePlayer", "LineScript", "LineStep", "RecoveryLine",
+           "chain_effect", "encoded_action_key", "recovery_line",
            "line_script", "match_action", "match_loose"]  # fmt: skip

@@ -19,7 +19,7 @@ DECKS = ("a.ydk", "b.ydk")
 STRINGS = {"env": "v1", "text_dir": str(Path("/tmp/feats").resolve()), "bc_prior": "bc.pt", "init_from": "init.pt", "device": "cuda:1",
            "register_matrix": str(Path("/tmp/matrix.json").resolve()), "keep_best_by": "random", "ppo.objective": "pg", "deck_pool": str(Path("/tmp/pool.json").resolve()), "critic_init": "fresh", "line_labels": str(Path("/tmp/graded.jsonl").resolve())}  # fmt: skip
 TUPLES = {"eval_opponents": ("random", "greedy", "policy:x.pt"), "pin_opponents": ("a.pt", "b.pt"),
-          "line_demos": ("a.jsonl", "b.jsonl")}  # fmt: skip
+          "line_demos": ("a.jsonl", "b.jsonl"), "line_recovery": ("fire.jsonl",)}  # fmt: skip
 
 
 def parse(argv, base=None):
@@ -60,7 +60,7 @@ def perturbed(key: str):
         base = replace(base, line_demos=("demos.jsonl",))
     if key == "line_first_share":
         base = replace(base, line_demos=("demos.jsonl",), line_share=0.5)
-    if key == "line_labels":
+    if key in ("line_labels", "line_recovery"):
         base = replace(base, line_demos=("demos.jsonl",), line_share=0.5)
     if key == "line_labelled_only":
         base = replace(base, line_demos=("demos.jsonl",), line_share=0.5, line_labels="/tmp/graded.jsonl")
