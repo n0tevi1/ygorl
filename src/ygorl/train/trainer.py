@@ -54,7 +54,7 @@ from ygorl.train.checkpoint import (
     warm_start,
 )
 from ygorl.train.ppo import PPOConfig, PPOLearner
-from ygorl.train.rollout import Rollout, RolloutCollector, RolloutStalled
+from ygorl.train.rollout import BranchConfig, Rollout, RolloutCollector, RolloutStalled
 from ygorl.train.league import League
 from ygorl.train.line_labels import LineLabels
 from ygorl.train.lines import LineLibrary
@@ -130,6 +130,18 @@ class TrainConfig:
     # deal only the lines that carry a label (line_labels): the labelled rows are sparse otherwise (a labelled line and
     # the learner holding the hand trap are both needed); scripted games then never use unlabelled lines
     line_labelled_only: bool = False
+    # window branching (train.rollout.BranchConfig, docs/training.md §8.1 「窗口分支」): at the learner's chain windows of
+    # the scripted games on the line's turn the slot is snapshotted and the pass and the branch_k - 1 likeliest
+    # activations are each played on branch_rollouts times to the learner's next turn (branch_horizon: board score,
+    # critic V or both; branch_board_scale per board point), in branch_fraction of the windows; branch_require_recovery:
+    # only where the line has a recovery line for those activations. The values feed ppo.branch_mode / branch_q_coef
+    branch_windows: bool = False
+    branch_k: int = 2
+    branch_rollouts: int = 1
+    branch_horizon: str = "board"
+    branch_fraction: float = 1.0
+    branch_require_recovery: bool = True
+    branch_board_scale: float = 0.1
     snapshot_every: int = 10  # updates
     pool_sampling: str = (
         "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
@@ -203,6 +215,23 @@ class TrainConfig:
             raise ValueError("line_labels needs line_demos and a line_share above 0 (the labels are on those lines)")
         if self.line_labelled_only and not self.line_labels:
             raise ValueError("line_labelled_only needs line_labels")
+        self.branch_config()  # validates the branch_* values
+        if self.branch_windows:
+            if not (self.line_demos and self.line_share > 0):
+                raise ValueError("branch_windows needs line_demos and a line_share above 0 (it branches their windows)")
+            if self.branch_require_recovery and not self.line_recovery:
+                raise ValueError("branch_require_recovery needs line_recovery (or --no-branch-require-recovery)")
+            if self.complete_games:
+                raise ValueError("branch_windows needs fixed-length segments, not complete_games")
+        if (self.ppo.branch_mode != "off" or self.ppo.branch_q_coef > 0) and not self.branch_windows:
+            raise ValueError(
+                "ppo.branch_mode / branch_q_coef need branch_windows (the rollouts carry no branch values)"
+            )
+
+    def branch_config(self) -> BranchConfig:
+        return BranchConfig(fraction=self.branch_fraction, k=self.branch_k, rollouts=self.branch_rollouts,
+                            horizon=self.branch_horizon, require_recovery=self.branch_require_recovery,
+                            board_scale=self.branch_board_scale)  # fmt: skip
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -363,7 +392,8 @@ class Trainer:
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced, record_actions=True, record_games=cfg.trace_games,
-                                 selection_history=self.net_config.selection_history, attack_history=self.net_config.attack_history, cancel_budget=cfg.cancel_budget)  # fmt: skip
+                                 selection_history=self.net_config.selection_history, attack_history=self.net_config.attack_history, cancel_budget=cfg.cancel_budget,
+                                 snapshots=cfg.branch_windows)  # fmt: skip
         # the acting network: the model itself, or a copy refreshed before each overlapped collection
         self.acting = copy.deepcopy(self.model) if cfg.overlap_collect else self.model
         self._pending: Rollout | None = None
@@ -372,7 +402,8 @@ class Trainer:
         self.collector = RolloutCollector(self.env, self.acting, self.schedule, cfg.steps, opponents=self.schedule.opponent,
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
                                           device=self.device, stall_timeout=cfg.stall_timeout,
-                                          turn_discount=cfg.turn_discount, complete_games=cfg.complete_games)  # fmt: skip
+                                          turn_discount=cfg.turn_discount, complete_games=cfg.complete_games,
+                                          branch=cfg.branch_config() if cfg.branch_windows else None)  # fmt: skip
         self._warmup_ev: list[float] = []
         self.counters = {"critic_warmup_done": 0, "updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0, "snapshots": 0, "snapshots_skipped": 0}  # fmt: skip
@@ -613,6 +644,10 @@ class Trainer:
                     f"{record['line_bonus_mean']:.3f})" if "line_labelled_rows" in record else "")
                  + (f", line CE rows {record['line_ce_rows']} ({record['line_ce_fire_targets']} fire targets, loss "
                     f"{record.get('line_ce_loss', 0.0):.4f})" if "line_ce_rows" in record else "")
+                 + (f", branched windows {record['branch_windows']} ({record['branch_decisions']} branch decisions"
+                    + (f", {record['branch_rows']} rows used, mean adv {record['branch_adv_mean']:.3f}, fire share "
+                       f"{record['branch_fire_share']:.2f}" if "branch_rows" in record else "") + ")"
+                    if "branch_windows" in record else "")
                  + (f", SKIPPED {stats['nonfinite_minibatches']} non-finite-loss / {stats['nonfinite_grad_minibatches']} "
                     "non-finite-gradient minibatches" if stats.get("nonfinite_minibatches")
                     or stats.get("nonfinite_grad_minibatches") else ""))  # fmt: skip
@@ -727,6 +762,8 @@ class Trainer:
             "pool_games": len(pool_scores), "pool_win_rate": None if not pool_scores else round(_mean(pool_scores), 3),
             "first_player_win_rate": None if not first_wins else round(_mean(first_wins), 3),
             **({"discarded_rows": ro.discarded_rows} if ro.complete_games else {}),
+            **({"branch_windows": ro.branch_windows, "branch_decisions": ro.branch_decisions}
+               if ro.branch_value is not None else {}),
             "truncated_games": sum(g.truncated for g in games), "errors": sum(g.reason == "error" for g in games),
             "reasons": dict(Counter(g.reason for g in games)),
             "mean_game_decisions": _mean(int(g.result.get("decisions", 0)) for g in games),

@@ -62,6 +62,11 @@ def perturbed(key: str):
         base = replace(base, line_demos=("demos.jsonl",), line_share=0.5)
     if key in ("line_labels", "line_recovery"):
         base = replace(base, line_demos=("demos.jsonl",), line_share=0.5)
+    if key == "branch_fraction":
+        values = dict.fromkeys(flag.keys, 0.5)
+    if key in ("branch_windows", "ppo.branch_mode", "ppo.branch_q_coef"):
+        base = replace(base, line_demos=("demos.jsonl",), line_share=0.5, line_recovery=("fire.jsonl",),
+                       branch_windows=True)  # fmt: skip
     if key == "line_labelled_only":
         base = replace(base, line_demos=("demos.jsonl",), line_share=0.5, line_labels="/tmp/graded.jsonl")
     owner = key.partition(".")[0]

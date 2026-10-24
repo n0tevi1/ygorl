@@ -101,6 +101,11 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | prefix start / `prefix` | 前缀起局 | `EncodedVecEnv.reset(env_id, spec, prefix)`：建局后在工作线程上按 `step` 的语义连续应用一串动作下标，中间不回传事件，`recv` 直接拿到前缀之后的决策（或中途的终局）；可在任意槽位起局，与快照互补（engine.md「前缀起局」，同上 §5.2） |
 | `Position` / position library / `PositionLibrary` | 局面 / 局面库 | 局面 = 一局的精确起点（环境版本、种子、先后手、双方卡组、规则配置、可选核心种子字）+ 动作前缀 + 录制时的 `skip_forced` / `cancel_budget`，可附场面键与来源元数据；局面库是其 JSONL 集合，`sample(rng)` 均匀发局（`ygorl.train.positions`） |
 | response export / `responses` | 应答导出 | `EncodedVecEnv.responses(env_id)`：该局到目前为止送给核心的应答，配合 `Replay.from_spec` 构成 `Replay`，可重放、可写 `.yrpX` |
+| window counterfactual advantage / `branch_value` | 窗口反事实优势 | 在打断窗口同槽位快照，打 / 不打各推演到学习方下一回合，用截断值（默认场面分）的差作该窗口的优势或 Q 目标（`PPOConfig.branch_mode`；spikes/first-seat-interruption-plan-2026-10-24.md §5.1，training.md §8.2） |
+| window branching / `BranchConfig` | 窗口分支 | 收集器在符合条件的打断窗口上快照、逐个推演分支集再恢复，不改变主对局（`RolloutCollector(branch=...)`，training.md §8.1） |
+| branch set | 分支集 | 一个窗口上被推演的候选：pass 加策略最想打的 K − 1 个发动（默认 K = 2） |
+| branch horizon / board score | 分支视界 / 场面分 | 分支推演停下取值的点（学习方下一个自己回合的第一个决策，或终局）；场面分 = 3 × 阻断点 + 怪兽数 + 0.5 × 魔陷数（`rollout.board_score`） |
+| prefix start / `Position` | 前缀起局 / 局面 | 用种子 + 动作前缀在环境里重放到某个局面（如回合 1 结束）再开始训练（同上 §5.2） |
 | recovery line / `RecoveryLine` | 恢复线 | 对手的线在某时点被打断后，求解器（`--fire`）找到的到达原终场的续线；按（线，窗口身份 =（被回应效果，次数），打断卡）索引，脚本线对手被学习方在该时点打断时改走它（`LinePlayer.interrupt`，状态 `recovering`；同上 §5.3，training.md §8.3） |
 | reactive line | 反应式线 | 按学习者实际回合 1 场面重新求解的对手回合 2 线（同上 §5.3） |
 | bait line | 诱饵线 | 先用可恢复的次要起手骗打断、再出真起手的对手线（同上 §5.5） |

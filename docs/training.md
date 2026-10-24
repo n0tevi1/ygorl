@@ -273,6 +273,28 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
 旧来源未收集动作时该字段为null，不伪装为可复现的空序列；运行中的旧实验不会被补写不存在的动作日志。
 已知限制：若每一局都在第一个决策之前出错，收集器会不停开新局而凑不满一列（事件一直有，看门狗不触发）；只在引擎整体损坏时出现。
 
+**窗口分支**（`--branch-windows`，`RolloutCollector(branch=BranchConfig(...))`，默认关闭；
+[先手打断计划](spikes/first-seat-interruption-plan-2026-10-24.md) §5.1 A 的收集一侧，T4）：在打断窗口上用同槽位快照（[engine.md](engine.md)「步进环境快照」）把「打」与「不打」各推演一遍，给这一行记下各自的值。
+- **哪些窗口**：学习方的 `MSG_SELECT_CHAIN` 决策，同时满足：脚本线局、线所在的对手回合（学习方先手时回合 2，后手时回合 1；`is_my_turn = 0`）、
+  可选行里有 pass 也有至少一个发动（chain 类）；`--branch-fraction`（默认 1.0）按独立的随机数抽样。默认还要求 `--branch-require-recovery`
+  （`--no-branch-require-recovery` 关掉）：线还在按线走，且分支集里的每个发动在这个窗口（被回应效果，次数）都有恢复线（§8.3「恢复线」）。
+  没有恢复线时被打断的线交给快照策略，P0b 的配对证据显示这会把反事实系统性地推向「打」（计划 §10.2）。自博弈局不分支。
+- **分支集**：pass 加上策略概率最高的 `--branch-k − 1` 个发动（默认 K = 2：打 π 最想打的那张 / 不打）。
+- **推演**：`snapshot` → 走候选 → 推进到**视界**（学习方下一个自己回合的第一个决策：先手回合 3、后手回合 2）或终局 → 取值 → `restore`；
+  每个候选 `--branch-rollouts`（M，默认 1）次取均值，全部跑完后 `release`，再走这一行真实采样的动作。分支内学习方与快照对手用分支专用的
+  `torch.Generator` 采样，种子 = hash(收集器种子, 局号, 局内行号, 推演号)，同一推演号的各候选共用（公共随机数）；线对手的状态
+  （`LinePlayer.copy` / `restore`，含 `recovering` 切换）与槽位的窗口计数随快照回退，分支里学习方打出的发动照常让线切到恢复线。
+  分支内的决策不是行，只计入 `Rollout.branch_decisions`。
+- **取值**（学习方视角）：终局 +1 / −1 / 0（与视界无关）；视界上按 `--branch-horizon`：`board`（默认）= −`branch_board_scale`（默认 0.1）×
+  线方场面分，场面分与 P0b 探针相同 = 3 × 阻断点（`solver.blocking.board_interruptions`：表侧怪兽与魔陷、盖放魔陷、手牌、墓地）+ 1 × 怪兽数 +
+  0.5 × 魔陷区卡数，从观测卡表读出，手牌与盖放魔陷取特权真值（`rollout.board_score`）；`critic` = 学习方 critic 的 V；`both` = V − 场面项。
+  默认用场面分，是因为 P0b 里回合 2 起点的 critic 差与标签无关（计划 §10.2 / §10.5 第 2 条）。推演中局被上限或错误截断时，这个窗口作废。
+- **写进 Rollout**：`branch_value [T, B, A]`（分支集各候选的均值，其余 NaN）、`branch_valid [T, B]`（全部推演有效）、`branch_pass [T, B]`
+  （分支集里 pass 的行号）、`branch_windows` / `branch_decisions`；不开分支时这几个字段为 None / 0，其余字段与现在逐位相同（`branch_fraction = 0` 亦然）。
+- **不改变主对局**：`min_batch ≥ num_envs`（锁步）时，某个槽位在分支期间，其余槽位的决策先扣住、等分支结束再整轮处理，所以每一轮的前向成员与主生成器的抽样顺序和不分支时相同，
+  主对局的行逐位相同（测试）。默认的异步收集（`min_batch = num_envs / 2`）本来就依赖线程时序；这时其余槽位照常推进，分支只是多出几次前向。
+- 吞吐见 §8.6「窗口分支的收集开销」。
+
 ### 8.2 更新（`PPOLearner`）
 
 1. `estimate(cfg.estimator, ..., truncated=...)` 算一次目标（默认 VRPO，`estimator="gae"` 为对照），优势按
@@ -361,6 +383,19 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
 - **限制**：Φ 只看学习方的观测（加上特权 critic 看到的对手真值）：它不知道对手下一回合会怎么展开，只学到「这类场面通常能撑住」的平均。
   段内看不到下一边界的最后一个边界（对局延续到下一段、或被截断）不加塑形，所以跨段的对局只近似伸缩；固定步数的段短（16–32 行）时，
   能凑齐「边界 + 下一个自己回合」的行少，`phi_rows` 偏低，完整游戏收集（`complete_games`）下才严格成立。γ < 1 时我们用的 `γ^k` 按行而非按回合折扣。
+
+**窗口反事实优势**（`--branch-mode off|replace|add`、`--branch-coef`、`--branch-q-coef`，默认 off / 1.0 / 0，需要 `--branch-windows`；
+先手打断计划 §5.1 A 的更新一侧，T5）：§8.1「窗口分支」给分支行记下了分支集 S 上各候选的值 V_b(a)。
+- **优势**：`branch_valid` 且真实动作 a_t ∈ S 的行，`Â = V_b(a_t) − Σ_{a∈S} π̃(a) V_b(a)`，π̃ 是行为策略在 S 上重新归一化的概率（COMA 式基线，
+  `ppo.branch_advantages`）。`replace`：用 Â 替换这一行的 VRPO 原始优势；`add`：原始优势加 `branch_coef · Â`。两者都在归一化之前，与 `line_bonus` 同一位置
+  （先合并分支、再加 `line_bonus`），之后整段照常按 `adv_norm` 归一化。真实动作不在 S 里（K 小于可选发动数时）的行退回 VRPO。PPO 的比值裁剪照常用行为 log π。
+- **Q 目标**（`branch_q_coef = w > 0`，可单独开，即计划阶段 2 的 A1q 臂）：有效分支行上，真实动作的 Q 目标改为 `(1 − w) · λ 目标 + w · V_b(a_t)`；
+  S 里其它动作没有 λ 目标，用 `(1 − w) · Q_act(a) + w · V_b(a)`（Q_act 为动作时记录的 Q），每个这样的（行，动作）在 minibatch 上与一行同权，
+  `0.5 (Q(a) − 目标)²` 加进 Q 损失（日志 `q_loss` 含它，另报 `branch_q_loss`）。V 目标不变。注意 `board` 视界的值是场面分单位（× `branch_board_scale`），
+  不是胜负期望；Q 目标混入它时 w 宜小。
+- **统计**：`branch_rows`（用上分支优势的行）、`branch_valid_rows`、`branch_fallback_rows`（真实动作不在 S 里）、`branch_adv_mean`（这些行 Â 的均值，归一化前）、
+  `branch_fire_share`（有 pass 的有效分支行中，最优候选是发动、即反事实判「打」的比例）；收集侧 `branch_windows`、`branch_decisions`。
+- `off` 且 `branch_q_coef = 0`，或 `add` 且两个系数都为 0 时，更新与不开分支逐位相同（测试）。
 
 ### 8.3 联赛与牌组池（`selfplay`）
 
@@ -610,6 +645,22 @@ R2b 的 G u576 读数在诱饵侧复现了方法论回顾里的 0.65；动点侧
 - 实现：`PPOLearner.timing = True` 时，每段结束前等设备同步再读时钟。同步只改变读表的时机，不改变计算：同种子下参数逐位相同（`tests/test_ppo.py`）。
   默认关闭，关闭时不做任何同步。
 
+**窗口分支的收集开销**（`tools/bench_branch_collect.py`，2026-10-24，本机 AI Max+ 395 CPU，**负载 20–90**（其它会话在训练），绝对值只作量级）：
+LL-local 的配置（128 × 128 = 16,384 行、两席位脚本线 `line_share 1.0`、先手 0.5、自博弈 0.5、`env_threads 2`、`collect_threads 2`、默认异步 `min_batch = 64`），
+行动网络 LL u1088，恢复线 `full_fire8.jsonl`，K = 2、M = 1、场面分视界；四个臂交替各收 3 段，只计收集时间。
+
+| 臂 | 行/秒（3 段均值） | 每段分支窗口 | 每段分支内决策 | 相对 plain |
+|---|---:|---:|---:|---:|
+| plain（不开快照、不分支） | 182 | — | — | — |
+| branch（默认：要求恢复线） | 200 | 3–5 | 90–460 | 噪声内（≈ 0%） |
+| branch_all（`--no-branch-require-recovery`，窗口全分） | 117 | 180–367 | 8,100–22,900 | 行/秒 −36%（耗时 +56%） |
+| branch_quarter（同上，`--branch-fraction 0.25`） | 180 | 36–72 | 1,400–5,000 | −1% |
+
+读法：默认要求恢复线时，训练线库里有恢复线的窗口很少（每段 3–5 个），开销测不出来。窗口全分时每段约 200–370 个窗口、每个推演约 31 个决策，
+分支内的决策与主对局的决策数同量级，开销 +56%，超过计划的 30% 预算：分支的决策要一个个回到 Python，打得多的槽位成了一段里最慢的列（固定长度段要等所有列满），
+而不像计划 §5.1 估计的那样只付网络前向（分支的前向已与主对局合批）。在预算内的做法是按比例抽窗口：`--branch-fraction 0.25` 时开销在噪声内；
+按测得的斜率，30% 的预算约对应 fraction 0.5。锁步收集（`min_batch = num_envs`）会让其余槽位在分支期间等待，开销更大，只用于需要逐位复现的测试。
+
 ### 8.7 测试
 
 - `tests/test_train_cli.py`（约 5 秒）：每个配置字段都有且只有一个参数（枚举 dataclass 字段）；每个字段取非默认值后经 `to_argv` → 解析 →
@@ -620,6 +671,13 @@ R2b 的 G u576 读数在诱饵侧复现了方法论回顾里的 0.65；动点侧
   对快照池训练同样收敛；收集器布局（交替座位、终局奖励、段间衔接自举状态）、快照局只含学习方的行、截断局标记且无奖励、
   引擎错误事件（开局失败 / 局中错误）记为截断并立即开新局；默认超参数符合设计（熵系数在 0.05–0.2）；EMA 参考；
   KL 为 0 与梯度方向；先验 KL 只在第 1 回合（`kl_prior_turns`）时的行选择、权重与更新结果；学习器状态往返；快照池逐出与 keep-best；策略目标可插拔（注册自定义目标，`prepare` / `loss` 被调用）。
+- `tests/test_window_branching.py`（约 15 秒）：窗口分支。Nim 上对手完美时最优拿法的分支值最高（拿完 +1、其余 −1 或场面项），
+  确定性对手下 `critic` 视界的值等于学习方在该局面的 V；锁步收集开关分支（含 `fraction = 0.5`、跨段）主对局各字段逐位相同，
+  `fraction = 0` 时 Rollout 与不开分支相同；真实对局（`tests/data/line_recovery.jsonl` 的恢复线，学习方 40 张灰流丽，先手 / 后手）主对局逐位相同、
+  每个有效分支行恰有 pass 与灰流丽两个值、都在线的回合且是计数窗口；没有恢复线时默认不分支；快照计数回到 0、`arena_escapes() == 0`；
+  `LinePlayer.copy / restore`；`board_score` 的读法。阳性对照：去掉线状态还原、窗口计数还原或锁步扣住其余槽位，各自让逐位相同的测试失败。
+- `tests/test_branch_advantages.py`（约 5 秒）：手设分支值的 Nim rollout 上，`branch_advantages` 等于公式；`replace` / `add` 的优势、
+  `branch_q_coef` 的 Q 目标与额外 Q 损失目标等于公式；真实动作不在分支集里的行退回 VRPO；`off` / 系数为 0 的更新与不开分支逐位相同；`Trainer` 上开分支一步的日志。
 - `tests/test_checkpoint.py`（手工写的小检查点，不构造 `Trainer`、不开局）：各种 critic 选项（含牌序 critic、非共享主干、非特权）的
   actor-critic 往返；策略检查点能当 actor 加载、不能当 actor-critic；所有加载器缺表时同一报错，PPO 检查点从运行配置找回表；
   `Signature` 的兼容性原因；从 PPO / BC 检查点热启动、热启动多出卡片视角、网络不同则报错。

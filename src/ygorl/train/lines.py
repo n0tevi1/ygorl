@@ -28,6 +28,7 @@ nothing changes: the line plays on and the snapshot takes over once it breaks.
 
 from __future__ import annotations
 
+import copy
 import time
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
@@ -432,6 +433,19 @@ class LinePlayer:
         self.recoveries = 0  # switches to a recovery line
         self.recovered_at: int | None = None  # the line's step at which the switch happened
         self.recovery_window: tuple[int, int, int] | None = None  # (effect, occurrence, card) of the switch
+
+    def copy(self) -> LinePlayer:
+        """The player's state now, for :meth:`restore` (window branching rolls a game back to a snapshot, and the line
+        with it: docs/training.md §8.3 「窗口分支」). The state is the player's attributes; the steps lists and the
+        recovery table are shared, never mutated."""
+        return copy.copy(self)
+
+    def restore(self, state: LinePlayer) -> None:
+        """Return to a :meth:`copy` of this player (position, status, recovery switch and counters). ``state`` stays
+        valid: the attributes are rebound, not mutated, so it can be restored again."""
+        if state.script is not self.script:
+            raise ValueError("a line player only restores a copy of itself")
+        self.__dict__.update(state.__dict__)
 
     def interrupt(self, effect: int, occurrence: int, card: int) -> bool:
         """The learner activated ``card`` (vocab index) at the chain window ``(effect, occurrence)`` of this game
