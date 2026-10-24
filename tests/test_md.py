@@ -231,6 +231,22 @@ def test_to_snapshot_shows_only_what_the_advisor_can_see(me):
     assert opp.deck_count == 28
 
 
+def test_to_snapshot_keeps_the_shown_attack_and_defense_of_face_up_monsters():
+    """The client's ATK / DEF (by uid) land on face-up monsters only; a face-down one is never given any."""
+    off = replace(OFF, verified=True, semantics=SEM, dll_sha256="ab" * 32)
+    raw = read_duel(build_memory(), BASE, off)
+    theirs = raw.players[1 - raw.me].slots
+    up, down = theirs[0], theirs[1]
+    zeus = next(c for c in raw.players[raw.me].slots if c is not None)
+    stats = {up.uid: (3000, 2500), down.uid: (1, 1), zeus.uid: (3500, 3000)}
+    snap = to_snapshot(raw, PASSWORDS, stats=stats)
+    monsters = {c.sequence: c for c in opp_monsters(snap)}
+    assert (monsters[0].attack, monsters[0].defense) == (3000, 2500)
+    assert (monsters[1].attack, monsters[1].defense) == (None, None)
+    assert next(c for c in snap.sides[0].cards if c.location == "mzone").attack == 3500
+    assert to_snapshot(raw, PASSWORDS).sides[1].at("mzone")[0].attack is None
+
+
 def opp_monsters(snap):
     return snap.sides[1].at("mzone")
 

@@ -92,10 +92,15 @@ def build_game():
                                       ("commandMask", 0x6C, 0), ("cardID", 0x88, 0), ("commandList", 0xA0, 0)])  # fmt: skip
     g.define(D, "RunEffectWorker", [("step", 0x10, 0)])
     g.define(D, "DuelClient", [("step", 0x10, 0)])
-    g.define(D, "CardRoot", [("<cardPlane>k__BackingField", 0x78, 0), ("<team>k__BackingField", 0x90, 0),
-                              ("position", 0x94, 0), ("<index>k__BackingField", 0x98, 0),
-                              ("<cardId>k__BackingField", 0x9C, 0), ("<uniqueId>k__BackingField", 0xA8, 0)])  # fmt: skip
-    g.define(D, "CardPlane", [("highlightEff", 0x88, 0), ("auraEffType", 0xB8, 0), ("cmdBitHighlight", 0, STATIC)])
+    g.define(D, "CardRoot", [("<cardPool>k__BackingField", 0x68, 0), ("<cardPlane>k__BackingField", 0x78, 0),
+                              ("<team>k__BackingField", 0x90, 0), ("position", 0x94, 0),
+                              ("<index>k__BackingField", 0x98, 0), ("<cardId>k__BackingField", 0x9C, 0),
+                              ("<uniqueId>k__BackingField", 0xA8, 0), ("m_Atk", 0xB4, 0), ("m_Def", 0xB8, 0),
+                              ("<orgAtk>k__BackingField", 0xBC, 0)])  # fmt: skip
+    g.define(D, "CardPlane", [("highlightEff", 0x88, 0), ("auraEffType", 0xB8, 0), ("cmdBitHighlight", 0, STATIC),
+                               ("<cardRoot>k__BackingField", 0x140, 0)])  # fmt: skip
+    g.define(D, "CardInstancePool", [("list", 0x38, 0), ("<isTerminated>k__BackingField", 0x49, 0)])
+    g.define(D, "Dictionary`2", [("_buckets", 0x10, 0)])
     g.define(D, "CardSelectionList", [("m_DuelClient", 0x50, 0), ("m_GroupedDataList", 0xE8, 0),
                                        ("m_ListType", 0x248, 0)])  # fmt: skip
     g.define(D, "ListCardData", [("cardid", 0x18, 0), ("cardstatus", 0x30, 0)])
@@ -106,20 +111,22 @@ def build_game():
     return g
 
 
-def board(me=0):
+def board(me=0, theirs_down=()):
     """Own hand 15836 (uid 68), 4998 (uid 4); own Monster Zone 1: 11169 (uid 30), S/T slot 7: 15839 (uid 78);
-    the opponent has 11170 (uid 46) in Monster Zone 1."""
+    the opponent has 11170 (uid 46) in Monster Zone 1 and the Set cards ``theirs_down`` (slot, cid, uid)."""
     empty = {z: () for z in PILES}
 
-    def player(slots, hand):
+    def player(slots, hand, down=()):
         s = [None] * FIELD_SLOTS
         for i, cid, uid in slots:
             s[i] = RawCard(cid, uid, 0, face=1)
+        for i, cid, uid in down:
+            s[i] = RawCard(cid, uid, 0, face=0)
         piles = dict(empty, hand=tuple(RawCard(cid, uid, 0) for cid, uid in hand))
         return RawPlayer(lp=8000, slots=tuple(s), piles=piles, counts={z: len(piles[z]) for z in PILES})
 
     mine = player([(0, 11169, 30), (7, 15839, 78)], [(15836, 68), (4998, 4)])
-    theirs = player([(0, 11170, 46)], [])
+    theirs = player([(0, 11170, 46)], [], theirs_down)
     players = (mine, theirs) if me == 0 else (theirs, mine)
     return RawDuel(turn=3, phase=2, turn_player=me, me=me, players=players, offsets=None)
 
@@ -149,7 +156,11 @@ def test_classes_and_fields_from_metadata():
     found = find_classes(Heap(mem), Metadata(g.metadata(), META_BASE), [(HEAP_BASE, HEAP_BASE + HEAP_SIZE)],
                          [(D, "CardPlane"), ("", "CardStatus"), (D, "Missing")])  # fmt: skip
     assert set(found) == {"CardPlane", "CardStatus"}
-    assert found["CardPlane"].fields == {"highlightEff": 0x88, "auraEffType": 0xB8}  # the static one left out
+    assert found["CardPlane"].fields == {
+        "highlightEff": 0x88,
+        "auraEffType": 0xB8,
+        "<cardRoot>k__BackingField": 0x140,
+    }  # the static one left out
     assert found["CardStatus"].address == g.klass[("", "CardStatus")][0]  # not YgomGame.Duel.CardStatus
     assert found["CardStatus"].fields["bitVec"] == 0x24
 
@@ -209,13 +220,29 @@ def test_a_failed_check_finds_the_object_again():
     assert c.open_command(0).cid == 4998
 
 
-def put_root(g, team, position, index, cid, uid, lit, aura):
-    root, plane = g.obj(D, "CardRoot"), g.obj(D, "CardPlane")
+def live_pool(g):
+    if not hasattr(g, "pool"):
+        g.pool = g.obj(D, "CardInstancePool")
+    return g.pool
+
+
+def put_root(g, team, position, index, cid, uid, lit=False, aura=0, attack=0, defense=0, pool=None, back=True):
+    """A card view; ``pool``: its pool (default the duel's live one); ``back``: its plane points back at it."""
+    root, plane = g.obj(D, "CardRoot"), g.obj(D, "CardPlane", 0x150)
+    g.put(root + 0x68, "<Q", pool if pool is not None else live_pool(g))
     g.put(root + 0x78, "<Q", plane)
     g.put(root + 0x90, "<iiii", team, position, index, cid)
     g.put(root + 0xA8, "<i", uid)
+    g.put(root + 0xB4, "<iii", attack, defense, attack)
     g.put(plane + 0x88, "<Q", g.alloc(0x10) if lit else 0)
     g.put(plane + 0xB8, "<i", aura)
+    g.put(plane + 0x140, "<Q", root if back else g.alloc(0x10))
+    return root
+
+
+def dead_pool(g):
+    """The pool of an earlier duel: freed, its memory now another object."""
+    return g.obj(D, "Dictionary`2")
 
 
 def test_highlighted_own_cards_only():
@@ -227,7 +254,41 @@ def test_highlighted_own_cards_only():
     put_root(g, 1, 0, 0, 11170, 46, True, 0x18)  # the opponent's
     put_root(g, 0, 18, 0, 15836, 0, True, 0x7C)  # a pooled view
     put_root(g, 0, 13, 0, 12345, 68, True, 0x7C)  # a stale view: uid of another card
+    put_root(g, 0, 13, 1, 4998, 4, True, 0x7E, pool=dead_pool(g))  # an earlier duel's view of the same card
     assert client_for(g).highlighted(board()) == {68: 0x7C, 30: 0x18, 78: 0x88}
+
+
+def test_live_root_needs_its_plane_and_a_live_pool():
+    g = build_game()
+    live = put_root(g, 0, 0, 0, 11169, 30)
+    stolen = put_root(g, 0, 0, 0, 11169, 30, back=False)  # its plane now belongs to another view
+    freed = put_root(g, 0, 0, 0, 11169, 30, pool=dead_pool(g))
+    ended = g.obj(D, "CardInstancePool")
+    g.put(ended + 0x49, "<B", 1)
+    terminated = put_root(g, 0, 0, 0, 11169, 30, pool=ended)
+    c = client_for(g)
+    c.cls("CardRoot")
+    assert [c.live_root(r) for r in (live, stolen, freed, terminated)] == [True, False, False, False]
+
+
+def test_field_stats_reads_face_up_monsters_of_both_players():
+    g = build_game()
+    put_root(g, 1, 0, 0, 11170, 46, attack=3000, defense=2400, pool=dead_pool(g))  # an earlier duel's view first
+    put_root(g, 0, 0, 0, 11169, 30, attack=1100, defense=600)
+    put_root(g, 1, 0, 0, 11170, 46, attack=2800, defense=2400)
+    put_root(g, 0, 7, 0, 15839, 78, attack=0, defense=0)  # a Spell / Trap: not a monster
+    put_root(g, 1, 2, 0, 11171, 50, attack=1900, defense=1200)  # the opponent's Set monster: never read
+    put_root(g, 1, 3, 0, 11172, 52, attack=1000, defense=1000)  # a view at a place the board has no such card
+    put_root(g, 0, 13, 0, 15836, 68, attack=1500, defense=500)  # a hand card
+    stats = client_for(g).field_stats(board(theirs_down=((2, 11171, 50),)))
+    assert stats == {30: (1100, 600), 46: (2800, 2400)}
+
+
+def test_field_stats_skip_a_view_of_another_card():
+    g = build_game()
+    put_root(g, 1, 0, 0, 12345, 46, attack=500, defense=500)  # same uid, another card id
+    put_root(g, 1, 1, 0, 11170, 46, attack=500, defense=500)  # same card, another zone
+    assert client_for(g).field_stats(board()) == {}
 
 
 def put_list_card(g, cid, player, position, index):

@@ -93,6 +93,10 @@ class SnapshotCard:
     effect_used: bool = False  # an effect of this card was activated this turn (its once-per-turn use is spent)
     card_activated: bool = False  # this face-up Spell / Trap was activated this turn
     summoned: str = ""  # SUMMONED: how this monster came to the field this turn ("" = an earlier turn)
+    # face-up monsters (mzone): current ATK / DEF as the game shows them, continuous effects such as equips
+    # included; None = not read (the card's own values apply)
+    attack: int | None = None
+    defense: int | None = None
 
     @property
     def pos(self) -> str:
@@ -136,6 +140,10 @@ class SnapshotCard:
             out["card_activated"] = True
         if self.summoned:
             out["summoned"] = self.summoned
+        if self.attack is not None:
+            out["attack"] = self.attack
+        if self.defense is not None:
+            out["defense"] = self.defense
         return out
 
     @classmethod
@@ -144,7 +152,7 @@ class SnapshotCard:
             raise SnapshotError(f"a card must be an object, not {data!r}")
         unknown = set(data) - {"location", "password", "sequence", "position", "owner", "materials", "counters",
                                "position_locked", "attacked", "set_this_turn", "effect_used", "card_activated",
-                               "summoned"}  # fmt: skip
+                               "summoned", "attack", "defense"}  # fmt: skip
         if unknown:
             raise SnapshotError(f"unknown card keys {sorted(unknown)}")
         try:
@@ -157,7 +165,9 @@ class SnapshotCard:
                        set_this_turn=bool(data.get("set_this_turn", False)),
                        effect_used=bool(data.get("effect_used", False)),
                        card_activated=bool(data.get("card_activated", False)),
-                       summoned=str(data.get("summoned", "")))  # fmt: skip
+                       summoned=str(data.get("summoned", "")),
+                       attack=None if data.get("attack") is None else int(data["attack"]),
+                       defense=None if data.get("defense") is None else int(data["defense"]))  # fmt: skip
         except KeyError:
             raise SnapshotError(f"card without a location: {dict(data)}") from None
         except (TypeError, ValueError) as exc:
@@ -334,6 +344,9 @@ def _check_card(card: SnapshotCard, side: int, who: str, used: set[tuple[str, in
         raise SnapshotError(f"{where}: effect_used / card_activated describe a card on the field")
     if card.materials and card.location != "mzone":
         raise SnapshotError(f"{where}: only monsters in a Monster Zone have materials")
+    if (card.attack is not None or card.defense is not None) and not (card.location == "mzone" and card.known
+                                                                   and card.pos.startswith("faceup")):  # fmt: skip
+        raise SnapshotError(f"{where}: attack / defense describe a face-up monster in a Monster Zone")
 
 
 # summoned, flip summoned, Set or repositioned this turn: the monster cannot change position

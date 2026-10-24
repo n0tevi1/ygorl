@@ -108,8 +108,14 @@ def _attach(args: argparse.Namespace, env):
         names = {cid: cards[pw].name for cid, pw in passwords.items() if pw in cards}
         print(format_raw(raw, names))
         return None
+    try:  # the face-up monsters' ATK / DEF as MD shows them (equips included): MD's client views
+        from ygorl.md.client import Client
+
+        stats = Client.for_process(game.memory, game.pid).field_stats(raw)
+    except (MemoryReadError, OSError):
+        stats = {}
     try:
-        snapshot = to_snapshot(raw, passwords)
+        snapshot = to_snapshot(raw, passwords, stats=stats)
     except SnapshotError as exc:
         raise CommandError(str(exc)) from None
     if args.save:

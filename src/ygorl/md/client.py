@@ -8,7 +8,14 @@ The C# client calls it and keeps the results in its UI objects, and those can be
 - ``CardRoot`` -> ``CardPlane``: every card MD highlights while it waits for input. The highlight is set from
   ``mask & HIGHLIGHT_MASK``; its "aura" names which of three command groups the mask holds (:meth:`Client.highlighted`,
   :func:`aura_kinds`). In an open / chain prompt only the cards that can be activated are lit;
-- ``CardSelectionList``: the cards an open / chain prompt offers, in list order (:meth:`Client.prompt_cards`).
+- ``CardSelectionList``: the cards an open / chain prompt offers, in list order (:meth:`Client.prompt_cards`);
+- ``CardRoot.m_Atk`` / ``m_Def``: a face-up monster's current ATK / DEF as the board shows them, equips and other
+  continuous effects included (:meth:`Client.field_stats`). ``duel.dll`` stores no current value either: its
+  ``DLL_DuelGetCardBasicVal`` recomputes it from the effect lists on every call, and the client keeps the result.
+
+Views of earlier duels stay on the heap and may carry the same unique id and card id as a live one (uids repeat when
+the same decks meet again); a view is live only while its ``CardPlane`` points back at it and its ``CardInstancePool``
+is a live pool (:meth:`Client.live_root`).
 
 Managed field offsets are not hard-coded. Class names live in the mapped ``global-metadata.dat``; the runtime
 ``Il2CppClass`` is the one whose name / namespace pointers point at them, and its ``FieldInfo`` array gives every
@@ -92,6 +99,7 @@ AURA_SURE = {0x7C: 1, 0x7D: 1, 0x18: 2, 0x19: 2, 0x7E: 3, 0x7F: 3, 0x88: 3, 0x89
 LIST_CHAIN, LIST_CHECK_TIMING = 6, 7
 FIRST_PILE = 13  # MD locations: 0-12 field slots, 13 hand, then PILES
 POOLED = 18  # CardRoot.position of a view in the pool (no card)
+MONSTER_ZONES = 7  # MD locations 0-6: Main and Extra Monster Zones
 
 
 def mask_kinds(mask: int) -> set[str]:
@@ -304,6 +312,7 @@ CLASSES = (
     (DUEL, "RunEffectWorker"),
     (DUEL, "CardRoot"),
     (DUEL, "CardPlane"),
+    (DUEL, "CardInstancePool"),
     (DUEL, "CardSelectionList"),
     (DUEL, "ListCardData"),
     ("", "CardStatus"),
@@ -364,6 +373,27 @@ class Client:
             self.scanned[name] = now
         return self.instances[name]
 
+    def live_root(self, root: int) -> bool:
+        """A ``CardRoot`` of the running duel: its ``CardPlane`` points back at it and its ``CardInstancePool`` is
+        live (not terminated). A view of an earlier duel fails one of them (its plane was given to another view, or
+        its pool was freed and the memory reused)."""
+        if self.cls("CardPlane") is None or self.cls("CardInstancePool") is None:
+            return False
+        r, p = self.classes["CardRoot"].fields, self.classes["CardPlane"].fields
+        pool_class = self.classes["CardInstancePool"]
+        back, terminated = p.get("<cardRoot>k__BackingField"), pool_class.fields.get("<isTerminated>k__BackingField")
+        if back is None or terminated is None or "<cardPool>k__BackingField" not in r:
+            return False
+        h = self.heap
+        try:
+            plane = h.u64(root + r["<cardPlane>k__BackingField"])
+            if not plane or h.u64(plane) != self.classes["CardPlane"].address or h.u64(plane + back) != root:
+                return False
+            pool = h.u64(root + r["<cardPool>k__BackingField"])
+            return bool(pool) and h.u64(pool) == pool_class.address and not h.memory.read(pool + terminated, 1)[0]
+        except (MemoryReadError, OSError):
+            return False
+
     # -- reads --
 
     def open_command(self, me: int) -> OpenCommand | None:
@@ -400,6 +430,8 @@ class Client:
                         continue  # a pooled view, holding no card
                     if own.get(uid) != self.heap.i32(root + r["<cardId>k__BackingField"]) or not uid:
                         continue
+                    if not self.live_root(root):
+                        continue  # a view of an earlier duel with the same uid and card id
                     seen.add(uid)
                     plane = self.heap.u64(root + r["<cardPlane>k__BackingField"])
                     if self.heap.u64(plane + p["highlightEff"]):
@@ -411,6 +443,42 @@ class Client:
             if shown <= seen:
                 break  # every own hand / field card has its view (else a new one was pooled: search again)
         return lit
+
+    def field_stats(self, raw: RawDuel) -> dict[int, tuple[int, int]]:
+        """uid -> (ATK, DEF) MD shows for every face-up monster in a Monster Zone, both players' (public
+        information). Only live views (:meth:`live_root`) whose player, zone, unique id and card id match the board
+        read ``raw`` count; a face-down card is never read. The views follow the duel through the client's effect
+        queue: read while MD waits for input, when the queue is drained."""
+        if self.cls("CardRoot") is None:
+            return {}
+        r, h = self.classes["CardRoot"].fields, self.heap
+        if "m_Atk" not in r or "m_Def" not in r:
+            return {}
+        faceup = raw.offsets.semantics["faceup"] if raw.offsets is not None else 1
+        wanted = {}
+        for p, pl in enumerate(raw.players):
+            for i, card in enumerate(pl.slots[:MONSTER_ZONES]):
+                if card is not None and card.uid and card.face & faceup:
+                    wanted[card.uid] = (p, i, card.cid)
+        out: dict[int, tuple[int, int]] = {}
+        for refresh in (False, True):
+            for root in self.objects("CardRoot", refresh=refresh):
+                try:
+                    uid = h.i32(root + r["<uniqueId>k__BackingField"])
+                    if uid not in wanted or uid in out:
+                        continue
+                    team, position, cid = wanted[uid]
+                    if (h.i32(root + r["<team>k__BackingField"]), h.i32(root + r["position"]),
+                            h.i32(root + r["<cardId>k__BackingField"])) != (team, position, cid):  # fmt: skip
+                        continue
+                    if not self.live_root(root):
+                        continue
+                    out[uid] = (h.i32(root + r["m_Atk"]), h.i32(root + r["m_Def"]))
+                except (MemoryReadError, OSError):
+                    continue
+            if set(out) == set(wanted):
+                break  # every face-up monster has its view (else a new one was made: search again)
+        return out
 
     def prompt_cards(self, raw: RawDuel) -> list[PromptCard] | None:
         """The cards of the open / chain prompt list in list order (own cards only); None when the list is no
@@ -473,6 +541,8 @@ def _describe(client: Client, raw: RawDuel, kind: str) -> list[str]:
     lines = [f"request {kind}  me {raw.me}"]
     for uid, aura in sorted(client.highlighted(raw).items()):
         lines.append(f"  lit uid {uid:3d} cid {own[uid]:5d} aura {aura:#x} kinds {sorted(aura_kinds(aura))}")
+    for uid, (attack, defense) in sorted(client.field_stats(raw).items()):
+        lines.append(f"  face-up monster uid {uid:3d} ATK {attack} DEF {defense}")
     op = client.open_command(raw.me)
     if op is not None:
         lines.append(f"  open p{op.player} loc {op.location} idx {op.index} cid {op.cid} mask {op.mask:#x} "

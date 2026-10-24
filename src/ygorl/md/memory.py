@@ -383,15 +383,18 @@ def summon_kind(flags: int, sem: Mapping[str, int]) -> str:
 
 
 def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[int] = frozenset(),
-                activated: frozenset[tuple[int, str]] = frozenset()) -> BoardSnapshot:  # fmt: skip
+                activated: frozenset[tuple[int, str]] = frozenset(),
+                stats: Mapping[int, tuple[int, int]] | None = None) -> BoardSnapshot:  # fmt: skip
     """The advisor's view (seat 0 = the client) as a :class:`BoardSnapshot`; MD card ids -> passwords.
 
     The turn's state of the advisor's own cards comes from their slot flags (summoned how, attacked, an effect
     used, Set or activated this turn) and its player block (Normal Summons, additional Tribute Summons granted).
     ``attacked``: unique ids of monsters the caller saw attack (added to the decoded flag); ``activated``:
     (password, location) of the cards the caller activated this turn that left the field since (their once-per-turn
-    use is in no slot any more)."""
+    use is in no slot any more); ``stats``: uid -> (ATK, DEF) MD shows for its face-up monsters
+    (:meth:`ygorl.md.client.Client.field_stats`), kept on the face-up monsters it names."""
     off = raw.offsets
+    stats = stats or {}
     if not off.verified:
         raise SnapshotError(f"duel.dll {off.dll_sha256[:16]} is not verified against the screen yet; "
                             "use --raw and record the flag semantics first")  # fmt: skip
@@ -426,10 +429,11 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[
             used = mine and bool(flags & sem.get("effect_used", 0))
             card_activated = mine and loc == "szone" and faceup and bool(flags & sem.get("card_activated", 0))
             summoned = summon_kind(flags, sem) if mine and loc == "mzone" else ""
+            attack, defense = stats.get(c.uid, (None, None)) if loc == "mzone" and faceup else (None, None)
             cards.append(SnapshotCard(location=loc, sequence=seq, position=pos, position_locked=locked,
                                       attacked=hit, set_this_turn=set_turn, effect_used=used,
-                                      card_activated=card_activated, summoned=summoned,
-                                      password=pw(c.cid) if known else UNKNOWN,
+                                      card_activated=card_activated, summoned=summoned, attack=attack,
+                                      defense=defense, password=pw(c.cid) if known else UNKNOWN,
                                       materials=tuple(pw(m) for m in c.materials) if known else ()))  # fmt: skip
         cards += [SnapshotCard("grave", pw(c.cid)) for c in pl.piles["grave"]]
         for c in pl.piles["removed"]:

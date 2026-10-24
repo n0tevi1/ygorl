@@ -434,8 +434,9 @@ class Player:
         self.trace = Trace(self.out, screen_every=self.screen_every)
         self.observer = ShadowObserver(self.env.rule_flags, self.cards, self.prior, self._score)  # design 10
         scorer = policy_scorer(self.policy, self.cards, self.env.player.starting_lp) if self.policy else None
+        # in-action decisions rebuilt from the current board
         self.decider = Decider(self.env.rule_flags, self.cards, self.passwords, self.prior, scorer=scorer,
-                               samples=self.samples)  # in-action decisions rebuilt from the current board  # fmt: skip
+                               samples=self.samples, stats=self.field_stats)  # fmt: skip
         self.panel = PanelBook(self.out / "panel_book.npz")  # learned across runs
         self.attacked: set[int] = set()  # uids that attacked (or could not) in this Battle Phase
         self.activated: set[tuple[int, str]] = set()  # (password, location) the policy activated off the field
@@ -1081,12 +1082,24 @@ class Player:
             self.trace.observe(strong_target=target)
             print("  battle: the target survived and we took damage; no more attacks into it this turn", flush=True)
 
+    def field_stats(self, raw: RawDuel) -> dict[int, tuple[int, int]]:
+        """uid -> (ATK, DEF) MD shows for the face-up monsters (memory: the client's card views, equips and other
+        continuous effects included; :meth:`ygorl.md.client.Client.field_stats`); {} when not readable."""
+        client = getattr(self, "client", None)
+        if client is None:
+            return {}
+        try:
+            return client.field_stats(raw)
+        except (MemoryReadError, OSError):
+            return {}
+
     def still_attacks(self, raw: RawDuel) -> bool:
         """Whether the policy's top Battle Phase action on ``raw`` is an attack by the attacker of the replay."""
         from ygorl.advisor.advise import advise
 
         uid, code = self.attacker
-        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked - {uid}), frozenset(self.activated))
+        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked - {uid}), frozenset(self.activated),
+                           self.field_stats(raw))  # fmt: skip
         try:
             advice = advise(snap, own_deck(raw, self.passwords, self.cards), self.policy, self.prior,
                             self.env.rule_flags, cards=self.cards, samples=self.samples,
@@ -1102,7 +1115,8 @@ class Player:
         """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""
         from ygorl.advisor.advise import advise
 
-        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked), frozenset(self.activated))
+        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked), frozenset(self.activated),
+                           self.field_stats(raw))  # fmt: skip
         deck = own_deck(raw, self.passwords, self.cards)
         advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
                         samples=self.samples, seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip

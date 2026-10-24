@@ -64,6 +64,11 @@ def test_snapshot_json_roundtrip():
                    normal_summons=2, extra_tribute_summons=1, activated=((ASH, "hand"),),
                    player_effects=((78665705, 0),))  # fmt: skip
     assert BoardSnapshot.from_json(turn.check().to_json()) == turn
+    stats = snapshot(op=[SnapshotCard("mzone", BLUE_EYES, 1, "faceup_attack", attack=3500, defense=2100),
+                         SnapshotCard("mzone", ASH, 2, "faceup_defense", attack=1000)])  # fmt: skip
+    assert BoardSnapshot.from_json(stats.check().to_json()) == stats
+    assert "attack" not in SnapshotCard("mzone", BLUE_EYES, 1).to_json()
+    assert "defense" not in stats.sides[1].cards[1].to_json()
 
 
 @pytest.mark.parametrize(
@@ -84,6 +89,8 @@ def test_snapshot_json_roundtrip():
         (snapshot(me=[SnapshotCard("mzone", BLUE_EYES, 1, summoned="tribute")]), "summoned must be one of"),
         (snapshot(me=[SnapshotCard("grave", ASH, effect_used=True)]), "describe a card on the field"),
         (snapshot(activated=((ASH, "field"),)), "is not \\(password, location\\)"),
+        (snapshot(me=[SnapshotCard("hand", BLUE_EYES, attack=100)]), "describe a face-up monster"),
+        (snapshot(op=[SnapshotCard("mzone", 0, 1, "facedown_defense", defense=100)]), "describe a face-up monster"),
     ],
 )
 def test_snapshot_rejects_impossible_boards(snap, msg):
@@ -181,6 +188,26 @@ def test_xyz_materials_counters_and_field_zone(cards):
     assert any(c.password == MYSTIC_MINE and c.sequence == 5 for c in again.sides[0].cards)
     assert rec.point.lp == (8000, 1234)
     assert [c.location for c in again.sides[1].cards].count("hand") == 1
+
+
+def test_shown_attack_and_defense_reach_the_core(cards):
+    """ATK / DEF the game shows (an equip the board cannot hold) are restored as a change on the placed monster, in
+    a Main Phase and in a Battle Phase rebuild; a monster without them keeps its own values."""
+    from ygorl.engine.query import parse_query_location
+
+    me = [SnapshotCard("mzone", BLUE_EYES, 0, attack=3500, defense=2100), SnapshotCard("mzone", BLUE_EYES, 1)]
+    op = [SnapshotCard("mzone", BLUE_EYES, 2, "faceup_attack", attack=1000), SnapshotCard("hand")]
+    for phase in ("main1", "battle"):
+        board = complete(snapshot(me, op, phase=phase).check(), Deck((BLUE_EYES,) * 40),
+                         OpponentPrior((load_ydk(MALISS),), (1.0,)), cards, random.Random(0))  # fmt: skip
+        rec = build(board, C.DUEL_MODE_MR5, cards=cards)
+
+        def stats(player, seq):
+            (card,) = parse_query_location(b"\0\0\0\0" + rec.core.query(C.QUERY_ATTACK | C.QUERY_DEFENSE, player,
+                                                                         C.LOCATION_MZONE, seq))  # fmt: skip
+            return card["attack"], card["defense"]
+
+        assert (stats(0, 0), stats(0, 1), stats(1, 2)) == ((3500, 2100), (3000, 2500), (1000, 2500)), phase
 
 
 def test_battle_is_allowed_after_turn_one(cards):

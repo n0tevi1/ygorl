@@ -379,17 +379,20 @@ class Situation:
     clock: Clock  # the real turn, first player and phase
 
 
-def situation(raw, passwords: Mapping[int, int], attacked: frozenset[int] = frozenset()) -> Situation:
+def situation(raw, passwords: Mapping[int, int], attacked: frozenset[int] = frozenset(),
+              stats: Mapping[int, tuple[int, int]] | None = None) -> Situation:  # fmt: skip
     """The board of ``raw`` (a :class:`ygorl.md.memory.RawDuel`) in any turn and phase. The reconstruction only
     starts in the advisor's own Main / Battle Phase, so outside them the snapshot is read as the advisor's Main Phase
     1; in the opponent's turn it is the advisor's turn before (the opponent's hand one card smaller and its Deck one
-    larger: the rebuild's own draw gives it back)."""
+    larger: the rebuild's own draw gives it back). ``stats``: the face-up monsters' ATK / DEF MD shows
+    (:func:`ygorl.md.memory.to_snapshot`)."""
     from ygorl.md.memory import to_snapshot
 
     phase = MD_PHASES[raw.phase] if 0 <= raw.phase < len(MD_PHASES) else "main1"
     theirs = raw.turn_player != raw.me
     base = phase if not theirs and phase in ("main1", "battle", "main2") else "main1"
-    snap = to_snapshot(replace(raw, turn_player=raw.me, phase=MD_PHASES.index(base)), passwords, attacked)
+    snap = to_snapshot(replace(raw, turn_player=raw.me, phase=MD_PHASES.index(base)), passwords, attacked,
+                       stats=stats)  # fmt: skip
     turn, went_first = snap.turn, snap.went_first != theirs  # to_snapshot read the turn as the advisor's
     if theirs:
         op = snap.sides[1]
@@ -456,9 +459,15 @@ class Decider:
     """The rebuilt decisions for the Solo player (:mod:`ygorl.selfplay.loop`): MD memory in, a :class:`Choice` out."""
 
     def __init__(self, rule_flags: int, cards, passwords: Mapping[int, int], prior: OpponentPrior, *,
-                 scorer: Scorer | None = None, samples: int = 4, scripts=None) -> None:  # fmt: skip
+                 scorer: Scorer | None = None, samples: int = 4, scripts=None,
+                 stats: Callable[[object], Mapping[int, tuple[int, int]]] | None = None) -> None:  # fmt: skip
+        """``stats``: raw -> uid -> (ATK, DEF) MD shows for the face-up monsters (the client's views)."""
         self.rule_flags, self.cards, self.passwords, self.prior = rule_flags, cards, passwords, prior
         self.scorer, self.samples, self.scripts = scorer, samples, scripts
+        self.stats = stats
+
+    def _situation(self, raw, attacked: frozenset[int] = frozenset()) -> Situation:
+        return situation(raw, self.passwords, attacked, self.stats(raw) if self.stats is not None else None)
 
     def _deck(self, raw) -> Deck:
         from ygorl.md.memory import own_deck
@@ -473,7 +482,7 @@ class Decider:
 
     def attack_target(self, raw, attacker: int, attacked: frozenset[int] = frozenset()) -> Choice:
         def run():
-            sit = situation(raw, self.passwords, attacked)
+            sit = self._situation(raw, attacked)
             return attack_target(sit.snapshot, self._deck(raw), self.prior, self.rule_flags, attacker, cards=self.cards,
                                  scorer=self.scorer, samples=self.samples, seed=random.randrange(1 << 30),
                                  scripts=self.scripts)  # fmt: skip
@@ -490,7 +499,7 @@ class Decider:
                                      listed=listed)  # fmt: skip
             if not password:
                 return Choice("position", notes=["the summoned monster is not known"])
-            sit = situation(raw, self.passwords)
+            sit = self._situation(raw)
             return summon_position(sit.snapshot, self._deck(raw), self.prior, self.rule_flags, password,
                                    cards=self.cards, scorer=self.scorer, samples=self.samples,
                                    seed=random.randrange(1 << 30), scripts=self.scripts, clock=sit.clock)  # fmt: skip
@@ -501,7 +510,7 @@ class Decider:
         """``offered``: passwords of the cards MD's prompt offers (the client's list); else the request's."""
 
         def run():
-            sit = situation(raw, self.passwords)
+            sit = self._situation(raw)
             nonlocal offered
             if offered is None:
                 offered = tuple(self.passwords[c.cid] for c in getattr(req, "candidates", ()) or ()
