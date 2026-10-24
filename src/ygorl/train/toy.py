@@ -5,6 +5,11 @@ stone wins. The optimal move from ``n`` is to take ``n % 4``; a multiple of 4 is
 ``NimEnv`` speaks the same protocol as ``EncodedVecEnv`` (``reset`` / ``step`` / ``recv`` events with
 ``obs`` / ``result`` / ``privileged``), so the rollout collector, the PPO learner and the league run on it
 unchanged; ``NimModel`` has the model interface of :class:`ygorl.nets.actor_critic.ActorCritic`.
+
+``NimEnv(snapshots=True)`` adds the snapshot interface of ``EncodedVecEnv`` (``snapshot`` / ``restore`` / ``release``
+/ ``snapshot_count``: jobs whose event is the current observation), and :class:`NimBranchHooks` the game-specific
+parts of the collector's window branching (``ygorl.train.rollout.BranchConfig``), so branching is testable on a game
+whose best move is known.
 """
 
 from __future__ import annotations
@@ -36,8 +41,14 @@ class NimEnv:
     Observations: ``pile`` (int), ``player`` (the seat to move), ``action_mask`` ``[3]``.
     """
 
-    def __init__(self, num_envs: int, max_pile: int = 15, max_moves: int | None = None) -> None:
+    def __init__(
+        self, num_envs: int, max_pile: int = 15, max_moves: int | None = None, snapshots: bool = False
+    ) -> None:
         self.num_envs = num_envs
+        self.snapshots = snapshots
+        self._snapshots: dict[int, tuple[int, int, int, int, int]] = {}  # id -> (env, reset count, pile, player, moves)
+        self._next_sid = 0
+        self._resets = [0] * num_envs
         self.max_pile = max_pile
         self.max_moves = max_moves
         self._pile = [0] * num_envs
@@ -55,6 +66,7 @@ class NimEnv:
         if not 1 <= spec <= self.max_pile:
             raise ValueError(f"pile must be in 1..{self.max_pile}")
         self._pile[env_id], self._player[env_id], self._moves[env_id] = int(spec), 0, 0
+        self._resets[env_id] += 1
         self._emit(env_id)
 
     def step(self, env_id: int, action: int) -> None:
@@ -74,6 +86,34 @@ class NimEnv:
             return
         self._emit(env_id)
 
+    def snapshot(self, env_id: int) -> int:
+        """A snapshot of ``env_id``'s current decision; its event is the unchanged observation (EncodedVecEnv)."""
+        if not self.snapshots:
+            raise RuntimeError("snapshots are disabled; construct with snapshots=True")
+        if self._pile[env_id] == 0:
+            raise RuntimeError("snapshot needs a game at a decision")
+        sid = self._next_sid
+        self._next_sid += 1
+        self._snapshots[sid] = (env_id, self._resets[env_id], self._pile[env_id], self._player[env_id],
+                                self._moves[env_id])  # fmt: skip
+        self._emit(env_id)
+        return sid
+
+    def restore(self, env_id: int, sid: int) -> None:
+        env, resets, pile, player, moves = self._snapshots[sid]
+        if env != env_id or resets != self._resets[env_id]:
+            raise ValueError("a snapshot only restores in its env's game")
+        self._pile[env_id], self._player[env_id], self._moves[env_id] = pile, player, moves
+        self._emit(env_id)
+
+    def release(self, env_id: int, sid: int) -> None:
+        if self._snapshots.get(sid, (env_id,))[0] != env_id:
+            raise ValueError("not a snapshot of this env")
+        self._snapshots.pop(sid, None)
+
+    def snapshot_count(self) -> int:
+        return len(self._snapshots)
+
     def recv(self, min_events: int = 1, timeout: float | None = None) -> list[EncodedEvent]:
         out = list(self._ready)
         self._ready.clear()
@@ -85,6 +125,30 @@ class NimEnv:
     def _emit(self, env_id: int) -> None:
         obs = self.observe(self._pile[env_id], self._player[env_id], self.max_pile)
         self._ready.append(EncodedEvent(env_id, self._player[env_id], obs, None))
+
+
+class NimBranchHooks:
+    """Window branching on Nim (``RolloutCollector(branch=..., branch_hooks=NimBranchHooks())``): every learner decision
+    of a pool game with two or more legal takes is a window; the branch set is the ``k`` takes of highest probability
+    (Nim has no pass); the horizon is the learner's next decision; the opponent's "board" is 1 when the learner then
+    faces a multiple of 4 (a lost pile against perfect play), else 0. ``require_recovery`` (scripted lines only)
+    leaves no window."""
+
+    def candidates(self, slot, ev, probs: Tensor, k: int, require_recovery: bool, effect: int,
+                   occurrence: int) -> tuple[int, list[int]] | None:  # fmt: skip
+        legal = np.flatnonzero(ev.obs["action_mask"])
+        if require_recovery or slot.assignment.opponent is None or len(legal) < 2:
+            return None
+        return -1, sorted((int(i) for i in legal), key=lambda i: (-float(probs[i]), i))[:k]
+
+    def turn(self, ev) -> int:
+        return 0
+
+    def horizon(self, state, ev) -> bool:
+        return True
+
+    def board(self, ev) -> float:
+        return float(int(ev.obs["pile"]) % 4 == 0)
 
 
 class NimModel(nn.Module):
