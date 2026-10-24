@@ -81,6 +81,48 @@ class ListsMixin:
                                                                                 for c in cands]})  # fmt: skip
         return replace(req, candidates=tuple(cands)), False
 
+    def recalibrate_on_list(self, entries, cards, pos: int, j: int, want: int, want_uid: int) -> int | None:
+        """The open-card read was stale (it did not move with a tick): find the open-card object again on this
+        list (scan, tick a neighbour, scan: the address that changed), tell which card the neighbour is, and so
+        how far the list really scrolled; then tick the wanted card at its true place and read it back (a scroll
+        landed two cards past Obelisk and The Winged Dragon of Ra was sent, unconfirmed). None when it cannot."""
+        selection = self.selection
+        n = len(cards)
+        if n < 2:
+            return None
+        raw = self.game.read()
+        pairs = {(e.cid, e.uid) for e in entries if e.uid}
+        pairs |= {(cid, uid) for uid, cid in own_cards(raw).items()}
+        selection.opened(raw, pairs)  # the scan the neighbour's tick is compared against
+        nb = pos - 1 if pos > 0 else pos + 1
+        self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
+        self.ui.click(*cards[nb], f"#{nb + 1} of {n}: find the open-card object again", 0.9)
+        got = selection.opened(self.game.read(), pairs)
+        self.ui.click(*cards[nb], f"untick #{nb + 1}", 0.6)
+        k = next((i for i, e in enumerate(entries) if got is not None and e.uid == got[1]), None)
+        if k is None or selection.address is None:
+            self.ui.click(*cards[pos], f"#{pos + 1} of {n}: the card the client lists (again)", 0.9)
+            return None
+        t = j - (k - nb)  # the wanted card's place on screen, from where the neighbour really is
+        if not 0 <= t < n:
+            self.ui.click(*cards[pos], f"#{pos + 1} of {n}: the card the client lists (again)", 0.9)
+            return None
+        self.ui.click(*cards[t], f"#{t + 1} of {n}: the card the client lists (after recalibrating)", 0.9)
+        try:
+            cid, uid = struct.unpack("<II", selection.memory.read(selection.address, 8))
+        except Exception:  # noqa: BLE001
+            cid, uid = 0, 0
+        pw = lambda c: self.passwords.get(c, c)  # noqa: E731
+        ok = pw(cid) == pw(want) and (not want_uid or uid == want_uid)
+        self.trace.observe(list_check={"want": want, "by": "client list (recalibrated)", "index": j,
+                                       "neighbour_index": k, "place": t, "ok": ok})  # fmt: skip
+        if ok:
+            return t
+        if t != pos:  # back to the client list's place: the caller takes it as ticked
+            self.ui.click(*cards[t], f"untick #{t + 1}", 0.6)
+            self.ui.click(*cards[pos], f"#{pos + 1} of {n}: the card the client lists (again)", 0.9)
+        return None
+
     def find_by_client_list(self, want: int, want_uid: int, cards: list) -> int | None:
         """The screen position of the wanted card from the client's own list (memory; its order is the screen's,
         checked on run s33's lists), ticked and confirmed by the open-card read; None when the list does not tell
@@ -124,6 +166,9 @@ class ListsMixin:
             # order is the screen's (checked since run s33), so its place stands; the stale address is dropped
             # (Ra - Sphere Mode was ticked right, then a guess sent The Winged Dragon of Ra instead)
             selection.address = None
+            fixed = self.recalibrate_on_list(entries, cards, pos, j, want, want_uid)
+            if fixed is not None:
+                return fixed
             self.trace.observe(list_check={"want": want, "by": "client list (unconfirmed: no open-card read)",
                                            "index": j, "turns": turns})  # fmt: skip
             return pos
