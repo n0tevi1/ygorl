@@ -146,10 +146,28 @@ def declare_box(img: np.ndarray) -> bool:
     return sides and bool(L.list_cards(img, trays=(L.DECLARE_TRAY,)))
 
 
+COIN_RINGS = ((918, 520), (1134, 520))  # "Coin Toss Selection": the two coins' green rings (Time Wizard)
+COIN_OK = (1026, 794)
+
+
+def coin_dialog(img: np.ndarray) -> bool:
+    """MD's coin call ("Coin Toss Selection", heads / tails rings over the coins, then OK): asked with the engine's
+    input closed (mode 0), so only the screen tells it; a game waited 10 minutes on it and was given up."""
+    ang = np.linspace(0, 2 * np.pi, 36, endpoint=False)
+    for x, y in COIN_RINGS:
+        px = np.array([img[y + round(21 * np.sin(t)), x + round(21 * np.cos(t))] for t in ang]).astype(int)
+        green = (px[:, 1] > 150) & (px[:, 0] > 110) & (px[:, 2] < 90)
+        if green.mean() < 0.4:
+            return False
+    return True
+
+
 def screen_dialog(img: np.ndarray) -> str | None:
     """MD UI dialogs that are not engine input states (measured on the 2054x1184 window)."""
     if minimised(img):
         return "minimised"
+    if coin_dialog(img):
+        return "coin"
     if declare_box(img):
         return "declare"
     if L.menu_button(img, *L.PHASE_MENU["end"]):

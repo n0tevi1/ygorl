@@ -212,14 +212,15 @@ class ShadowObserver:
             return {"shadow_error": f"{type(exc).__name__}: {exc}", "where": traceback.format_exc(limit=3)}
 
     def choose(self, dialog: str, req: MDRequest | None, me: int, passwords: Mapping[int, int], *, count: int = 0,
-               zone: tuple[str, int] | None = None) -> tuple[int | None, dict]:  # fmt: skip
+               zone: tuple[str, int] | None = None, exclude: frozenset = frozenset()) -> tuple[int | None, dict]:  # fmt: skip
         """The option of MD's ``dialog`` the policy picks through the shadow, and a trace record; (None, record)
         when there is no shadow or it does not match (then the shadow is dropped).
 
         Options are numbered as the player clicks them: "list" the list candidates in order, "option" the dialog's
         tabs, "radio" the rows top down (``count`` of them), "yesno" 0 yes / 1 no, "prompt" 0 activate the offered
         card / 1 pass, "position" the buttons left to right (:data:`POSITION_BUTTONS`). ``zone``: the zone the
-        player will pick for the card in question (MD asks it after the position / the cost)."""
+        player will pick for the card in question (MD asks it after the position / the cost). ``exclude``: MD
+        options its screen does not show (a list's candidate MD never displays), not picked."""
         shadow = self.shadow
         if shadow is None or shadow.point is None:
             return None, {}
@@ -259,7 +260,7 @@ class ShadowObserver:
                     return pick, {**record, "pick": pick, "by": how}
                 self.shadow = None
                 return None, {**record, "desync": "the shadow asks something else"}
-            pairs = self._pairs(dialog, req, point, me, passwords, count)
+            pairs = {m: a for m, a in self._pairs(dialog, req, point, me, passwords, count).items() if m not in exclude}
             if not pairs:
                 pick, how = self._tolerated(dialog, req, passwords)
                 if pick is not None:

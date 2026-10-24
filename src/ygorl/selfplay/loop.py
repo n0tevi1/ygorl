@@ -41,6 +41,8 @@ from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, load_md_cid, own_d
 from ygorl.md.screen import ScreenError
 from ygorl.md.screen import capture as capture_client
 from ygorl.md.ui import (
+    COIN_OK,
+    COIN_RINGS,
     GY_STRIP_SHOWN,
     MINIMISED_RESTORE,
     PHASE_MENU_CANCEL,
@@ -1193,7 +1195,8 @@ class Player:
               flush=True)  # fmt: skip
         return choice.pick
 
-    def lockstep(self, dialog: str, raw: RawDuel, req=None, count: int = 0, zone=None) -> int | None:
+    def lockstep(self, dialog: str, raw: RawDuel, req=None, count: int = 0, zone=None,
+                 exclude: frozenset = frozenset()) -> int | None:  # fmt: skip
         """The option the policy picks for MD's ``dialog`` through the shadow duel (None: no shadow, or it does not
         match; the caller's rule decides). Recorded as the step's decision."""
         observer = getattr(self, "observer", None)  # tests build players without one
@@ -1201,7 +1204,7 @@ class Player:
             return None
         if callable(req):  # read only when there is a shadow to ask
             req = req()
-        pick, record = observer.choose(dialog, req, raw.me, self.passwords, count=count, zone=zone)
+        pick, record = observer.choose(dialog, req, raw.me, self.passwords, count=count, zone=zone, exclude=exclude)
         if record:
             self.trace.observe(lockstep=record)
         if pick is not None:
@@ -1394,6 +1397,11 @@ class Player:
                 except Stuck as exc:
                     self.trace.observe(declare_failed=str(exc))
             raise Stuck("no declarable name found among the Deck's cards")
+        elif kind == "coin":
+            # a coin call (Time Wizard): either face is a guess with the same odds; no policy decides it
+            self.trace.rule("coin-call-first")
+            self.ui.click(*COIN_RINGS[0], "call the coin (left face)", 0.8)
+            self.ui.click(*COIN_OK, "ok", 2.0)
         elif kind == "minimised":
             self.trace.rule("restore-minimised")
             self.ui.click(*MINIMISED_RESTORE, "restore the minimised panel", 1.5)
@@ -1450,7 +1458,12 @@ class Player:
                 self.trace.observe(list_set=self.ui.pick_list_set(need))
                 self.context = "list"
                 return
-            pick = None if stale else self.lockstep("list", raw, req)
+            hidden = self.hidden_in_lists()
+            exclude = frozenset(i for i, c in enumerate(req.candidates)
+                                if [self.passwords.get(c.cid), c.location] in hidden)  # fmt: skip
+            if exclude:
+                self.trace.observe(list_hidden=sorted(exclude))
+            pick = None if stale else self.lockstep("list", raw, req, exclude=exclude)
             if pick is None and self.ra_pays_lp(raw, req) is False:
                 # The Winged Dragon of Ra's optional "pay LP so that you have 100" trigger (a one-card list of Ra
                 # itself, Cancel on the left): taken by "first on screen", it paid 8000 -> 100 on turn 1, when Ra
@@ -1584,6 +1597,24 @@ class Player:
         ranked = ranked or list(dict.fromkeys(deck.main))
         return list(dict.fromkeys(self.cards[p].name for p in ranked))
 
+    def hidden_in_lists(self) -> list:
+        """[password, location] of list candidates MD's lists never display (learned, kept across runs): memory
+        lists Ra - Immortal Phoenix among Foolish Burial's Deck monsters, and every card of MD's list was seen
+        without it (four lists in runs s29 / s31)."""
+        if getattr(self, "_hidden", None) is None:
+            path = self.out / "md_hidden_in_lists.json"
+            self._hidden = json.loads(path.read_text()) if path.exists() else []
+        return self._hidden
+
+    def learn_hidden(self, password: int, location: str) -> None:
+        hidden = self.hidden_in_lists()
+        if [password, location] not in hidden:
+            hidden.append([password, location])
+            (self.out / "md_hidden_in_lists.json").write_text(json.dumps(hidden))
+        self.trace.observe(list_learned_hidden=[password, location])
+        print(f"  list: MD does not display {self.cards[password].name if password in self.cards else password}"
+              f" ({location}); learned", flush=True)  # fmt: skip
+
     def find_in_list(self, req, pick: int) -> tuple[int, bool]:
         """The screen position of candidate ``pick`` in MD's card list, and whether it is ticked already.
 
@@ -1661,6 +1692,7 @@ class Player:
             return None
 
         uids_seen: set = set()
+        complete = False
         for page in range(LIST_PAGES):
             # the arrow scrolls one card (run s28: 14 cards, 6 turns showed only the first 11): after a turn,
             # only the newly shown cards on the right are ticked, right to left, until one already seen (its uid)
@@ -1705,6 +1737,7 @@ class Player:
             # while fewer cards were seen than memory lists, turn once more (a turn showing nothing new ends it)
             unseen = len(uids_seen - {0}) < len(cands) and 0 not in uids_seen
             if page and len(uids_seen) == before_page:
+                complete = True
                 break  # the turn showed no new card: the list's end
             if page == LIST_PAGES - 1 or (not list_more(self.ui.capture()) and not unseen):
                 break  # (no page turned after the last one looked at: a guess there clicked an unseen card)
@@ -1720,6 +1753,14 @@ class Player:
             self.trace.observe(list_check={"want": want, "by": "elimination"})
             self.pending_list = (panels[k], req)
             return k[1], False
+        if complete and 0 not in uids_seen and want_uid not in uids_seen:
+            # every card MD displays was named from memory and the wanted one is not among them: MD does not offer
+            # it. Learned (the next lists leave it to the policy's other choices); this pick falls to a rule
+            self.learn_hidden(pw(want), req.candidates[pick].location)
+            observer = getattr(self, "observer", None)
+            if observer is not None:
+                observer.shadow = None  # it took the card MD does not show: out of step from here
+            self.trace.rule("list-wanted-card-not-displayed", want=want)
         k = here[0] if here else (last, 0)
         self.trace.observe(list_check={"want": want, "unverified": True, "seen": {f"{k[0]}:{k[1]}": v for k, v in
                                        seen.items()}, "reads": reads[-12:]})  # fmt: skip
