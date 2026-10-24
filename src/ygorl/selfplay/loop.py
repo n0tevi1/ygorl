@@ -954,6 +954,10 @@ class Player:
             self.ui.yesno(True, "yes: tribute")
             self.pick_tributes(raw)
             return
+        if card.type & C.TYPE_FIELD:
+            # a Field Spell goes to the Field Zone by itself: no Spell & Trap zone to click (one was clicked, empty
+            # by luck, and the shadow recorded the card there)
+            return
         location = "mzone" if card.is_monster else "szone"
         if best.kind in ("spsummon", "activate") and self.pending_question():
             self.last_zone = (location, self.free_zone(raw, location))  # the zone, should MD ask it later
