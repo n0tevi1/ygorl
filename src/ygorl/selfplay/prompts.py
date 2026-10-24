@@ -66,12 +66,15 @@ class PromptsMixin:
         self.responded = seen if respond else None
         calibrated = getattr(getattr(self, "selection", None), "address", None) is not None
         listed = self.prompt_list()  # the cards offered (memory: the client's list; no calibration needed)
-        in_hand = [c for c in listed if c.location == HAND_LOCATION and self.passwords.get(c.cid)]
+        # only monsters: a hand trigger is a monster's (Millennium Seeker, Mahad); a Quick-Play Spell offered at an
+        # open timing (Soul Crossing) is a play the policy passed twice, and taking it by this rule lost a duel
+        in_hand = [c for c in listed if c.location == HAND_LOCATION and self.passwords.get(c.cid)
+                   and getattr(self.cards.get(self.passwords[c.cid]), "is_monster", False)]  # fmt: skip
         if (pick is None and not respond and inp.mode == OPEN_PROMPT and in_hand
                 and getattr(self, "hand_trigger", None) != seen):  # fmt: skip
             # an optional trigger of a card in our hand (Millennium Seeker's free Special Summon): take it
             card = self.passwords[in_hand[0].cid]
-            self.trace.rule("prompt-respond-hand-trigger", card=in_hand[0].cid, by="client list")
+            self.trace.rule("prompt-respond-hand-trigger", card=in_hand[0].cid, source="client list")
             if self.tick_prompt_card(card) == card:
                 self.listed = (self.expect, (in_hand[0].cid,))  # names the monster whose position is asked next
                 self.ui.click(*L.PROMPT_ACTIVATE, "activate", 2.0)

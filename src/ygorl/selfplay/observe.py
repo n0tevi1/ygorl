@@ -359,10 +359,13 @@ def _same(a, b) -> bool:
         return False
     if a.card is None:
         return True
+    # an activation is also its effect: Millennium Revelation's two activations differ only by description, and
+    # the shadow stepped the other one than the policy chose
     return (
         a.card.code == b.card.code
         and a.card.loc.location == b.card.loc.location
         and a.card.loc.sequence == b.card.loc.sequence
+        and (a.kind != "activate" or getattr(a, "description", 0) == getattr(b, "description", 0))
     )
 
 

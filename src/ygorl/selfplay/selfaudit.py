@@ -240,8 +240,8 @@ class _Game:
             for dd in _decisions(d):
                 if dd.get("by") in ("policy", "shadow", "rebuild"):
                     self.rep.policy += 1
-                elif dd.get("by") == "rule":
-                    self.rule(rec, dd.get("rule") or "?", last_card)
+                elif dd.get("by") == "rule" or dd.get("rule"):  # (a rule once recorded with by= overwritten)
+                    self.rule(rec, dd.get("rule") or "?", dd.get("card") or last_card)
             if d.get("by") == "policy" and float(d.get("p", 1.0)) < 0.01:
                 low_p.append(rec.get("seq"))
             if (r := rec.get("refusal")) is not None:
@@ -284,6 +284,14 @@ class _Game:
                 return
         if rule in ("tribute-lowest-atk", "field-pick-own-lowest-atk"):
             return  # checked by check_tributes against the board
+        if rule == "prompt-respond-hand-trigger":
+            k = self.ctx.card(self.ctx.pw(card)) or self.ctx.card(card)  # the rule records an MD card id
+            if k is not None and not k.is_monster:
+                # a hand trigger is a monster's: a Spell taken by this rule is a play no policy chose (Soul
+                # Crossing at an open timing, run s51)
+                self.add("major", rec, "hand-trigger-not-monster",
+                         f"the hand-trigger rule activated {k.name}, which is no monster", rule=rule, card=card)  # fmt: skip
+                return
         self.add("info", rec, "rule-decision", f"a rule decided: {rule} (in the action of {self.ctx.name(card)})",
                  rule=rule, card=card)  # fmt: skip
 
