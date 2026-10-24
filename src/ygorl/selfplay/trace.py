@@ -123,6 +123,8 @@ class Trace:
         self._current()["decision"] = {
             "by": "policy", "action": action.kind, "card": _card(action), "p": round(float(prob), 4), "phase": phase,
             "top": [[s.action.kind, _card(s.action), round(float(s.prob), 4)] for s in list(top)[:5]],
+            # which effect (an activation's card string): an option dialog's tab is checked against it
+            "description": int(getattr(action, "description", 0) or 0),
         }  # fmt: skip
 
     def rule(self, rule: str, **detail) -> None:
