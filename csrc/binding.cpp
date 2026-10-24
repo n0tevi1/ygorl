@@ -498,8 +498,10 @@ PYBIND11_MODULE(_core, m) {
              py::arg("privileged") = false, py::arg("event_length") = 0, py::arg("skip_forced") = false, py::arg("selection_history") = false, py::arg("cancel_budget") = 32, py::arg("attack_history") = false,
              py::arg("snapshots") = false)
         .def("reset", [](host::HostPool& p, int env, std::array<uint64_t, 4> seed, uint64_t flags, py::tuple t1,
-                         py::tuple t2, DeckLists decks, uint32_t max_turns, uint32_t max_decisions) {
+                         py::tuple t2, DeckLists decks, uint32_t max_turns, uint32_t max_decisions,
+                         std::vector<uint32_t> prefix) {
             host::PoolJob job;
+            job.prefix = std::move(prefix);
             job.seed = seed;
             job.flags = flags;
             job.team1 = to_player(t1);
@@ -509,7 +511,9 @@ PYBIND11_MODULE(_core, m) {
             job.max_decisions = max_decisions;
             py::gil_scoped_release release;
             p.reset(env, std::move(job));
-        })
+        }, py::arg("env"), py::arg("seed"), py::arg("flags"), py::arg("team1"), py::arg("team2"), py::arg("decks"),
+           py::arg("max_turns"), py::arg("max_decisions"), py::arg("prefix") = std::vector<uint32_t>{},
+           "Queue a new game; prefix: action indices played on the worker first, as successive steps would.")
         .def("step", &host::HostPool::step, py::arg("env"), py::arg("action"), py::call_guard<py::gil_scoped_release>())
         .def("recv", [](host::HostPool& p, size_t min_results, int timeout_ms) {
             std::vector<host::PoolEvent> events;
@@ -521,14 +525,29 @@ PYBIND11_MODULE(_core, m) {
             for (const auto& e : events) {
                 // 6th element: training-mode ground truth, None in inference mode and at game end
                 py::object priv = e.has_privileged && !e.done ? py::object(privileged_dict(e.privileged)) : py::none();
-                if (e.done)
-                    out.append(py::make_tuple(e.env_id, true, e.player, py::none(), outcome_dict(e.outcome), priv));
-                else
+                if (e.done) {
+                    py::dict result = outcome_dict(e.outcome);
+                    if (e.prefix_applied >= 0) {  // a reset with a prefix ended (inside it, or as it was refused)
+                        result["prefix_applied"] = e.prefix_applied;
+                        result["prefix_error"] = e.prefix_error;
+                    }
+                    out.append(py::make_tuple(e.env_id, true, e.player, py::none(), result, priv));
+                } else
                     out.append(py::make_tuple(e.env_id, false, e.player, observation_dict(e.obs), py::none(), priv));
             }
             return out;
         }, py::arg("min_results") = 1, py::arg("timeout_ms") = -1)
         .def("pending", &host::HostPool::pending)
+        .def("responses", [](const host::HostPool& p, int env) {
+            std::vector<std::string> responses;
+            {
+                py::gil_scoped_release release;
+                responses = p.responses(env);
+            }
+            py::list out;
+            for (const auto& r : responses) out.append(py::bytes(r));
+            return out;
+        }, py::arg("env"), "Engine responses of env's game so far (env idle with a game in its slot).")
         .def("snapshot", &host::HostPool::snapshot, py::arg("env"), py::call_guard<py::gil_scoped_release>(),
              "Queue a snapshot of env's current decision; returns its id at once (recv returns the observation).")
         .def("restore", &host::HostPool::restore, py::arg("env"), py::arg("id"), py::call_guard<py::gil_scoped_release>(),

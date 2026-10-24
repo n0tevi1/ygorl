@@ -1,7 +1,7 @@
 // Vectorized environment with the whole step loop in C++ (T2.2 integration, T2.7):
-// each slot owns a HostDuel; a job resets it, applies one action index, or takes /
-// restores a snapshot (T1), then returns the next observation (or the final result)
-// for that env.
+// each slot owns a HostDuel; a job resets it (optionally playing an action prefix, T2),
+// applies one action index, or takes / restores a snapshot (T1), then returns the next
+// observation (or the final result) for that env.
 #pragma once
 
 #include <atomic>
@@ -23,6 +23,10 @@ struct PoolEvent {
     bool has_privileged = false;
     Privileged privileged;  // training mode only (HostPool privileged = true), valid when !done
     DuelOutcome outcome;  // valid when done
+    // RESET with a prefix (docs/engine.md 「前缀起局」): prefix actions applied before this event (-1: no prefix);
+    // prefix_error: action prefix_applied was not legal there (outcome.error says why; the env has no game).
+    int64_t prefix_applied = -1;
+    bool prefix_error = false;
 };
 
 struct PoolJob {
@@ -34,6 +38,9 @@ struct PoolJob {
     PlayerOptions team1, team2;
     std::vector<std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> decks;
     uint32_t max_turns = 0, max_decisions = 0;
+    // RESET: action indices applied on the worker after the start, as successive step() calls would (same
+    // skip_forced handling, no events in between); each must be a choosable row of its decision's mask.
+    std::vector<uint32_t> prefix;
     uint64_t snapshot_id = 0;                          // SNAPSHOT: where to store it
     std::shared_ptr<const HostDuel::Snapshot> snapshot;  // RESTORE
 };
@@ -56,6 +63,9 @@ public:
     uint64_t snapshot(int env);
     void restore(int env, uint64_t id);
     void release(int env, uint64_t id);
+    // The engine responses of env's current game so far (finished games of snapshot pools included); the env must
+    // be idle with a game in its slot (std::runtime_error otherwise).
+    std::vector<std::string> responses(int env) const;
     size_t snapshot_count() const;
     size_t snapshot_bytes() const;  // core images of the live snapshots
     uint64_t arena_escapes() const;  // over the duels of all slots (must be 0)

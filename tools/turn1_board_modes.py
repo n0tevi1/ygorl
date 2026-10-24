@@ -32,17 +32,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from phase0_common import mean_se, select_hands  # noqa: E402
 
 from ygorl.eval.arena import derive_seed  # noqa: E402
+from ygorl.train.positions import board_keys  # noqa: E402  (the keys live with the position library)
 
 _CTX: dict = {}
-
-
-def board_keys(board: dict, player: int = 0) -> dict[str, tuple]:
-    from ygorl.engine import constants as C
-
-    side = board["players"][player]
-    field = sorted((z, int(c["code"]), not c["position"] & C.POS_FACEUP) for z in ("mzone", "szone") for c in side[z])
-    piles = sorted(("grave", int(x)) for x in side["grave"]) + sorted(("banished", int(x)) for x in side["banished"])
-    return {"field": tuple(field), "field_grave": (tuple(field), tuple(piles))}
 
 
 def _init(args: dict) -> None:

@@ -104,6 +104,14 @@ void HostPool::release(int env, uint64_t id) {
     stored_.erase(it);
 }
 
+std::vector<std::string> HostPool::responses(int env) const {
+    if (pool_->busy(env))  // also checks the range; an idle env's slot is settled (recv synchronizes with its worker)
+        throw std::runtime_error("env " + std::to_string(env) + " is busy (its previous job has not been received)");
+    const auto& host = slots_[env];
+    if (!host || !host->started()) throw std::runtime_error("env " + std::to_string(env) + " has no game in its slot");
+    return host->tracker().responses();
+}
+
 size_t HostPool::snapshot_count() const {
     std::lock_guard<std::mutex> lock(snapshots_mutex_);
     return stored_.size();
@@ -140,6 +148,24 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
         else
             retire();
     };
+    // Runs to the next decision a caller answers. A decision with a single choosable row has nothing to learn: with
+    // skip_forced it is taken here (same game either way); the single-action case needs no encoding, otherwise the
+    // mask decides (equivalent copies are masked out). True at a decision (ev.obs is its observation), false once the
+    // game is over. Snapshots are taken at points this loop returned, so after SNAPSHOT / RESTORE it only observes.
+    auto settle = [&]() -> bool {
+        while (!host->done() && !host->actions().empty()) {  // actions() may stop the duel (decision limit)
+            if (skip_forced_ && host->actions().size() == 1) {
+                host->act(0);
+                continue;
+            }
+            host->observe(ev.obs);
+            if (!skip_forced_) return true;
+            const auto& mask = ev.obs.action_mask;
+            if (std::count(mask.begin(), mask.end(), 1) != 1) return true;
+            host->act(static_cast<size_t>(std::find(mask.begin(), mask.end(), 1) - mask.begin()));
+        }
+        return false;
+    };
     std::string error;
     bool failed = false;
     try {
@@ -154,6 +180,25 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
                 host->set_cancel_budget(cancel_budget_);
                 host->start(job.seed, job.flags, job.team1, job.team2, job.decks, job.max_turns, job.max_decisions);
                 running_[env] = true;
+                if (!job.prefix.empty()) {
+                    // Prefix start (docs/engine.md 「前缀起局」): played exactly as successive step() jobs would play
+                    // it (settle, then one action), without events in between.
+                    ev.prefix_applied = 0;
+                    for (uint32_t a : job.prefix) {
+                        if (!settle()) break;  // the game ended inside the prefix: report its end
+                        const auto& mask = ev.obs.action_mask;
+                        if (a >= mask.size() || !mask[a]) {
+                            ev.prefix_error = true;
+                            throw std::invalid_argument(
+                                "prefix action " + std::to_string(ev.prefix_applied) + " (row " + std::to_string(a) +
+                                ") is not a choosable row of its decision (" +
+                                std::to_string(std::count(mask.begin(), mask.end(), 1)) + " of " +
+                                std::to_string(host->actions().size()) + " rows choosable)");
+                        }
+                        host->act(a);
+                        ++ev.prefix_applied;
+                    }
+                }
                 break;
             case PoolJob::STEP:
                 if (!host || !running_[env] || host->done()) throw std::runtime_error("env has no running game");
@@ -174,21 +219,7 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
                 running_[env] = true;
                 break;
         }
-        // A decision with a single choosable row has nothing to learn: take it here (same game either way). The
-        // single-action case needs no encoding; otherwise the mask decides (equivalent copies are masked out).
-        // Snapshots are taken at points this loop returned, so after SNAPSHOT / RESTORE it only observes.
-        while (!host->done() && !host->actions().empty()) {  // actions() may stop the duel (decision limit)
-            if (skip_forced_ && host->actions().size() == 1) {
-                host->act(0);
-                continue;
-            }
-            host->observe(ev.obs);
-            if (!skip_forced_) break;
-            const auto& mask = ev.obs.action_mask;
-            if (std::count(mask.begin(), mask.end(), 1) != 1) break;
-            host->act(static_cast<size_t>(std::find(mask.begin(), mask.end(), 1) - mask.begin()));
-        }
-        if (!host->done() && !host->actions().empty()) {
+        if (settle()) {
             ev.player = host->player();
             if (privileged_) {
                 host->observe_privileged(ev.privileged);
@@ -198,7 +229,7 @@ PoolEvent HostPool::run(int env, PoolJob& job) {
             return ev;
         }
     } catch (const std::exception& e) {
-        if (!host || !host->started()) {  // start() failed: there is no game to report on
+        if (!host || !host->started() || ev.prefix_error) {  // start() failed / illegal prefix: no game to report on
             running_[env] = false;
             retire();
             ev.done = true;

@@ -18,6 +18,8 @@ again = rep.play(env=env)                                   # 按应答日志重
 rep.to_yrpx("game.yrpX", names=("A", "B"), env=env)         # 导出 EDOPro 回放（LZMA 压缩；compress=False 不压缩）
 ```
 
+C++ 步进环境里的对局没有 `Duel`：`Replay.from_spec(spec, venv.responses(env_id), env)` 用对局规格与到目前为止的应答构造回放（没有终局记录；未下完的局重放为 `log_exhausted`），见 [engine.md](engine.md)「前缀起局」。
+
 命令行：`ygorl duel ... --save-replay game.json.gz --yrpx game.yrpX` 录制并导出，`ygorl replay game.json.gz --verify --export-yrpx out.yrpX` 显示元数据、重新模拟核对终局并导出，
 两者加 `--yrpx-uncompressed` 写不压缩的 `.yrpX`（见 [cli.md](cli.md)）。
 

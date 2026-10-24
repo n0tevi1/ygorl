@@ -240,7 +240,7 @@ core.restore(snap)        # 回到快照时刻，之后的消息流与从头重�
 
 `csrc/host_pool.{h,cpp}` 的 `HostPool` 在此之上提供异步接口（线程分配规则与 `DuelPool` 相同，由通用模板 `csrc/worker_pool.h` 实现）：
 
-- `reset(env, spec)`：在工作线程上建局并运行到第一个决策；
+- `reset(env, spec, prefix=None)`：在工作线程上建局并运行到第一个决策（带 `prefix` 时再连续应用这串动作，见下文「前缀起局」）；
 - `step(env, action_index)`：应用一个动作；多选的中间步骤只更新本地状态，完整应答才送回核心；
 - `recv(min_events, timeout)`：取回事件 `EncodedEvent(env_id, player, obs, result)`。`obs` 是定长 numpy 数组（`cards` 160×23、`globals` 22、`actions` 128×10、`action_mask` 128），对局结束时 `obs` 为 `None`、`result` 为终局信息（引擎玩家顺序）。
 - 槽位在其作业结果被 `recv` 取走之前一直处于 busy 状态，此时再次 `reset/step` 会抛出 `RuntimeError`。
@@ -268,3 +268,34 @@ env.release(e, sid)          # 立即释放（不是作业，也不产生事件�
 - **耗时**：`HostDuel.restore` 中位数 0.067 ms（快照 3.31 MiB；核心镜像拷回占绝大部分）（`tests/test_host_snapshot.py::test_host_duel_restore_is_fast`，2026-10-24 AI Max+ 395；阈值 1 ms）。
 
 验证：`tests/test_host_snapshot.py`——随机时刻拍快照、随机走 1–40 步（或走到终局）再恢复，观测（含事件与特权张量）逐字节相同、之后跑完的结果与应答日志与不中断的对局相同（`skip_forced` 开 / 关各一次）；多快照乱序恢复、终局后恢复；跨槽位 / 跨局 / 跨 `HostDuel` 恢复报错；线程数不影响结果；`arena_escapes() == 0`；释放后快照字节与进程 RSS 回落；恢复耗时。阳性对照：把 `HostDuel::restore` 改成空操作时10 项里 8 项失败；只恢复核心、不恢复追踪器与事件流时 7 项失败。
+
+### 前缀起局（T2）
+
+快照只能恢复回拍下它的那一局；要在**任意槽位**从某个局面（例如回合 1 结束、回合 2 的第一个决策）开始一局，就从种子重放。前缀起局把这次重放放进工作线程：
+
+```python
+env.reset(e, spec, prefix=actions)   # 作业：建局，再按 step 的语义连续应用 actions，中间不回传事件
+ev = env.recv(1)[0]                  # 前缀之后的决策（与逐步 step 同一串动作得到的观测逐字节相同）
+responses = env.responses(e)         # 到目前为止送给核心的应答（env 须空闲）
+replay = Replay.from_spec(spec, responses, env=environment)   # replay.play() 重放到同一决策（log_exhausted）
+```
+
+- **语义**：`prefix` 是 Python 侧 `step` 会收到的动作下标序列，按本环境的 `skip_forced` 解释：工作线程先跑「强制决策自动作答」的同一个循环，到下一个会回到 Python 的决策时检查并应用下一个前缀动作，如此往复（`csrc/host_pool.cpp` 的 `settle`，`reset` / `step` / 快照 / 恢复共用）。所以录制前缀和重放前缀的环境必须用同一个 `skip_forced` 与 `cancel_budget`（它们决定哪些决策回到 Python、哪些行可选）。`record_actions` / `record_games` 的动作轨迹以前缀开头（前缀动作的 `action_model_updates` 记为 `None`）。
+- **非法动作**：前缀里的某个动作不是该决策 `action_mask` 里可选的行（越界、被撤销规则或等价副本遮住），`recv` 对该槽位抛 `ValueError`（消息指出第几个动作），该槽位随即没有对局；同一次 `recv` 里其它槽位的事件留给下一次 `recv`。负数或超过 32 位的下标在 `reset` 时就报 `ValueError`。
+- **中途终局**：前缀没用完对局就结束（或最后一个动作结束了对局），`recv` 回传终局结果，多带一个 `prefix_applied`（实际应用的动作数）；没用到的前缀动作不进动作轨迹。
+- **应答导出**：`responses(env_id)` 返回该局到目前为止的引擎应答（与终局 `result["responses"]` 同格式），对局结束后返回终局日志；槽位忙时报 `RuntimeError`。`Replay.from_spec(spec, responses, env)` 用对局规格补齐种子、先后手、卡组、规则与上限，`play()` 重放到当前决策的起点（正在多选拆步中的决策还没有应答）；可以照常 `save` / `to_yrpx`。用 `engine.branch.recorded_actions(replay)` 可以把它换回 `skip_forced=False` 下的动作前缀。
+- **局面库**：`ygorl.train.positions`。`Position` = 环境版本、种子、先后手、双方卡组（加载顺序）、`DuelConfig`、可选核心种子字、动作前缀、录制时的 `skip_forced` / `cancel_budget`，可选 `learner_seat`、场面键 `board_key` 与来源元数据 `origin`；`Position.start(venv, env_id, env)` 先核对环境版本与两项设置，再前缀起局。JSONL 读写（`write_positions` / `read_positions`，一行一个），`PositionLibrary.load(paths, env)` 拒绝别的环境版本录的局面，`sample(rng, learner_seat=None)` 只用传入的生成器均匀抽取（同一生成器状态抽到同一局面）。场面键 `board_key(board, player)` 是 `board_keys` 的「只看场上」键（`tools/turn1_board_modes.py` 也改用这一份；P0c 的结论，见 [spikes/first-seat-interruption-plan-2026-10-24.md](spikes/first-seat-interruption-plan-2026-10-24.md) §10.3）。
+- **耗时**（`tools/bench_prefix_fork.py`，77 条求解线走到回合 2 第一个决策，前缀中位数 55 步、p90 92 步；2026-10-24 AI Max+ 395，负载约 29）：
+
+  | 项 | 中位数 | p90 |
+  |---|---:|---:|
+  | C++ `reset` 到第一个决策（建局） | 31.8 ms | 34.0 |
+  | C++ 前缀起局到回合 2（`reset(..., prefix)`） | **43.4 ms** | 54.3 |
+  | 　每个前缀动作（(前缀起局 − 建局) / 步数） | **0.22 ms** | 0.34 |
+  | 对照：C++ 逐步 `step` + `LinePlayer` 走同一条线 | 44.6 ms | 61.0 |
+  | 吞吐（64 槽、16 线程）：前缀起局 | 257 个/秒（13,300 动作/秒） | |
+  | 吞吐（同上）：逐步走线 | 193 个/秒（10,000 决策/秒） | |
+
+  与预期「建局 + 约 0.16 ms × 步数」一致：这次建局比计划 §3 的 16 ms 慢近一倍，是机器负载所致；同一时段另测的随机局每步 0.19 ms，关掉事件流也是 0.19 ms。每步的成本主要是核心推进与观测编码（判断动作是否可选要用编码后的掩码），省掉的只是 Python 往返，所以单局只快几毫秒，多槽位吞吐高约 1/3。
+
+验证：`tests/test_prefix_start.py`——带前缀的 reset 与逐步 `step` 同一前缀的观测（含事件与特权张量）逐字节相同，之后继续走也相同（`skip_forced` 开 / 关各一次）；任意槽位、任意线程起局；前缀正好走到终局与越过终局都回传同一终局（`prefix_applied`、动作轨迹）；非法动作（被遮住的行、越界）报 `ValueError`，不丢其它槽位的事件，槽位可复用；`responses()` 构造的 `Replay` 重放为 `log_exhausted` 且应答相同，由它恢复的动作前缀起局得到同一观测（快照开 / 关各一次）；局面 JSONL 往返、起局、设置不符时报错；`PositionLibrary.sample` 的确定性；场面键。阳性对照：前缀循环里不自动作答强制决策时 10 项里 5 项失败。

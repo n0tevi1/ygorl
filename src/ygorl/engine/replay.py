@@ -135,6 +135,25 @@ class Replay:
         )
 
     @classmethod
+    def from_spec(cls, spec, responses: list[bytes], env: Environment | None = None) -> Replay:
+        """The replay of a game started from ``spec`` (a :class:`~ygorl.env.pool.GameSpec`) that has sent
+        ``responses`` so far, e.g. ``EncodedVecEnv.responses(env_id)`` (docs/engine.md 「前缀起局」); ``env`` binds it
+        to the environment the game ran under. It carries no result: :meth:`play` re-runs the game to the decision
+        after the last response (reason ``log_exhausted``) or to its end."""
+        cfg = spec.config
+        core_seed = None if spec.core_seed is None else [int(w) for w in spec.core_seed]
+        return cls(seed=spec.seed, first=spec.first, rule_flags=cfg.rule_flags, player=asdict(cfg.player),
+                   shuffle_decks=cfg.shuffle_decks,
+                   decks={"a": _deck_to_dict(spec.deck_a), "b": _deck_to_dict(spec.deck_b)},
+                   responses=[bytes(r) for r in responses],
+                   environment={"version": env.version, "fingerprint": env.fingerprint} if env is not None else None,
+                   engine={"ocgcore": list(_core.ocg_version())}, max_turns=cfg.max_turns,
+                   max_decisions=cfg.max_decisions, curriculum=cfg.curriculum, learner=cfg.learner,
+                   augmented_start=cfg.augmented_start,
+                   seed_words=None if core_seed is None or core_seed == expand_seed(spec.seed) else core_seed,
+                   recorded_at=int(time.time()))  # fmt: skip
+
+    @classmethod
     def from_yrp(cls, source: str | Path | bytes | YrpFile) -> Replay:
         """A replay of the duel an EDOPro ``.yrp`` / ``.yrpX`` (or its embedded ``yrp1``) records.
 

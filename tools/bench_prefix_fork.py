@@ -13,7 +13,12 @@ plays its line, deck b passes), measures per line:
   play the line with :class:`ygorl.train.lines.LinePlayer`, the other seat passing, to the first decision of turn 2;
 - ``cpp_turn2``: from there, both seats choose uniformly at random until turn 3 starts or the game ends (a stand-in
   for the engine cost of one branch rollout through the opponent's turn 2; no network);
-- then the throughput of ``cpp_replay`` with ``--envs`` envs on ``--threads`` threads (prefix starts per second).
+- ``cpp_reset``: C++ reset alone (build the duel and run to its first decision), and ``cpp_prefix``: the C++ prefix
+  start (``EncodedVecEnv.reset(..., prefix=)``, docs/engine.md 「前缀起局」) with the action indices ``cpp_replay``
+  sent, which reaches the same decision without returning to Python in between; ``prefix_per_step`` =
+  (``cpp_prefix`` - ``cpp_reset``) / actions;
+- then the throughput of ``cpp_replay`` with ``--envs`` envs on ``--threads`` threads (prefix starts per second),
+  and the same for the C++ prefix start (``prefix_throughput``).
 
 Usage: uv run --no-sync python tools/bench_prefix_fork.py DEMOS.jsonl [--lines 40] [--env md-2026-09]
            [--learner-deck environments/md-2026-09/meta/yummy.ydk] [--envs 32] [--threads 16] [--out OUT.json]
@@ -99,16 +104,30 @@ def py_side(demo, env, cards) -> dict:
 def cpp_side(script, learner, vocab, cards, seed: int) -> dict:
     venv = EncodedVecEnv(1, 1, cards=cards, vocab=vocab)
     player = LinePlayer(script, venv.skip_forced)
+    spec = script.spec(learner, seed, learner_seat=1)
     t0 = time.perf_counter()
-    venv.reset(0, script.spec(learner, seed, learner_seat=1))
-    decisions = 0
+    venv.reset(0, spec)
+    actions = []
     ev = venv.recv(1)[0]
     while ev.result is None and _turn(ev.obs) < 2:
         row = player.act(ev.obs) if ev.player == 0 else None
-        venv.step(0, row if row is not None else _passive(ev.obs))
-        decisions += 1
+        actions.append(row if row is not None else _passive(ev.obs))
+        venv.step(0, actions[-1])
         ev = venv.recv(1)[0]
     replay = time.perf_counter() - t0
+    decisions = len(actions)
+    t0 = time.perf_counter()
+    venv.reset(0, spec, actions)
+    (start,) = venv.recv(1)
+    prefix = time.perf_counter() - t0
+    if (start.result is None) != (ev.result is None) or (
+        start.result is None and any(not np.array_equal(start.obs[k], ev.obs[k]) for k in ev.obs)
+    ):
+        raise RuntimeError(f"line {script.id}: the prefix start does not reach the step-wise decision")
+    t0 = time.perf_counter()
+    venv.reset(0, spec)
+    venv.recv(1)
+    reset = time.perf_counter() - t0
     rng = np.random.default_rng(seed)
     t0 = time.perf_counter()
     turn2 = 0
@@ -117,7 +136,9 @@ def cpp_side(script, learner, vocab, cards, seed: int) -> dict:
         turn2 += 1
         ev = venv.recv(1)[0]
     return {"cpp_replay": replay, "cpp_decisions": decisions, "line_status": player.status,
-            "cpp_turn2": time.perf_counter() - t0, "cpp_turn2_decisions": turn2}  # fmt: skip
+            "cpp_turn2": time.perf_counter() - t0, "cpp_turn2_decisions": turn2, "cpp_reset": reset,
+            "cpp_prefix": prefix, "prefix_per_step": (prefix - reset) / max(1, decisions),
+            "spec": spec, "actions": actions}  # fmt: skip
 
 
 def cpp_throughput(scripts, learner, vocab, cards, envs: int, threads: int, games: int) -> dict:
@@ -149,6 +170,31 @@ def cpp_throughput(scripts, learner, vocab, cards, envs: int, threads: int, game
     # envs whose duel reached turn 2 are left mid-game; the pool is dropped with them
     return {"envs": envs, "threads": threads, "prefixes": done, "seconds": secs, "prefixes_per_s": done / secs,
             "decisions_per_s": decisions / secs}  # fmt: skip
+
+
+def prefix_throughput(starts, vocab, cards, envs: int, threads: int, games: int) -> dict:
+    """Prefix starts per second: every env resets with a (spec, prefix) of ``starts`` until ``games`` came back."""
+    venv = EncodedVecEnv(envs, threads, cards=cards, vocab=vocab)
+    started = done = steps = 0
+
+    def start(e: int) -> None:
+        nonlocal started, steps
+        spec, actions = starts[started % len(starts)]
+        venv.reset(e, spec, actions)
+        steps += len(actions)
+        started += 1
+
+    t0 = time.perf_counter()
+    for e in range(envs):
+        start(e)
+    while done < games:
+        for ev in venv.recv(1):
+            done += 1
+            if started < games:
+                start(ev.env_id)
+    secs = time.perf_counter() - t0
+    return {"envs": envs, "threads": threads, "prefixes": done, "seconds": secs, "prefixes_per_s": done / secs,
+            "decisions_per_s": steps / secs}  # fmt: skip
 
 
 def summary(values: list[float], scale: float = 1e3) -> dict:
@@ -185,7 +231,8 @@ def main() -> None:
         row.update(cpp_side(script, learner, vocab, cards, seed=i))
         rows.append(row)
     keys_ms = ["py_setup", "py_replay", "py_replay_arena", "py_snapshot", "py_restore", "core_snapshot", "core_restore",
-               "cpp_replay", "cpp_turn2"]  # fmt: skip
+               "cpp_replay", "cpp_turn2", "cpp_reset", "cpp_prefix", "prefix_per_step"]  # fmt: skip
+    starts = [(r.pop("spec"), r.pop("actions")) for r in rows]
     report = {
         "arena_available": bool(_core.ARENA_AVAILABLE),
         "lines": len(rows),
@@ -196,6 +243,7 @@ def main() -> None:
         "arena_mib": summary([r["arena_bytes"] / 2**20 for r in rows], 1),
         "line_broken": sum(r["line_status"] == "broken" for r in rows) / max(1, len(rows)),
         "throughput": cpp_throughput(scripts, learner, vocab, cards, a.envs, a.threads, 4 * a.envs),
+        "prefix_throughput": prefix_throughput(starts, vocab, cards, a.envs, a.threads, 4 * a.envs),
     }
     print(json.dumps(report, indent=1))
     if a.out:

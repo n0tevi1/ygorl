@@ -97,8 +97,19 @@ class EncodedVecEnv:
         self.snapshots = snapshots
         # Per snapshot id: the env's action trace / model updates when it was taken (restored with it).
         self._snapshot_traces: dict[int, tuple[list[int] | None, list[int | None] | None]] = {}
+        self._held: list[EncodedEvent] = []  # events received alongside a refused prefix (returned by the next recv)
+        self._final_responses: dict[int, list[bytes]] = {}  # per env: the response log its last finished game reported
 
-    def reset(self, env_id: int, spec: GameSpec) -> None:
+    def reset(self, env_id: int, spec: GameSpec, prefix: Sequence[int] | None = None) -> None:
+        """Queue a new game of ``spec`` in ``env_id``; :meth:`recv` returns its first decision.
+
+        ``prefix`` (prefix start, docs/engine.md 「前缀起局」): action indices the worker plays right after the start,
+        exactly as successive :meth:`step` calls with this env's ``skip_forced`` would (one per decision that comes
+        back to Python), without events in between; :meth:`recv` then returns the decision after the last one, or
+        the result (with ``prefix_applied``, the actions played) if the game ends inside the prefix. An action that
+        is not a choosable row of its decision's ``action_mask`` makes :meth:`recv` raise ValueError for the env
+        (which is then left without a game).
+        """
         if spec.config.curriculum != "full" or spec.config.augmented_start:
             raise NotImplementedError("EncodedVecEnv supports only curriculum='full' without augmented_start; "
                                       "curriculum modes (T2.6) run on VecDuelEnv / Duel.run")  # fmt: skip
@@ -108,15 +119,20 @@ class EncodedVecEnv:
         p = cfg.player
         player = (p.starting_lp, p.starting_hand, p.draw_per_turn)
         decks = [(list(m), list(e)) for m, e in duel.loaded_decks()]
+        actions = [] if prefix is None else [int(a) for a in prefix]
+        if any(a < 0 or a >= 1 << 32 for a in actions):
+            raise ValueError("prefix action indices must be non-negative 32-bit integers")
         self._pool.reset(env_id, duel.core_seed, cfg.rule_flags, player, player, decks, cfg.max_turns,
-                         cfg.max_decisions)  # fmt: skip
+                         cfg.max_decisions, actions)  # fmt: skip
+        self._final_responses.pop(env_id, None)
         if self._action_traces is not None:
-            self._action_traces[env_id] = []
+            self._action_traces[env_id] = list(actions)
         if self.record_games:
-            self._action_updates[env_id] = []
+            self._action_updates[env_id] = [None] * len(actions)  # prefix actions come from no model
 
     def step(self, env_id: int, action: int) -> None:
         self._pool.step(env_id, action)
+        self._final_responses.pop(env_id, None)
         if self._action_traces is not None:
             self._action_traces[env_id].append(int(action))
         if self.record_games:
@@ -142,6 +158,7 @@ class EncodedVecEnv:
         (byte for byte). Only snapshots of the env's current game restore, finished or not: a snapshot of another env
         or of an earlier game raises ValueError. The snapshot stays valid until :meth:`release`."""
         self._pool.restore(env_id, sid)
+        self._final_responses.pop(env_id, None)
         trace, updates = self._snapshot_traces[sid]
         if self._action_traces is not None and trace is not None:
             self._action_traces[env_id] = list(trace)
@@ -152,6 +169,18 @@ class EncodedVecEnv:
         """Free snapshot ``sid`` of ``env_id`` (immediately; no event). Snapshots are never freed implicitly."""
         self._pool.release(env_id, sid)
         self._snapshot_traces.pop(sid, None)
+
+    def responses(self, env_id: int) -> list[bytes]:
+        """The engine responses of ``env_id``'s game so far (``set_response`` payloads, as ``result["responses"]``).
+
+        With the game's spec they make a :class:`~ygorl.engine.replay.Replay` (:meth:`Replay.from_spec`) whose
+        :meth:`~ygorl.engine.replay.Replay.play` re-runs the game to the start of the current decision (a
+        multi-step decision in progress has no response yet). The env must be idle (its last event received);
+        after the game ended it is the final log.
+        """
+        if env_id in self._final_responses:
+            return list(self._final_responses[env_id])
+        return list(self._pool.responses(env_id))
 
     def snapshot_count(self) -> int:
         return self._pool.snapshot_count()
@@ -165,27 +194,48 @@ class EncodedVecEnv:
         return self._pool.arena_escapes()
 
     def recv(self, min_events: int = 1, timeout: float | None = None) -> list[EncodedEvent]:
+        """At least ``min_events`` events (fewer once ``timeout`` seconds pass). A refused prefix (:meth:`reset`) raises
+        ValueError; the events received with it are returned by the next call."""
+        events, self._held = self._held, []
         timeout_ms = -1 if timeout is None else int(timeout * 1000)
-        events = []
-        for e, done, player, obs, result, priv in self._pool.recv(min_events, timeout_ms):
-            if done and self._action_traces is not None:
-                actions = self._action_traces.pop(e, [])
-                if (
-                    self.record_games
-                    or result["reason"] in TRUNCATED
-                    or any(
-                        result.get(k)
-                        for k in ("error", "retries", "unknown_messages", "script_errors", "undecodable_messages")
-                    )
-                ):
-                    result["action_indices"] = actions
-                if self.record_games:
-                    result["action_model_updates"] = self._action_updates.pop(e, [])
-            events.append(EncodedEvent(e, player, obs, result, priv))
+        need = max(0, min_events - len(events))
+        if need or self._pool.pending():
+            events += [self._event(*raw) for raw in self._pool.recv(need, timeout_ms if need else 0)]
+        for i, ev in enumerate(events):
+            if ev.result is not None and ev.result.get("prefix_error"):
+                self._held = events[:i] + events[i + 1 :]
+                raise ValueError(f"env {ev.env_id}: illegal prefix: {ev.result['error']}")
         return events
 
+    def _event(self, e: int, done: bool, player: int, obs, result, priv) -> EncodedEvent:
+        if not done:
+            return EncodedEvent(e, player, obs, result, priv)
+        if result.pop("prefix_error", False):  # the env has no game: nothing to record
+            if self._action_traces is not None:
+                self._action_traces.pop(e, None)
+            self._action_updates.pop(e, None)
+            return EncodedEvent(e, player, None, {**result, "prefix_error": True})
+        self._final_responses[e] = result["responses"]
+        if self._action_traces is not None:
+            actions = self._action_traces.pop(e, [])
+            updates = self._action_updates.pop(e, []) if self.record_games else []
+            if "prefix_applied" in result:  # the game ended inside the prefix: the rest was never played
+                del actions[result["prefix_applied"] :], updates[result["prefix_applied"] :]
+            if (
+                self.record_games
+                or result["reason"] in TRUNCATED
+                or any(
+                    result.get(k)
+                    for k in ("error", "retries", "unknown_messages", "script_errors", "undecodable_messages")
+                )
+            ):
+                result["action_indices"] = actions
+            if self.record_games:
+                result["action_model_updates"] = updates
+        return EncodedEvent(e, player, obs, result, priv)
+
     def pending(self) -> int:
-        return self._pool.pending()
+        return self._pool.pending() + len(self._held)
 
     def play(self, specs: Sequence[GameSpec], choose: Callable[[int, int, int], int]) -> list[dict]:
         """Play every spec with ``choose(seed, step, n) -> k``, which picks the ``k``-th of the ``n`` rows the mask

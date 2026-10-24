@@ -98,7 +98,9 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | blocking board | 阻断场面 | 先攻第 1 回合结束时阻断点多的场面；求解器示范的自动目标（solver.md） |
 | piece | 阻断件 | 卡组里能作为求解器目标的场上阻断怪兽（`blocking.Piece`） |
 | window counterfactual advantage / `branch_value` | 窗口反事实优势 | 在打断窗口同槽位快照，打 / 不打各推演到对手回合结束，用 critic 截断后的差作该窗口的优势或 Q 目标（spikes/first-seat-interruption-plan-2026-10-24.md §5.1） |
-| prefix start / `Position` | 前缀起局 / 局面 | 用种子 + 动作前缀在环境里重放到某个局面（如回合 1 结束）再开始训练（同上 §5.2） |
+| prefix start / `prefix` | 前缀起局 | `EncodedVecEnv.reset(env_id, spec, prefix)`：建局后在工作线程上按 `step` 的语义连续应用一串动作下标，中间不回传事件，`recv` 直接拿到前缀之后的决策（或中途的终局）；可在任意槽位起局，与快照互补（engine.md「前缀起局」，同上 §5.2） |
+| `Position` / position library / `PositionLibrary` | 局面 / 局面库 | 局面 = 一局的精确起点（环境版本、种子、先后手、双方卡组、规则配置、可选核心种子字）+ 动作前缀 + 录制时的 `skip_forced` / `cancel_budget`，可附场面键与来源元数据；局面库是其 JSONL 集合，`sample(rng)` 均匀发局（`ygorl.train.positions`） |
+| response export / `responses` | 应答导出 | `EncodedVecEnv.responses(env_id)`：该局到目前为止送给核心的应答，配合 `Replay.from_spec` 构成 `Replay`，可重放、可写 `.yrpX` |
 | recovery line / `RecoveryLine` | 恢复线 | 对手的线在某时点被打断后，求解器（`--fire`）找到的到达原终场的续线；按（线，窗口身份 =（被回应效果，次数），打断卡）索引，脚本线对手被学习方在该时点打断时改走它（`LinePlayer.interrupt`，状态 `recovering`；同上 §5.3，training.md §8.3） |
 | reactive line | 反应式线 | 按学习者实际回合 1 场面重新求解的对手回合 2 线（同上 §5.3） |
 | bait line | 诱饵线 | 先用可恢复的次要起手骗打断、再出真起手的对手线（同上 §5.5） |
@@ -106,7 +108,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | ruler R1 / R2 / R2b | 尺子 R1 / R2 / R2b | 留出手（40–49）上的固定行为读数：R1 回合 1 打断数，R2 手坑评分 / 浪费率 / 漏打，R2b 诱饵在前子集上的 P(打 \| 诱饵) 与 P(打 \| 动点)（training.md §8.4.1） |
 | first-seat line evaluation | 先手线评估 | 学习者先攻、对手回合 2 按求解线走（断线后由固定 ckpt 接手）的配对评估：线完成率、胜率、窗口开火分布（`tools/first_seat_line_eval.py`） |
 | line break / break cause | 断线 / 断线原因 | 脚本线对手在某一步找不到匹配候选而交给快照策略；原因分三类：学习者在线的回合打断（`learner_interrupt`）、先手局回合 2 开头容差匹配失败（`turn2_start`）、其它（`tools/line_break_census.py`，同上 §6 P0a） |
-| board key | 场面键 | 回合 1 终场的离散化：学习者场上怪兽与魔陷（密码，表侧 / 盖放）加墓地、除外的多重集合；反应式线缓存按它命中（`tools/turn1_board_modes.py`，同上 §5.3、§6 P0c） |
+| board key / `board_key` | 场面键 | 回合 1 终场的离散化：学习者场上怪兽与魔陷（密码，表侧 / 盖放）的多重集合（「只看场上」，P0c 的结论；`field_grave` 另加墓地、除外）；反应式线缓存按它命中（`ygorl.train.positions.board_key(s)`，`tools/turn1_board_modes.py`，同上 §5.3、§10.3） |
 | cross-fitting | 交叉拟合 | 把评估样本分两半，一半选候选、另一半估它的值，再交换取均值，去掉「选最好的」带来的乐观偏差（PR #167；`tools/turn1_exit_pilot.py`，同上 §6 P0d） |
 | ExIt / turn-1 expert iteration | 专家迭代 / 回合 1 专家迭代 | 同一手牌采样多个回合 1 展开，按对手线失败率打分，取组内优者加权蒸馏回策略（同上 §5.4） |
 
