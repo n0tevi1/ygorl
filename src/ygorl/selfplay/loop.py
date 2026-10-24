@@ -68,7 +68,7 @@ from ygorl.md.selection import for_process as selection_for
 from ygorl.md.client import Client, CommandBit, aura_kinds
 from ygorl.md.selection import own_cards, scan_pairs
 from ygorl.selfplay.decide import Decider, policy_scorer
-from ygorl.selfplay.observe import ShadowObserver
+from ygorl.selfplay.observe import ShadowObserver, md_option_desc, option_of_description
 from ygorl.selfplay.trace import Trace
 
 # --- input state (S + ...): written by duel.dll's command layer, read by DLL_DuelComGetCommandMask --------------
@@ -1060,6 +1060,11 @@ class Player:
         seq = best.card.loc.sequence
         guess = len(grave) - 1 - seq if 0 <= seq < len(grave) else 0  # the strip shows the top card first
         tries = [guess] + [i for i in range(len(grave)) if i != guess]
+        if guess >= GY_STRIP_SHOWN:
+            # deeper than the strip shows (it is not scrolled yet): refused for the turn without opening the viewer
+            # (Ancient Chant at position 10 was tried twice a turn on cards 1-5)
+            self.forbidden.add(((raw.turn, "*"), _action_key(best)))
+            return self.refused(raw, best, f"{self.name(cid)} is #{guess + 1} in the Graveyard, past the strip")
         self.gy_before = self.ui.capture()
         self.ui.open_graveyard()
         for i in [t for t in tries if t < GY_STRIP_SHOWN]:  # deeper cards need the strip scrolled: not yet
@@ -1074,6 +1079,8 @@ class Player:
                 continue  # another card: try the next position
             if sel is None and i != guess:
                 continue  # memory cannot tell, and this is not the position the pile order names
+            if sel is None:
+                sel = (cid, 0)  # the position the pile order names: taken as the card (the turn-wide mask below)
             oc = self.open_command(raw, cid) if sel is not None else None
             if oc is not None:
                 # memory: MD's command mask for the open Graveyard card decides, not the glyph (lava passed
@@ -1232,6 +1239,13 @@ class Player:
         self.trace.observe(replay={"top": [top.kind, top.card.code if top and top.card else 0] if top else None})
         return top is not None and top.kind == "attack" and top.card is not None and top.card.code == code
 
+    def effect_spent(self, raw: RawDuel, action) -> bool:
+        """An activation of an effect MD showed greyed out this turn (its option tab without the enabled bit:
+        Millennium Revelation's once-per-turn effects, by card name across copies)."""
+        if action.kind != "activate" or action.card is None or not getattr(action, "description", 0):
+            return False
+        return (raw.turn, action.card.code, action.description) in getattr(self, "spent_effects", set())
+
     def decide(self, raw: RawDuel):
         """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""
         from ygorl.advisor.advise import advise
@@ -1249,7 +1263,9 @@ class Player:
         allowed = [g for g in advice.suggestions if offered(g.action)
                    and (key, _action_key(g.action)) not in self.forbidden
                    and ((raw.turn, "*"), _action_key(g.action)) not in self.forbidden
-                   and not (no_attacks and g.action.kind == "attack") and clickable(g.action)]  # fmt: skip
+                   and not (no_attacks and g.action.kind == "attack") and clickable(g.action)
+                   and not self.effect_spent(raw, g.action)]  # fmt: skip
+        self.last_allowed = allowed
         if not allowed:
             raise Stuck(f"no legal action left in the {snap.phase} reconstruction (MD refused the rest)")
         top = allowed[0]
@@ -1702,6 +1718,30 @@ class Player:
             pick = self.lockstep("option", raw, req)
             if pick is None:
                 pick = self.intended_option(req)
+            # memory: a tab without the enabled bit is an effect spent this turn; remembered, so no later decision
+            # takes it, and the policy's next activation of this card among the enabled tabs is taken instead (a
+            # greyed tab could not be selected, and a rule then paid a cost the policy never chose)
+            disabled = {i for i, c in enumerate(req.choices) if not c >> 31}
+            code = self.expect.action.card.code if self.expect is not None and self.expect.action.card else 0
+            spent = getattr(self, "spent_effects", set())
+            for i in disabled:
+                desc = md_option_desc(req.choices[i], self.passwords)
+                if code and desc:
+                    spent.add((raw.turn, code, desc))
+            self.spent_effects = spent
+            if pick is not None and pick in disabled:
+                observer = getattr(self, "observer", None)
+                if observer is not None:
+                    observer.shadow = None  # it took the spent effect: out of step from here
+                pick = None
+                for g in getattr(self, "last_allowed", []):
+                    a = g.action
+                    if a.kind == "activate" and a.card is not None and a.card.code == code:
+                        tab = option_of_description(req.choices, getattr(a, "description", 0), self.passwords)
+                        if tab is not None and tab not in disabled:
+                            pick = tab
+                            self.trace.rule("option-policy-next-enabled", pick=pick, p=round(g.prob, 4))
+                            break
             if pick is None:
                 pick = next((i for i, c in enumerate(req.choices) if c >> 31), 0)  # the first enabled effect
                 self.trace.rule("option-first-enabled", choices=[hex(c) for c in req.choices], pick=pick)
@@ -2579,7 +2619,7 @@ class Player:
 
     def reset_game_state(self) -> None:
         self.attacked, self.forbidden, self.recent, self.last_zone = set(), set(), [], None
-        self.strong_targets = set()
+        self.strong_targets, self.spent_effects = set(), set()
         self.activated = set()
         self.recoveries, self.recovery_count = {}, 0
         self.field_picked = ((-1, -1), [])
