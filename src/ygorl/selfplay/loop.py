@@ -754,6 +754,18 @@ class Player:
                 xy = L.my_zone(location, zone)
                 if yellow_highlight(img, *xy) or zone_outlined(img, *xy):
                     return location, zone
+        # the opponent's Monster Zones (Ra - Sphere Mode is Special Summoned to the opponent's field): the banner
+        # hides their outlines' tops, so their bottom edge (y +70) tells
+        # (every free zone of theirs outlined, at least two: one or two lit edges were lava on 31 of 909 screens)
+        free = [z for z in range(5) if raw.players[1 - raw.me].slots[z] is None]
+
+        def edge(zone):
+            x, y = opp_monster_xy(zone)
+            band = img[y + 64 : y + 76, x - 90 : x + 90].reshape(-1, 3).astype(int)
+            return ((band[:, 0] > 100) & (band[:, 1] > 110) & (band[:, 2] < 90)).mean() > 0.25
+
+        if len(free) >= 2 and all(edge(z) for z in free):
+            return "opp_mzone", free[0]
         # no outline seen: the card MD places (its request names it, a mix entry of kind 5) tells the row (Dark
         # Spell Regeneration's Spell was clicked toward a Monster Zone)
         try:
@@ -1600,6 +1612,9 @@ class Player:
             self.trace.observe(place="no zone outlined yet")
             return  # nothing to click yet: the loop comes back with the next state (once; then as before)
         location, zone = self.outlined_zone(raw)
+        if location == "opp_mzone":
+            self.ui.click(*opp_monster_xy(zone), "zone for the card (the opponent's Monster Zone)", 2.5)
+            return
         self.ui.pick_zone(location, zone, f"zone for the card ({location})")
         self._placed(location, zone)
 
