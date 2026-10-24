@@ -48,6 +48,25 @@ from ygorl.train.critic import aux_loss, load_allowing_new_heads, phi_loss, q_lo
 from ygorl.train.rollout import Rollout
 
 
+BRANCH_MODES = ("off", "replace", "add")
+
+
+@torch.no_grad()
+def branch_advantages(ro: Rollout) -> tuple[Tensor, Tensor, Tensor]:
+    """The window counterfactual advantage of each branched row (first-seat plan §5.1 A, a COMA-style baseline):
+    ``(adv, used, in_set)`` -- ``adv`` [T, B] is ``V_b(a_taken) - Σ_{a in set} π̃(a) V_b(a)`` with π̃ the behaviour
+    probabilities renormalized on the branch set (0 off ``used``), ``used`` [T, B] the valid branched rows whose taken
+    action is in the set, ``in_set`` [T, B, A] the set's candidates of the valid rows."""
+    value, valid = ro.branch_value, ro.branch_valid
+    in_set = torch.isfinite(value) & valid.unsqueeze(-1)
+    used = in_set.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1)
+    v = torch.where(in_set, value, torch.zeros((), dtype=value.dtype))
+    pi = torch.where(in_set, ro.probs.to(value), torch.zeros((), dtype=value.dtype))
+    baseline = (pi * v).sum(-1) / pi.sum(-1).clamp(min=1e-12)
+    taken = v.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1)
+    return torch.where(used, taken - baseline, torch.zeros((), dtype=value.dtype)), used, in_set
+
+
 @dataclass(frozen=True)
 class PPOConfig:
     objective: str = "ppo_clip"  # policy objective (register_objective); "ppo_clip" or "pg"
@@ -111,6 +130,15 @@ class PPOConfig:
     phi_coef: float = 0.0
     phi_shape_coef: float = 0.0
     phi_shape_first_seat_only: bool = False  # shape only the rows of engine player 0 (the seat that moved first)
+    # window counterfactual advantages (TrainConfig.branch_windows, Rollout.branch_value; docs/training.md §8.2
+    # 「窗口反事实优势」): on a branched row whose taken action is in the branch set, Â = V_b(a_taken) - Σ π̃(a) V_b(a)
+    # (π̃ the behaviour policy renormalized on the set); "replace" puts Â in place of the row's VRPO advantage,
+    # "add" adds branch_coef * Â to it (both before normalization, where line_bonus goes); a row whose taken action is
+    # outside the set keeps VRPO. branch_q_coef = w > 0: the Q targets of the set's actions become
+    # (1 - w) * (λ target of the taken action, acting-time Q of the others) + w * V_b(a). "off" / 0 = unchanged
+    branch_mode: str = "off"
+    branch_coef: float = 1.0
+    branch_q_coef: float = 0.0
 
     def __post_init__(self) -> None:
         if self.critic_target not in ("lambda", "terminal"):
@@ -149,6 +177,10 @@ class PPOConfig:
             raise ValueError("line_ce_coef must be nonnegative")
         if self.phi_coef < 0 or self.phi_shape_coef < 0:
             raise ValueError("phi_coef and phi_shape_coef must be nonnegative")
+        if self.branch_mode not in BRANCH_MODES:
+            raise ValueError(f"branch_mode must be one of {BRANCH_MODES}, got {self.branch_mode!r}")
+        if self.branch_coef < 0 or not 0 <= self.branch_q_coef <= 1:
+            raise ValueError("branch_coef must be nonnegative and branch_q_coef in [0, 1]")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -318,6 +350,8 @@ class PPOLearner:
         self._line_ce: tuple[Tensor, Tensor] | None = None  # [T, B] target candidate (-1: none) and weight
         self._phi_stats: dict[str, float] = {}
         self._boundaries = None  # train.aux.TurnBoundaries of the rollout being updated on (phi_coef / phi_shape_coef)
+        self._branch_stats: dict[str, float] = {}
+        self._branch_q: Tensor | None = None  # [T, B, A] Q targets of the branch sets' untaken actions (NaN: none)
         self.optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, eps=cfg.adam_eps)
         self.updates = 0
         self.new_heads: list[str] = []  # critic parameters a loaded checkpoint lacked (started fresh)
@@ -392,6 +426,8 @@ class PPOLearner:
         self._line_ce = None
         self._phi_stats = {}
         self._boundaries = None
+        self._branch_stats = {}
+        self._branch_q = None
         rewards = ro.rewards
         if cfg.phi_coef > 0 or cfg.phi_shape_coef > 0:
             self._boundaries = turn_boundaries(ro.obs, ro.players, ro.dones, ro.rewards, ro.truncated)
@@ -404,21 +440,71 @@ class PPOLearner:
             target, weight, ce_stats = self.line_labels.ce_targets(ro)
             self._line_ce = (target, weight if cfg.line_ce_weighted else (target >= 0).float())
             self._line_stats.update(ce_stats)
+        branch = None
+        if ro.branch_value is not None and (cfg.branch_mode != "off" or cfg.branch_q_coef > 0):
+            branch = branch_advantages(ro)
+            self._branch_stats = self._branch_summary(ro, *branch)
+        shift = bonus is not None or (branch is not None and cfg.branch_mode != "off")
         est = estimate(cfg.estimator, rewards=rewards, dones=ro.dones, players=ro.players, actions=ro.actions,
                         action_mask=ro.action_mask, probs=ro.probs, q=ro.q, values=ro.values, gamma=cfg.gamma,
                         lam=cfg.lam, bootstrap_player=ro.bootstrap_player, bootstrap_value=ro.bootstrap_value,
                         bootstrap_q=ro.bootstrap_q, bootstrap_probs=ro.bootstrap_probs,
                         bootstrap_mask=ro.bootstrap_mask, truncated=ro.truncated, vrpo_mode=cfg.vrpo_mode,
-                        normalize="none" if bonus is not None else cfg.adv_norm, target_lam=cfg.critic_lam)  # fmt: skip
-        if bonus is not None:
-            raw = est.advantages + cfg.line_bonus_coef * bonus.to(est.advantages)
+                        normalize="none" if shift else cfg.adv_norm, target_lam=cfg.critic_lam)  # fmt: skip
+        if shift:
+            raw = est.advantages
+            if branch is not None and cfg.branch_mode != "off":
+                adv, used, _ = branch
+                if cfg.branch_mode == "replace":
+                    raw = torch.where(used, adv.to(raw), raw)
+                else:
+                    raw = raw + cfg.branch_coef * adv.to(raw)
+            if bonus is not None:
+                raw = raw + cfg.line_bonus_coef * bonus.to(raw)
             est.advantages = normalize_advantages(raw, mode=cfg.adv_norm)
         if cfg.critic_target == "terminal":
             if not ro.complete_games:
                 raise ValueError("terminal targets require complete-game collection")
             z = terminal_returns(ro.rewards, ro.dones, ro.players, ro.truncated)
             est.q_targets = est.v_targets = z
+        if branch is not None and cfg.branch_q_coef > 0 and est.q_targets is not None:
+            est.q_targets, self._branch_q = self.branch_q_targets(ro, est.q_targets, branch[1], branch[2])
         return est
+
+    def branch_q_targets(self, ro: Rollout, q_targets: Tensor, used: Tensor, in_set: Tensor) -> tuple[Tensor, Tensor]:
+        """``branch_q_coef`` w: the taken action's Q target on the rows ``used`` becomes ``(1 - w) G + w V_b(a)``; the
+        set's other actions get ``(1 - w) Q_act(a) + w V_b(a)`` (Q at acting time, ``Rollout.q``), returned as
+        ``[T, B, A]`` (NaN off the set and at the taken action) for the extra Q loss of :meth:`update`."""
+        w = self.cfg.branch_q_coef
+        value = ro.branch_value.to(q_targets)
+        taken = value.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1)
+        q_targets = torch.where(used, (1 - w) * q_targets + w * taken, q_targets)
+        others = in_set.clone()
+        others.scatter_(-1, ro.actions.unsqueeze(-1), False)
+        extra = torch.where(
+            others, (1 - w) * ro.q.to(value) + w * value, torch.full((), float("nan"), dtype=value.dtype)
+        )
+        return q_targets, extra
+
+    @staticmethod
+    def _branch_summary(ro: Rollout, adv: Tensor, used: Tensor, in_set: Tensor) -> dict[str, float]:
+        """``branch_rows`` (branched rows whose taken action is in the set: their advantage is the branch one),
+        ``branch_valid_rows``, ``branch_fallback_rows`` (taken action outside the set: VRPO), ``branch_adv_mean`` (Â
+        over the used rows, before normalization), ``branch_fire_share`` (of the valid rows with a pass in the set,
+        those whose best candidate is an activation: the counterfactual says fire)."""
+        valid = ro.branch_valid
+        out = {"branch_rows": int(used.sum()), "branch_valid_rows": int(valid.sum()),
+               "branch_fallback_rows": int((valid & ~used).sum()),
+               "branch_adv_mean": float(adv[used].mean()) if used.any() else 0.0}  # fmt: skip
+        has_pass = valid & (ro.branch_pass >= 0) if ro.branch_pass is not None else torch.zeros_like(valid)
+        if has_pass.any():
+            value = torch.where(in_set, ro.branch_value, torch.full((), -float("inf"), dtype=ro.branch_value.dtype))
+            hold = value.gather(-1, ro.branch_pass.clamp(min=0).unsqueeze(-1)).squeeze(-1)
+            fire = value.scatter(-1, ro.branch_pass.clamp(min=0).unsqueeze(-1), -float("inf")).amax(-1)
+            out["branch_fire_share"] = float((fire > hold)[has_pass].float().mean())
+        else:
+            out["branch_fire_share"] = 0.0
+        return out
 
     @torch.no_grad()
     def phi_shaping(self, ro: Rollout) -> Tensor:
@@ -475,6 +561,10 @@ class PPOLearner:
         obs = trim_padding(ro.obs)
         mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]].to(dev)
         n = actions.shape[0]
+        bq = None
+        if self._branch_q is not None:
+            bq = self._branch_q.reshape(n, -1)[:, : mask.shape[1]].to(dev)
+            bq_sum = torch.zeros((), dtype=torch.float64, device=dev)
         ce_t = ce_w = None
         if self._line_ce is not None and policy:
             ce_t, ce_w = (x.reshape(-1).to(dev) for x in self._line_ce)
@@ -532,6 +622,12 @@ class PPOLearner:
                     ce = self.line_ce(logp, ce_t[idx], ce_w[idx])
                     loss = loss + cfg.line_ce_coef * ce
                 ql = q_loss(out.q.float(), actions[idx], q_targets[idx])
+                if bq is not None:  # the branch sets' other actions (branch_q_coef): each entry weighs like a row
+                    t = bq[idx]
+                    has = torch.isfinite(t)
+                    sq = torch.where(has, (out.q.float() - torch.nan_to_num(t)) ** 2, torch.zeros((), device=dev))
+                    bql = 0.5 * sq.sum() / idx.shape[0]
+                    ql = ql + bql
                 vl = v_loss(out.v.float(), v_targets[idx])
                 al = torch.zeros((), device=dev)
                 if aux_t is not None:
@@ -579,6 +675,8 @@ class PPOLearner:
                                  *extra.items(), *((("phi_loss", pl),) if phi_t is not None else ())):  # fmt: skip
                     # device sums in float64: the same values as summing the floats one by one, without a wait
                     sums[key] += val.detach().double() if isinstance(val, Tensor) else float(val)
+                if bq is not None:
+                    bq_sum = bq_sum + bql.detach().double()
                 if ce_t is not None:  # the mean over the minibatches that hold a labelled row
                     ce_sum = ce_sum + ce.detach().double()
                     ce_batches = ce_batches + (ce_t[idx] >= 0).any().double()
@@ -623,6 +721,9 @@ class PPOLearner:
         if prior_rows is not None:
             stats["kl_prior_rows"] = int(prior_rows.sum())
         stats.update(self._line_stats)
+        stats.update(self._branch_stats)
+        if bq is not None:
+            stats["branch_q_loss"] = float(bq_sum) / max(1, checked)
         if ce_t is not None:
             stats["line_ce_loss"] = float(ce_sum / ce_batches.clamp(min=1))
         stats.update(laps.stats())
@@ -685,5 +786,5 @@ def _explained_variance(pred: Tensor, target: Tensor) -> float:
     return float("nan") if var == 0 else 1.0 - float((target - pred.to(target)).var(correction=0)) / var
 
 
-__all__ = ["ClippedSurrogate", "ObjectiveInputs", "PPOConfig", "PPOLearner", "PolicyGradient", "PolicyObjective",
-           "available_objectives", "register_objective"]  # fmt: skip
+__all__ = ["BRANCH_MODES", "ClippedSurrogate", "ObjectiveInputs", "PPOConfig", "PPOLearner", "PolicyGradient",
+           "PolicyObjective", "available_objectives", "branch_advantages", "register_objective"]  # fmt: skip

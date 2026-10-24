@@ -97,7 +97,10 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | `interruption` | 阻断点 / 妨害 | 能在对手回合打断对手的一张卡：场上表侧的诱发即时效果、盖放的陷阱或速攻魔法、手里的手坑、墓地的诱发即时效果，效果须无效或能处理对手的卡（`ygorl.solver.blocking`，solver.md「阻断场面」） |
 | blocking board | 阻断场面 | 先攻第 1 回合结束时阻断点多的场面；求解器示范的自动目标（solver.md） |
 | piece | 阻断件 | 卡组里能作为求解器目标的场上阻断怪兽（`blocking.Piece`） |
-| window counterfactual advantage / `branch_value` | 窗口反事实优势 | 在打断窗口同槽位快照，打 / 不打各推演到对手回合结束，用 critic 截断后的差作该窗口的优势或 Q 目标（spikes/first-seat-interruption-plan-2026-10-24.md §5.1） |
+| window counterfactual advantage / `branch_value` | 窗口反事实优势 | 在打断窗口同槽位快照，打 / 不打各推演到学习方下一回合，用截断值（默认场面分）的差作该窗口的优势或 Q 目标（`PPOConfig.branch_mode`；spikes/first-seat-interruption-plan-2026-10-24.md §5.1，training.md §8.2） |
+| window branching / `BranchConfig` | 窗口分支 | 收集器在符合条件的打断窗口上快照、逐个推演分支集再恢复，不改变主对局（`RolloutCollector(branch=...)`，training.md §8.1） |
+| branch set | 分支集 | 一个窗口上被推演的候选：pass 加策略最想打的 K − 1 个发动（默认 K = 2） |
+| branch horizon / board score | 分支视界 / 场面分 | 分支推演停下取值的点（学习方下一个自己回合的第一个决策，或终局）；场面分 = 3 × 阻断点 + 怪兽数 + 0.5 × 魔陷数（`rollout.board_score`） |
 | prefix start / `Position` | 前缀起局 / 局面 | 用种子 + 动作前缀在环境里重放到某个局面（如回合 1 结束）再开始训练（同上 §5.2） |
 | recovery line / `RecoveryLine` | 恢复线 | 对手的线在某时点被打断后，求解器（`--fire`）找到的到达原终场的续线；按（线，窗口身份 =（被回应效果，次数），打断卡）索引，脚本线对手被学习方在该时点打断时改走它（`LinePlayer.interrupt`，状态 `recovering`；同上 §5.3，training.md §8.3） |
 | reactive line | 反应式线 | 按学习者实际回合 1 场面重新求解的对手回合 2 线（同上 §5.3） |

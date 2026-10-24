@@ -185,6 +185,22 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            "of the solver's choice (Ash where u_k > max later u, else pass), weighted by |u_k - max later u| (0 = off)"),
         _f("--no-line-ce-weighted", "ppo.line_ce_weighted", "every labelled row of --line-ce-coef weighs 1 (ties "
            "included) instead of |u_k - max later u|", negate=True),
+        _f("--branch-windows", "branch_windows", "window branching: at the learner's chain windows of scripted games on "
+           "the line's turn, snapshot and play the pass and the likeliest activations to the learner's next turn"),
+        _f("--branch-k", "branch_k", "candidates per branched window (the pass + k - 1 activations)"),
+        _f("--branch-rollouts", "branch_rollouts", "rollouts per candidate (common random numbers), averaged"),
+        _f("--branch-horizon", "branch_horizon", "how a branch rollout is scored at the learner's next turn: the line "
+           "seat's board score, the critic V, or both", choices=("board", "critic", "both")),
+        _f("--branch-fraction", "branch_fraction", "share of the qualifying windows that are branched"),
+        _f("--no-branch-require-recovery", "branch_require_recovery", "also branch windows without a recovery line for "
+           "the activation (the snapshot plays the broken line: biased towards firing)", negate=True),
+        _f("--branch-board-scale", "branch_board_scale", "branch value per board point (3 per interruption, 1 per "
+           "monster, 0.5 per spell / trap)"),
+        _f("--branch-mode", "ppo.branch_mode", "window counterfactual advantage on branched rows: replace the VRPO "
+           "advantage, add branch-coef times it, or off", choices=("off", "replace", "add")),
+        _f("--branch-coef", "ppo.branch_coef", "weight of the counterfactual advantage with --branch-mode add"),
+        _f("--branch-q-coef", "ppo.branch_q_coef", "blend w of the branch values into the Q targets of the branch "
+           "set's actions (0 = off)"),
         _f("--snapshot-every", "snapshot_every"),
         _f("--pool-sampling", "pool_sampling",
            "pfsp (design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power",
