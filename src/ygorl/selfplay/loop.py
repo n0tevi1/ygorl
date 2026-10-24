@@ -1004,14 +1004,27 @@ class Player:
             return False
         nth = [i for i, c in enumerate(oc.commands) if want & (1 << c)][0]
         n = len(oc.commands)
-        if len(icons) != n:
-            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
-            self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
-            icons = self.ui.open_card(xy, f"field {self.name(cid)} (again: MD offers {kind})")
         # an icon must sit where the command list puts it (one command: straight above the card; Obelisk's attack
         # clicked a mark 88 px to the right six times and never attacked)
         expect = [round(xy[0] + (i - (n - 1) / 2) * FIELD_ICON_STEP) for i in range(n)]
         icons = [p for p in icons if min(abs(p[0] - e) for e in expect) <= 45]
+        if len(icons) != n:
+            # the card is open (memory says so): its icons blink, so look again over a blink cycle rather than
+            # clicking the card again, which closed it (Ra's attack was then clicked on nothing eight times)
+            y0, y1 = xy[1] + FIELD_ICON_DY - 60, xy[1] + FIELD_ICON_DY + 60
+            for _ in range(12):
+                img = self.ui.capture()
+                box = (min(expect) - 70, y0, max(expect) + 70, y1)
+                found = L.find_icons(img, *box) + L.blue_icons(img, *box) + L.green_icons(img, *box)
+                found = [p for p in found if min(abs(p[0] - e) for e in expect) <= 45]
+                seen = []
+                for p in sorted(found):
+                    if all(abs(p[0] - q[0]) > 60 for q in seen):
+                        seen.append(p)
+                if len(seen) == n:
+                    icons = seen
+                    break
+                self.ui.sleep(0.35)
         how = "seen"
         if len(icons) == n:
             target = sorted(icons)[nth]
