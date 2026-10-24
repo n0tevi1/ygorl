@@ -52,8 +52,10 @@ from ygorl.md.ui import (
     icon_kind,
     is_command_icon,
     my_monster_xy,
+    my_spell_xy,
     notice_button,
     opp_monster_xy,
+    opp_spell_xy,
     radio_rows,
     yellow_highlight,
     zone_outlined,
@@ -2058,6 +2060,8 @@ class Player:
         me, op = raw.players[raw.me], raw.players[1 - raw.me]
         cards = [my_monster_xy(s) for s in range(7) if me.slots[s] is not None]
         cards += [opp_monster_xy(s) for s in range(7) if op.slots[s] is not None]
+        cards += [my_spell_xy(s) for s in range(5) if me.slots[7 + s] is not None]
+        cards += [opp_spell_xy(s) for s in range(5) if op.slots[7 + s] is not None]
         return [xy for xy in spots if any(abs(xy[0] - c[0]) + abs(xy[1] - c[1]) < 80 for c in cards)]
 
     def offered_field_cards(self, raw: RawDuel) -> list[tuple[int, int]]:

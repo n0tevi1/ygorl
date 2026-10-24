@@ -80,6 +80,18 @@ def my_monster_xy(slot: int) -> XY:
     return (L.ZONE_X[slot], MY_MZONE_Y) if slot < 5 else (EMZ_X[slot - 5], MY_EMZ_Y)
 
 
+OPP_SZONE_Y = 206  # the opponent's Spell & Trap row (one capture: their Set cards at y 206)
+
+
+def my_spell_xy(slot: int) -> XY:
+    """Our Spell & Trap Zone ``slot`` (0-4)."""
+    return L.ZONE_X[slot], L.MY_SZONE_Y
+
+
+def opp_spell_xy(slot: int) -> XY:
+    return L.ZONE_X[4 - slot], OPP_SZONE_Y
+
+
 def opp_monster_xy(slot: int) -> XY:
     return (L.ZONE_X[4 - slot], OPP_MZONE_Y) if slot < 5 else (EMZ_X[6 - slot], MY_EMZ_Y)
 
@@ -375,6 +387,9 @@ class UI:
 
         img = self.capture()
         spots = [my_monster_xy(s) for s in range(7)] + [opp_monster_xy(s) for s in range(7)]
+        # Spell / Trap cards are picked too (a cost "send 1 card to the GY": only our Set card was framed, and the
+        # player looked at monsters only until it gave the duel up)
+        spots += [my_spell_xy(s) for s in range(5)] + [opp_spell_xy(s) for s in range(5)]
         lit = [xy for xy in spots if yellow_highlight(img, *xy) or yellow_highlight(img, *xy, w=200, h=130)]
         # frames found anywhere (MD draws the Extra Monster Zones and a tilted board a little off the measured
         # spots: a target at (1214, 556) for the spot (1232, 540)); the click goes to the frame itself
