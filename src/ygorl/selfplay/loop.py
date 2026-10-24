@@ -1066,6 +1066,21 @@ class Player:
 
         return record
 
+    def note_battle(self, exp: Expectation, now: RawDuel) -> None:
+        """An attack that cost us LP while its target stayed on the field: the target is stronger than the
+        reconstruction thinks (an equip it does not restore: Time Wizard with Red-Eyes Black Dragon Sword was
+        attacked three times by a 1100 monster). No more attacks into it this turn."""
+        target = getattr(self, "attack_target_uid", 0)
+        self.attack_target_uid = 0
+        if exp.action.kind != "attack" or not target:
+            return
+        me0, me1 = exp.before.players[exp.before.me], now.players[now.me]
+        stays = any(c is not None and c.uid == target for c in now.players[1 - now.me].slots[:7])
+        if me1.lp < me0.lp and stays:
+            self.strong_targets = getattr(self, "strong_targets", set()) | {(now.turn, target)}
+            self.trace.observe(strong_target=target)
+            print("  battle: the target survived and we took damage; no more attacks into it this turn", flush=True)
+
     def still_attacks(self, raw: RawDuel) -> bool:
         """Whether the policy's top Battle Phase action on ``raw`` is an attack by the attacker of the replay."""
         from ygorl.advisor.advise import advise
@@ -1131,12 +1146,16 @@ class Player:
         pw = self.passwords.get(card.cid)
         power = self.cards[pw].attack if pw in self.cards else 0
         targets = []
+        strong = getattr(self, "strong_targets", set())
         for s, c in enumerate(opp.slots[:7]):
-            if c is None:
+            if c is None or (raw.turn, c.uid) in strong:
                 continue
             k = self.cards.get(self.passwords.get(c.cid)) if c.face else None
             value = (k.defense if c.sideways else k.attack) if k is not None else 1500  # face-down: average guess
             targets.append((value < power, value if value < power else -value, s))
+        if not targets and any(c is not None for c in opp.slots[:7]):
+            # every monster it could attack beat an attack of ours this turn: not again
+            return self.refused(raw, best, "every target survived an attack of ours this turn")
         if not self.ui.attack(my_monster_xy(slot), f"attacker {self.name(card.cid)}"):
             # the previous battle can still be animating (a second Ra's Disciple was refused while it glowed ready
             # to attack): let the board settle and try once more
@@ -1150,6 +1169,7 @@ class Player:
                 _, _, s = max(targets)
                 self.trace.sub("target", by="rule", rule="target-most-valuable-beaten", slot=s)
             self.trace.observe(target_slot=s)
+            self.attack_target_uid = opp.slots[s].uid if opp.slots[s] is not None else 0
             if not self.ui.pick_target(opp_monster_xy(s), f"target {s}"):
                 raise Stuck("no Confirm icon above the attack target")
         self.context = f"attack lp {opp.lp}"
@@ -1847,9 +1867,26 @@ class Player:
         ok = pw(cid) == pw(want) and (not want_uid or uid == want_uid)
         self.trace.observe(list_check={"want": want, "by": "client list", "index": j, "turns": turns, "ok": ok,
                                        "changed": prev is not None and prev[:8] != struct.pack("<II", cid, uid)})  # fmt: skip
+        if not ok:
+            # another card of the list: aim again by its place in the client's list (a scroll click can be
+            # swallowed, and the list can hold cards the screen does not show: Foolish Burial landed two short)
+            k = next((i for i, e in enumerate(entries) if e.uid and e.uid == uid), None)
+            again = pos + (j - k) if k is not None else -1
+            self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
+            if 0 <= again < n and again != pos:
+                self.ui.click(*cards[again], f"#{again + 1} of {n}: aimed again by the client's list", 0.9)
+                try:
+                    cid, uid = struct.unpack("<II", selection.memory.read(selection.address, 8))
+                except Exception:  # noqa: BLE001
+                    cid, uid = 0, 0
+                ok = pw(cid) == pw(want) and (not want_uid or uid == want_uid)
+                self.trace.observe(list_check={"want": want, "by": "client list (aimed again)", "index": j, "ok": ok})
+                if ok:
+                    return again
+                self.ui.click(*cards[again], f"untick #{again + 1}", 0.6)
+            return None
         if ok:
             return pos
-        self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
         return None  # (scrolled: the card the client named is on screen, where the tick-and-read search finds it)
 
     def find_in_list(self, req, pick: int) -> tuple[int, bool]:
@@ -2365,6 +2402,7 @@ class Player:
 
     def reset_game_state(self) -> None:
         self.attacked, self.forbidden, self.recent, self.last_zone = set(), set(), [], None
+        self.strong_targets = set()
         self.activated = set()
         self.recoveries, self.recovery_count = {}, 0
         self.field_picked = ((-1, -1), [])
@@ -2460,6 +2498,7 @@ class Player:
                     print(f"  check {self.expect.action.kind}: {'ok' if problem is None else problem}", flush=True)
                     if problem is None:
                         self.note_activation(self.expect.action)
+                        self.note_battle(self.expect, raw)
                     self.expect = None
                     if problem is not None:
                         raise Stuck(f"the game does not show the policy's action: {problem}")
