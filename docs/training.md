@@ -454,6 +454,48 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
 策略 agent 如何在 Python `Duel` 上跑 C++ 编码的观测见 [evaluation.md](evaluation.md)「策略检查点 agent」。
 评估期间训练暂停；PyTorch 已加载时 Arena 用 `spawn` 起子进程（fork 已初始化的 PyTorch 会让子进程死锁）。
 
+#### 8.4.1 尺子（R1 / R2 / R2b / 先手线评估）
+
+面板（扩展面板：先后手胜率、强锚点、对老师）只看胜负；下面几把尺子读的是先手做场与对手回合打断的**行为**，
+都在求解器示范的留出手（每套牌 40–49 手，`--min-hand 40`）上算，数据是 `out/claude-scale/handtrap/full_fire8.jsonl`
+这类同时有 `plain`（阻断线）与 `fire`（灰流丽恢复线）记录的示范集。定义与验收门槛见
+[spikes/first-seat-interruption-plan-2026-10-24.md](spikes/first-seat-interruption-plan-2026-10-24.md) §6。
+
+- **R1**（回合 1 打断数，`out/claude-scale/turn1_board.py`，尚未移进仓库）：策略先攻打回合 1（对手被动），
+  终场用 `solver.blocking.board_interruptions` 计数，对比求解器线（2.81）。
+- **R2**（`tools/handtrap_ruler.py`，由 `out/claude-scale/handtrap_eval.py` 原样移入）：候选坐玩家 1、手里有灰流丽，
+  玩家 0 按阻断线走；每手的结果由标签直接判定，没有推演噪声：`broken`（在动点打）、`wasted`（在诱饵时点打）、
+  `missed`（有动点却没打）、`held`（没有动点也没打）。`score` = (broken + held) / 手数，另报 `waste_rate`（浪费 / 开火）、
+  `break_rate`、`fire_rate`、`mean_fired_window`。默认贪心（`--sampled` 采样）；每手的 agent 种子是 `seed * 100003 + n`，
+  与旧脚本逐位一致（`tests/test_rulers.py` 用参考实现在同一组手牌上比对；真 ckpt 上 G u576 与 LL u1088 的贪心 / 采样输出也与旧脚本相同）。
+- **R2b**（同一工具，新增）：「第 1 个时点是诱饵、后面有动点」的子集（留出手 16 手）。在这些手上逐个时点问策略，
+  但玩家 1 一律被迫让过（强制让过），读策略放在灰流丽上的概率：`p_fire_bait` = 第 1 个时点的平均 P(灰流丽)，
+  `p_fire_break` = 第一个动点的平均 P(灰流丽)；`act_*` 是 agent 自己的选择（贪心下为 0 / 1），`p_fire_bait_all` 平均动点之前的所有诱饵时点。
+  阶段 2 的门槛是 `p_fire_bait` ≤ 0.5、阶段 5 是 ≤ 0.4 且 `p_fire_break` ≥ 0.9。
+- **先手线评估**（`tools/first_seat_line_eval.py`）：学习者先攻（环境 meta 卡组按种子抽），对手用示范卡组在回合 2 按求解线走
+  （`LinePlayer(first_seat=True)`，与训练里的先攻席脚本线同一套容差），线结束或被打断后由 `--opponent`（默认第一个 ckpt）接手。
+  报线完成率（另按学习者在回合 2 是否发动过拆开）、学习者胜率（按线是否完成拆开）、首次发动的窗口直方图 `fire_hist` 与
+  P(在第 k 个窗口发动 | 到达且之前没发动)。窗口与 `Rollout.line_window` 相同：对手回合 2 上有两个以上可选行的 MSG_SELECT_CHAIN；
+  发动 = 选了非让过行。所有 ckpt 打同一批局（同样的线、卡组顺序、种子），采样决策的均匀数由（局种子、席位、该席位的决策序号）派生（公共随机数），
+  所以两个 ckpt 可以逐局配对（`paired`：得分差与标准误、各自更好的局数、完成率差）。`--line-recovery FIRE.jsonl` 透传给
+  `LineLibrary.load(..., recovery=)`（T6 恢复线；库还不支持时提示后忽略）。
+
+```bash
+uv run --no-sync python tools/handtrap_ruler.py out/claude-scale/handtrap/full_fire8.jsonl CKPT --min-hand 40 [--json]
+uv run --no-sync python tools/first_seat_line_eval.py CKPT_A CKPT_B --opponent CKPT_A \
+    --demos out/claude-scale/handtrap/full_fire8.jsonl --min-hand 40 --games-per-line 2 [--json] [--out report.json]
+```
+
+`--json` 每个 ckpt 打印一行 JSON（`{"ckpt", "r2", "r2b"}`；先手线评估是整份报告一个对象），给 `colab/rulers_colab.sh` 这类轮询脚本直接追加到 JSONL。
+参考读数（2026-10-24，贪心，留出手）：
+
+| ckpt | R2 score / 浪费率 / 首次开火时点 | R2b p_fire_bait / p_fire_break |
+|---|---|---|
+| G u576 | 0.664 / 0.340 / 1.12 | 0.645 / 0.964 |
+| LL-local u1088 | 0.636 / 0.365 / 1.06 | 0.771 / 0.952 |
+
+R2b 的 G u576 读数在诱饵侧复现了方法论回顾里的 0.65；动点侧是 0.964，回顾里写的是 0.98。那次的计算脚本没有留下，差异的来源未查明（可能是用了离线数据集上的观测，或对动点取了另一种平均）。
+
 ### 8.5 checkpoint、续训与目录
 
 一个 checkpoint 是一个自包含的 `.pt`（`torch.save` 普通容器，`weights_only=True` 可读）：`config`（`TrainConfig`，含

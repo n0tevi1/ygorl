@@ -101,6 +101,9 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | recovery line | 恢复线 | 对手的线在某时点被打断后，求解器（`--fire`）找到的到达原终场的续线；脚本线对手被打断时改走它（同上 §5.3） |
 | reactive line | 反应式线 | 按学习者实际回合 1 场面重新求解的对手回合 2 线（同上 §5.3） |
 | bait line | 诱饵线 | 先用可恢复的次要起手骗打断、再出真起手的对手线（同上 §5.5） |
+| bait window / breaking window | 诱饵时点 / 动点 | 求解器灰流丽标签里，打了对手仍能恢复原终场的时点 / 打了就铺不出原场面的时点（`tools/handtrap_ruler.py`，training.md §8.4.1） |
+| ruler R1 / R2 / R2b | 尺子 R1 / R2 / R2b | 留出手（40–49）上的固定行为读数：R1 回合 1 打断数，R2 手坑评分 / 浪费率 / 漏打，R2b 诱饵在前子集上的 P(打 \| 诱饵) 与 P(打 \| 动点)（training.md §8.4.1） |
+| first-seat line evaluation | 先手线评估 | 学习者先攻、对手回合 2 按求解线走（断线后由固定 ckpt 接手）的配对评估：线完成率、胜率、窗口开火分布（`tools/first_seat_line_eval.py`） |
 | ExIt / turn-1 expert iteration | 专家迭代 / 回合 1 专家迭代 | 同一手牌采样多个回合 1 展开，按对手线失败率打分，取组内优者加权蒸馏回策略（同上 §5.4） |
 
 ## 组牌与评估
