@@ -269,7 +269,7 @@ def test_rebuilt_decisions_reach_the_ui(tmp_path):
             asked.append(("position", args[2:4]))
             return Choice("position", pick=1, probs={0: 0.2, 1: 0.8}, reached=2, samples=2)
 
-        def respond(self, raw, req):
+        def respond(self, raw, req, offered=None):
             asked.append(("respond", raw.turn_player))
             return Choice("respond", pick=0, probs={0: 0.7, 1: 0.3}, reached=1, samples=2)
 

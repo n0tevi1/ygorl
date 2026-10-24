@@ -76,6 +76,7 @@ OPTION_OK = (1024, 788)
 
 LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
 RA = 10000010  # The Winged Dragon of Ra
+HAND_LOCATION = 13  # MD's location number of the hand (the client's lists)
 # the command bits of each action kind (MD's CommandBit; Pendulum activation counts as activate)
 COMMAND_BITS = {"summon": CommandBit.SUMMON, "mset": CommandBit.SETMONST, "sset": CommandBit.SET,
                 "spsummon": CommandBit.SPSUMMON, "activate": CommandBit.ACTION | CommandBit.PENDULUM,
@@ -1069,7 +1070,19 @@ class Player:
             self.trace.observe(prompt="the response did not take: passing")
         self.responded = seen if respond else None
         calibrated = getattr(getattr(self, "selection", None), "address", None) is not None
-        if (pick is None and not respond and inp.mode == OPEN_PROMPT and calibrated
+        listed = self.prompt_list()  # the cards offered (memory: the client's list; no calibration needed)
+        in_hand = [c for c in listed if c.location == HAND_LOCATION and self.passwords.get(c.cid)]
+        if (pick is None and not respond and inp.mode == OPEN_PROMPT and in_hand
+                and getattr(self, "hand_trigger", None) != seen):  # fmt: skip
+            # an optional trigger of a card in our hand (Millennium Seeker's free Special Summon): take it
+            card = self.passwords[in_hand[0].cid]
+            self.trace.rule("prompt-respond-hand-trigger", card=in_hand[0].cid, by="client list")
+            if self.tick_prompt_card(card) == card:
+                self.listed = (self.expect, (in_hand[0].cid,))  # names the monster whose position is asked next
+                self.ui.click(*L.PROMPT_ACTIVATE, "activate", 2.0)
+                self.context, self.hand_trigger = "respond", seen  # the same prompt again: it did not take, pass
+                return
+        if (pick is None and not respond and inp.mode == OPEN_PROMPT and calibrated and not listed
                 and getattr(self, "hand_trigger", None) != seen):  # fmt: skip
             # an optional trigger of a card in our hand (Millennium Seeker's "You have received damage. Activate?"
             # in the opponent's turn: a free Special Summon was passed): tick it, read it from memory, take it when
@@ -1088,6 +1101,10 @@ class Player:
             self.trace.rule("prompt-respond" if respond else "prompt-pass")
         want = getattr(self, "respond_card", None) if pick is not None else None
         self.respond_card = None
+        if respond and want is None and listed and self.passwords.get(listed[0].cid):
+            # the rule responds: to the card MD lists first, ticked through memory so the card activated is known
+            # (Palladium Oracle Mahad's position question after a rule response fell to a rule)
+            want = self.passwords[listed[0].cid]
         if respond and want is not None:
             # the rebuild's answer is for the window, not for the card MD offers here: tick it, read which card
             # it is from memory, and pass when it is another one (Ultimate Divine-Beast was flipped for a Mirror
@@ -1108,6 +1125,20 @@ class Player:
         self.ui.respond_prompt(respond)
         if respond:
             self.context = "respond"
+
+    def observe_client_list(self) -> None:
+        """Record the client's card list (memory) next to what the screen shows: whether its order is the screen's
+        (then lists need no tick to identify a card) is checked on these records."""
+        client = getattr(self, "client", None)
+        if client is None:
+            return
+        try:
+            got = client.list_cards(self.game.read())
+        except Exception as exc:  # noqa: BLE001
+            got = f"{type(exc).__name__}: {exc}"
+        if isinstance(got, tuple):
+            got = {"type": got[0], "cards": [[c.cid, c.location, c.index, c.uid] for c in got[1]]}
+        self.trace.observe(client_list=got)
 
     def prompt_list(self) -> list:
         """The cards MD's open / chain prompt offers (memory, the client's list), [] when not readable."""
@@ -1178,7 +1209,11 @@ class Player:
             choice = decider.position(raw, self.request_now(raw), action, shadow, before,
                                       listed[1] if listed[0] is self.expect else ())  # fmt: skip
         else:
-            choice = decider.respond(raw, self.request_now(raw))
+            # the cards MD offers (memory: the client's prompt list): the window's other activations are not this
+            # prompt's (Millennium Seeker's trigger was passed on Sun God Unification's probabilities)
+            listed = self.prompt_list()
+            offered = tuple(p for c in listed if (p := self.passwords.get(c.cid))) or None
+            choice = decider.respond(raw, self.request_now(raw), offered=offered)
             self.respond_card = choice.detail.get("card")  # the card the policy would activate (a password)
         record = choice.record()
         if choice.pick is None:
@@ -1452,6 +1487,7 @@ class Player:
                 self.trace.observe(list_request={"stale": [[c.cid, c.location, c.sequence] for c in req.candidates],
                                                  "shown": shown})  # fmt: skip
             self.listed = (self.expect, tuple(c.cid for c in req.candidates))  # names a monster summoned next
+            self.observe_client_list()
             need = next((v for k, v in req.params if k == 8), 1)  # "choose N cards" (Fusion Materials)
             if 1 < need <= len(L.list_cards(self.ui.capture())):
                 self.trace.rule("list-set-first-accepted", need=need)  # MD's list here is not the one in memory

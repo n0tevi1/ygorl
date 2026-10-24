@@ -426,6 +426,18 @@ class Client:
             return self._cards(self._data(grouped), raw) if grouped else []
         return None
 
+    def list_cards(self, raw: RawDuel) -> tuple[int, list[PromptCard]] | None:
+        """(list type, cards) of the card list MD's client holds now, any list type (a select list of a search,
+        a cost, a target), own cards in list order; None when there is none. Observed alongside the player's own
+        tick-and-read identification until its order is known to be the screen's (design 10)."""
+        if self.cls("ListCardData") is None or self.cls("CardStatus") is None:
+            return None
+        h, f = self.heap, self.classes["CardSelectionList"].fields
+        for sel in self.objects("CardSelectionList"):
+            grouped = h.u64(sel + f["m_GroupedDataList"])
+            return h.i32(sel + f["m_ListType"]), self._cards(self._data(grouped), raw) if grouped else []
+        return None
+
     def _data(self, lst: int, depth: int = 0) -> list[int]:
         """ListCardData objects of a list, nested lists (groups) flattened in order."""
         out = []

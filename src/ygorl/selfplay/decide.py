@@ -497,11 +497,15 @@ class Decider:
 
         return self._run("position", run)
 
-    def respond(self, raw, req=None) -> Choice:
+    def respond(self, raw, req=None, offered: tuple[int, ...] | None = None) -> Choice:
+        """``offered``: passwords of the cards MD's prompt offers (the client's list); else the request's."""
+
         def run():
             sit = situation(raw, self.passwords)
-            offered = tuple(self.passwords[c.cid] for c in getattr(req, "candidates", ()) or ()
-                            if c.cid in self.passwords)  # fmt: skip
+            nonlocal offered
+            if offered is None:
+                offered = tuple(self.passwords[c.cid] for c in getattr(req, "candidates", ()) or ()
+                                if c.cid in self.passwords)  # fmt: skip
             return respond(sit.snapshot, self._deck(raw), self.prior, self.rule_flags, theirs=sit.theirs,
                            phase=sit.phase, clock=sit.clock, offered=offered, cards=self.cards, scorer=self.scorer,
                            samples=self.samples, seed=random.randrange(1 << 30), scripts=self.scripts)  # fmt: skip
