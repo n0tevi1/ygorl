@@ -238,6 +238,20 @@ def appeared_discs(before: np.ndarray, after: np.ndarray, x0: int, y0: int, x1: 
 
 TRAY_RGB, CARD_STEP = (37, 66, 143), 158  # MD's card-list tray colour and card pitch (reference pixels)
 TRAY_RGBS = (TRAY_RGB, (163, 26, 25))  # blue: own cards; red: the opponent's (a Monster Reborn target in their GY)
+# grey: a Graveyard card in "Select a optional effect to activate" (unseen until the duel was given up); taken only
+# on a two-button (Cancel / Select) panel, as grey bars of phase menus and boards passed for trays
+GREY_TRAY = (171, 171, 171)
+TWO_BUTTON_LABELS = ((840, 1102, 905, 1134), (1150, 1102, 1215, 1134))  # Cancel, Select
+
+
+def _two_button_panel(img: np.ndarray) -> bool:
+    for x0, y0, x1, y1 in TWO_BUTTON_LABELS:
+        r = img[y0:y1, x0:x1].reshape(-1, 3).astype(int)
+        if not ((r[:, 1] >= 85) & (r[:, 2] < 90) & (r[:, 1] > r[:, 0])).mean() > 0.02:
+            return False
+    return True
+
+
 DECLARE_TRAY = (171, 171, 171)  # grey: the cards a "declare a card name" search found
 LIST_CARD_Y = 905  # the middle of a listed card's art: y 960, near its lower edge, did not always register a tick
 
@@ -251,6 +265,8 @@ def list_cards(img: np.ndarray, trays: Sequence[tuple[int, int, int]] = TRAY_RGB
     too long for the panel scrolls: its tray is cut at the panel's edge (wider than its whole cards) and the cards
     start at its left end (a 7-card list measured: tray 999 px from x 530, cards from x 599).
     """
+    if trays == TRAY_RGBS and _two_button_panel(img):
+        trays = (*trays, GREY_TRAY)
     best: list[tuple[int, int]] = []  # (left, width) of the trays on the row that shows the most tray
     for y in range(1030, 1062, 2):
         row = img[y].astype(int)

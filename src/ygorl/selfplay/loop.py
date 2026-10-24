@@ -1008,6 +1008,10 @@ class Player:
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
             self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
             icons = self.ui.open_card(xy, f"field {self.name(cid)} (again: MD offers {kind})")
+        # an icon must sit where the command list puts it (one command: straight above the card; Obelisk's attack
+        # clicked a mark 88 px to the right six times and never attacked)
+        expect = [round(xy[0] + (i - (n - 1) / 2) * FIELD_ICON_STEP) for i in range(n)]
+        icons = [p for p in icons if min(abs(p[0] - e) for e in expect) <= 45]
         how = "seen"
         if len(icons) == n:
             target = sorted(icons)[nth]
