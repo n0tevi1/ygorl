@@ -482,7 +482,11 @@ class Player:
         ``timeout`` counts from the last change of the duel in memory: the CPU's own turn can run for minutes of
         chains and animations (a Red-Eyes turn took over 4), and that is not the player being stuck."""
         end, stable, last, progress = time.time() + timeout, 0, None, None
+        menu_checked = 0.0
         while time.time() < end:
+            if time.time() - menu_checked > 5:
+                menu_checked = time.time()
+                self.answer_turn_order()
             try:
                 raw, inp = self.game.read(), self.input()
             except MemoryReadError:  # between duels (loading) the state can be gone for a moment
@@ -506,6 +510,24 @@ class Player:
                 return raw, inp, dialog
             time.sleep(0.35)
         raise Stuck(f"nothing to do for {timeout:.0f} s")
+
+    def answer_turn_order(self) -> bool:
+        """MD's "go first or second?" menu before a duel (some stages ask it after Retry, and once it came only
+        after the player had taken the restarted duel for running: it waited 120 s, then crashed reading the
+        freed duel state). The menu's own pick (the user allowed menu clicks for restarts)."""
+        from ygorl.md import menu
+        from ygorl.md.input import MenuMouse
+
+        try:
+            img = self._capture()
+            if menu.screen(img) != "turn_order":
+                return False
+            MenuMouse(self.game).click(*menu.target(img, "turn_order"))
+        except Exception:  # noqa: BLE001 - no window / capture: nothing to answer
+            return False
+        print("  menu: turn_order", flush=True)
+        self.trace.observe(menu="turn_order")
+        return True
 
     def learn_panel(self, raw: RawDuel) -> None:
         """The card that actually left the hand since the panel was captured is the card the panel showed —
@@ -2140,7 +2162,14 @@ class Player:
         for g in range(games):
             print(f"=== game {g + 1}/{games}", flush=True)
             code = self.run(max_steps)
-            raw = self.game.read()
+            try:
+                raw = self.game.read()
+            except MemoryReadError:  # no duel state (a menu): restart through the menus and go on
+                print(f"=== game {g + 1} summary: no duel state after exit {code}", flush=True)
+                if g + 1 < games:
+                    self.restart_duel()
+                    continue
+                return code or 3
             result = self._result()
             for _ in range(20):  # MD sets the result a moment after the finish flag (0 read twice in a series)
                 if result in (1, 2) or code != 0:
@@ -2345,7 +2374,14 @@ class Player:
             try:
                 raw, inp, dialog = self.wait_turn()
             except Stuck as exc:  # nothing to do for a long time: MD may wait for a click we do not see
-                raw, inp, dialog = self.game.read(), self.input(), self.ui.dialog()
+                try:
+                    raw, inp, dialog = self.game.read(), self.input(), self.ui.dialog()
+                except MemoryReadError:
+                    # no duel state at all (a menu before the duel): answer a turn-order menu and wait again
+                    if self.answer_turn_order():
+                        continue
+                    print(f"  {exc}, and no duel state to recover from", flush=True)
+                    return 3
                 if not self.recover(str(exc), raw, inp, dialog, ("idle", raw.turn, raw.phase)):
                     return 3
                 continue
