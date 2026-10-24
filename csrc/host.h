@@ -131,6 +131,22 @@ private:
 
 bool is_declarable(const CardRecord& card, const std::vector<uint64_t>& opcodes);
 
+// A unique_ptr whose copies deep-copy the pointee, so classes holding one (Tracker) stay default-copyable for
+// HostDuel snapshots.
+template <typename T>
+class DeepPtr : public std::unique_ptr<T> {
+public:
+    DeepPtr() = default;
+    DeepPtr(std::unique_ptr<T> p) : std::unique_ptr<T>(std::move(p)) {}
+    DeepPtr(const DeepPtr& o) : std::unique_ptr<T>(o ? std::make_unique<T>(*o) : nullptr) {}
+    DeepPtr(DeepPtr&&) noexcept = default;
+    DeepPtr& operator=(const DeepPtr& o) {
+        if (this != &o) this->reset(o ? new T(*o) : nullptr);
+        return *this;
+    }
+    DeepPtr& operator=(DeepPtr&&) noexcept = default;
+};
+
 // How a duel ended, in engine-player order: what a C++ host reports (the fields of engine.tracker.DuelResult it has;
 // reasons and the winner rule are engine.outcome's).
 struct DuelOutcome {
@@ -203,7 +219,8 @@ private:
     uint32_t activations_turn_ = UINT32_MAX;
 };
 
-// Mirror of engine.tracker.DuelTracker, in engine-player order.
+// Mirror of engine.tracker.DuelTracker, in engine-player order. Copies are deep (HostDuel snapshots): every member
+// is a value, the decision in progress included.
 class Tracker {
 public:
     Tracker(TrackerConfig cfg, const CardDatabase* cards);
@@ -251,7 +268,7 @@ private:
     int win_reason_ = -1;
     uint32_t retries_ = 0, unknown_ = 0, consecutive_retries_ = 0, decisions_ = 0;
     std::optional<Decision> last_decision_;
-    std::unique_ptr<DecisionState> state_;
+    DeepPtr<DecisionState> state_;
     std::vector<std::string> responses_;
     UndoRules undo_rules_;
 };
@@ -287,8 +304,19 @@ struct Privileged;  // privileged.h (T2.5)
 // A single duel driven entirely in C++ (used by tests and by the pool).
 class HostDuel {
 public:
+    // Complete step-wise state at one decision point (T1): the core's arena image, a deep copy of the tracker
+    // (decision in progress, undo rules and response log included) and of the event history. Immutable once
+    // taken; restorable only into the game that took it (docs/engine.md 「步进环境快照」).
+    struct Snapshot {
+        std::shared_ptr<const DuelSnapshot> core;
+        Tracker tracker;
+        std::shared_ptr<const EventHistory> events;  // null without an event stream
+        size_t nbytes() const { return core ? core->nbytes() : 0; }
+    };
+
+    // snapshots = true keeps each game's core in a private arena (core_backend.h) so snapshot()/restore() work.
     HostDuel(std::shared_ptr<CardDatabase> cards, std::shared_ptr<ScriptSource> scripts,
-             std::shared_ptr<const Vocab> vocab);
+             std::shared_ptr<const Vocab> vocab, bool snapshots = false);
     void start(const std::array<uint64_t, 4>& seed, uint64_t flags, const PlayerOptions& team1,
                const PlayerOptions& team2,
                const std::vector<std::pair<std::vector<uint32_t>, std::vector<uint32_t>>>& decks,
@@ -311,6 +339,15 @@ public:
     void set_attack_history(bool enabled) { attack_history_ = enabled; }
     void set_cancel_budget(uint32_t budget);
 
+    bool snapshots_enabled() const { return snapshots_; }
+    // Only at a decision of a running game; std::runtime_error otherwise (or without snapshots).
+    std::shared_ptr<const Snapshot> snapshot();
+    // Back to `snap`, finished games included; std::invalid_argument if it was taken from another game (another
+    // HostDuel, or before this one's last start()). Nothing changes when it throws.
+    void restore(const Snapshot& snap);
+    uint64_t arena_escapes() const { return core_ ? core_->arena_escapes() : 0; }
+    size_t arena_bytes() const { return core_ ? core_->arena_bytes() : 0; }
+
 private:
     void advance();
     void require_started() const;
@@ -325,6 +362,7 @@ private:
     bool selection_history_ = false;
     bool attack_history_ = false;
     uint32_t cancel_budget_ = CANCEL_BUDGET_OFF;
+    bool snapshots_ = false;
     std::shared_ptr<EventHistory> events_;
 };
 

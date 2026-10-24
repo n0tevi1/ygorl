@@ -76,6 +76,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | choosable / `DecisionPoint.choosable` | 可选动作 | 除撤销类空操作外的动作下标，即策略可选的行（从不为空）；规则在 `engine.undo.UndoRules`（C++ 同名）里 |
 | `abstain` | 放弃响应 token | 有响应窗口而未连锁（事件流） |
 | `snapshot` / `restore` | 快照 / 恢复 | 每局 arena 的内存拷贝（T2.8） |
+| step-wise snapshot / `release` | 步进环境快照 / 释放 | `HostDuel` / `HostPool` / `EncodedVecEnv` 的快照：核心 arena 镜像 + C++ 追踪器与事件流的深拷贝（T1）；只能恢复回拍下它的那一局，`release` 显式释放 |
 | `fork` / `branch` / `rollout` | 分叉 / 分支 / 推演 | 从某个决策点尝试候选并下完（T2.9） |
 | `curriculum` / `learner` | 课程模式 / 学习方 | full / solo / handtrap（T2.6） |
 | `privileged` | 训练态真值 | 只给 critic 与信念头，绝不喂给 actor |

@@ -1043,8 +1043,8 @@ int Tracker::winner() const {
 // ------------------------------------------------------------------ HostDuel
 
 HostDuel::HostDuel(std::shared_ptr<CardDatabase> cards, std::shared_ptr<ScriptSource> scripts,
-                   std::shared_ptr<const Vocab> vocab)
-    : cards_(std::move(cards)), scripts_(std::move(scripts)), vocab_(std::move(vocab)) {}
+                   std::shared_ptr<const Vocab> vocab, bool snapshots)
+    : cards_(std::move(cards)), scripts_(std::move(scripts)), vocab_(std::move(vocab)), snapshots_(snapshots) {}
 
 void HostDuel::start(const std::array<uint64_t, 4>& seed, uint64_t flags, const PlayerOptions& team1,
                      const PlayerOptions& team2,
@@ -1054,7 +1054,8 @@ void HostDuel::start(const std::array<uint64_t, 4>& seed, uint64_t flags, const 
     if ((selection_history_ || attack_history_) && !event_length_)
         throw std::invalid_argument("selection history requires a nonempty event window");
     events_.reset();
-    core_ = std::make_unique<Duel>(seed, flags, team1, team2, cards_, scripts_);
+    core_.reset();  // frees the previous game's arena slot first
+    core_ = std::make_unique<Duel>(seed, flags, team1, team2, cards_, scripts_, snapshots_);
     for (const char* base : {"constant.lua", "utility.lua"})
         if (!core_->load_script(base)) throw std::runtime_error(std::string("failed to load base script ") + base);
     for (uint8_t team = 0; team < 2 && team < decks.size(); ++team) {
@@ -1125,6 +1126,27 @@ void HostDuel::set_cancel_budget(uint32_t budget) {
     if (budget != 0 && budget != 1 && budget != 4 && budget != CANCEL_BUDGET_OFF)
         throw std::invalid_argument("cancel_budget must be 0, 1, 4 or 32");
     cancel_budget_ = budget;
+}
+
+std::shared_ptr<const HostDuel::Snapshot> HostDuel::snapshot() {
+    require_started();
+    if (!snapshots_) throw std::runtime_error("this HostDuel was created without snapshots (pass snapshots=True)");
+    if (!tracker_->awaiting()) throw std::runtime_error("snapshots are taken at a decision of a running game");
+    auto core = core_->snapshot();  // checks the core first (no pending callback error)
+    return std::make_shared<const Snapshot>(Snapshot{
+        std::move(core), *tracker_, events_ ? std::make_shared<const EventHistory>(*events_) : nullptr});
+}
+
+void HostDuel::restore(const Snapshot& snap) {
+    require_started();
+    if (!snap.core) throw std::invalid_argument("empty snapshot");
+    if ((snap.events != nullptr) != (events_ != nullptr))
+        throw std::invalid_argument("the snapshot was taken from another game");
+    Tracker tracker = snap.tracker;  // copies first: nothing below throws once the core is restored
+    auto events = snap.events ? std::make_shared<EventHistory>(*snap.events) : nullptr;
+    core_->restore(*snap.core);  // std::invalid_argument for another game's core (arena ids are never reused)
+    *tracker_ = std::move(tracker);
+    events_ = std::move(events);
 }
 
 void HostDuel::observe(Observation& out) {
