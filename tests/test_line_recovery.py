@@ -25,7 +25,7 @@ from ygorl.env.encoding import ACTION_KINDS, CARD_INDEX, CONTROLLER, LOCATION  #
 from ygorl.nets import NetConfig  # noqa: E402
 from ygorl.nets.actor_critic import ActorCritic  # noqa: E402
 from ygorl.solver.demo import PASSIVE_KINDS, read_jsonl  # noqa: E402
-from ygorl.train.line_labels import FIRE, window_identities  # noqa: E402
+from ygorl.train.line_labels import FIRE, fire_windows, window_identities  # noqa: E402
 from ygorl.train.lines import CHAIN_KIND, LineLibrary, LinePlayer, chain_effect, encoded_action_key  # noqa: E402
 from ygorl.train.rollout import Assignment, RolloutCollector  # noqa: E402
 from ygorl.train.selfplay import SnapshotPool  # noqa: E402
@@ -146,6 +146,21 @@ def test_fire_lines_join_their_lines_by_window_and_hand_trap(library, plain, voc
     # the lines themselves are the plain library's, and without recovery files nothing is attached
     assert [replace(s, recovery=()) for s in library.scripts] == plain.scripts
     assert all(s.recovery == () for s in plain.scripts) and plain.recovery_windows == 0
+
+
+def test_fire_windows_number_the_recovered_windows_as_the_graded_labels_do(db, windows):
+    fires: dict[str, list] = {}
+    for d in read_jsonl(DATA):
+        if d.variant == "fire" and d.status == "solved":
+            fires.setdefault(f"{d.deck['name']}#{d.hand_index}", []).append(d)
+    got = {name: {k for d in ds for k in fire_windows(d, cards=db)} for name, ds in fires.items()}
+    assert got == {"blue-eyes#12": {1}, "branded#32": {1, 2}, "branded#35": {1}}
+    assert all(max(ks) <= len(windows[name]) for name, ks in got.items())  # numbered over the line's Ash windows
+    first = fires["branded#32"][0]
+    mapping = fire_windows(first, cards=db)
+    assert all(0 <= i < len(first.lines) for i in mapping.values())
+    with pytest.raises(ValueError, match="start"):
+        fire_windows(replace(first, start=None), cards=db)
 
 
 def test_a_fire_line_must_leave_its_line_only_at_the_hand_trap(db, vocab, tmp_path):

@@ -109,7 +109,9 @@ class SolveRequest:
     Modes: an exact recorded ``start`` (ordinary rules retained), a synthetic opening (``deck`` + ``hand`` + ``targets``; ``template`` only supplies the rule
     flags, life points, core seed and the opponent, ``--no-ref``), or a ``--fire`` test of the line
     recorded in ``template`` (the opponent plays ``fire`` at every legal window and the solver
-    rebuilds the board; ``--fire-bake`` writes the card into the replays' headers).
+    rebuilds the board; ``--fire-bake`` writes the card into the replays' headers). A ``--fire`` request with
+    ``targets`` rebuilds a board that contains them (``--target ... --target-subset``) instead of the line's own
+    final board: one level of a graded hand-trap label (:func:`ygorl.solver.batch.solve_fire`).
     """
 
     template: Path
@@ -157,6 +159,10 @@ class SolveRequest:
             out += ["--fire", str(self.fire), "--fire-bake"]
             if self.fire_ms is not None:
                 out += ["--fire-ms", str(self.fire_ms)]
+            if self.targets:  # a graded level: rebuild a board CONTAINING these cards, not the line's own board
+                for t in self.targets:
+                    out += ["--target", t.to_arg()]
+                out += ["--target-subset"]
         else:
             if self.deck is None or not self.hand:
                 raise ValueError("an opening needs a deck and an opening hand")

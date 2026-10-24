@@ -102,6 +102,39 @@ def window_identities(demo: Demonstration, *, cards=None, env: Environment | Non
     return out
 
 
+def fire_windows(fire_demo: Demonstration, *, cards=None, env: Environment | None = None,
+                 fire: int = FIRE) -> dict[int, int]:  # fmt: skip
+    """Window -> index of the first line of the ``--fire`` record ``fire_demo`` that fires ``fire`` there: the
+    windows its lines recover. A window is numbered as the graded labels number it (``values[k]``): the k-th
+    responder decision along the line with a ``fire`` activation among its actions, 1-based. The record starts
+    where its lines do (the solver bakes ``fire`` into the responder's deck)."""
+    cards = cards if cards is not None else default_cards()
+    demo = fire_demo
+    if demo.start is None:
+        raise ValueError("the fire record has no start position")
+    out: dict[int, int] = {}
+    for n, ln in enumerate(demo.lines):
+        session = DuelSession(demo.replay(None).duel(env, cards=cards))
+        window = 0
+        try:
+            for idx in ln.actions:
+                point = session.point
+                if point is None:
+                    break
+                if point.player == _RESPONDER and any(
+                    a.card is not None and a.card.code == fire for a in point.actions
+                ):
+                    window += 1
+                    a = point.actions[idx]
+                    if a.card is not None and a.card.code == fire:
+                        out.setdefault(window, n)
+                        break
+                session.act(idx)
+        finally:
+            session.close()
+    return out
+
+
 def default_cache(graded: str | Path) -> Path:
     return Path(graded).with_suffix(".windows.json")
 
@@ -276,4 +309,4 @@ class LineLabels:
 
 
 __all__ = ["CACHE_FORMAT", "FIRE", "LineLabels", "WindowLabel", "build_window_table", "default_cache", "fire_start",
-           "read_graded", "window_identities"]  # fmt: skip
+           "fire_windows", "read_graded", "window_identities"]  # fmt: skip

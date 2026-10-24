@@ -460,6 +460,8 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   开了 `line_recovery` 时 `metrics.jsonl` 多 `line_recovered` / `line_recovered_completed`（先攻席另有 `line_first_*`），局终时仍在 `recovering` 的线算进 `line_unfinished`，日志行多一段 recovered 统计。
   不传 `line_recovery` 时脚本不带恢复线，`interrupt` 直接返回、`finish()` 与统计的键不变，与原来逐位相同。
   覆盖（`lines_train.jsonl` 772 条线 + `full_fire8.jsonl`）：243 条线、323 个（线，窗口）有恢复线，221 条 fire 线因撤销步重放失败被略去；线库只含手 0–39，留出的手 40–49 没有恢复线。
+  补齐后（`recovery_full.jsonl`：分级管线 `handtrap_labels_graded.py --recovery-out` 对每个可恢复时点按最高可达级别存的线，手 0–49）：351 条线、528 个（线，窗口），839 条 fire 线因同一原因略去；
+  推荐用它代替 `full_fire8.jsonl`（first-seat 计划 §10.2b）。
   只覆盖灰流丽；其它打断的恢复线需按 C0 离线用 `solve_fire --fire <密码>` 生成。切换是在打断发生时立即进行，而不是等原线断掉：原线在诱饵窗口（如灰流丽打 Maxx "C"）常常还能继续匹配，
   恢复线则是求解器从打断后局面出发的续线，两者都到原终场时以恢复线为准。
   普查（上面的线库，学习方 40 张灰流丽、只在该窗口发动、其余一律 pass，`skip_forced`）：后攻席 323 个窗口里 317 个切换后走完恢复线，303 个与不打断时的终场场面相同；不带恢复线时同一打断让原线在 277 个窗口断掉。先攻席 306 个切换（其余窗口在该局没出现）、256 个走完。先攻席收集时对手座位第 1 回合由快照下，它可能已用掉恢复线要用的卡（例如对灰流丽连锁的 Maxx "C"），恢复线随之断掉、快照接手。
