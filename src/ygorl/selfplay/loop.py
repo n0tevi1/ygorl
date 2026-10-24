@@ -2510,6 +2510,7 @@ class Player:
                        "failures": sum(getattr(self, "failures", {}).values())}  # fmt: skip
             self.trace.game(**summary)
             print(f"=== game {g + 1} summary {summary}", flush=True)
+            self.self_audit()
             if code != 0 and not raw.finished and g + 1 < games:
                 # the player gave up on this duel: restart it from the settings menu and go on with the series
                 try:
@@ -2534,6 +2535,25 @@ class Player:
                 else:
                     raise Stuck("no new duel after three restart attempts")
         return 0
+
+    def self_audit(self) -> None:
+        """The trace's own audit of the duel just played (:mod:`ygorl.selfplay.selfaudit`): its verdict and the
+        defects found, printed beside the summary (a run's last word before a human or agent audit)."""
+        from ygorl.selfplay.selfaudit import audit_trace
+
+        try:
+            self.trace._fh.flush()  # the records written so far (the open step stays open)
+            report = audit_trace(self.trace.path, passwords=self.passwords, cards=self.cards)
+        except Exception as exc:  # noqa: BLE001 - the audit never stops the series
+            print(f"  self-audit failed: {type(exc).__name__}: {exc}", flush=True)
+            return
+        if not report.games:
+            return
+        game = report.games[-1]
+        bad = [f for f in game.findings if f.severity in ("major", "minor")]
+        print(f"=== self-audit: {game.verdict} ({len(bad)} findings)", flush=True)
+        for f in bad:
+            print(f"  [{f.severity}] step {f.step} {f.kind}: {f.message}", flush=True)
 
     def _result(self) -> int:
         return struct.unpack("<I", self.game.memory.read(self._key() + self.game.offsets.duel_result, 4))[0]
