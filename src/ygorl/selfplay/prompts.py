@@ -305,8 +305,10 @@ class PromptsMixin:
                 # a Normal Summon / Set of Level <= 4 asks no Tribute question: this is no yes / no of ours
                 self.trace.observe(yesno="ignored: a Level <= 4 summon asks no Tribute question")
                 return
-            if pick is None and self.context == "summon":
-                pick = 0  # our own summon asks to confirm the Tribute Summon (message 335): the tributes come next
+            if pick is None and self.context in ("summon", "tribute"):
+                # our own summon asks to confirm the Tribute Summon (message 335): the tributes come next; still
+                # up after a yes that did not take ("tribute"), it is the same question, not one to answer no
+                pick = 0
                 self.trace.rule("yesno-yes-tribute")
             elif pick is None and self.context in ("activate", "spsummon", "respond"):
                 # our own card asks about an optional part of the effect we chose to activate ("add the designated

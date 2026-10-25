@@ -278,6 +278,7 @@ class Player(CommandsMixin, ListsMixin, PromptsMixin, BattleMixin, PolicyMixin, 
         chains and animations (a Red-Eyes turn took over 4), and that is not the player being stuck."""
         end, stable, last, progress = time.time() + timeout, 0, None, None
         menu_checked = 0.0
+        seen_dialogs: list = []  # the last few reads: a dialog whose button pulses reads as one only now and then
         while time.time() < end:
             if time.time() - menu_checked > 5:
                 menu_checked = time.time()
@@ -294,6 +295,11 @@ class Player(CommandsMixin, ListsMixin, PromptsMixin, BattleMixin, PolicyMixin, 
                 return raw, inp, "over"
             mine = inp.accepting and inp.player == raw.me
             dialog = self.ui.dialog()  # MD's own dialog wins over the engine mode
+            seen_dialogs = (seen_dialogs + [dialog])[-4:]
+            if dialog is None:
+                # a dialog read in the last few polls is still up (a Tribute question's pulsing Yes button made
+                # the read flicker, the state never counted as stable, and the duel waited 120 s twice)
+                dialog = next((d for d in reversed(seen_dialogs) if d is not None), None)
             if dialog == "panel" and not mine and self.read_dialog_type() != OPTION_DIALOG:
                 dialog = None  # a dimmed board while MD works: nothing for us yet
             if dialog and dialog not in NEUTRAL and inp.player != raw.me:
