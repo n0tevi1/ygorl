@@ -431,6 +431,18 @@ class PromptsMixin:
         order = list(dict.fromkeys([L.hand_card(L.hand_order(hand, lambda c: self.passwords.get(c, 0),
                                                               self.cards.get).index(i), len(hand)) for i in guessed]
                                    + [L.hand_card(i, len(hand)) for i in range(len(hand))]))  # fmt: skip
+        want = self.summon_pick_by_policy(raw)
+        if want is not None:
+            # the policy's monster (through the shadow): the positions are opened until the client says that card
+            # is the open one (both Ra cards have ? ATK, and a guess summoned Sphere Mode)
+            for n, xy in enumerate(order):
+                icons = self.ui.open_hand_card(xy, f"hand position {n + 1}: {self.name(want)}?")
+                if self.open_hand_cid(raw) == want and icons and self.ui.choose_command(
+                    icons, "summon", ["summon", "mset"], self.name(want)
+                ) is not None:  # fmt: skip
+                    self.context, self.summon_level = "summon", 5
+                    return
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
         self.trace.rule("summon-pick-first-offered", hand=hand)
         for n, xy in enumerate(order):
             icons = self.ui.open_hand_card(xy, f"hand position {n + 1}: offered for the summon?")
@@ -440,6 +452,21 @@ class PromptsMixin:
                 return
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
         raise Stuck(f"no hand card shows a Summon icon for the summon pick ({len(order)} positions tried)")
+
+    def summon_pick_by_policy(self, raw: RawDuel) -> int | None:
+        """The MD card id of the hand monster the policy summons for MD's summon pick, through the shadow (its
+        SelectCard over the hand's monsters); None without a shadow decision."""
+        me = raw.players[raw.me]
+        cands = tuple(Candidate(c.cid, c.uid, raw.me, "hand", i) for i, c in enumerate(me.piles["hand"])
+                      if getattr(self.cards.get(self.passwords.get(c.cid)), "is_monster", False))  # fmt: skip
+        if len({c.cid for c in cands}) < 2:
+            return None
+        try:
+            req = replace(self.request_now(raw), candidates=cands)
+        except Exception:  # noqa: BLE001
+            return None
+        pick = self.lockstep("list", raw, req)
+        return cands[pick].cid if pick is not None and 0 <= pick < len(cands) else None
 
     def intended_option(self, req) -> int | None:
         """The tab of the effect the policy activated: its action's description (password * 16 + effect index) is

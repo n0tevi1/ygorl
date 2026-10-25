@@ -296,6 +296,15 @@ class _Game:
                          + (": the opponent's monster offered was not considered" if theirs else ""),
                          rule=rule, theirs=theirs)  # fmt: skip
             return  # otherwise checked by check_tributes against the board
+        if rule == "summon-pick-first-offered":
+            o = rec.get("observed") or {}
+            ygo = ((o.get("shadow_vs_md") or {}).get("ygo") or {}).get("decision")
+            if ygo == "SelectCard":
+                # the shadow asked which monster to summon: the policy could have picked it (run s54: a guess
+                # between the two Ra cards summoned Sphere Mode)
+                self.add("minor", rec, "summon-pick-by-rule", "a rule picked the monster to summon though the "
+                         "shadow asked it", rule=rule)  # fmt: skip
+                return
         if rule == "prompt-respond-hand-trigger":
             k = self.ctx.card(self.ctx.pw(card)) or self.ctx.card(card)  # the rule records an MD card id
             if k is not None and not k.is_monster:

@@ -280,7 +280,7 @@ class BattleMixin:
         if self.field_picked[0] != episode:
             self.field_picked = (episode, [])
         picked = self.field_picked[1]
-        near = lambda a, b: abs(a[0] - b[0]) + abs(a[1] - b[1]) < 40  # noqa: E731
+        near = lambda a, b: abs(a[0] - b[0]) + abs(a[1] - b[1]) < 80  # noqa: E731 (a picked frame read 40 px off once counted as fresh)
         lit = self.occupied(raw, self.ui.highlighted())
         # no frame seen at all: the slots of the monsters MD's request offers (the opponent's gold-framed back row
         # hid the yellow frames of a Tribute for Ra - Sphere Mode). Only then: the request can be stale (it named an
