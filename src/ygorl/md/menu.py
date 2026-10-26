@@ -27,6 +27,8 @@ import numpy as np
 
 XY = tuple[int, int]
 VICTORY_CONFIRM = (1027, 1065)
+# a won duel that can be played again (SP Deck Challenge): Retry and OK side by side instead of one Confirm
+VICTORY_RETRY, VICTORY_OK = (743, 1065), (1313, 1065)
 BACK = (1825, 1079)
 PLAY, PLAY_BOX = (1675, 1002), (1460, 975, 1890, 1030)
 NODE_EDGE_Y, NODE_CENTRE_DY = 515, 120  # the nodes' top edge row (measured); their centre is this far below it
@@ -85,6 +87,8 @@ def screen(img: np.ndarray) -> str | None:
     r = img[y0:y1, x0:x1].reshape(-1, 3).astype(int)
     if ((r[:, 1] > 200) & (r[:, 0] > 150) & (r[:, 2] < 100)).mean() > 0.3:
         return "detail"
+    if _lime_label(img, *VICTORY_RETRY) > 0.05 and _lime_label(img, *VICTORY_OK) > 0.05:
+        return "victory_retry"
     if _lime_label(img, *VICTORY_CONFIRM) > 0.05:
         return "victory"
     if _lime_label(img, *BACK) > 0.05:
@@ -106,6 +110,8 @@ def target(img: np.ndarray, kind: str) -> XY | None:
         return PLAY
     if kind == "victory":
         return VICTORY_CONFIRM
+    if kind == "victory_retry":
+        return VICTORY_RETRY  # the same duel again
     if kind == "back":
         return BACK
     if kind == "turn_order":
