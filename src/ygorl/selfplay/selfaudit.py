@@ -298,7 +298,10 @@ class _Game:
             if lock.get("ygo") == "SelectTribute":
                 # the shadow had reached the Tributes, so the policy could have picked them: a rule did (run s53:
                 # Dark Magician tributed while Soul Crossing allowed the opponent's monster)
-                theirs = o.get("tribute_theirs") or [xy for xy in (o.get("offered_field") or []) if xy[1] < 640]
+                # (an opponent monster MD's request offers, memory; a frame seen on their side can be a glow:
+                # Ra's Tributes, which cannot include theirs, were flagged on one)
+                req = o.get("md_request") or {}
+                theirs = [c for c in req.get("candidates") or [] if len(c) > 3 and c[3] not in (0, None)]
                 self.add("major" if theirs else "minor", rec, "tribute-by-rule",
                          f"a rule picked the Tributes though the shadow asked them ({lock.get('desync') or 'dropped'})"
                          + (": the opponent's monster offered was not considered" if theirs else ""),
