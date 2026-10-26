@@ -545,10 +545,18 @@ class CommandsMixin:
         computed = (round(xy[0] + (nth - (n - 1) / 2) * FIELD_ICON_STEP), xy[1] + FIELD_ICON_DY)
         # each click is checked in memory within seconds; one without effect is followed by the next way to reach
         # the icon (never the same one twice): the icon seen, its computed place, the card opened again
+        if len(icons) != n:
+            try:  # what an open card shows when its icons are not found (a Divine-Beast with Divine Evolution)
+                np.save(self.out / f"command-open-{time.strftime('%Y%m%d-%H%M%S')}.npy", self.ui.capture())
+            except Exception:  # noqa: BLE001
+                pass
         tries = ([("seen", sorted(icons)[nth])] if len(icons) == n else []) + [
             ("computed", computed),
             ("reopened", None),
         ]
+        # then the icon's x at other heights (a Divine-Beast with Divine Evolution drew its Attack icon elsewhere:
+        # every such attack was clicked at the usual height and none took), each checked in memory
+        tries += [(f"computed dy {dy}", (computed[0], xy[1] + dy)) for dy in (-125, -175, -200, -100)]
         done = []
         for how, target in tries:
             if target is None:
@@ -562,6 +570,8 @@ class CommandsMixin:
                 target = sorted(again)[nth] if len(again) == n else computed
             elif target in done:
                 continue
+            if how.startswith("computed dy") and self.open_command(raw, cid) is None:
+                self.ui.open_card(xy, f"field {self.name(cid)} (open again for another height)")
             done.append(target)
             before = self.snapshot_state()
             self.ui.click(*target, kind, 0.5)
@@ -582,7 +592,7 @@ class CommandsMixin:
         """The open field card's icons where its command list puts them (``expect``: their x), looked for over a
         blink cycle (about 4 s); [] when not all of them were seen at once."""
         n = len(expect)
-        y0, y1 = xy[1] + FIELD_ICON_DY - 60, xy[1] + FIELD_ICON_DY + 60
+        y0, y1 = xy[1] + FIELD_ICON_DY - 90, xy[1] + FIELD_ICON_DY + 60  # (a band: the height varies)
         box = (min(expect) - 70, y0, max(expect) + 70, y1)
         for _ in range(12):
             img = self.ui.capture()

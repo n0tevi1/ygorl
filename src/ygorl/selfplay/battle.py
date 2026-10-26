@@ -149,10 +149,12 @@ class BattleMixin:
         except Exception:  # noqa: BLE001 - no request: the rule decides
             return None
         spots = self.lit_candidates(raw, lit)
-        if spots and not any(c.location in ("mzone", "szone") for c in req.candidates):
-            # memory's request names no field card (a Tribute's check has no list, or it is stale): the cards MD
-            # frames, read from memory at their places, are the candidates (a Tribute for Obelisk fell to a rule
-            # that never takes the opponent's monster Soul Crossing allows)
+        framed = {(c.player, c.sequence) for c, _ in spots}
+        on_field = [c for c in req.candidates if c.location == "mzone" and (c.player, c.sequence) in framed]
+        if spots and len(on_field) < len(spots):
+            # memory's request does not name every framed card (a Tribute's check has no list, or it is stale and
+            # named only one of three Tributes): the cards MD frames, read from memory at their places, are the
+            # candidates (a Tribute for Obelisk fell to a rule that never takes the opponent's monster)
             req = replace(req, candidates=tuple(c for c, _ in spots))
             self.trace.observe(field_candidates=[[c.cid, c.player, c.sequence] for c, _ in spots])
         pick = self.lockstep("list", raw, req)
