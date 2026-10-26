@@ -361,6 +361,18 @@ class PromptsMixin:
             if exclude:
                 self.trace.observe(list_hidden=sorted(exclude))
             pick = None if stale else self.lockstep("list", raw, req, exclude=exclude)
+            if (pick is None and shown == 1 and L._two_button_panel(self.ui.capture())
+                    and self.ra_pays_lp(raw, req) is None):  # fmt: skip
+                # "Select a optional effect to activate" with one card (Mahad's Graveyard trigger): an optional
+                # trigger, so the policy decides through a rebuild of the window, as a prompt does (it was
+                # activated by the first-on-screen rule without asking)
+                answer = self.rebuilt("respond", raw)
+                if answer == 1:
+                    self.ui.click(*L.PROMPT_CANCEL, "cancel: the policy passes the optional effect", 1.5)
+                    self.context = "list"
+                    return
+                if answer == 0:
+                    pick = 0
             if pick is None and self.ra_pays_lp(raw, req) is False:
                 # The Winged Dragon of Ra's optional "pay LP so that you have 100" trigger (a one-card list of Ra
                 # itself, Cancel on the left): taken by "first on screen", it paid 8000 -> 100 on turn 1, when Ra
