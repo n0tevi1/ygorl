@@ -123,6 +123,11 @@ class PromptsMixin:
         self.ui.respond_prompt(respond)
         if respond:
             self.context = "respond"
+            hand = raw.players[raw.me].piles["hand"]
+            if phase == "draw" and not theirs and hand:
+                # no list named the card (Palladium Oracle Mahad's "You drew card(s)"): the card just drawn is the
+                # one summoned, so the position question that follows goes to the policy, not to a rule
+                self.listed = (self.expect, (hand[-1].cid,))
 
     def observe_client_list(self) -> None:
         """Record the client's card list (memory) next to what the screen shows: whether its order is the screen's
@@ -181,7 +186,10 @@ class PromptsMixin:
             self.ui.click(*order[0], "tick the offered card (the client's list names it)", 0.8)
             cid = listed[spots.index(order[0])].cid
             got = sel.read(self.game.read()) if sel is not None and sel.address is not None else None
-            if got is not None and got[0] != cid:
+            # the read overrides the list only when it names another listed card (ticking a prompt card need not
+            # update the open-card object: a Mirror Force opened a duel earlier, still in it, made a meant
+            # Millennium Revelation pass twice)
+            if got is not None and got[0] != cid and (got[0], got[1]) in {(c.cid, c.uid) for c in listed}:
                 cid = got[0]
             self.prompted = cid
             got_pw = self.passwords.get(cid)

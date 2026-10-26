@@ -272,6 +272,14 @@ class _Game:
     # rules ------------------------------------------------------------------------------------------------------
     def rule(self, rec: dict, rule: str, card: int | None) -> None:
         self.rep.rules[rule] += 1
+        if rule == "position-faceup-attack":
+            notes = ((rec.get("observed") or {}).get("rebuild") or {}).get("notes") or []
+            if any("not known" in str(n) for n in notes):
+                # the position fell to a rule because the summoned monster was not named (run s57: Mahad drawn
+                # and summoned by its own prompt); the policy could have chosen it
+                self.add("minor", rec, "position-by-rule", "a rule chose the position: the summoned monster was "
+                         "not known to the rebuild", rule=rule)  # fmt: skip
+                return
         if rule in MECHANICAL_RULES or rule.startswith("recover-"):
             return
         if rule in ACCEPTED_ANY or card in ACCEPTED.get(rule, ()):
@@ -336,7 +344,12 @@ class _Game:
         listed = o.get("prompt_list") or []
         only_want = bool(listed) and all(self.ctx.pw(c) == want for c in listed)
         ev = {"want": want, "got": got, "prompt_list": listed, "passed": passed}
-        if got is not None:
+        if got is not None and only_want and passed:
+            # the client's list offered exactly the meant card, yet a disagreeing read made the player pass (run
+            # s57: a stale open-card read named a Mirror Force from an earlier duel)
+            self.add("major", rec, "prompt-card", f"{self.ctx.name(want)} was offered (client list) and meant, but "
+                     f"the prompt was passed on a read of {self.ctx.name(got)}", **ev)  # fmt: skip
+        elif got is not None:
             self.add("minor", rec, "prompt-card", f"MD offered {self.ctx.name(got)}, the player meant "
                      f"{self.ctx.name(want)}" + (" (passed)" if passed else ""), **ev)  # fmt: skip
         elif passed:
