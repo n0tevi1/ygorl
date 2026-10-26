@@ -49,6 +49,7 @@ from ygorl.train.rollout import Rollout
 
 
 BRANCH_MODES = ("off", "replace", "add")
+BRANCH_CE_WEIGHTS = ("delta", "uniform")
 
 
 @torch.no_grad()
@@ -65,6 +66,33 @@ def branch_advantages(ro: Rollout) -> tuple[Tensor, Tensor, Tensor]:
     baseline = (pi * v).sum(-1) / pi.sum(-1).clamp(min=1e-12)
     taken = v.gather(-1, ro.actions.unsqueeze(-1)).squeeze(-1)
     return torch.where(used, taken - baseline, torch.zeros((), dtype=value.dtype)), used, in_set
+
+
+@torch.no_grad()
+def branch_ce_targets(ro: Rollout, margin: float, weight: str = "delta") -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    """The supervised targets of the window counterfactuals (first-seat plan §11.8 items 2-3, ``branch_ce_coef``):
+    ``(target, weight, gap, tie)``. On each valid branched row with two or more candidates, ``gap`` [T, B] is the best
+    candidate's branch value (the mean over the rollouts) minus the second best; the row is a tie when
+    ``gap <= margin`` (value units) and gets no target. ``target`` [T, B] is the best candidate (-1: none),
+    ``weight`` [T, B] is ``gap`` over its mean on the rollout's targeted rows (``"delta"``) or 1 (``"uniform"``), 0
+    off the targets; ``tie`` [T, B] marks the tied rows."""
+    value, valid = ro.branch_value, ro.branch_valid
+    in_set = torch.isfinite(value) & valid.unsqueeze(-1)
+    two = in_set.sum(-1) >= 2
+    zero = torch.zeros((), dtype=value.dtype)
+    v = torch.where(in_set, value, torch.full((), -float("inf"), dtype=value.dtype))
+    if v.shape[-1] < 2:
+        return torch.full_like(valid, -1, dtype=torch.long), zero.expand(valid.shape), zero.expand(valid.shape), two
+    top = v.topk(2, dim=-1)
+    gap = torch.where(two, top.values[..., 0] - top.values[..., 1], zero)
+    decided = two & (gap > margin)
+    target = torch.where(decided, top.indices[..., 0], torch.full((), -1, dtype=torch.long))
+    if weight == "uniform":
+        w = decided.to(value.dtype)
+    else:
+        mean = gap[decided].mean() if decided.any() else torch.ones((), dtype=value.dtype)
+        w = torch.where(decided, gap / mean, zero)
+    return target, w, gap, two & ~decided
 
 
 @dataclass(frozen=True)
@@ -139,6 +167,16 @@ class PPOConfig:
     branch_mode: str = "off"
     branch_coef: float = 1.0
     branch_q_coef: float = 0.0
+    # the window counterfactuals as a supervised term instead (first-seat plan §11.8 items 2-3; docs/training.md §8.2
+    # 「窗口反事实监督项」): on each valid branched row the target is the branch-set candidate of highest branch value,
+    # given only when it beats the second best by more than branch_ce_margin board points (times the collector's
+    # board scale, PPOLearner.branch_board_scale; ties get none); branch_ce_coef * the mean over the minibatch's
+    # targeted rows of -log π(target), weighted by gap / its mean over the rollout's targets ("delta") or 1
+    # ("uniform"), is added to the policy loss (as line_ce, with which it adds up). Works with branch_mode "off".
+    # 0 = off (updates unchanged)
+    branch_ce_coef: float = 0.0
+    branch_ce_margin: float = 0.5
+    branch_ce_weight: str = "delta"
 
     def __post_init__(self) -> None:
         if self.critic_target not in ("lambda", "terminal"):
@@ -181,6 +219,10 @@ class PPOConfig:
             raise ValueError(f"branch_mode must be one of {BRANCH_MODES}, got {self.branch_mode!r}")
         if self.branch_coef < 0 or not 0 <= self.branch_q_coef <= 1:
             raise ValueError("branch_coef must be nonnegative and branch_q_coef in [0, 1]")
+        if self.branch_ce_coef < 0 or self.branch_ce_margin < 0:
+            raise ValueError("branch_ce_coef and branch_ce_margin must be nonnegative")
+        if self.branch_ce_weight not in BRANCH_CE_WEIGHTS:
+            raise ValueError(f"branch_ce_weight must be one of {BRANCH_CE_WEIGHTS}, got {self.branch_ce_weight!r}")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -337,9 +379,11 @@ class _Laps:
 class PPOLearner:
     """Owns the model's optimizer, the EMA reference policy, the optional BC prior and the optional solver-window
     labels (``line_labels``, a :class:`ygorl.train.line_labels.LineLabels`; used with ``cfg.line_bonus_coef > 0`` and /
-    or ``cfg.line_ce_coef > 0``)."""
+    or ``cfg.line_ce_coef > 0``). ``branch_board_scale`` is the collector's branch value per board point
+    (``BranchConfig.board_scale``): ``cfg.branch_ce_margin`` is in board points."""
 
-    def __init__(self, model: nn.Module, cfg: PPOConfig, prior: nn.Module | None = None, line_labels=None) -> None:
+    def __init__(self, model: nn.Module, cfg: PPOConfig, prior: nn.Module | None = None, line_labels=None,
+                 branch_board_scale: float = 0.1) -> None:  # fmt: skip
         self.model = model
         self.cfg = cfg
         self.objective = _OBJECTIVES[cfg.objective](cfg)
@@ -352,6 +396,8 @@ class PPOLearner:
         self._boundaries = None  # train.aux.TurnBoundaries of the rollout being updated on (phi_coef / phi_shape_coef)
         self._branch_stats: dict[str, float] = {}
         self._branch_q: Tensor | None = None  # [T, B, A] Q targets of the branch sets' untaken actions (NaN: none)
+        self._branch_ce: tuple[Tensor, Tensor] | None = None  # [T, B] branch_ce_coef target (-1: none) and weight
+        self.branch_board_scale = branch_board_scale
         self.optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr, eps=cfg.adam_eps)
         self.updates = 0
         self.new_heads: list[str] = []  # critic parameters a loaded checkpoint lacked (started fresh)
@@ -428,6 +474,7 @@ class PPOLearner:
         self._boundaries = None
         self._branch_stats = {}
         self._branch_q = None
+        self._branch_ce = None
         rewards = ro.rewards
         if cfg.phi_coef > 0 or cfg.phi_shape_coef > 0:
             self._boundaries = turn_boundaries(ro.obs, ro.players, ro.dones, ro.rewards, ro.truncated)
@@ -441,9 +488,14 @@ class PPOLearner:
             self._line_ce = (target, weight if cfg.line_ce_weighted else (target >= 0).float())
             self._line_stats.update(ce_stats)
         branch = None
-        if ro.branch_value is not None and (cfg.branch_mode != "off" or cfg.branch_q_coef > 0):
+        if ro.branch_value is not None and (
+            cfg.branch_mode != "off" or cfg.branch_q_coef > 0 or cfg.branch_ce_coef > 0
+        ):
             branch = branch_advantages(ro)
-            self._branch_stats = self._branch_summary(ro, *branch)
+            ce = branch_ce_targets(ro, cfg.branch_ce_margin * self.branch_board_scale, cfg.branch_ce_weight)
+            self._branch_stats = self._branch_summary(ro, *branch, ce)
+            if cfg.branch_ce_coef > 0:
+                self._branch_ce = (ce[0], ce[1])
         shift = bonus is not None or (branch is not None and cfg.branch_mode != "off")
         est = estimate(cfg.estimator, rewards=rewards, dones=ro.dones, players=ro.players, actions=ro.actions,
                         action_mask=ro.action_mask, probs=ro.probs, q=ro.q, values=ro.values, gamma=cfg.gamma,
@@ -487,23 +539,30 @@ class PPOLearner:
         return q_targets, extra
 
     @staticmethod
-    def _branch_summary(ro: Rollout, adv: Tensor, used: Tensor, in_set: Tensor) -> dict[str, float]:
+    def _branch_summary(ro: Rollout, adv: Tensor, used: Tensor, in_set: Tensor, ce) -> dict[str, float]:
         """``branch_rows`` (branched rows whose taken action is in the set: their advantage is the branch one),
         ``branch_valid_rows``, ``branch_fallback_rows`` (taken action outside the set: VRPO), ``branch_adv_mean`` (Â
         over the used rows, before normalization), ``branch_fire_share`` (of the valid rows with a pass in the set,
-        those whose best candidate is an activation: the counterfactual says fire)."""
+        those whose best candidate is an activation: the counterfactual says fire; exact ties count as not); from
+        :func:`branch_ce_targets` (``ce``, with the margin): ``branch_ce_rows`` (rows with a target), and of the
+        valid rows with a pass in the set ``branch_tie_share`` (within the margin) and ``branch_hold_share`` (the
+        target is the pass)."""
         valid = ro.branch_valid
+        target, tie = ce[0], ce[3]
         out = {"branch_rows": int(used.sum()), "branch_valid_rows": int(valid.sum()),
                "branch_fallback_rows": int((valid & ~used).sum()),
-               "branch_adv_mean": float(adv[used].mean()) if used.any() else 0.0}  # fmt: skip
+               "branch_adv_mean": float(adv[used].mean()) if used.any() else 0.0,
+               "branch_ce_rows": int((target >= 0).sum())}  # fmt: skip
         has_pass = valid & (ro.branch_pass >= 0) if ro.branch_pass is not None else torch.zeros_like(valid)
         if has_pass.any():
             value = torch.where(in_set, ro.branch_value, torch.full((), -float("inf"), dtype=ro.branch_value.dtype))
             hold = value.gather(-1, ro.branch_pass.clamp(min=0).unsqueeze(-1)).squeeze(-1)
             fire = value.scatter(-1, ro.branch_pass.clamp(min=0).unsqueeze(-1), -float("inf")).amax(-1)
             out["branch_fire_share"] = float((fire > hold)[has_pass].float().mean())
+            out["branch_tie_share"] = float(tie[has_pass].float().mean())
+            out["branch_hold_share"] = float((target == ro.branch_pass)[has_pass].float().mean())
         else:
-            out["branch_fire_share"] = 0.0
+            out["branch_fire_share"] = out["branch_tie_share"] = out["branch_hold_share"] = 0.0
         return out
 
     @torch.no_grad()
@@ -569,6 +628,10 @@ class PPOLearner:
         if self._line_ce is not None and policy:
             ce_t, ce_w = (x.reshape(-1).to(dev) for x in self._line_ce)
             ce_sum = ce_batches = torch.zeros((), dtype=torch.float64, device=dev)
+        bce_t = bce_w = None
+        if self._branch_ce is not None and policy:
+            bce_t, bce_w = (x.reshape(-1).to(dev) for x in self._branch_ce)
+            bce_sum = bce_batches = torch.zeros((), dtype=torch.float64, device=dev)
         aux_t = aux_v = None
         if cfg.aux_coef > 0:
             at, av = aux_targets(ro.obs, ro.players, ro.dones)
@@ -621,6 +684,9 @@ class PPOLearner:
                 if ce_t is not None:
                     ce = self.line_ce(logp, ce_t[idx], ce_w[idx])
                     loss = loss + cfg.line_ce_coef * ce
+                if bce_t is not None:  # the window counterfactuals' targets (branch_ce_coef), averaged as line_ce
+                    bce = self.line_ce(logp, bce_t[idx], bce_w[idx])
+                    loss = loss + cfg.branch_ce_coef * bce
                 ql = q_loss(out.q.float(), actions[idx], q_targets[idx])
                 if bq is not None:  # the branch sets' other actions (branch_q_coef): each entry weighs like a row
                     t = bq[idx]
@@ -680,6 +746,9 @@ class PPOLearner:
                 if ce_t is not None:  # the mean over the minibatches that hold a labelled row
                     ce_sum = ce_sum + ce.detach().double()
                     ce_batches = ce_batches + (ce_t[idx] >= 0).any().double()
+                if bce_t is not None:
+                    bce_sum = bce_sum + bce.detach().double()
+                    bce_batches = bce_batches + (bce_t[idx] >= 0).any().double()
                 checked += 1
                 laps.lap("bookkeeping")
                 if rejected:
@@ -726,6 +795,8 @@ class PPOLearner:
             stats["branch_q_loss"] = float(bq_sum) / max(1, checked)
         if ce_t is not None:
             stats["line_ce_loss"] = float(ce_sum / ce_batches.clamp(min=1))
+        if bce_t is not None:
+            stats["branch_ce_loss"] = float(bce_sum / bce_batches.clamp(min=1))
         stats.update(laps.stats())
         return stats
 
@@ -786,5 +857,6 @@ def _explained_variance(pred: Tensor, target: Tensor) -> float:
     return float("nan") if var == 0 else 1.0 - float((target - pred.to(target)).var(correction=0)) / var
 
 
-__all__ = ["BRANCH_MODES", "ClippedSurrogate", "ObjectiveInputs", "PPOConfig", "PPOLearner", "PolicyGradient",
-           "PolicyObjective", "available_objectives", "branch_advantages", "register_objective"]  # fmt: skip
+__all__ = ["BRANCH_CE_WEIGHTS", "BRANCH_MODES", "ClippedSurrogate", "ObjectiveInputs", "PPOConfig", "PPOLearner",
+           "PolicyGradient", "PolicyObjective", "available_objectives", "branch_advantages", "branch_ce_targets",
+           "register_objective"]  # fmt: skip

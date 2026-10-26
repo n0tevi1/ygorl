@@ -643,6 +643,9 @@ P0b 重跑（同 §10.2：LL u1088，K = 1，M = 4 CRN，种子 0，8 进程；�
 | 4 | 不建议：Â 单独缩放、`branch_fraction 1.0` + 屏蔽未分支窗口行的主优势、仅提高 `branch_board_scale` | 11.6：单独缩放与 A1n 相同；屏蔽主优势几乎无影响；放大尺度只放大偏打的净指令（A2 仿真 +0.86 logit 向打） | — |
 | 5 | 用已有的求解器标签（`line_ce_coef` / `line_bonus_coef`，graded 标签）代替在线反事实作为灰流丽窗口的监督；A 只留给没有标签的窗口 | 标签确定、无推演噪声，P0b (ii) 一致率 0.83 说明两者在有恢复线时同向；`line_ce` 通路已在树里 | 只覆盖有标签的手（0–39）与灰流丽；需要先在 R2b（诱饵）上验证不过拟合 |
 
+实现状态（2026-10-26）：建议 2 + 3 已进树——`--branch-ce-coef` / `--branch-ce-margin`（场面分，默认 0.5）/ `--branch-ce-weight`，统计 `branch_ce_rows`、`branch_ce_loss`、
+`branch_tie_share`、`branch_hold_share`（[training.md](../training.md) §8.2「窗口反事实监督项」）；M 仍由 `--branch-rollouts` 给，默认 1 未改。
+
 最有把握的一条是 1 + 2 一起：先让信号对（只用有恢复线的窗口，扩覆盖），再让它推得动（非饱和监督项）。单做 2 会把 11.4 的偏打信号放大；单做 1 剂量太小，A1 已经证明推不动。
 
 复现：

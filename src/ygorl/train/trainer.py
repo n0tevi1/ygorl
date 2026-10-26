@@ -134,7 +134,8 @@ class TrainConfig:
     # the scripted games on the line's turn the slot is snapshotted and the pass and the branch_k - 1 likeliest
     # activations are each played on branch_rollouts times to the learner's next turn (branch_horizon: board score,
     # critic V or both; branch_board_scale per board point), in branch_fraction of the windows; branch_require_recovery:
-    # only where the line has a recovery line for those activations. The values feed ppo.branch_mode / branch_q_coef
+    # only where the line has a recovery line for those activations. The values feed ppo.branch_mode / branch_q_coef /
+    # branch_ce_coef (whose margin is in board points: times branch_board_scale)
     branch_windows: bool = False
     branch_k: int = 2
     branch_rollouts: int = 1
@@ -223,9 +224,11 @@ class TrainConfig:
                 raise ValueError("branch_require_recovery needs line_recovery (or --no-branch-require-recovery)")
             if self.complete_games:
                 raise ValueError("branch_windows needs fixed-length segments, not complete_games")
-        if (self.ppo.branch_mode != "off" or self.ppo.branch_q_coef > 0) and not self.branch_windows:
+        uses_branch = self.ppo.branch_mode != "off" or self.ppo.branch_q_coef > 0 or self.ppo.branch_ce_coef > 0
+        if uses_branch and not self.branch_windows:
             raise ValueError(
-                "ppo.branch_mode / branch_q_coef need branch_windows (the rollouts carry no branch values)"
+                "ppo.branch_mode / branch_q_coef / branch_ce_coef need branch_windows (the rollouts carry no branch "
+                "values)"
             )
 
     def branch_config(self) -> BranchConfig:
@@ -369,7 +372,8 @@ class Trainer:
                 if cfg.line_labelled_only:
                     self.lines.dealable = sorted({key[0] for key in self.line_labels.table})
                     self.log(f"scripted lines dealt from the {len(self.lines.dealable)} labelled lines only")
-        self.learner = PPOLearner(self.model, cfg.ppo, prior, line_labels=self.line_labels)
+        self.learner = PPOLearner(self.model, cfg.ppo, prior, line_labels=self.line_labels,
+                                  branch_board_scale=cfg.branch_board_scale)  # fmt: skip
         self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share, cfg.pool_sampling, cfg.pfsp_power)
         for path in cfg.pin_opponents:
             pinned = load_actor(path, cfg.text_dir)
@@ -646,7 +650,10 @@ class Trainer:
                     f"{record.get('line_ce_loss', 0.0):.4f})" if "line_ce_rows" in record else "")
                  + (f", branched windows {record['branch_windows']} ({record['branch_decisions']} branch decisions"
                     + (f", {record['branch_rows']} rows used, mean adv {record['branch_adv_mean']:.3f}, fire share "
-                       f"{record['branch_fire_share']:.2f}" if "branch_rows" in record else "") + ")"
+                       f"{record['branch_fire_share']:.2f}, tie share {record['branch_tie_share']:.2f}, hold share "
+                       f"{record['branch_hold_share']:.2f}" if "branch_rows" in record else "")
+                    + (f", CE rows {record['branch_ce_rows']} (loss {record['branch_ce_loss']:.4f})"
+                       if "branch_ce_loss" in record else "") + ")"
                     if "branch_windows" in record else "")
                  + (f", SKIPPED {stats['nonfinite_minibatches']} non-finite-loss / {stats['nonfinite_grad_minibatches']} "
                     "non-finite-gradient minibatches" if stats.get("nonfinite_minibatches")

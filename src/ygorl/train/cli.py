@@ -201,6 +201,13 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--branch-coef", "ppo.branch_coef", "weight of the counterfactual advantage with --branch-mode add"),
         _f("--branch-q-coef", "ppo.branch_q_coef", "blend w of the branch values into the Q targets of the branch "
            "set's actions (0 = off)"),
+        _f("--branch-ce-coef", "ppo.branch_ce_coef", "supervised term on branched rows: coef * mean -log pi of the "
+           "branch-set candidate with the best branch value, ties (within --branch-ce-margin) dropped (0 = off; works "
+           "with --branch-mode off)"),
+        _f("--branch-ce-margin", "ppo.branch_ce_margin", "tie margin of --branch-ce-coef in board points (times "
+           "--branch-board-scale): no target when the best candidate beats the second by at most this"),
+        _f("--branch-ce-weight", "ppo.branch_ce_weight", "weight of each --branch-ce-coef target: the best-minus-second "
+           "gap over its mean in the rollout, or 1", choices=("delta", "uniform")),
         _f("--snapshot-every", "snapshot_every"),
         _f("--pool-sampling", "pool_sampling",
            "pfsp (design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power",

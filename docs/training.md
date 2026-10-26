@@ -394,8 +394,23 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   `0.5 (Q(a) − 目标)²` 加进 Q 损失（日志 `q_loss` 含它，另报 `branch_q_loss`）。V 目标不变。注意 `board` 视界的值是场面分单位（× `branch_board_scale`），
   不是胜负期望；Q 目标混入它时 w 宜小。
 - **统计**：`branch_rows`（用上分支优势的行）、`branch_valid_rows`、`branch_fallback_rows`（真实动作不在 S 里）、`branch_adv_mean`（这些行 Â 的均值，归一化前）、
-  `branch_fire_share`（有 pass 的有效分支行中，最优候选是发动、即反事实判「打」的比例）；收集侧 `branch_windows`、`branch_decisions`。
+  `branch_fire_share`（有 pass 的有效分支行中，最优候选是发动、即反事实判「打」的比例；严格比较，不看边距）、`branch_tie_share` / `branch_hold_share`
+  （同一分母中，最高与次高之差 ≤ 平局边距的比例 / 监督目标是 pass 的比例，边距见下一小节；三者在 `branch_ce_margin = 0` 且无完全相等时加起来为 1）；收集侧 `branch_windows`、`branch_decisions`。
 - `off` 且 `branch_q_coef = 0`，或 `add` 且两个系数都为 0 时，更新与不开分支逐位相同（测试）。
+
+**窗口反事实监督项**（`--branch-ce-coef C`、`--branch-ce-margin M`、`--branch-ce-weight delta|uniform`，默认 0 / 0.5 / delta，需要 `--branch-windows`；
+[先手打断计划](spikes/first-seat-interruption-plan-2026-10-24.md) §11.8 建议 2 + 3）：上面的 Â 在近确定的窗口上被 COMA 基线收缩到 |Δ| 的 1/20–1/60，
+又被全段归一化稀释（计划 §11.3），推不动策略。这里不经过优势，把分支值直接当作监督目标（AWR / ExIt 式），与 `line_ce` 同一通路：
+- **目标**（`ppo.branch_ce_targets`）：每个有效分支行（`branch_valid`，分支集至少两个候选），目标 = 分支值（M 次推演的均值）最高的候选，**不要求真实动作在分支集里**；
+  最高与次高之差 Δ̄ ≤ `M × branch_board_scale`（边距按场面分计，换成分支值单位；`critic` 视界时同样乘这个系数）时判为平局，这一行不给目标。
+- **权重**：`delta`（默认）= Δ̄ / 本段有目标行的 Δ̄ 均值（与诊断工具一致，均值为 1）；`uniform` = 1。
+- **损失**：`C ×` 每个 minibatch 里有目标的行上 `权重 · (−log π(目标))` 的均值（没有目标的 minibatch 为 0），加进策略损失；π 是全部合法候选上的策略。
+  与 `line_ce_coef` 可同时开，两项相加、各自统计（`line_ce_loss` / `branch_ce_loss`，都是含目标的 minibatch 上的均值）。critic 预热的更新不加。
+- **与 `branch_mode` 的关系**：独立。`branch_mode off` + `branch_ce_coef > 0` 时主优势不变（VRPO），分支值只进监督项；也可与 `replace` / `add` / `branch_q_coef` 同开。
+  `branch_ce_coef = 0` 时更新逐位不变（测试）。
+- **统计**：`branch_ce_rows`（有目标的行）、`branch_ce_loss`，以及上面的 `branch_tie_share` / `branch_hold_share`（开了任何一种分支用法就报）；日志行「CE rows … (loss …)」。
+- **系数**：计划 §11.6 的一次更新对照里系数 0.2 就撞 `target_kl`（7/16 批早停），力度约是 PPO 优势的 6–7 倍；建议 0.02–0.05。
+  目标的错判会被同样放大（单窗口已决符号可靠性约 0.7，无恢复线的窗口偏「打」），所以应与 `--branch-require-recovery`（默认开）和 M ≥ 4 一起用（§11.8 建议 1、3）。
 
 ### 8.3 联赛与牌组池（`selfplay`）
 
