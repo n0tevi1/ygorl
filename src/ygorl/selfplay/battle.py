@@ -190,7 +190,11 @@ class BattleMixin:
         lowest ATK first. Each is confirmed, until none is left highlighted."""
         me = raw.players[raw.me]
         taken: set = set()  # slots picked already: they stay framed, and a click would take the pick back
-        for n in range(3):
+        unpickable: set = set()  # spots that showed no Confirm (not a Tribute MD allows): never tried again
+        n = 0
+        for _attempt in range(6):
+            if n >= 3:
+                return
             # the input mode flickers while a pick animates (a third Tribute for Ra was lost); the first pick waits
             # too, longer (a request read before MD is in field-pick mode is stale: the shadow was dropped)
             for _ in range(8 if n else 20):
@@ -205,7 +209,9 @@ class BattleMixin:
             # within 80 px; the monsters MD's request offers (memory) count too: an exact match missed one, and the
             # lowest-ATK rule tributed a 2500 monster instead of a 2000 one
             near = lambda xy: any(abs(xy[0] - p[0]) + abs(xy[1] - p[1]) < 80 for p in lit)  # noqa: E731
-            offered = set(self.offered_field_cards(self.game.read())) if n == 0 else set()
+            # the request's monsters only when no frame is seen (it can be stale: it named our Ra's Disciple, which
+            # Sphere Mode's Tributes exclude, and the duel was given up on its missing Confirm)
+            offered = set(self.offered_field_cards(self.game.read())) if n == 0 and not lit else set()
             mine = [(s, c) for s, c in enumerate(me.slots[:7])
                     if c and (near(my_monster_xy(s)) or my_monster_xy(s) in offered) and s not in taken]  # fmt: skip
             # the opponent's framed monsters too (Soul Crossing lets one be tributed)
@@ -214,11 +220,22 @@ class BattleMixin:
             self.trace.observe(tribute_candidates=[s for s, _ in mine], tribute_theirs=theirs, tribute_lit=sorted(lit))
             if not mine and not theirs:
                 return
+            mine = [(s, c) for s, c in mine if my_monster_xy(s) not in unpickable]
+            theirs = [s for s in theirs if opp_monster_xy(s) not in unpickable]
+            if not mine and not theirs:
+                return
             spots = {my_monster_xy(s) for s, _ in mine} | {opp_monster_xy(s) for s in theirs}
             xy = self.field_target(self.game.read(), spots)
             if xy is not None:
                 if not self.ui.card_command(xy, "tribute (policy)", "confirm tribute", 2.0):
-                    raise Stuck("no Confirm icon above the tribute")
+                    # MD does not take this one: the shadow is out of step; the next candidate, never this again
+                    self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                    unpickable.add(self.nearest_spot(xy, spots))
+                    if getattr(self, "observer", None) is not None:
+                        self.observer.shadow = None
+                    self.trace.observe(tribute_unpickable=list(xy))
+                    continue
+                n += 1
                 taken |= {
                     s for s, _ in mine if abs(my_monster_xy(s)[0] - xy[0]) + abs(my_monster_xy(s)[1] - xy[1]) < 80
                 }
@@ -235,8 +252,15 @@ class BattleMixin:
 
             s, c = min(mine, key=lambda t: atk(t[1]))
             if not self.ui.card_command(my_monster_xy(s), f"tribute {self.name(c.cid)}", "confirm tribute", 2.0):
-                raise Stuck("no Confirm icon above the tribute")
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                unpickable.add(my_monster_xy(s))
+                continue
             taken.add(s)
+            n += 1
+
+    @staticmethod
+    def nearest_spot(xy, spots):
+        return min(spots, key=lambda p: abs(p[0] - xy[0]) + abs(p[1] - xy[1])) if spots else xy
 
     def monster_attack_at(self, raw: RawDuel, xy) -> int:
         """The ATK of our monster drawn at ``xy`` (a large number when none is there)."""
