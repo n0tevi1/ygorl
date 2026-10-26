@@ -28,8 +28,12 @@ hurts the combo as much as any later one), hold otherwise. Report per (opponent,
 as hold, as the pilot did), agreement on decided windows, tie rate, the confusion matrix, P(fire | label hold) and
 P(hold | label fire), and the mean delta by label; ``rows`` holds every window's deltas.
 
+``--fire P`` (default Ash) probes another hand trap the same way: its graded records (``"fire": P`` in a multi-card
+graded file, :func:`ygorl.train.line_labels.read_graded`), its fire records (``fire == P``) and its windows (the
+responder decisions with a ``P`` activation); "Ash" above then reads as that card.
+
   uv run --no-sync python tools/window_counterfactual_probe.py GRADED.jsonl CKPT --demos full_fire8.jsonl \\
-      [--min-hand 40] [--rollouts 4] [--workers 12] [--seed 0] --out OUT.json
+      [--min-hand 40] [--rollouts 4] [--workers 12] [--seed 0] [--fire P] --out OUT.json
 """
 
 from __future__ import annotations
@@ -65,7 +69,7 @@ def passive(point) -> int:
     return passive_action(point)
 
 
-def recovery_lines(fire_demos, env, cards) -> dict[int, list[int]]:
+def recovery_lines(fire_demos, env, cards, fire: int = FIRE) -> dict[int, list[int]]:
     """window -> the actions (both seats, from the fire start) of the first verified fire line firing Ash there, over
     the hand's fire records in file order (a graded run writes its levels highest first: the line that reaches the
     best board left after firing there; :func:`ygorl.train.line_labels.fire_windows`)."""
@@ -73,7 +77,7 @@ def recovery_lines(fire_demos, env, cards) -> dict[int, list[int]]:
 
     out: dict[int, list[int]] = {}
     for fd in fire_demos:
-        for window, k in fire_windows(fd, cards=cards, env=env).items():
+        for window, k in fire_windows(fd, cards=cards, env=env, fire=fire).items():
             out.setdefault(window, list(fd.lines[k].actions))
     return out
 
@@ -131,7 +135,7 @@ def rollout(ctx: dict, hand: dict, k: int, fire_now: bool, mode: str, m: int) ->
                     else:
                         idx = sample(opponent.probs([opp_host.observe()])[0], opp_gen)
             else:
-                ai = ash_index(point) if fired_at is None else None
+                ai = ash_index(point, ctx["fire"]) if fired_at is None else None
                 if ai is not None:
                     window += 1
                     if window < k:
@@ -195,12 +199,12 @@ def _init(args: dict) -> None:
     learner = Brain(args["ckpt"])
     opponent = learner if args["opponent"] in (None, args["ckpt"]) else Brain(args["opponent"])
     _CTX.update(learner=learner, opponent=opponent, env=load_environment(args["env"]), cards=default_cards(),
-                seed=args["seed"], rollouts=args["rollouts"], recovery={})  # fmt: skip
+                seed=args["seed"], rollouts=args["rollouts"], recovery={}, fire=args.get("fire", FIRE))  # fmt: skip
 
 
 def probe_hand(hand: dict) -> list[dict]:
     ctx = _CTX
-    ctx["recovery"][hand["id"]] = recovery_lines(hand["fire_demos"], ctx["env"], ctx["cards"])
+    ctx["recovery"][hand["id"]] = recovery_lines(hand["fire_demos"], ctx["env"], ctx["cards"], ctx["fire"])
     rows = []
     for k in range(1, hand["windows"] + 1):
         runs = {(mode, b): [] for mode in ("snapshot", "recovery") for b in (True, False)}
@@ -235,16 +239,16 @@ def probe_hand(hand: dict) -> list[dict]:
 
 
 def load_hands(
-    graded: str, demos: list[str], min_hand: int, max_hand: int, limit: int | None, env, cards
+    graded: str, demos: list[str], min_hand: int, max_hand: int, limit: int | None, env, cards, fire: int = FIRE
 ) -> list[dict]:
-    labels = read_graded(graded)
+    labels = read_graded(graded, fire)
     plain, fires = {}, {}
     for path in demos:
         for d in read_jsonl(path):
             key = (d.deck["name"], d.hand_index)
             if d.variant == "plain" and d.status == "solved" and d.lines:
                 plain.setdefault(key, d)
-            elif d.variant == "fire" and d.lines and d.status == "solved":
+            elif d.variant == "fire" and d.fire == fire and d.lines and d.status == "solved":
                 fires.setdefault(key, []).append(d)
     hands = []
     for key in sorted(labels):
@@ -257,7 +261,7 @@ def load_hands(
         if best <= 0 or any(k not in values for k in range(1, w + 1)):
             continue
         base = plain[key]
-        start = fire_start(base)
+        start = fire_start(base, fire)
         fds = [_with_start(fd, start) for fd in fires.get(key, [])]
         fire_demo = fds[0] if fds else start  # the game starts where the fire lines do
         fds = [fd for fd in fds if fd.start == fire_demo.start]
@@ -322,14 +326,17 @@ def main(argv: list[str] | None = None) -> dict:
     p.add_argument("--env", default="md-2026-09")
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--fire", type=int, default=FIRE, help="the hand trap (password) of the labels and fire records")
     p.add_argument("--out", default=None)
     a = p.parse_args(argv)
     t0 = time.perf_counter()
     from ygorl.data import load_environment
     from ygorl.engine.duel import default_cards
 
-    hands = load_hands(a.graded, a.demos, a.min_hand, a.max_hand, a.limit, load_environment(a.env), default_cards())
-    init = {"ckpt": a.ckpt, "opponent": a.opponent, "env": a.env, "seed": a.seed, "rollouts": a.rollouts}
+    hands = load_hands(a.graded, a.demos, a.min_hand, a.max_hand, a.limit, load_environment(a.env), default_cards(),
+                       a.fire)  # fmt: skip
+    init = {"ckpt": a.ckpt, "opponent": a.opponent, "env": a.env, "seed": a.seed, "rollouts": a.rollouts,
+            "fire": a.fire}  # fmt: skip
     if a.workers <= 1:
         _init(init)
         per_hand = [probe_hand(h) for h in hands]
@@ -337,7 +344,7 @@ def main(argv: list[str] | None = None) -> dict:
         with mp.get_context("spawn").Pool(a.workers, initializer=_init, initargs=(init,)) as pool:
             per_hand = pool.map(probe_hand, hands, chunksize=1)
     rows = [r for rs in per_hand for r in rs]
-    report = {"ckpt": a.ckpt, "opponent": a.opponent or a.ckpt, "graded": a.graded, "hands": len(hands),
+    report = {"ckpt": a.ckpt, "opponent": a.opponent or a.ckpt, "graded": a.graded, "fire": a.fire, "hands": len(hands),
               "hands_with_recovery_lines": sum(h["fire_lines"] for h in hands), "windows": len(rows),
               "windows_reached": sum(r["reached"] for r in rows),
               "windows_with_recovery": sum(r["has_recovery"] for r in rows), "rollouts": a.rollouts, "seed": a.seed,

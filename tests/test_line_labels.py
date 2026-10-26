@@ -503,3 +503,20 @@ def test_the_label_join_holds_in_the_first_seat(library, db, vocab, graded):
         label = labels.table[(int(ro.line_id[t, b]), int(ro.line_effect[t, b]), int(ro.line_occurrence[t, b]))]
         fired = bool(((codes[t, b] == labels.fire_index) & ro.action_mask[t, b])[int(ro.actions[t, b])])
         assert float(bonus[t, b]) == (label.fire_bonus if fired else -label.fire_bonus)
+
+
+def test_a_multi_card_graded_file_keeps_each_hand_traps_records_apart(tmp_path):
+    """A graded file of several hand traps (first-seat plan §10.2c) holds one record per hand and card, the card in
+    ``"fire"``; Ash's records (with or without the field) are what the labels read, another card's only on request."""
+    ash = read_graded(GRADED)
+    other = 23434538  # Maxx "C"
+    mixed = tmp_path / "graded_multi.jsonl"
+    with open(GRADED) as f, open(mixed, "w") as out:
+        for line in f:
+            r = json.loads(line)
+            out.write(json.dumps({**r, "fire": FIRE}) + "\n")
+            out.write(json.dumps({**r, "fire": other, "values": {k: 0 for k in r["values"]}}) + "\n")
+    assert read_graded(mixed) == {k: {**v, "fire": FIRE} for k, v in ash.items()}
+    g = read_graded(mixed, other)
+    assert set(g) == set(ash) and all(r["fire"] == other and not any(r["values"].values()) for r in g.values())
+    assert read_graded(mixed, 10045474) == {}

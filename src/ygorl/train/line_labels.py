@@ -46,14 +46,17 @@ CACHE_FORMAT = "ygorl.line-windows.v1"
 _RESPONDER = 1 - LINE_PLAYER
 
 
-def read_graded(path: str | Path) -> dict[tuple[str, int], dict]:
-    """The graded records of ``path`` by ``(deck name, hand index)``; a record of 0 windows has no labels."""
+def read_graded(path: str | Path, fire: int = FIRE) -> dict[tuple[str, int], dict]:
+    """The graded records of hand trap ``fire`` in ``path`` by ``(deck name, hand index)``; a record of 0 windows has
+    no labels. A file may grade several hand traps (one record per hand and card, the card in ``"fire"``; a record
+    without it is Ash's, as the first graded runs wrote them); the other cards' records are left out."""
     out = {}
     with open(path, encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 r = json.loads(line)
-                out[(r["deck"], int(r["hand_index"]))] = r
+                if int(r.get("fire", FIRE)) == fire:
+                    out[(r["deck"], int(r["hand_index"]))] = r
     return out
 
 
@@ -147,7 +150,7 @@ def build_window_table(graded: str | Path, demos: Iterable[str | Path], *, cards
     ``cache`` (default: the graded file with the suffix ``.windows.json``) when it has the hand and was built with
     the same ``event_length`` and ``fire``; the hands it lacks are replayed and the cache rewritten."""
     cache = default_cache(graded) if cache is None else Path(cache)
-    labels = read_graded(graded)
+    labels = read_graded(graded, fire)
     hands: dict[str, dict] = {}
     if cache.exists():
         data = json.loads(cache.read_text())

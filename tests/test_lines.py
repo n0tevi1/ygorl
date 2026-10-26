@@ -117,7 +117,7 @@ def test_a_scripted_game_reproduces_the_line_when_the_learner_passes(library, db
         assert turn is not None and turn >= 2  # the line ends at the first decision of turn 2: the snapshot takes over
         assert player.finish() == {"id": script.id, "name": script.name, "status": "completed", "played": len(expected),
                                    "steps": len(script.steps), "broken_at": None, "seat": 1, "turn": 1, "skipped": 0,
-                                   "extra": 0}  # fmt: skip
+                                   "extra": 0, "passed_over": 0}  # fmt: skip
 
 
 def test_encoded_keys_tell_choices_apart_like_action_key(library, db, vocab):
@@ -534,3 +534,33 @@ def test_first_seat_tolerances_on_synthetic_decisions():
     assert q.act(idle) == 0 and q.act(idle) == 1 and q.pos == 3  # the forced step not asked: passed over
     second = LinePlayer(script, True)
     assert second.act(window) is None and second.status == "broken"  # the second seat has no tolerance
+
+
+def test_a_first_seat_line_passes_over_a_recorded_chain_pass_turn_2_does_not_ask():
+    """First-seat plan §10.2c: a recovery line recorded on turn 1 passes at a response window the scripted seat no
+    longer gets on turn 2 (the environment answers a forced pass itself); the line plays on from the next step."""
+    from ygorl.cards.ydk import Deck
+    from ygorl.engine.constants import MSG_SELECT_IDLECMD
+
+    idle = fake_obs(MSG_SELECT_IDLECMD, [("activate", 7, 0), ("activate", 8, 0), ("end_phase", 0, 0)])
+    window = fake_obs(MSG_SELECT_CHAIN, [("chain", 5, 0), ("pass", 0, 0)])
+    key = lambda obs, i: encoded_action_key(obs, i)  # noqa: E731
+    steps = (LineStep(key(idle, 0), False), LineStep(key(window, 1), False), LineStep(key(window, 1), False),
+             LineStep(key(idle, 1), False), LineStep(key(idle, 2), False))  # fmt: skip
+    script = LineScript(0, Deck((1,), (), (), "d"), 0, (1, 1, 1, 1), 0, {}, steps)
+
+    p = LinePlayer(script, True, first_seat=True)
+    assert p.act(idle) == 0
+    assert p.act(idle) == 1 and p.pos == 4 and p.passed_over == 2  # both recorded passes were never asked
+    assert p.act(window) == 1 and p.pos == 4 and p.extra == 1  # an unrecorded window: still answered outside the line
+    assert p.act(idle) == 2 and p.pos == 5
+    assert p.finish()["passed_over"] == 2
+
+    q = LinePlayer(script, True, first_seat=True)
+    assert q.act(idle) == 0 and q.act(window) == 1 and q.pos == 2  # a window turn 2 does ask: the recorded pass
+    assert q.act(idle) == 1 and q.pos == 4 and q.passed_over == 1
+
+    r = LinePlayer(script, True, first_seat=True, chain_pass_skip=1)
+    assert r.act(idle) == 0 and r.act(idle) is None and r.status == "broken"  # two passes: beyond the tolerance
+    second = LinePlayer(script, True)
+    assert second.act(idle) == 0 and second.act(idle) is None and second.status == "broken"  # second seat: none

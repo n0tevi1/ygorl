@@ -195,6 +195,11 @@ class LineScript:
         return GameSpec(seed=seed, deck_a=a, deck_b=b, first=0, config=cfg, core_seed=self.core_seed)
 
 
+def _is_chain_pass(key: tuple) -> bool:
+    """A step that passes at a chain window (MSG_SELECT_CHAIN, the pass row)."""
+    return key[0] == C.MSG_SELECT_CHAIN and key[1] == _PASS_KIND
+
+
 def _line_step(obs, idx: int, step: int) -> LineStep:
     """The :class:`LineStep` of demonstrated action ``idx`` at encoded observation ``obs`` (line step ``step``)."""
     if idx >= MAX_OPTIONS:
@@ -407,8 +412,12 @@ class LinePlayer:
     graveyard / banished card is matched without its sequence (the piles' order can differ); a forced decision (one
     choosable row) or a chain window with a pass row that matches no step is answered with that row without using a
     step (``extra``: a prompt turn 1 did not have, e.g. a hand trap's or a quick-play spell's window); at the line's
-    first decision up to ``lead_skip`` leading steps may be passed over to find a match (``skipped``). Completion is
-    noticed at any later decision of the seat. Second-seat lines behave as they always did.
+    first decision up to ``lead_skip`` leading steps may be passed over to find a match (``skipped``); later, when the
+    next step is a recorded pass at a chain window that matches nothing, up to ``chain_pass_skip`` such passes may be
+    passed over to match the step after them (``passed_over``: a window turn 1 asked and turn 2 does not, e.g. a
+    response window the scripted seat had something to chain at on turn 1, or one that turn 2 makes a forced pass the
+    environment answers itself; first-seat plan §10.2c). Completion is noticed at any later decision of the seat.
+    Second-seat lines behave as they always did.
 
     Recovery (:meth:`interrupt`, the script's :attr:`LineScript.recovery`): when the learner activates a hand trap at
     a chain window for which the script has a recovery line, the player switches to that line's steps (``status``
@@ -416,12 +425,14 @@ class LinePlayer:
     window without a recovery line changes nothing. A recovering line is not switched again.
     """
 
-    def __init__(self, script: LineScript, skip_forced: bool, *, first_seat: bool = False, lead_skip: int = 3) -> None:
+    def __init__(self, script: LineScript, skip_forced: bool, *, first_seat: bool = False, lead_skip: int = 3,
+                 chain_pass_skip: int = 2) -> None:  # fmt: skip
         self.script = script
         self.steps = script.steps  # the steps being played: the line's, or a recovery line's once switched
         self.skip_forced = skip_forced
         self.first_seat = first_seat
         self.lead_skip = lead_skip if first_seat else 0
+        self.chain_pass_skip = chain_pass_skip if first_seat else 0
         self.pos = 0
         self.status = "playing"
         self.broken_at: int | None = None
@@ -429,6 +440,7 @@ class LinePlayer:
         self.turn: int | None = None  # turn of the line's first played step
         self.skipped = 0  # leading steps passed over (first seat)
         self.extra = 0  # decisions answered outside the line (first seat)
+        self.passed_over = 0  # recorded chain-window passes turn 2 did not ask (first seat)
         self.recovery = {r.key: r for r in script.recovery}
         self.recoveries = 0  # switches to a recovery line
         self.recovered_at: int | None = None  # the line's step at which the switch happened
@@ -506,6 +518,8 @@ class LinePlayer:
         if not int(obs["globals"][2]):  # not the scripted seat's turn: the line has not started yet
             return None
         found = self._find(obs, candidates)
+        if found is None and self.played:
+            found = self._past_chain_passes(obs, candidates[-1])
         if found is None:
             n = min(int(obs["globals"][20]), MAX_OPTIONS)
             legal = np.flatnonzero(obs["action_mask"][:n])
@@ -538,6 +552,22 @@ class LinePlayer:
         self.played += 1
         return row
 
+    def _past_chain_passes(self, obs, step: int) -> tuple[int, int] | None:
+        """The decision matches no candidate and the line's next step is a pass at a chain window: turn 2 did not
+        ask that window (nothing to chain there now, or a forced pass the environment answered itself). Pass over up
+        to ``chain_pass_skip`` such recorded passes and match the step after them; (step, row) or None."""
+        steps, passed = self.steps, 0
+        while passed < self.chain_pass_skip and step < len(steps) and _is_chain_pass(steps[step].key):
+            step += 1
+            passed += 1
+            if step >= len(steps):
+                return None
+            found = self._find(obs, self._candidates(step))
+            if found is not None:
+                self.passed_over += passed
+                return found
+        return None
+
     def _find(self, obs, candidates: list[int]) -> tuple[int, int] | None:
         """The candidate step a choosable row matches -- the next unforced step first, then the recorded forced steps
         before it in order; exactly, else without the pile sequence: (step, row)."""
@@ -559,7 +589,8 @@ class LinePlayer:
         ends during it is ``"recovering"``."""
         out = {"id": self.script.id, "name": self.script.name, "status": self.status, "played": self.played,
                "steps": len(self.script.steps), "broken_at": self.broken_at, "seat": 0 if self.first_seat else 1,
-               "turn": self.turn, "skipped": self.skipped, "extra": self.extra}  # fmt: skip
+               "turn": self.turn, "skipped": self.skipped, "extra": self.extra,
+               "passed_over": self.passed_over}  # fmt: skip
         if self.script.recovery:
             out.update(recoveries=self.recoveries, recovered_at=self.recovered_at,
                        recovery_window=list(self.recovery_window) if self.recovery_window else None)  # fmt: skip

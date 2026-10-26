@@ -451,11 +451,13 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   学习方第 1 回合的展开、盖放与手坑都会改变对手的局面，线断后快照接手——先攻席因此终于有一个第 2 回合真会展开的对手，第 1 回合铺妨碍、对方回合用手坑都有回报。
   第 2 回合与记录的第 1 回合不完全相同，先攻席的匹配多几条容忍（后攻席完全不变）：记录里被 `skip_forced` 跳过的强制步，若这回合因多抽的一张有了选择而被问到，按它的键走；
   墓地 / 除外的卡不比序号（堆的顺序可能不同）；没有匹配的强制决策（只一行可选）或带「不连锁」行的连锁窗口（手坑、速攻魔法这回合多出的窗口）直接答该行 / 不连锁，不消耗步（`extra`）；
-  线的第一个决策可跳过至多 3 个开头步（`skipped`）。以训练示范集（`lines_train.jsonl` 有标签的线、20 套环境卡组作学习方、学习方与对手第 1 回合都一律 pass）
+  线的第一个决策可跳过至多 3 个开头步（`skipped`）；之后若下一步是记录里在连锁窗口的「不连锁」而这个决策对不上，
+  可跳过至多 2 个这样的记录步、去匹配其后的那一步（`passed_over`：回合 1 问过、回合 2 不再问的应答窗口，例如回合 1 combo 座位手里有可连锁的卡、
+  或回合 2 那里只剩「不连锁」被 `skip_forced` 自动答掉；多见于手坑之后的恢复线，first-seat 计划 §10.2c）。以训练示范集（`lines_train.jsonl` 有标签的线、20 套环境卡组作学习方、学习方与对手第 1 回合都一律 pass）
   抽 150 局：后攻席 143 局完成，先攻席加容忍前 87 局、加容忍后 125 局；余下的断点多是多抽的那张正是线要从卡组检索的卡、或条件依赖对方场面的效果，属于真分歧。
   学习方行的 `line_effect` / `line_occurrence` 在先攻席只记对手第 2 回合（线所在的回合）里有真实选择的连锁窗口，与求解器被动应答方的计数口径一致，
   标签照 `(line_id, 效果, 次数)` 接上（测试：40 张灰流丽的学习方先攻，带标签的窗口行与符号正确）。
-  `Rollout.line_seat`（脚本局里学习方的座位：1 后攻、0 先攻；其它为 −1）与 `FinishedGame.line_seat`；`FinishedGame.line` 多 `seat`、`turn`（线第一步所在回合）、`skipped`、`extra`；
+  `Rollout.line_seat`（脚本局里学习方的座位：1 后攻、0 先攻；其它为 −1）与 `FinishedGame.line_seat`；`FinishedGame.line` 多 `seat`、`turn`（线第一步所在回合）、`skipped`、`extra`、`passed_over`；
   `metrics.jsonl` 多 `line_first_games` / `line_first_completed` / `line_first_broken` / `line_first_broken_step` / `line_first_unfinished` / `line_first_skipped`，日志行多一段 first-seat 统计。
 - **应答窗口的身份与求解器标签**（`TrainConfig.line_labels`、`PPOConfig.line_bonus_coef`；`ygorl.train.line_labels`）：学习方用自己的卡组应答，
   它收到的连锁提示未必与求解器的被动应答方（只拿一张灰流丽，密码 14558127）一样多，单纯计数的 `line_window` 会错位；
@@ -497,7 +499,11 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   覆盖（`lines_train.jsonl` 772 条线 + `full_fire8.jsonl`）：243 条线、323 个（线，窗口）有恢复线，221 条 fire 线因撤销步重放失败被略去；线库只含手 0–39，留出的手 40–49 没有恢复线。
   补齐后（`recovery_full.jsonl`：分级管线 `handtrap_labels_graded.py --recovery-out` 对每个可恢复时点按最高可达级别存的线，手 0–49）：351 条线、528 个（线，窗口），839 条 fire 线因同一原因略去；
   推荐用它代替 `full_fire8.jsonl`（first-seat 计划 §10.2b）。
-  只覆盖灰流丽；其它打断的恢复线需按 C0 离线用 `solve_fire --fire <密码>` 生成。切换是在打断发生时立即进行，而不是等原线断掉：原线在诱饵窗口（如灰流丽打 Maxx "C"）常常还能继续匹配，
+  多张手坑（2026-10-26，first-seat 计划 §5.1b、§10.2c）：`handtrap_labels_graded.py --fire <密码>`（可重复）对每手每张卡各出一条分级记录（带 `"fire"`）与各级 fire 记录，
+  `recovery_multi.jsonl` / `graded_multi.jsonl` 含灰流丽与按使用频率补的几张手坑，恢复线按（效果，次数，**卡**）索引，同一窗口不同卡互不覆盖；
+  `read_graded(path, fire=…)` 只读一张卡的记录（缺省灰流丽，旧文件没有 `"fire"` 也按灰流丽读），标签（`line_labels`）仍只用灰流丽。
+  求解器的被动应答方没有额外卡组、空场，场上怪兽的效果与要展示额外卡组的手坑（如 Fydraulis Harmonia）没有恢复线；增殖的 G / Mulcharmy Fuwalos 的「恢复」只是照常走完（求解器不计抽卡压力）。
+  原来只覆盖灰流丽；其它打断的恢复线按 C0 离线用 `solve_fire --fire <密码>` 生成。切换是在打断发生时立即进行，而不是等原线断掉：原线在诱饵窗口（如灰流丽打 Maxx "C"）常常还能继续匹配，
   恢复线则是求解器从打断后局面出发的续线，两者都到原终场时以恢复线为准。
   普查（上面的线库，学习方 40 张灰流丽、只在该窗口发动、其余一律 pass，`skip_forced`）：后攻席 323 个窗口里 317 个切换后走完恢复线，303 个与不打断时的终场场面相同；不带恢复线时同一打断让原线在 277 个窗口断掉。先攻席 306 个切换（其余窗口在该局没出现）、256 个走完。先攻席收集时对手座位第 1 回合由快照下，它可能已用掉恢复线要用的卡（例如对灰流丽连锁的 Maxx "C"），恢复线随之断掉、快照接手。
   测试（`tests/test_line_recovery.py`，数据 `tests/data/line_recovery.jsonl`：三手的 plain 与灰流丽 fire 记录）：可恢复窗口在两席位、两种 `skip_forced` 下切换并到达原终场场面，不带恢复线时原线在该处断；不可恢复窗口照旧断、与不带恢复线时逐项相同；收集器、统计与训练器日志。
