@@ -10,6 +10,7 @@ from dataclasses import replace
 
 from ygorl.md import layout as L
 from ygorl.md.memory import MemoryReadError, RawDuel, own_deck, to_snapshot
+from ygorl.md.client import CommandBit
 from ygorl.md.request import Candidate
 from ygorl.md.ui import (
     Stuck,
@@ -345,4 +346,41 @@ class BattleMixin:
             # no Confirm on this one (Millennium Seeker, framed among three Tribute candidates): another
             self.trace.observe(field_pick_no_confirm=list(target))
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+        # no framed card took it: a frame can be hidden (an attack arrow over our Set card asked as a cost, run
+        # s59). Every other card on the field is opened and taken only when MD's command mask (memory) says it
+        # can be selected (the Decide bit)
+        tried = [xy] + fresh
+        for target in self.field_spots(raw):
+            if any(abs(target[0] - q[0]) + abs(target[1] - q[1]) < 80 for q in tried + picked):
+                continue
+            if self.selectable_in_memory(target):
+                if self.ui.card_command(target, "a card memory says can be selected", "confirm"):
+                    self.trace.rule("field-pick-by-command-mask", spot=list(target))
+                    picked.append(target)
+                    return
+            self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
         raise Stuck("no Confirm icon above any selected card")
+
+    def field_spots(self, raw: RawDuel) -> list:
+        """Screen spots of every card on the field: ours first (Spell & Trap row, then monsters), then theirs."""
+        me, op = raw.players[raw.me], raw.players[1 - raw.me]
+        out = [my_spell_xy(s) for s in range(5) if me.slots[7 + s] is not None]
+        out += [my_monster_xy(s) for s in range(7) if me.slots[s] is not None]
+        out += [opp_monster_xy(s) for s in range(7) if op.slots[s] is not None]
+        out += [opp_spell_xy(s) for s in range(5) if op.slots[7 + s] is not None]
+        return out
+
+    def selectable_in_memory(self, xy) -> bool:
+        """Open the card at ``xy`` and read MD's command mask for it: whether the Decide bit (a card choice
+        without a list) is set. False when the client is not readable."""
+        client = getattr(self, "client", None)
+        if client is None:
+            return False
+        self.ui.click(*xy, "open: may this card be selected?", 0.9)
+        try:
+            oc = client.open_command(self.game.read().me)
+        except Exception:  # noqa: BLE001
+            return False
+        ok = oc is not None and bool(oc.mask & CommandBit.DECIDE)
+        self.trace.observe(selectable={"spot": list(xy), "mask": oc.mask if oc is not None else None, "ok": ok})
+        return ok
