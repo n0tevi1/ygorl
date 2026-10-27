@@ -146,6 +146,14 @@ class TrainConfig:
     branch_require_recovery: bool = True
     branch_board_scale: float = 0.1
     branch_cards: tuple[int, ...] = ()
+    # look-ahead opponents (train.lookahead, first-seat plan §13): in lookahead_share of the unscripted pool deals the
+    # snapshot plays its first own turn (turn 2 when the learner moves first; with lookahead_second also turn 1 when it
+    # moves second) best-of-lookahead_k by snapshot branching, each candidate rolled out lookahead_rollouts times to the
+    # end of the turn and scored by its board (ygorl.train.lookahead.lookahead_value)
+    lookahead_share: float = 0.0
+    lookahead_k: int = 8
+    lookahead_rollouts: int = 1
+    lookahead_second: bool = False
     snapshot_every: int = 10  # updates
     pool_sampling: str = (
         "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
@@ -231,12 +239,25 @@ class TrainConfig:
                 raise ValueError("branch_cards needs line_recovery (the covered cards' recovery lines)")
             if self.complete_games:
                 raise ValueError("branch_windows needs fixed-length segments, not complete_games")
+        if not 0 <= self.lookahead_share <= 1:
+            raise ValueError("lookahead_share must be in [0, 1]")
+        if self.lookahead_share > 0:
+            self.lookahead_config()  # validates k / rollouts
+            if self.complete_games:
+                raise ValueError("lookahead_share needs fixed-length segments, not complete_games")
+            if not self.privileged_critic:
+                raise ValueError("lookahead_share needs the privileged environment (the rollouts score both boards)")
         uses_branch = self.ppo.branch_mode != "off" or self.ppo.branch_q_coef > 0 or self.ppo.branch_ce_coef > 0
         if uses_branch and not self.branch_windows:
             raise ValueError(
                 "ppo.branch_mode / branch_q_coef / branch_ce_coef need branch_windows (the rollouts carry no branch "
                 "values)"
             )
+
+    def lookahead_config(self):
+        from ygorl.train.lookahead import LookaheadConfig
+
+        return LookaheadConfig(k=self.lookahead_k, rollouts=self.lookahead_rollouts)
 
     def branch_config(self) -> BranchConfig:
         return BranchConfig(fraction=self.branch_fraction, k=self.branch_k, rollouts=self.branch_rollouts,
@@ -400,12 +421,15 @@ class Trainer:
         self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
                                          selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed,
                                          evolved=self.evolved, lines=self.lines, line_share=cfg.line_share,
-                                         line_first_share=cfg.line_first_share)  # fmt: skip
+                                         line_first_share=cfg.line_first_share,
+                                         lookahead=cfg.lookahead_config() if cfg.lookahead_share > 0 else None,
+                                         lookahead_share=cfg.lookahead_share,
+                                         lookahead_second=cfg.lookahead_second)  # fmt: skip
         self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced, record_actions=True, record_games=cfg.trace_games,
                                  selection_history=self.net_config.selection_history, attack_history=self.net_config.attack_history, cancel_budget=cfg.cancel_budget,
-                                 snapshots=cfg.branch_windows)  # fmt: skip
+                                 snapshots=cfg.branch_windows or cfg.lookahead_share > 0)  # fmt: skip
         # the acting network: the model itself, or a copy refreshed before each overlapped collection
         self.acting = copy.deepcopy(self.model) if cfg.overlap_collect else self.model
         self._pending: Rollout | None = None
@@ -665,6 +689,9 @@ class Trainer:
                     + (f", CE rows {record['branch_ce_rows']} (loss {record['branch_ce_loss']:.4f})"
                        if "branch_ce_loss" in record else "") + ")"
                     if "branch_windows" in record else "")
+                 + (f", look-ahead decisions {record['lookahead_decisions']} ({record['lookahead_branched']} rolled out, "
+                    f"{record['lookahead_changed']} changed, {record['lookahead_steps']} rollout decisions)"
+                    if "lookahead_decisions" in record else "")
                  + (f", SKIPPED {stats['nonfinite_minibatches']} non-finite-loss / {stats['nonfinite_grad_minibatches']} "
                     "non-finite-gradient minibatches" if stats.get("nonfinite_minibatches")
                     or stats.get("nonfinite_grad_minibatches") else ""))  # fmt: skip
@@ -782,6 +809,9 @@ class Trainer:
             **({"branch_windows": ro.branch_windows, "branch_decisions": ro.branch_decisions,
                 "branch_no_recovery_share": round(ro.branch_no_recovery / ro.branch_windows, 3)
                 if ro.branch_windows else None} if ro.branch_value is not None else {}),
+            **({"lookahead_decisions": ro.lookahead_decisions, "lookahead_branched": ro.lookahead_branched,
+                "lookahead_changed": ro.lookahead_changed, "lookahead_steps": ro.lookahead_steps}
+               if ro.lookahead_decisions else {}),
             "truncated_games": sum(g.truncated for g in games), "errors": sum(g.reason == "error" for g in games),
             "reasons": dict(Counter(g.reason for g in games)),
             "mean_game_decisions": _mean(int(g.result.get("decisions", 0)) for g in games),

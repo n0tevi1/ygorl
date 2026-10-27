@@ -130,23 +130,24 @@ class BranchConfig:
             raise ValueError("branch board_scale must be positive")
 
 
-def board_score(obs, privileged, cards, vocab) -> float:
+def board_score(obs, privileged, cards, vocab, side: int = 1) -> float:
     """The board of the decider's opponent (the line seat, at the learner's horizon) in the phase-0 probe's units
     (tools/window_counterfactual_probe.py ``board_score``): 3 per interruption (:func:`ygorl.solver.blocking.
     board_interruptions`: face-up monsters and spells / traps, set spells / traps, cards in hand, cards in the
     graveyard) + 1 per monster + 0.5 per spell / trap zone card. Read from the encoded card table; the hand and the
     set spells / traps from the privileged tensors (training mode), without them those are unknown (no
-    interruption)."""
+    interruption). ``side`` 0 scores the decider's own board instead (its hand and set cards are in the observation;
+    look-ahead, :mod:`ygorl.train.lookahead`)."""
     from ygorl.engine import constants as C
     from ygorl.solver.blocking import board_interruptions
 
     def code(index: int) -> int:
         return vocab.password(index) if index > 1 else 0
 
-    monsters, spells, grave = [], [], []
+    monsters, spells, grave, own_hand = [], [], [], []
     for r in obs["cards"]:
         loc = int(r[LOCATION])
-        if not loc or int(r[CONTROLLER]) != 1:
+        if not loc or int(r[CONTROLLER]) != side:
             continue
         c, pos = code(int(r[CARD_INDEX])), int(r[POSITION])
         if loc == 3:
@@ -156,17 +157,19 @@ def board_score(obs, privileged, cards, vocab) -> float:
                            "sequence": int(r[SEQUENCE])})  # fmt: skip
         elif loc == 5 and c:
             grave.append(c)
-    hand = []
-    if privileged is not None:
+        elif loc == 2 and c and side == 0:
+            own_hand.append(c)
+    hand = own_hand
+    if privileged is not None and side == 1:
         hand = [c for c in (code(int(row[0])) for row in privileged["op_hand"]) if c]
         op_set = privileged["op_set"]
         for z in spells:  # a set spell / trap: its identity is ground truth (rows 7-14 = spell / trap zones 0-7)
             if not z["code"] and 7 + z["sequence"] < len(op_set):
                 z["code"] = code(int(op_set[7 + z["sequence"]][0]))
                 z["position"] = C.POS_FACEDOWN
-    side = {"mzone": [m for m in monsters if m["code"]], "szone": [z for z in spells if z["code"]], "hand": hand,
-            "grave": grave}  # fmt: skip
-    bi = board_interruptions({"players": [side]}, cards, 0)
+    zones = {"mzone": [m for m in monsters if m["code"]], "szone": [z for z in spells if z["code"]], "hand": hand,
+             "grave": grave}  # fmt: skip
+    bi = board_interruptions({"players": [zones]}, cards, 0)
     return 3 * bi.interruptions + len(monsters) + 0.5 * len(spells)
 
 
@@ -243,6 +246,9 @@ class Assignment:
     learner_seat: int = 0  # engine seat of the learner in a pool game (ignored in self-play)
     info: Mapping[str, Any] = field(default_factory=dict)  # free-form labels (deck names ...) for the logs
     line: Any = None  # a LineScript the opponent seat opens with (needs a snapshot opponent); None: none
+    # a look-ahead opponent (ygorl.train.lookahead.LookaheadConfig; needs a snapshot opponent, no line, an environment
+    # with snapshots): at its qualifying decisions the snapshot plays best-of-K by snapshot branching; None: none
+    lookahead: Any = None
 
     def is_learner(self, seat: int) -> bool:
         return self.opponent is None or seat == self.learner_seat
@@ -314,6 +320,12 @@ class Rollout:
     branch_windows: int = 0
     branch_decisions: int = 0
     branch_no_recovery: int = 0  # branched windows with an activation of the set without a recovery line
+    # look-ahead opponents (Assignment.lookahead): their qualifying decisions, those rolled out (more than one distinct
+    # candidate), those where the chosen action is not the snapshot's own draw, and decisions stepped in their rollouts
+    lookahead_decisions: int = 0
+    lookahead_branched: int = 0
+    lookahead_changed: int = 0
+    lookahead_steps: int = 0
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -378,6 +390,17 @@ class _BranchState:
 
 
 @dataclass
+class _LookState:
+    """A look-ahead opponent's decision in progress: the generator (:func:`ygorl.train.lookahead.look_ahead`), the
+    decision's event, and a snapshot whose event is awaited."""
+
+    gen: Any
+    ev: Any
+    turn: int
+    wait_sid: int | None = None
+
+
+@dataclass
 class _Slot:
     assignment: Assignment
     opponent: nn.Module | None = None  # the snapshot, resolved when the game starts (it may leave the pool)
@@ -388,6 +411,8 @@ class _Slot:
     occurrences: dict[int, int] = field(default_factory=dict)  # effect (vocab index) -> chain windows answered on it
     serial: int = 0  # the game's number in the collector (branch seeds)
     branch: _BranchState | None = None  # a window being branched
+    look: _LookState | None = None  # a look-ahead opponent's decision being rolled out (Assignment.lookahead)
+    looks: int = 0  # look-ahead decisions of the opponent so far in this game (their random-number keys)
 
 
 class RolloutCollector:
@@ -422,6 +447,7 @@ class RolloutCollector:
         self._branch_cards = frozenset(branch.cards) if branch is not None else frozenset()
         # windows branched, decisions stepped in branches, branched windows without a recovery line (this collection)
         self._branch_counts = [0, 0, 0]
+        self._look_counts = [0, 0, 0, 0]  # look-ahead decisions, branched, changed, rollout steps (this collection)
         self.env = env
         self.model = model
         self.next_game = next_game
@@ -472,10 +498,11 @@ class RolloutCollector:
         ready = list(self._held.values())
         self._held.clear()
         self._branch_counts = [0, 0, 0]
+        self._look_counts = [0, 0, 0, 0]
         lockstep = self.min_batch >= B
         deferred: list = []  # lockstep: the other slots' decisions, held back while a window is branched
         while True:
-            learner, others, branching = [], defaultdict(list), []
+            learner, others, branching, looking, look_starts = [], defaultdict(list), [], [], []
             # Full batches provide stable membership; worker order must not reassign RNG draws or deals.
             # Partial asynchronous collection retains its existing scheduling/sampling behavior.
             if lockstep:
@@ -484,6 +511,8 @@ class RolloutCollector:
                 slot = self._slots[ev.env_id]
                 if slot.branch is not None:
                     branching.append(ev)
+                elif slot.look is not None:
+                    looking.append(ev)
                 elif lockstep and self._branching:
                     deferred.append(ev)
                 elif ev.result is not None:
@@ -496,8 +525,12 @@ class RolloutCollector:
                         learner.append(ev)
                 elif slot.line is not None and self._act_line(slot, ev):
                     opponent_decisions += 1
+                elif slot.assignment.lookahead is not None and slot.assignment.lookahead.applies(ev.obs):
+                    look_starts.append(ev)
                 else:
                     others[id(slot.opponent)].append(ev)
+            if looking or look_starts:
+                opponent_decisions += self._look_round(looking, look_starts)
             b_learner, b_horizon, b_groups = self._sort_branch(branching) if branching else ([], [], {})
             pending, b_pending = self._forward_opponents(others, b_groups)  # queued before the learner's wait
             if learner or b_learner or b_horizon:
@@ -584,6 +617,13 @@ class RolloutCollector:
                 raise RuntimeError("a pool game needs opponents(snapshot_id)")
             opponent = self.opponents(assignment.opponent)
         line = None
+        if assignment.lookahead is not None:
+            if opponent is None or assignment.line is not None:
+                raise RuntimeError("a look-ahead opponent needs a snapshot opponent and no scripted line")
+            if self.complete_games or not getattr(self.env, "snapshots", False):
+                raise RuntimeError(
+                    "a look-ahead opponent needs fixed-length segments and EncodedVecEnv(snapshots=True)"
+                )
         if assignment.line is not None:
             if opponent is None:
                 raise RuntimeError("a scripted-line game needs a snapshot opponent to continue the line")
@@ -806,6 +846,98 @@ class RolloutCollector:
         self._branch_counts[2] += not st.recovered
         self.env.step(env_id, st.action)
 
+    # -- look-ahead opponents ------------------------------------------------------------------------
+    def _look_round(self, events: list, starts: list) -> int:
+        """Advance the look-ahead opponents (``Assignment.lookahead``; :func:`ygorl.train.lookahead.look_ahead`):
+        ``starts`` are qualifying snapshot decisions (the look-ahead begins), ``events`` the environment's answers to
+        running ones. Their forwards are batched by module (the snapshot for its seat, the learner's model for the
+        learner's seat, no rows); a finished look-ahead steps its action in the main game. Returns the snapshot's
+        main-game decisions stepped. The slots count as branching (``_branching``), so lockstep collection holds the
+        other slots back as it does for window branches."""
+        from ygorl.train.lookahead import GameHooks, Uniforms, look_ahead, lookahead_value
+
+        stepped = 0
+        env_of: dict[int, int] = {}
+        forwards: list[tuple[_Slot, int, Any, str]] = []
+
+        def send(slot: _Slot, value) -> None:
+            nonlocal stepped
+            st, env_id = slot.look, env_of[id(slot)]
+            while True:
+                try:
+                    req = st.gen.send(value)
+                except StopIteration as stop:
+                    action, info = stop.value
+                    counts = self._look_counts
+                    counts[0] += 1
+                    counts[1] += info["branched"]
+                    counts[2] += info["changed"]
+                    counts[3] += info["steps"]
+                    slot.look = None
+                    slot.looks += 1
+                    self._branching -= 1
+                    stepped += 1
+                    self.env.step(env_id, int(action))
+                    return
+                kind = req[0]
+                if kind == "forward":
+                    forwards.append((slot, req[1], req[2], "co"))
+                    return
+                if kind == "release":
+                    self.env.release(env_id, req[1])
+                    value = None
+                    continue
+                if kind == "step":
+                    self.env.step(env_id, int(req[1]))
+                elif kind == "restore":
+                    self.env.restore(env_id, req[1])
+                elif kind == "snapshot":
+                    st.wait_sid = self.env.snapshot(env_id)
+                else:
+                    raise RuntimeError(f"unknown look-ahead request {kind!r}")
+                return
+
+        for ev in [*events, *starts]:
+            env_of[id(self._slots[ev.env_id])] = ev.env_id
+        forwards.extend((self._slots[ev.env_id], int(ev.player), ev, "start") for ev in starts)
+        for ev in events:
+            slot = self._slots[ev.env_id]
+            if slot.look.wait_sid is not None:
+                sid, slot.look.wait_sid = slot.look.wait_sid, None
+                send(slot, sid)
+            else:
+                send(slot, ev)
+        while forwards:
+            batch = list(forwards)
+            forwards.clear()
+            groups: dict[int, list[int]] = defaultdict(list)
+            modules: dict[int, nn.Module] = {}
+            for k, (slot, seat, _, _) in enumerate(batch):
+                module = self.model if seat == slot.assignment.learner_seat else self._opponent_module(slot.opponent)
+                modules[id(module)] = module
+                groups[id(module)].append(k)
+            probs: list[Any] = [None] * len(batch)
+            for key, ks in groups.items():
+                obs = self.model.collate([batch[k][2].obs for k in ks], self.device)
+                p = torch.softmax(policy_logits(modules[key], obs).float(), -1).cpu().numpy().astype(np.float64)
+                for r, k in enumerate(ks):
+                    probs[k] = p[r]
+            for (slot, seat, ev, kind), p in zip(batch, probs, strict=True):
+                if kind == "co":
+                    send(slot, p)
+                    continue
+                cfg = slot.assignment.lookahead
+
+                def score(cur, s, w, cfg=cfg):
+                    return lookahead_value(cur, s, w, cfg, self.env.cards, self.env.vocab)
+
+                gen = look_ahead(cfg, seat, slot.looks, ev, p, Uniforms(_mix(self.seed, 0x100CA, slot.serial)),
+                                 GameHooks(), score)  # fmt: skip
+                slot.look = _LookState(gen, ev, int(ev.obs["globals"][3]))
+                self._branching += 1
+                send(slot, None)
+        return stepped
+
     def _act_line(self, slot: _Slot, ev) -> bool:
         """Play the opponent seat's decision from its scripted line; False once the line is over (the snapshot plays)."""
         row = slot.line.act(ev.obs)
@@ -924,6 +1056,8 @@ class RolloutCollector:
             line_effect=grid([r.line_effect for r in rows], torch.long),
             line_occurrence=grid([r.line_occurrence for r in rows], torch.long),
             line_seat=grid([r.line_seat for r in rows], torch.long),
+            lookahead_decisions=self._look_counts[0], lookahead_branched=self._look_counts[1],
+            lookahead_changed=self._look_counts[2], lookahead_steps=self._look_counts[3],
             **(self._branch_fields(rows, T, B) if self.branch is not None else {}),
         )  # fmt: skip
 

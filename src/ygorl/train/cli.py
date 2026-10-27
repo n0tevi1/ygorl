@@ -201,6 +201,13 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            listing="nargs"),
         _f("--branch-board-scale", "branch_board_scale", "branch value per board point (3 per interruption, 1 per "
            "monster, 0.5 per spell / trap)"),
+        _f("--lookahead-share", "lookahead_share", "share of the unscripted pool deals whose snapshot looks ahead on "
+           "its first own turn (turn 2 when the learner moves first): best-of-K by snapshot branching, scored by the "
+           "board at the end of the turn (0 = off)"),
+        _f("--lookahead-k", "lookahead_k", "candidates drawn per look-ahead decision"),
+        _f("--lookahead-rollouts", "lookahead_rollouts", "rollouts per look-ahead candidate, averaged"),
+        _f("--lookahead-second", "lookahead_second", "the look-ahead snapshot also looks ahead on turn 1 of the game "
+           "where the learner moves second"),
         _f("--branch-mode", "ppo.branch_mode", "window counterfactual advantage on branched rows: replace the VRPO "
            "advantage, add branch-coef times it, or off", choices=("off", "replace", "add")),
         _f("--branch-coef", "ppo.branch_coef", "weight of the counterfactual advantage with --branch-mode add"),

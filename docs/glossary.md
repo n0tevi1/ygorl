@@ -111,6 +111,9 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | prefix start / `Position` | 前缀起局 / 局面 | 用种子 + 动作前缀在环境里重放到某个局面（如回合 1 结束）再开始训练（同上 §5.2） |
 | recovery line / `RecoveryLine` | 恢复线 | 对手的线在某时点被打断后，求解器（`--fire`）找到的到达原终场的续线；按（线，窗口身份 =（被回应效果，次数），打断卡）索引，脚本线对手被学习方在该时点打断时改走它（`LinePlayer.interrupt`，状态 `recovering`；同上 §5.3，training.md §8.3） |
 | reactive line | 反应式线 | 按学习者实际回合 1 场面重新求解的对手回合 2 线（同上 §5.3） |
+| look-ahead / `LookaheadConfig` | 前瞻（best-of-K） | 在某席位的决策点从策略取 K 个候选（第 1 个就是策略自己的抽样），同槽位快照后各自由双方原样推演到本回合结束、按前瞻分取最高者再恢复主对局；K = 1 即原策略（`ygorl.train.lookahead`，先手打断计划 §13）。推演看得到全部引擎状态，是开天眼的上界 |
+| look-ahead score | 前瞻分 | 前瞻推演在视界上的取值：己方权重 × 己方场面分 − 对方场面分 + LP 差 / 1000，终局 ±100；己方权重默认在自己回合为 1、对方回合为 0（`lookahead_value`） |
+| look-ahead opponent / `lookahead_share` | 前瞻对手 | 在自己第一个回合（学习者先手时为回合 2）做前瞻的快照对手，按学习者实际场面挑展开；自博弈发局里按份额出现（`Assignment.lookahead`，training.md §8.3「前瞻对手」，先手打断计划 §13） |
 | bait line | 诱饵线 | 先用可恢复的次要起手骗打断、再出真起手的对手线（同上 §5.5） |
 | bait window / breaking window | 诱饵时点 / 动点 | 求解器灰流丽标签里，打了对手仍能恢复原终场的时点 / 打了就铺不出原场面的时点（`tools/handtrap_ruler.py`，training.md §8.4.1） |
 | ruler R1 / R2 / R2b | 尺子 R1 / R2 / R2b | 留出手（40–49）上的固定行为读数：R1 回合 1 打断数，R2 手坑评分 / 浪费率 / 漏打，R2b 诱饵在前子集上的 P(打 \| 诱饵) 与 P(打 \| 动点)（training.md §8.4.1） |

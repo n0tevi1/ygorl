@@ -530,6 +530,12 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   恢复线则是求解器从打断后局面出发的续线，两者都到原终场时以恢复线为准。
   普查（上面的线库，学习方 40 张灰流丽、只在该窗口发动、其余一律 pass，`skip_forced`）：后攻席 323 个窗口里 317 个切换后走完恢复线，303 个与不打断时的终场场面相同；不带恢复线时同一打断让原线在 277 个窗口断掉。先攻席 306 个切换（其余窗口在该局没出现）、256 个走完。先攻席收集时对手座位第 1 回合由快照下，它可能已用掉恢复线要用的卡（例如对灰流丽连锁的 Maxx "C"），恢复线随之断掉、快照接手。
   测试（`tests/test_line_recovery.py`，数据 `tests/data/line_recovery.jsonl`：三手的 plain 与灰流丽 fire 记录）：可恢复窗口在两席位、两种 `skip_forced` 下切换并到达原终场场面，不带恢复线时原线在该处断；不可恢复窗口照旧断、与不带恢复线时逐项相同；收集器、统计与训练器日志。
+- **前瞻对手**（`TrainConfig.lookahead_share` / `lookahead_k` / `lookahead_rollouts` / `lookahead_second`，`--lookahead-*`；`ygorl.train.lookahead`，
+  [spikes/first-seat-interruption-plan-2026-10-24.md](spikes/first-seat-interruption-plan-2026-10-24.md) §13）：按份额，非脚本的池对局里快照对手在自己第一个回合
+  （学习者先手的那局是回合 2；`lookahead_second` 时后手那局的回合 1 也做）每个有真实选择的决策上做 best-of-K：从快照策略取 K 个候选（第 1 个是它自己的抽样），
+  同槽位快照，每个候选由快照（对手座位）与当前模型（学习者座位，不记行）推演到回合结束，按前瞻分（己方场面分 − 学习者场面分 + LP 差 / 1000，终局 ±100）取最高，恢复后走它。
+  收集器把这类槽位当作分支中的槽位（锁步收集同样暂停其它槽位）；`Rollout.lookahead_decisions / _branched / _changed / _steps` 计数。需要 `privileged_critic`（推演要看双方场面），环境开 `snapshots`。
+  `lookahead_share = 0`（默认）时不抽额外随机数，发局与收集逐位不变。测试：`tests/test_lookahead.py`。
 
 ### 8.4 评估
 

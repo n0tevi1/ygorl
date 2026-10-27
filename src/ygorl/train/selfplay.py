@@ -17,6 +17,11 @@ deck-pool sampling with paired first / second games.
   seat over once the line ends or breaks. With ``line_first_share`` a scripted deal is instead, with that probability,
   two first-seat games: the learner's deck moves first and the demonstration deck plays the line on its turn 2. With
   ``line_share == 0`` (``line_first_share == 0``) no extra random number is drawn (for the seat).
+- **Look-ahead opponents** (``lookahead`` / ``lookahead_share``, :mod:`ygorl.train.lookahead`, first-seat plan §13):
+  with probability ``lookahead_share`` an unscripted pool deal's snapshot looks ahead (best-of-K by snapshot
+  branching) on its first own turn -- turn 2 in the game where the learner moves first, and with
+  ``lookahead_second`` also turn 1 in the game where it moves second. With ``lookahead_share == 0`` no extra random
+  number is drawn.
 - :class:`EvolvedDecks` (#108): the decks an evolution process adds to the pool while training runs, read from a
   deck-pool manifest (``ygorl-deck-pool`` JSON) that the trainer re-reads every few updates. With probability
   ``share`` a deal pairs one probation / active evolved deck (weight x ``(1 - p) ** power``, ``p`` the current
@@ -354,13 +359,19 @@ class SelfPlaySchedule:
     def __init__(self, decks: DeckPool, pool: SnapshotPool, config: DuelConfig | None = None, *,
                  selfplay_fraction: float = 0.75, seed: int = 0, evolved: EvolvedDecks | None = None,
                  lines: LineLibrary | None = None, line_share: float = 0.0,
-                 line_first_share: float = 0.0) -> None:  # fmt: skip
+                 line_first_share: float = 0.0, lookahead=None, lookahead_share: float = 0.0,
+                 lookahead_second: bool = False) -> None:  # fmt: skip
         if not 0 <= selfplay_fraction <= 1:
             raise ValueError("selfplay_fraction must be in [0, 1]")
         if not 0 <= line_share <= 1:
             raise ValueError("line_share must be in [0, 1]")
         if not 0 <= line_first_share <= 1:
             raise ValueError("line_first_share must be in [0, 1]")
+        if not 0 <= lookahead_share <= 1 or (lookahead_share > 0 and lookahead is None):
+            raise ValueError("lookahead_share must be in [0, 1] and needs a look-ahead configuration when above 0")
+        self.lookahead = lookahead
+        self.lookahead_share = lookahead_share
+        self.lookahead_second = lookahead_second
         self.decks = decks
         self.evolved = evolved
         self.lines = lines if lines is not None and len(lines) else None
@@ -416,6 +427,7 @@ class SelfPlaySchedule:
         if scripted and self.rng.random() < self.line_share:
             self._deal_lines(seed, opponent, (deck_a, deck_b)[side], evolved == side)
             return
+        looks = opponent is not None and self.lookahead_share > 0 and self.rng.random() < self.lookahead_share
         for first in (0, 1):
             spec = GameSpec(seed=seed, deck_a=deck_a, deck_b=deck_b, first=first, config=self.config)
             info = {"deck_a": deck_a.name, "deck_b": deck_b.name, "first": first}
@@ -424,7 +436,19 @@ class SelfPlaySchedule:
             if evolved is not None:
                 info["evolved"] = (deck_a, deck_b)[evolved].name
                 info["evolved_seat"] = spec.seat_of_deck(evolved)
-            self._queue.append(Assignment(spec, opponent, spec.seat_of_deck(side), info))
+            seat = spec.seat_of_deck(side)
+            look = self._lookahead(seat) if looks else None
+            if look is not None:
+                info["lookahead"] = look.first_turn
+            self._queue.append(Assignment(spec, opponent, seat, info, lookahead=look))
+
+    def _lookahead(self, learner_seat: int):
+        """The snapshot's look-ahead in a game where the learner holds ``learner_seat``: its first own turn (2 when the
+        learner moves first; 1 when it moves second, only with ``lookahead_second``), or None."""
+        if learner_seat == 1 and not self.lookahead_second:
+            return None
+        turn = 2 if learner_seat == 0 else 1
+        return replace(self.lookahead, first_turn=turn, last_turn=turn, own_turn=True)
 
     def _deal_lines(self, seed: int, opponent: int, learner: Deck, evolved: bool) -> None:
         """Two scripted games on ``learner``, each with a line drawn from the library: the line moves first and the
