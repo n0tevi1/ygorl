@@ -215,6 +215,10 @@ class _Game:
         self.rep.findings.append(Finding(severity, self.rep.game, rec.get("step") if rec else None,
                                          rec.get("seq") if rec else None, kind, message, evidence))  # fmt: skip
 
+    def later_memories(self, i: int, n: int) -> list[dict]:
+        """The memory digests of the next ``n`` steps after step ``i`` (this game) that have one."""
+        return [r["memory"] for r in self.steps[i + 1 :] if "memory" in r][:n]
+
     def next_memory(self, i: int) -> dict | None:
         """The memory digest of the first step after step ``i`` (this game) that has one."""
         for r in self.steps[i + 1 :]:
@@ -378,11 +382,16 @@ class _Game:
         elif lc.get("ok") is False:
             self.add("major", rec, "list-pick", f"list pick of {self.ctx.cname(want)} not confirmed by the client list",
                      want=want)  # fmt: skip
-        after = self.next_memory(i)
-        if after is None or "memory" not in rec:
+        if "memory" not in rec:
             return
         cands = o.get("list_candidates") or []
-        moved = self.moved(rec["memory"], after, cands)
+        # the picked card can move only once MD has asked the rest (a Fusion Monster's position and zone): the
+        # first of the next few steps where a candidate moved (run s77's wrong Fusion Monster moved 4 steps later)
+        moved = []
+        for after in self.later_memories(i, 6):
+            moved = self.moved(rec["memory"], after, cands)
+            if moved:
+                break
         if moved and not any(self.ctx.same(c, want) for c in moved):
             self.add("major", rec, "list-pick", f"the list pick wanted {self.ctx.cname(want)} but "
                      + ", ".join(self.ctx.cname(c) for c in moved) + " moved", want=want, moved=moved)  # fmt: skip
@@ -396,7 +405,7 @@ class _Game:
             cid, loc = c[0], c[1] if len(c) > 1 else ""
             if not cid or cid in out:
                 continue
-            if loc == "deck":
+            if loc in ("deck", "extra"):
                 if any(a[k][cid] > b[k][cid] for k in ("hand", "grave", "field")):
                     out.append(cid)
                 continue

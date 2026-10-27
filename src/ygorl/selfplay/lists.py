@@ -209,16 +209,18 @@ class ListsMixin:
             cid, uid = 0, 0
         ok = pw(cid) == pw(want) and (not want_uid or uid == want_uid)
         if not ok and prev is not None and prev[:8] == struct.pack("<II", cid, uid):
-            # the open-card read did not move with the tick (it held no card: a stale address): the client's
-            # order is the screen's (checked since run s33), so its place stands; the stale address is dropped
-            # (Ra - Sphere Mode was ticked right, then a guess sent The Winged Dragon of Ra instead)
+            # the open-card read did not move with the tick (it held no card: a stale address): the stale address
+            # is dropped and found again on this list. The client's order is not always the screen's (runs s73 /
+            # s74: its last card stood first on screen, and the place it gave summoned the card before it), so an
+            # unconfirmed place is not taken: every card is ticked and read instead
             selection.address = None
             fixed = self.recalibrate_on_list(entries, cards, pos, j, want, want_uid)
             if fixed is not None:
                 return fixed
-            self.trace.observe(list_check={"want": want, "by": "client list (unconfirmed: no open-card read)",
+            self.trace.observe(list_check={"want": want, "by": "client list (unconfirmed: searched instead)",
                                            "index": j, "turns": turns})  # fmt: skip
-            return pos
+            self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
+            return None
         self.trace.observe(list_check={"want": want, "by": "client list", "index": j, "turns": turns, "ok": ok,
                                        "changed": prev is not None and prev[:8] != struct.pack("<II", cid, uid)})  # fmt: skip
         if not ok:
