@@ -360,9 +360,18 @@ class BattleMixin:
         for target in self.field_spots(raw):
             if any(abs(target[0] - q[0]) + abs(target[1] - q[1]) < 80 for q in tried + picked):
                 continue
-            if self.selectable_in_memory(target):
+            selectable = self.selectable_in_memory(target)
+            if selectable:
                 if self.ui.card_command(target, "a card memory says can be selected", "confirm"):
                     self.trace.rule("field-pick-by-command-mask", spot=list(target))
+                    picked.append(target)
+                    return
+            elif selectable is None:
+                # no command object for the card (our Field Zone's Galloping Gaia as Curse of Dragonfire's
+                # target, run s72): in a field selection a card shows only Confirm, and only when it can be picked
+                self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+                if self.ui.card_command(target, "a card whose Confirm shows", "confirm"):
+                    self.trace.rule("field-pick-by-confirm-icon", spot=list(target))
                     picked.append(target)
                     return
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
@@ -377,9 +386,9 @@ class BattleMixin:
         out += [opp_spell_xy(s) for s in range(5) if op.slots[7 + s] is not None]
         return out
 
-    def selectable_in_memory(self, xy) -> bool:
+    def selectable_in_memory(self, xy) -> bool | None:
         """Open the card at ``xy`` and read MD's command mask for it: whether the Decide bit (a card choice
-        without a list) is set. False when the client is not readable."""
+        without a list) is set. False when the client is not readable; None when the card has no command object."""
         client = getattr(self, "client", None)
         if client is None:
             return False
@@ -390,4 +399,4 @@ class BattleMixin:
             return False
         ok = oc is not None and bool(oc.mask & CommandBit.DECIDE)
         self.trace.observe(selectable={"spot": list(xy), "mask": oc.mask if oc is not None else None, "ok": ok})
-        return ok
+        return None if oc is None else ok
