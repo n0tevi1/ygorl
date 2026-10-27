@@ -428,6 +428,21 @@ def in_limbo(before, now, passwords: Mapping[int, int], cards: Mapping) -> set[i
     return out
 
 
+def arrived_on_field(before, now, passwords: Mapping[int, int], cards: Mapping) -> set[int]:
+    """Passwords of the advisor's monsters on the field ``now`` that were not there ``before``."""
+    from collections import Counter
+
+    def field(raw) -> Counter:
+        return Counter(c.cid for c in raw.players[raw.me].slots if c is not None)
+
+    out = set()
+    for cid in field(now) - field(before):
+        card = cards.get(passwords.get(cid, 0))
+        if card is not None and card.is_monster:
+            out.add(passwords[cid])
+    return out
+
+
 def summoned_card(req, action, passwords: Mapping[int, int], shadow: ShadowDuel | None = None, *, before=None,
                   now=None, cards: Mapping | None = None, listed: tuple[int, ...] = ()) -> int:  # fmt: skip
     """The password of the monster MD asks the position for (0: unknown): the card MD's dialog names (a mix entry of
@@ -446,6 +461,10 @@ def summoned_card(req, action, passwords: Mapping[int, int], shadow: ShadowDuel 
         limbo = in_limbo(before, now, passwords, cards)
         if len(limbo) == 1:
             return next(iter(limbo))
+        arrived = arrived_on_field(before, now, passwords, cards)
+        if not limbo and len(arrived) == 1:
+            # already in its zone when MD asks (a Fusion Summon by Spiral Fusion, run s73: two positions by rule)
+            return next(iter(arrived))
     names = {passwords.get(cid, 0) for cid in listed}
     if len(names) == 1 and cards is not None:
         (password,) = names

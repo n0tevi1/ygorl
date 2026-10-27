@@ -209,6 +209,8 @@ def test_the_summoned_monster_is_told_from_memory(cards):
     field = digest("me", "main1", hand=(4,))
     field["memory"]["me"]["field"][1] = [6, 1, 0]
     assert in_limbo(before, raw_from_digest(field, off, []), PW, cards) == set()
+    # ... but the one monster that arrived on the field since the action (a Fusion Summon asked in its zone)
+    assert summoned_card(None, None, PW, before=before, now=raw_from_digest(field, off, []), cards=cards) == JACK
     assert summoned_card(None, None, PW, cards=cards, listed=(6, 6)) == JACK  # MD listed only Jack's Knights
     assert summoned_card(None, None, PW, cards=cards, listed=(6, 2)) == 0
 
