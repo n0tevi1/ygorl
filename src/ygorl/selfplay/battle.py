@@ -80,15 +80,20 @@ class BattleMixin:
         from the current board, :meth:`ygorl.selfplay.decide.Decider.attack_target`). The rule when the rebuild
         cannot tell: the most valuable monster the attacker beats, else the weakest; direct when the opponent has no
         monster."""
-        best, _ = self.decide(raw)
+        best, legal = self.decide(raw)
         self.close_phase_menu_unless(best.kind)
         self.context = best.kind
         if best.kind == "main2":
             return self.ui.phase("main2")
         if best.kind == "end_phase":
             return self.ui.phase("end")
+        if best.kind == "activate" and best.card is not None:
+            # an effect activated in the Battle Phase (Gaia the Fierce Knight Origin, run s76): the same commands as
+            # in a Main Phase
+            return self.main_phase(raw, decided=(best, legal))
         if best.kind != "attack" or best.card is None:
-            raise Stuck(f"no click script for {best.kind} in the Battle Phase")
+            # nothing clicked: masked for this phase, the policy decides again (not a generic recovery)
+            return self.refused(raw, best, f"no click script for {best.kind} in the Battle Phase")
         me, opp = raw.players[raw.me], raw.players[1 - raw.me]
         slot = best.card.loc.sequence
         card = me.slots[slot]

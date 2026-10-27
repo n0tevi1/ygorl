@@ -303,10 +303,11 @@ class CommandsMixin:
         if kind not in ("battle_phase", "main2", "end_phase") and self.ui.dialog() == "phase_menu":
             self.ui.click(*PHASE_MENU_CANCEL, "close the phase menu", 1.2)
 
-    def main_phase(self, raw: RawDuel) -> None:
+    def main_phase(self, raw: RawDuel, decided=None) -> None:
+        """A Main Phase command; ``decided``: the (best, legal) the Battle Phase already chose (an activation)."""
         self.extra_pick = (None, 0)  # (an earlier action's Extra Deck pick is never this one's)
         self.last_zone = None  # an earlier action's zone is never this one's (a stale one opened a Set card twice)
-        best, legal = self.decide(raw)
+        best, legal = decided if decided is not None else self.decide(raw)
         self.close_phase_menu_unless(best.kind)
         kinds = {}
         for s in legal:
