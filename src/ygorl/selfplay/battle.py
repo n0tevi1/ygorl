@@ -221,6 +221,11 @@ class BattleMixin:
             theirs = [s for s in range(7) if raw.players[1 - raw.me].slots[s] is not None
                       and near(opp_monster_xy(s)) and ("op", s) not in taken]  # fmt: skip
             self.trace.observe(tribute_candidates=[s for s, _ in mine], tribute_theirs=theirs, tribute_lit=sorted(lit))
+            # every pick's view, not only the last (an audit could not tell whether a hidden frame was offered)
+            self.tribute_views = getattr(self, "tribute_views", [])[-8:] + [
+                {"mine": [s for s, _ in mine], "theirs": theirs, "lit": sorted(lit)}
+            ]
+            self.trace.observe(tribute_views=self.tribute_views)
             if not mine and not theirs:
                 return
             mine = [(s, c) for s, c in mine if my_monster_xy(s) not in unpickable]
