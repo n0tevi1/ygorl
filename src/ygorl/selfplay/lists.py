@@ -14,6 +14,7 @@ from ygorl.md.request import Candidate, _locate
 from ygorl.md.selection import own_cards, scan_pairs
 from ygorl.selfplay.state import (
     LIST_NEXT,
+    LIST_PREV,
     LIST_SHOWN,
     LIST_PAGES,
     list_more,
@@ -151,6 +152,7 @@ class ListsMixin:
         turns = max(0, j - n + 1)
         for _ in range(turns):
             self.ui.click(*LIST_NEXT, "next cards of the list (to the card the client lists)", 1.2)
+            self.list_turned = getattr(self, "list_turned", 0) + 1
         pos = j - turns
 
         def aim_again(k: int | None) -> int | None:
@@ -163,6 +165,7 @@ class ListsMixin:
             target = pos + (j - k)
             for _ in range(max(0, target - (n - 1))):
                 self.ui.click(*LIST_NEXT, "next cards of the list (aiming again)", 1.2)
+                self.list_turned = getattr(self, "list_turned", 0) + 1
             target = min(target, n - 1)
             if target < 0:
                 return None
@@ -250,10 +253,17 @@ class ListsMixin:
         by_uid = len({c.location for c in copies}) > 1 and want_uid != 0
         if n <= 1 or (len({pw(c) for c in cands}) <= 1 and not by_uid):
             return 0, False  # one card, or only copies of one card: any position is the wanted card
+        self.list_turned = 0
         direct = self.find_by_client_list(want, want_uid if by_uid else 0, cards)
         if direct is not None:
             self.pending_list = (self.ui.capture(), req)
             return direct, True
+        # the search below starts from the list's first card: turned on, the cards left of the screen were never
+        # looked at (the screen's order is not always the client's: runs s73 / s77 picked a guess, once wrong)
+        for _ in range(self.list_turned + 2 if self.list_turned else 0):  # (+2: an arrow click can be lost)
+            self.ui.click(*LIST_PREV, "previous cards of the list (back to its start)", 1.2)
+        if self.list_turned:
+            cards = L.list_cards(self.ui.capture())
         stats = {c: self.card_stats(c) for c in set(cands)}
         seen: dict = {}
         panels = {}

@@ -23,6 +23,7 @@ OPTION_OK = (1024, 788)
 
 
 LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
+LIST_PREV = (552, 1120)  # its "<" arrow, mirrored (run s65's capture)
 RA = 10000010  # The Winged Dragon of Ra
 FIELD_ICON_STEP, FIELD_ICON_DY = 172, -150  # a field card's command icons: apart, and above the card
 SLIFER = 10000020  # Slifer the Sky Dragon
