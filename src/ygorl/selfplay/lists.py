@@ -152,6 +152,33 @@ class ListsMixin:
         for _ in range(turns):
             self.ui.click(*LIST_NEXT, "next cards of the list (to the card the client lists)", 1.2)
         pos = j - turns
+
+        def aim_again(k: int | None) -> int | None:
+            """The card ticked at ``pos`` is entry ``k`` of the client's list: untick it, move by the difference
+            (turning the list further when the card lies past its right edge: one of 11 arrow clicks was swallowed
+            on run s68 and the last card's pick was guessed), tick and read back; None when that fails."""
+            self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
+            if k is None or k == j:
+                return None
+            target = pos + (j - k)
+            for _ in range(max(0, target - (n - 1))):
+                self.ui.click(*LIST_NEXT, "next cards of the list (aiming again)", 1.2)
+            target = min(target, n - 1)
+            if target < 0:
+                return None
+            self.ui.click(*cards[target], f"#{target + 1} of {n}: aimed again by the client's list", 0.9)
+            try:
+                cid, uid = struct.unpack("<II", selection.memory.read(selection.address, 8))
+            except Exception:  # noqa: BLE001
+                cid, uid = 0, 0
+            ok = pw(cid) == pw(want) and (not want_uid or uid == want_uid)
+            self.trace.observe(list_check={"want": want, "by": "client list (aimed again)", "index": j, "from": k,
+                                           "place": target, "ok": ok})  # fmt: skip
+            if ok:
+                return target
+            self.ui.click(*cards[target], f"untick #{target + 1}", 0.6)
+            return None
+
         if selection.address is None:
             # the open-card object is not found yet (a Deck list on turn 1, run s64: 30 ticks to find one card):
             # calibrate on the tick of the card the client lists, which confirms it at the same time
@@ -164,8 +191,10 @@ class ListsMixin:
                                            "turns": turns, "read": list(found) if found else None, "ok": ok})  # fmt: skip
             if ok:
                 return pos
-            self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
-            return None  # (then every card is ticked and read)
+            if found is None or selection.address is None:
+                self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
+                return None  # (then every card is ticked and read)
+            return aim_again(next((i for i, e in enumerate(entries) if e.uid and e.uid == found[1]), None))
         try:
             prev = selection.memory.read(selection.address, 8)
         except Exception:  # noqa: BLE001
@@ -192,21 +221,7 @@ class ListsMixin:
         if not ok:
             # another card of the list: aim again by its place in the client's list (a scroll click can be
             # swallowed, and the list can hold cards the screen does not show: Foolish Burial landed two short)
-            k = next((i for i, e in enumerate(entries) if e.uid and e.uid == uid), None)
-            again = pos + (j - k) if k is not None else -1
-            self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
-            if 0 <= again < n and again != pos:
-                self.ui.click(*cards[again], f"#{again + 1} of {n}: aimed again by the client's list", 0.9)
-                try:
-                    cid, uid = struct.unpack("<II", selection.memory.read(selection.address, 8))
-                except Exception:  # noqa: BLE001
-                    cid, uid = 0, 0
-                ok = pw(cid) == pw(want) and (not want_uid or uid == want_uid)
-                self.trace.observe(list_check={"want": want, "by": "client list (aimed again)", "index": j, "ok": ok})
-                if ok:
-                    return again
-                self.ui.click(*cards[again], f"untick #{again + 1}", 0.6)
-            return None
+            return aim_again(next((i for i, e in enumerate(entries) if e.uid and e.uid == uid), None))
         if ok:
             return pos
         return None  # (scrolled: the card the client named is on screen, where the tick-and-read search finds it)
