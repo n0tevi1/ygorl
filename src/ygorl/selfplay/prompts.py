@@ -435,6 +435,10 @@ class PromptsMixin:
                 index, ticked = 0, False
             else:
                 index, ticked = self.find_in_list(req, pick)
+                if req.candidates[pick].location == "extra":
+                    # the Extra Deck monster to summon (a Fusion Monster of Spiral Fusion): MD asks its position before
+                    # it leaves the Extra Deck, after the Material lists (run s74: the position fell to a rule)
+                    self.extra_pick = (self.expect, req.candidates[pick].cid)
             self.trace.observe(list_cards=self.ui.pick_list_cards([index], ticked=ticked), list_index=index,
                                list_candidates=[[c.cid, c.location, c.sequence] for c in req.candidates])  # fmt: skip
             self.context = "list"

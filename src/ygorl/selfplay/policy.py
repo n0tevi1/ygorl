@@ -160,6 +160,9 @@ class PolicyMixin:
         elif question == "position":
             action, before = (self.expect.action, self.expect.before) if self.expect is not None else (None, None)
             listed = getattr(self, "listed", (None, ()))
+            extra = getattr(self, "extra_pick", (None, 0))
+            if extra[1] and extra[0] is self.expect:
+                listed = (self.expect, (extra[1],))  # the Extra Deck monster picked in this action names it
             shadow = getattr(getattr(self, "observer", None), "shadow", None)
             choice = decider.position(raw, self.request_now(raw), action, shadow, before,
                                       listed[1] if listed[0] is self.expect else ())  # fmt: skip
