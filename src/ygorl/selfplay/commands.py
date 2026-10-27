@@ -35,6 +35,7 @@ from ygorl.selfplay.state import (
     MAIN,
     BATTLE,
     PLACE,
+    POSITION_DIALOG,
     _action_key,
     _board_key,
 )
@@ -270,6 +271,10 @@ class CommandsMixin:
         and ask the command again there (Summon / Set icons above the zone): answer it with the same command."""
         x, y = L.my_zone(location, zone)
         self.ui.sleep(0.6)
+        if self.read_dialog_type() == POSITION_DIALOG or self.ui.dialog() == "position":
+            # the command took: MD asks the summoned monster's position, whose two icons stand above the zone too
+            # (run s67: Lord Gaia's Special Summon, its position icons read as two Set icons, stuck)
+            return
         img = self.ui.capture()
         box = (max(x - 200, 0), max(y - 260, 0), min(x + 200, L.REF_W), y - 60)
         icons = []
