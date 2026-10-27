@@ -358,6 +358,15 @@ class PromptsMixin:
             self.listed = (self.expect, tuple(c.cid for c in req.candidates))  # names a monster summoned next
             self.observe_client_list()
             need = next((v for k, v in req.params if k == 8), 1)  # "choose N cards" (Fusion Materials)
+            # the client's list says how many it wants ticked (memory): Beginning of Heaven and Earth's 3 Deck
+            # cards came with no count in the request, and one tick left Select dark (run s65, stuck)
+            try:
+                bounds = self.client.list_bounds() if getattr(self, "client", None) is not None else None
+            except Exception:  # noqa: BLE001
+                bounds = None
+            if bounds is not None and bounds[0] > need:
+                self.trace.observe(list_bounds=list(bounds))
+                need = bounds[0]
             if 1 < need <= len(L.list_cards(self.ui.capture())):
                 self.trace.rule("list-set-first-accepted", need=need)  # MD's list here is not the one in memory
                 self.trace.observe(list_set=self.ui.pick_list_set(need))

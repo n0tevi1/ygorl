@@ -504,9 +504,32 @@ class Client:
         if self.cls("ListCardData") is None or self.cls("CardStatus") is None:
             return None
         h, f = self.heap, self.classes["CardSelectionList"].fields
+        first = None
         for sel in self.objects("CardSelectionList"):
             grouped = h.u64(sel + f["m_GroupedDataList"])
-            return h.i32(sel + f["m_ListType"]), self._cards(self._data(grouped), raw, places) if grouped else []
+            items = self._data(grouped) if grouped else []
+            if items:  # the client keeps more than one list object: the one holding cards (run s65: an empty first)
+                return h.i32(sel + f["m_ListType"]), self._cards(items, raw, places)
+            if first is None:
+                first = (h.i32(sel + f["m_ListType"]), [])
+        return first
+
+    def list_bounds(self) -> tuple[int, int] | None:
+        """(least, most) cards the card list MD's client holds wants ticked before Select (``m_SelectMinNum`` /
+        ``m_SelectMaxNum``); None when it holds none. A Deck list of Beginning of Heaven and Earth wants 3 while
+        the engine's request names no count (run s65: one tick, Select dark, stuck). (``m_Open`` reads 0 while a
+        list is up: the list is the object holding cards.)"""
+        if self.cls("CardSelectionList") is None:
+            return None
+        h, f = self.heap, self.classes["CardSelectionList"].fields
+        for sel in self.objects("CardSelectionList"):
+            try:
+                grouped = h.u64(sel + f["m_GroupedDataList"])
+                if not grouped or not self._data(grouped):
+                    continue  # an empty list object (the client keeps more than one)
+                return h.i32(sel + f["m_SelectMinNum"]), h.i32(sel + f["m_SelectMaxNum"])
+            except (MemoryReadError, OSError):
+                continue
         return None
 
     def _data(self, lst: int, depth: int = 0) -> list[int]:
