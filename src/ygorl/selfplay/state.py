@@ -154,8 +154,10 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
                    for c in _cards(me1, loc) + _cards(op1, loc))  # fmt: skip
 
     if kind == "summon":
+        # or already gone again: destroyed in response to the summon (run s82: Artillery Catapult Turtle in the GY
+        # by the next step), or sent off by an effect it triggered (run s76: Gaia the Magical Knight)
         ok = left_hand and (count(me1, "mzone", face=1, sideways=0) > count(me0, "mzone", face=1, sideways=0)
-                            or arrived("mzone", face=1, sideways=0))  # fmt: skip
+                            or arrived("mzone", face=1, sideways=0) or arrived("grave") or arrived("removed"))  # fmt: skip
         return None if ok else "summon: no new face-up Attack Position monster from the hand"
     if kind == "mset":
         ok = left_hand and (count(me1, "mzone", face=0) > count(me0, "mzone", face=0) or arrived("mzone", face=0))
