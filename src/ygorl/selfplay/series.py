@@ -12,6 +12,7 @@ from ygorl.md.ui import Stuck
 from ygorl.md.request import read_request
 from ygorl.selfplay.state import (
     OPTION_DIALOG,
+    POSITION_DIALOG,
     RESULT_WIN,
     MAIN,
     BATTLE,
@@ -222,7 +223,12 @@ class SeriesMixin:
                             "action-no-effect", f"the game does not show the policy's action: {problem}", failed
                         )
                 mine = inp.accepting and inp.player == raw.me
-                ours = inp.player == raw.me or (dialog == "list" and not inp.accepting and self.list_is_ours(raw))
+                # MD's own dialogs while the engine takes no input can read the opponent's input player (run s68 /
+                # s69, our Artillery Catapult Turtle's Special Summon: its list, then its position): ours when memory
+                # confirms it (the client's list holds our cards; the dialog type is the position question)
+                ours = inp.player == raw.me or (not inp.accepting and (
+                    (dialog == "list" and self.list_is_ours(raw))
+                    or (dialog == "position" and req.dialog_type == POSITION_DIALOG)))  # fmt: skip
                 kind = classify(mine=mine, ours=ours, accepting=inp.accepting, mode=inp.mode,
                                 dialog_type=req.dialog_type, choices=len(req.choices), screen=dialog,
                                 context=self.context, zone_pending=self.last_zone is not None)  # fmt: skip
