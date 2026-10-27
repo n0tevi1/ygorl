@@ -323,7 +323,8 @@ class Player(CommandsMixin, ListsMixin, PromptsMixin, BattleMixin, PolicyMixin, 
             return False
         if dialog == "list":
             return self.list_is_ours(raw)
-        return dialog == "position" and self.read_dialog_type() == POSITION_DIALOG
+        # (the zone banner comes first, then the position buttons: run s71, Curse of Dragonfire)
+        return dialog in ("position", "banner") and self.read_dialog_type() == POSITION_DIALOG
 
     def answer_turn_order(self) -> bool:
         """MD's "go first or second?" menu before a duel (some stages ask it after Retry, and once it came only

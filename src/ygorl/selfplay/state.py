@@ -225,6 +225,10 @@ def classify(*, mine: bool, ours: bool, accepting: bool, mode: int, dialog_type:
         return screen
     if not ours:
         return "wait"  # the opponent holds the input: whatever is on screen is theirs
+    if not mine and not accepting and dialog_type == POSITION_DIALOG and screen in ("banner", "position"):
+        # MD's own summon placement while the engine takes no input (a Special Summon by an effect, runs s69 / s71):
+        # the zone banner, then the position buttons
+        return "place" if screen == "banner" else "position"
     if screen == "phase_menu" and mine and mode in (MAIN, BATTLE):
         screen = None  # a phase change under way: the command decision uses (or closes) the open menu
     if screen == "panel":  # a dark band without yes / no labels: the effect choice when memory says so
