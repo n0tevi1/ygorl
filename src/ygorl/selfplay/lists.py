@@ -129,10 +129,11 @@ class ListsMixin:
         or the tick does not confirm it (then every card is ticked and read). A list longer than the screen is
         scrolled with its arrow, one card per turn, until the card is the rightmost shown."""
         client, selection = getattr(self, "client", None), getattr(self, "selection", None)
-        if client is None or selection is None or selection.address is None or not cards:
+        if client is None or selection is None or not cards:
             return None
         try:
-            got = client.list_cards(self.game.read(), places=True)
+            raw = self.game.read()
+            got = client.list_cards(raw, places=True)
         except Exception:  # noqa: BLE001
             return None
         if not got:
@@ -151,6 +152,20 @@ class ListsMixin:
         for _ in range(turns):
             self.ui.click(*LIST_NEXT, "next cards of the list (to the card the client lists)", 1.2)
         pos = j - turns
+        if selection.address is None:
+            # the open-card object is not found yet (a Deck list on turn 1, run s64: 30 ticks to find one card):
+            # calibrate on the tick of the card the client lists, which confirms it at the same time
+            pairs = {(e.cid, e.uid) for e in entries if e.uid} | {(cid, uid) for uid, cid in own_cards(raw).items()}
+            selection.opened(raw, pairs)  # the scan the tick is compared against
+            self.ui.click(*cards[pos], f"#{pos + 1} of {n}: the card the client lists (calibrating)", 0.9)
+            found = selection.opened(self.game.read(), pairs)
+            ok = found is not None and pw(found[0]) == pw(want) and (not want_uid or found[1] == want_uid)
+            self.trace.observe(list_check={"want": want, "by": "client list (calibrated on the tick)", "index": j,
+                                           "turns": turns, "read": list(found) if found else None, "ok": ok})  # fmt: skip
+            if ok:
+                return pos
+            self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
+            return None  # (then every card is ticked and read)
         try:
             prev = selection.memory.read(selection.address, 8)
         except Exception:  # noqa: BLE001
