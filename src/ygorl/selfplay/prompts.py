@@ -130,6 +130,31 @@ class PromptsMixin:
                 # one summoned, so the position question that follows goes to the policy, not to a rule
                 self.listed = (self.expect, (hand[-1].cid,))
 
+    def tick_and_name(self, index: int) -> bool:
+        """Tick the list card at screen position ``index`` and read which card it is from the client list's ticked
+        entry (memory): a rule's pick then names the monster summoned next (run s80: \"first on screen\" of three,
+        and the position question that followed fell to a rule). Whether the card was ticked here."""
+        client = getattr(self, "client", None)
+        cards = L.list_cards(self.ui.capture())
+        if client is None or not 0 <= index < len(cards) or len(cards) < 2:
+            return False
+        try:
+            got = client.list_cards(self.game.read(), places=True)
+            if not got or client.list_ticked():
+                return False  # no list, or one MD pre-ticked (a tick would undo it)
+        except Exception:  # noqa: BLE001
+            return False
+        self.ui.click(*cards[index], f"#{index + 1} of {len(cards)}: tick and read which card it is", 0.9)
+        try:
+            ticked = client.list_ticked() or []
+        except Exception:  # noqa: BLE001
+            ticked = []
+        if len(ticked) == 1 and ticked[0] < len(got[1]) and got[1][ticked[0]].cid:
+            cid = got[1][ticked[0]].cid
+            self.listed = (self.expect, (cid,))
+            self.trace.observe(list_ticked={"index": index, "entry": ticked[0], "cid": cid})
+        return True
+
     def list_is_ours(self, raw: RawDuel) -> bool:
         """A card list on screen while the engine takes no input is ours when the client's list (memory) holds own
         cards that are where it says: the input's player read the opponent's while our Artillery Catapult Turtle
@@ -439,6 +464,8 @@ class PromptsMixin:
                     # the Extra Deck monster to summon (a Fusion Monster of Spiral Fusion): MD asks its position before
                     # it leaves the Extra Deck, after the Material lists (run s74: the position fell to a rule)
                     self.extra_pick = (self.expect, req.candidates[pick].cid)
+            if not ticked:
+                ticked = self.tick_and_name(index)
             self.trace.observe(list_cards=self.ui.pick_list_cards([index], ticked=ticked), list_index=index,
                                list_candidates=[[c.cid, c.location, c.sequence] for c in req.candidates])  # fmt: skip
             self.context = "list"
