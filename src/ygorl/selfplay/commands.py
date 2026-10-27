@@ -537,13 +537,14 @@ class CommandsMixin:
         n = len(oc.commands)
         # an icon must sit where the command list puts it (one command: straight above the card; Obelisk's attack
         # clicked a mark 88 px to the right six times and never attacked)
-        expect = [round(xy[0] + (i - (n - 1) / 2) * FIELD_ICON_STEP) for i in range(n)]
+        ax = L.MY_FIELD_ICON_X if tuple(xy) == L.MY_FIELD_ZONE else xy[0]  # (the Field Zone's icon is off the card)
+        expect = [round(ax + (i - (n - 1) / 2) * FIELD_ICON_STEP) for i in range(n)]
         icons = [p for p in icons if min(abs(p[0] - e) for e in expect) <= 45]
         if len(icons) != n:
             # the card is open (memory says so): its icons blink, so look again over a blink cycle rather than
             # clicking the card again, which closed it (Ra's attack was then clicked on nothing eight times)
             icons = self.blinking_icons(xy, expect) or icons
-        computed = (round(xy[0] + (nth - (n - 1) / 2) * FIELD_ICON_STEP), xy[1] + FIELD_ICON_DY)
+        computed = (round(ax + (nth - (n - 1) / 2) * FIELD_ICON_STEP), xy[1] + FIELD_ICON_DY)
         # each click is checked in memory within seconds; one without effect is followed by the next way to reach
         # the icon (never the same one twice): the icon seen, its computed place, the card opened again
         if len(icons) != n:

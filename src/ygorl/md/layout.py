@@ -36,6 +36,7 @@ COMMAND_DY = -220  # first command button, relative to the clicked hand card
 MY_MZONE_Y, MY_SZONE_Y = 740, 930
 ZONE_X = (650, 844, 1038, 1232, 1426)  # columns 1-5 from the advisor's left
 MY_FIELD_ZONE = (480, 750)  # the advisor's Field Zone (Spell & Trap sequence 5), left of column 1 (run s65's capture)
+MY_FIELD_ICON_X = 558  # its command icon is drawn 78 px right of the card (run s66: Galloping Gaia's Activate Effect)
 PHASE_BADGE = (1580, 560)
 PHASE_MENU = {"battle": (1144, 861), "main2": (1379, 861), "end": (1613, 861)}
 
