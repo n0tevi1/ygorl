@@ -22,6 +22,7 @@ from ygorl.md.ui import (
 )
 from ygorl.md.explore import find_buttons
 from ygorl.md.request import Candidate
+from ygorl.md.selection import own_cards
 from ygorl.selfplay.observe import md_option_desc, option_of_description
 from ygorl.selfplay.state import (
     OPTION_OK,
@@ -128,6 +129,18 @@ class PromptsMixin:
                 # no list named the card (Palladium Oracle Mahad's "You drew card(s)"): the card just drawn is the
                 # one summoned, so the position question that follows goes to the policy, not to a rule
                 self.listed = (self.expect, (hand[-1].cid,))
+
+    def list_is_ours(self, raw: RawDuel) -> bool:
+        """A card list on screen while the engine takes no input is ours when the client's list (memory) holds own
+        cards that are where it says: the input's player read the opponent's while our Artillery Catapult Turtle
+        asked which monster to Special Summon (run s68: waited 120 s). A stale list names cards since moved."""
+        client = getattr(self, "client", None)
+        try:
+            got = client.list_cards(raw) if client is not None else None
+        except Exception:  # noqa: BLE001
+            return False
+        own = own_cards(raw)
+        return bool(got and got[1] and all(c.uid and own.get(c.uid) == c.cid for c in got[1]))
 
     def list_identity(self) -> int:
         """Which card list the client holds (memory; 0 when unknown): a list MD opens again is a new one."""

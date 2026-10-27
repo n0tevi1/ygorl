@@ -222,7 +222,8 @@ class SeriesMixin:
                             "action-no-effect", f"the game does not show the policy's action: {problem}", failed
                         )
                 mine = inp.accepting and inp.player == raw.me
-                kind = classify(mine=mine, ours=inp.player == raw.me, accepting=inp.accepting, mode=inp.mode,
+                ours = inp.player == raw.me or (dialog == "list" and not inp.accepting and self.list_is_ours(raw))
+                kind = classify(mine=mine, ours=ours, accepting=inp.accepting, mode=inp.mode,
                                 dialog_type=req.dialog_type, choices=len(req.choices), screen=dialog,
                                 context=self.context, zone_pending=self.last_zone is not None)  # fmt: skip
                 self.trace.observe(kind=kind)
