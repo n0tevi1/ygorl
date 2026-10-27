@@ -22,6 +22,7 @@ OPTION_DIALOG = 6  # the dialog type of MD's "which effect?" choice (DLL_DuelDlg
 OPTION_OK = (1024, 788)
 
 
+PHASE_CHANGES = ("battle_phase", "main2", "end_phase")  # the policy's phase-change actions (``Player.context``)
 LIST_NEXT = (1496, 1120)  # the card list's ">" arrow (shown when the list has more cards than fit)
 LIST_PREV = (552, 1120)  # its "<" arrow, mirrored (run s65's capture)
 RA = 10000010  # The Winged Dragon of Ra

@@ -55,6 +55,7 @@ from ygorl.selfplay.observe import ShadowObserver
 from ygorl.selfplay.trace import Trace
 from ygorl.selfplay.state import (
     INPUT_MODE,
+    PHASE_CHANGES,
     INPUT_ACCEPT,
     INPUT_PLAYER,
     FOCUS_CID,
@@ -323,6 +324,8 @@ class Player(CommandsMixin, ListsMixin, PromptsMixin, BattleMixin, PolicyMixin, 
             return False
         if dialog == "list":
             return self.list_is_ours(raw)
+        if dialog == "yesno" and getattr(self, "context", "") in PHASE_CHANGES:
+            return True  # "Continue your Main Phase?" after an opponent's response to our phase change (run s81)
         # (the zone banner comes first, then the position buttons: run s71, Curse of Dragonfire)
         return dialog in ("position", "banner") and self.read_dialog_type() == POSITION_DIALOG
 

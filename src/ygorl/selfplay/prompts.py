@@ -26,6 +26,7 @@ from ygorl.md.selection import own_cards
 from ygorl.selfplay.observe import md_option_desc, option_of_description
 from ygorl.selfplay.state import (
     OPTION_OK,
+    PHASE_CHANGES,
     RA,
     SLIFER,
     HAND_LOCATION,
@@ -369,6 +370,11 @@ class PromptsMixin:
                 # card from the Deck to your hand?" of The True Name): take it
                 pick = 0
                 self.trace.rule("yesno-yes-own-effect")
+            elif pick is None and self.context in PHASE_CHANGES:
+                # "Continue your Main Phase?": the opponent responded to our phase change (run s81, waited 120 s);
+                # the policy chose the change, so no (a yes would stay in the phase it chose to leave)
+                pick = 1
+                self.trace.rule("phase-change-continue")
             elif pick is None and self.context.startswith("attack") and getattr(self, "attacker", None):
                 # a replay ("the opponent's monsters changed: continue the attack?"): the policy on the new board,
                 # its attacker not counted as having attacked: yes when it still attacks with it
