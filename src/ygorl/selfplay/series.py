@@ -185,6 +185,7 @@ class SeriesMixin:
                 _board_key(me, op),
                 req.params,  # successive "activate?" windows at different timings look alike otherwise
                 len(self.forbidden) + len(self.field_picked[1]),
+                self.list_identity() if dialog == "list" else 0,  # a list asked again is a new one
             )  # a pick of a multi-pick is progress too
             self.recent = (self.recent + [state])[-8:]
             # the Draw Phase takes a few clicks (badge, Deck) by design: it has its own budget of attempts

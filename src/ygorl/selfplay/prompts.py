@@ -129,6 +129,14 @@ class PromptsMixin:
                 # one summoned, so the position question that follows goes to the policy, not to a rule
                 self.listed = (self.expect, (hand[-1].cid,))
 
+    def list_identity(self) -> int:
+        """Which card list the client holds (memory; 0 when unknown): a list MD opens again is a new one."""
+        client = getattr(self, "client", None)
+        try:
+            return client.list_identity() if client is not None else 0
+        except Exception:  # noqa: BLE001
+            return 0
+
     def observe_client_list(self) -> None:
         """Record the client's card list (memory) next to what the screen shows: whether its order is the screen's
         (then lists need no tick to identify a card) is checked on these records."""

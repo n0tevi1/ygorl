@@ -532,6 +532,22 @@ class Client:
                 continue
         return None
 
+    def list_identity(self) -> int:
+        """The address of the item list of the card list the client holds (0 when none): MD builds a new one each
+        time it opens a list, so the same-looking list asked again (Beginning of Heaven and Earth's 3 Deck picks,
+        one at a time) is told from one that did not take its Select."""
+        if self.cls("CardSelectionList") is None:
+            return 0
+        h, f = self.heap, self.classes["CardSelectionList"].fields
+        for sel in self.objects("CardSelectionList"):
+            try:
+                grouped = h.u64(sel + f["m_GroupedDataList"])
+                if grouped and self._data(grouped):
+                    return self._data(grouped)[0]
+            except (MemoryReadError, OSError):
+                continue
+        return 0
+
     def _data(self, lst: int, depth: int = 0) -> list[int]:
         """ListCardData objects of a list, nested lists (groups) flattened in order."""
         out = []
