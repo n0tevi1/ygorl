@@ -203,8 +203,9 @@ def test_list_selection_by_index():
     panel, centres = list_panel(3)
     ui, mouse, sleeps = make_ui(panel, panel, panel, board())  # the panel closes after Select
     assert ui.pick_list_cards([1]) == [(x, 905) for x in centres]
-    # 0.3: a second capture to see the cards have stopped sliding in
-    assert mouse.clicks == [(centres[1], 905), (1026, 1116)] and sleeps == [0.3, 0.8, 1.0]
+    # 0.3: a second capture to see the cards have stopped sliding in; then 8 polls for a lit Select (this panel's
+    # Select reads neither lit nor dark: pressed after the polls, no second tick)
+    assert mouse.clicks == [(centres[1], 905), (1026, 1116)] and sleeps == [0.3, 0.8] + [0.3] * 8 + [1.0]
     assert ui.clicks[0]["why"] == "#2 of 3 cards in the list"
 
 
@@ -854,7 +855,7 @@ def test_ra_pays_lp_only_when_it_can_attack():
     assert player.ra_pays_lp(raw, other) is None
 
 
-def test_md_offers_masks_actions_the_highlight_rules_out():
+def test_md_offers_masks_actions_the_highlight_rules_out(monkeypatch):
     """A hand card MD does not light has no command; a lit card only its aura's groups (memory, not icons)."""
     from ygorl.engine import constants as C
     from ygorl.selfplay.loop import Player
@@ -875,6 +876,15 @@ def test_md_offers_masks_actions_the_highlight_rules_out():
     assert offered(act("summon", 111)) and not offered(act("activate", 111))
     assert not offered(act("summon", 222))  # not lit at all
     assert offered(SimpleNamespace(kind="end_phase", card=None))
+
+    # nothing lit: every card's view read means no card command (a set Pot of Extravagance after Main Phase 1);
+    # views not read yet means no test
+    monkeypatch.setattr("ygorl.selfplay.policy.time.sleep", lambda s: None)
+    player.client = SimpleNamespace(highlighted=lambda r: {}, views_complete=True)
+    offered = player.md_offers(raw)
+    assert not offered(act("activate", 111)) and offered(SimpleNamespace(kind="end_phase", card=None))
+    player.client = SimpleNamespace(highlighted=lambda r: {}, views_complete=False)
+    assert player.md_offers(raw)(act("activate", 111))
 
 
 def test_list_card_found_from_the_client_list():

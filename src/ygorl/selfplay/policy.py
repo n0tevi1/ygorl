@@ -64,8 +64,10 @@ class PolicyMixin:
                 if lit:
                     break
                 time.sleep(0.3)
-        if not lit:
-            return lambda action: True
+        if not lit and not getattr(client, "views_complete", False):
+            return lambda action: True  # (the highlight not readable: no test)
+        # every own card's view read and none lit: MD offers no hand / field card a command (a set Pot of
+        # Extravagance the rebuild could activate in Main Phase 2, run s64: MD refused it twice)
         me = raw.players[raw.me]
         masked = []
 

@@ -331,6 +331,7 @@ class Client:
         self.classes: dict[str, Class] = {}
         self.instances: dict[str, list[int]] = {}
         self.scanned: dict[str, float] = {}
+        self.views_complete = False  # the last highlighted() read a view of every own hand / field card
 
     @classmethod
     def for_process(cls, memory: Memory, pid: int) -> Client:
@@ -415,6 +416,7 @@ class Client:
     def highlighted(self, raw: RawDuel) -> dict[int, int]:
         """uid -> aura (``CardPlane.auraEffType``) of every own card MD highlights now (see :func:`aura_kinds`).
         Only cards whose (uid, card id) is one of the player's own on the board read ``raw`` count."""
+        self.views_complete = False
         if self.cls("CardRoot") is None or self.cls("CardPlane") is None:
             return {}
         own = own_cards(raw)
@@ -441,6 +443,7 @@ class Client:
             me = raw.players[raw.me]
             shown = {c.uid for c in me.piles["hand"]} | {c.uid for c in me.slots if c is not None}
             if shown <= seen:
+                self.views_complete = True  # (so an empty answer means no card is lit, not views unread)
                 break  # every own hand / field card has its view (else a new one was pooled: search again)
         return lit
 

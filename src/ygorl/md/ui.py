@@ -698,13 +698,17 @@ class UI:
                 nth = "first" if i == 0 else f"#{i + 1}"
                 self.click(*cards[i], f"{nth} of {len(cards)} cards in the list{again}", 0.8)
             # Select lights up once MD has the tick; pressing it before then does nothing, and the next tick of the
-            # same card would undo this one
+            # same card would undo this one. Only a lit Select counts: a capture while the panel redraws reads
+            # neither state, and taking that as lit sent Select on a lost tick (run s64: Gaia's Dragon list stuck)
             for _ in range(8):
-                if list_select_state(self.capture()) != "disabled":
+                img = self.capture()
+                now = {list_select_state(img), list_select_state(img, LIST_SELECT_TWO_TEXT)}
+                if "enabled" in now:
                     break
                 self.sleep(0.3)
             else:
-                continue
+                if "disabled" in now:
+                    continue  # the tick did not register: once more
             break
         self.click(*LIST_SELECT, "select", 1.0)
         if self._list_open(4.0):  # MD can take seconds to act on Select; clicking again would undo the tick
