@@ -213,6 +213,13 @@ def test_the_summoned_monster_is_told_from_memory(cards):
     assert summoned_card(None, None, PW, before=before, now=raw_from_digest(field, off, []), cards=cards) == JACK
     assert summoned_card(None, None, PW, cards=cards, listed=(6, 6)) == JACK  # MD listed only Jack's Knights
     assert summoned_card(None, None, PW, cards=cards, listed=(6, 2)) == 0
+    # a monster's own effect from the hand that summons it (asked while it is still in the hand)
+    from ygorl.engine import constants as C
+
+    own = SimpleNamespace(
+        kind="activate", card=SimpleNamespace(code=JACK, loc=SimpleNamespace(location=C.LOCATION_HAND))
+    )
+    assert summoned_card(None, own, PW, cards=cards) == JACK
 
 
 # -- the tolerant lockstep -----------------------------------------------------------------------------------------

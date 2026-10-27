@@ -471,6 +471,12 @@ def summoned_card(req, action, passwords: Mapping[int, int], shadow: ShadowDuel 
         card = cards.get(password)
         if card is not None and card.is_monster:
             return password
+    if action is not None and action.kind == "activate" and action.card is not None and cards is not None:
+        # a monster's effect activated from the hand that Special Summons the monster itself (Gaia the Fierce Knight
+        # Origin, run s81): MD asks the position while it is still in the hand
+        card = cards.get(action.card.code)
+        if card is not None and card.is_monster and action.card.loc.location == C.LOCATION_HAND:
+            return action.card.code
     return 0
 
 
