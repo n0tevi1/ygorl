@@ -320,10 +320,8 @@ class CommandsMixin:
         if where.location in (C.LOCATION_MZONE, C.LOCATION_SZONE) and best.kind == "activate":
             if where.location == C.LOCATION_MZONE:
                 xy = my_monster_xy(where.sequence)
-            elif where.sequence < 5:
-                xy = L.my_zone("szone", where.sequence)
             else:
-                raise Stuck("no position measured for the Field Zone yet")
+                xy = L.my_zone("szone", where.sequence)  # (5: the Field Zone)
             if self.activate_by_mask(raw, best, cid, xy):
                 return
             if getattr(self, "mask_refused", False):

@@ -164,7 +164,7 @@ class BattleMixin:
         xy = None
         if c.location == "mzone" and c.sequence is not None:
             xy = my_monster_xy(c.sequence) if c.player == raw.me else opp_monster_xy(c.sequence)
-        elif c.location == "szone" and c.player == raw.me and c.sequence is not None and c.sequence < 5:
+        elif c.location == "szone" and c.player == raw.me and c.sequence is not None and c.sequence <= 5:
             xy = L.my_zone("szone", c.sequence)
         # frames are found a little off the slot's measured point ((1219, 740) for (1232, 750)): near is enough
         near = [q for q in lit if xy is not None and abs(q[0] - xy[0]) + abs(q[1] - xy[1]) < 60]
@@ -287,7 +287,7 @@ class BattleMixin:
         me, op = raw.players[raw.me], raw.players[1 - raw.me]
         cards = [my_monster_xy(s) for s in range(7) if me.slots[s] is not None]
         cards += [opp_monster_xy(s) for s in range(7) if op.slots[s] is not None]
-        cards += [my_spell_xy(s) for s in range(5) if me.slots[7 + s] is not None]
+        cards += [my_spell_xy(s) for s in range(6) if me.slots[7 + s] is not None]
         cards += [opp_spell_xy(s) for s in range(5) if op.slots[7 + s] is not None]
         return [xy for xy in spots if any(abs(xy[0] - c[0]) + abs(xy[1] - c[1]) < 80 for c in cards)]
 
@@ -371,7 +371,7 @@ class BattleMixin:
     def field_spots(self, raw: RawDuel) -> list:
         """Screen spots of every card on the field: ours first (Spell & Trap row, then monsters), then theirs."""
         me, op = raw.players[raw.me], raw.players[1 - raw.me]
-        out = [my_spell_xy(s) for s in range(5) if me.slots[7 + s] is not None]
+        out = [my_spell_xy(s) for s in range(6) if me.slots[7 + s] is not None]
         out += [my_monster_xy(s) for s in range(7) if me.slots[s] is not None]
         out += [opp_monster_xy(s) for s in range(7) if op.slots[s] is not None]
         out += [opp_spell_xy(s) for s in range(5) if op.slots[7 + s] is not None]

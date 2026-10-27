@@ -35,6 +35,7 @@ HAND_Y, HAND_CENTER_X, HAND_STEP = 1100, 1020, 140
 COMMAND_DY = -220  # first command button, relative to the clicked hand card
 MY_MZONE_Y, MY_SZONE_Y = 740, 930
 ZONE_X = (650, 844, 1038, 1232, 1426)  # columns 1-5 from the advisor's left
+MY_FIELD_ZONE = (480, 750)  # the advisor's Field Zone (Spell & Trap sequence 5), left of column 1 (run s65's capture)
 PHASE_BADGE = (1580, 560)
 PHASE_MENU = {"battle": (1144, 861), "main2": (1379, 861), "end": (1613, 861)}
 
@@ -94,7 +95,9 @@ def command_button(card: tuple[int, int]) -> tuple[int, int]:
 
 
 def my_zone(location: str, sequence: int) -> tuple[int, int]:
-    """The advisor's Main Monster Zone (sequence 0-4) or Spell & Trap Zone (0-4)."""
+    """The advisor's Main Monster Zone (sequence 0-4) or Spell & Trap Zone (0-4; 5 is the Field Zone)."""
+    if location == "szone" and sequence == 5:
+        return MY_FIELD_ZONE
     if not 0 <= sequence < 5:
         raise ValueError(f"no measured position for {location} {sequence}")
     return ZONE_X[sequence], MY_MZONE_Y if location == "mzone" else MY_SZONE_Y
