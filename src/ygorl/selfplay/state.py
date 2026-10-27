@@ -316,9 +316,13 @@ def searchable(name: str) -> str:
 
 def clickable(action) -> bool:
     """Whether the player can carry ``action`` out: not yet effects activated from the banished cards (the
-    Graveyard's are, through its viewer: :meth:`Player.graveyard_activate`)."""
+    Graveyard's are, through its viewer: :meth:`Player.graveyard_activate`), nor a Special Summon by its own
+    procedure from anywhere but the hand (an Extra Deck Link Summon of Black Luster Soldier - Soldier of Chaos was
+    chosen and refused three times in one turn of run s83: the Extra Deck has no click script yet)."""
     card = action.card
     if action.kind == "activate" and card is not None and card.loc.location == C.LOCATION_REMOVED:
+        return False
+    if action.kind == "spsummon" and card is not None and card.loc.location != C.LOCATION_HAND:
         return False
     return True
 
