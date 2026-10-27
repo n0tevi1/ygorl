@@ -288,7 +288,7 @@ class BattleMixin:
         cards = [my_monster_xy(s) for s in range(7) if me.slots[s] is not None]
         cards += [opp_monster_xy(s) for s in range(7) if op.slots[s] is not None]
         cards += [my_spell_xy(s) for s in range(6) if me.slots[7 + s] is not None]
-        cards += [opp_spell_xy(s) for s in range(5) if op.slots[7 + s] is not None]
+        cards += [opp_spell_xy(s) for s in range(6) if op.slots[7 + s] is not None]
         return [xy for xy in spots if any(abs(xy[0] - c[0]) + abs(xy[1] - c[1]) < 80 for c in cards)]
 
     def offered_field_cards(self, raw: RawDuel) -> list[tuple[int, int]]:
@@ -383,7 +383,7 @@ class BattleMixin:
         out = [my_spell_xy(s) for s in range(6) if me.slots[7 + s] is not None]
         out += [my_monster_xy(s) for s in range(7) if me.slots[s] is not None]
         out += [opp_monster_xy(s) for s in range(7) if op.slots[s] is not None]
-        out += [opp_spell_xy(s) for s in range(5) if op.slots[7 + s] is not None]
+        out += [opp_spell_xy(s) for s in range(6) if op.slots[7 + s] is not None]
         return out
 
     def selectable_in_memory(self, xy) -> bool | None:
