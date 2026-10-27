@@ -532,6 +532,25 @@ class Client:
                 continue
         return None
 
+    def list_ticked(self) -> list[int] | None:
+        """Positions (in :meth:`list_cards` order, ``places=True``) of the entries ticked now in the card list the
+        client holds (``ListCardData.selectted``, set the moment a card on screen is ticked); None when no list.
+        Unlike the open-card read it names exactly the entry a tick reached (runs s73-s79: long Deck lists whose
+        open-card reads did not match the client's order picked the wrong card)."""
+        if self.cls("CardSelectionList") is None or self.cls("ListCardData") is None:
+            return None
+        h, f = self.heap, self.classes["CardSelectionList"].fields
+        d = self.classes["ListCardData"].fields
+        for sel in self.objects("CardSelectionList"):
+            try:
+                grouped = h.u64(sel + f["m_GroupedDataList"])
+                items = self._data(grouped) if grouped else []
+                if items:
+                    return [i for i, it in enumerate(items) if self.heap.memory.read(it + d["selectted"], 1)[0]]
+            except (MemoryReadError, OSError):
+                continue
+        return None
+
     def list_identity(self) -> int:
         """The address of the item list of the card list the client holds (0 when none): MD builds a new one each
         time it opens a list, so the same-looking list asked again (Beginning of Heaven and Earth's 3 Deck picks,

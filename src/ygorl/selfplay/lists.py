@@ -124,6 +124,63 @@ class ListsMixin:
             self.ui.click(*cards[pos], f"#{pos + 1} of {n}: the card the client lists (again)", 0.9)
         return None
 
+    def find_by_ticked(self, want: int, want_uid: int, cards: list) -> int | None:
+        """The screen position of the wanted card, found by which entry of the client's list each tick reaches
+        (memory: ``ListCardData.selectted``, :meth:`ygorl.md.client.Client.list_ticked`): tick where the client's
+        order puts the card, read the entry ticked, and move by the difference (turning the list when the place
+        lies off screen) until the wanted entry is ticked; left ticked on success. None when the ticked entries
+        are not readable or the card is not reached in a few moves (then every card is ticked and read)."""
+        client = getattr(self, "client", None)
+        if client is None or not cards:
+            return None
+        try:
+            got = client.list_cards(self.game.read(), places=True)
+            before = client.list_ticked()
+        except Exception:  # noqa: BLE001
+            return None
+        self.ticked_tried = False
+        if not got or before is None or before:
+            return None  # no list, or one with a card ticked already (MD's own pre-tick: not ours to move)
+        entries, n = got[1], len(cards)
+        pw = lambda cid: self.passwords.get(cid, cid)  # noqa: E731
+        hits = [
+            j for j, e in enumerate(entries) if e.cid and (e.uid == want_uid if want_uid else pw(e.cid) == pw(want))
+        ]
+        if not hits or len(entries) < n:
+            return None
+        j = hits[0]
+        pos, moves = min(j, n - 1), []
+        self.ticked_tried = True
+        for _ in range(max(0, j - (n - 1))):
+            self.ui.click(*LIST_NEXT, "next cards of the list (to the card the client lists)", 1.2)
+            self.list_turned = getattr(self, "list_turned", 0) + 1
+        for _ in range(5):
+            self.ui.click(*cards[pos], f"#{pos + 1} of {n}: the card the client lists (read by its tick)", 0.9)
+            try:
+                ticked = client.list_ticked() or []
+            except Exception:  # noqa: BLE001
+                ticked = []
+            k = ticked[0] if len(ticked) == 1 else None
+            moves.append([pos, k])
+            if k is not None and (k in hits if not want_uid else entries[k].uid == want_uid):
+                self.trace.observe(list_check={"want": want, "by": "client list (its tick)", "index": j, "moves": moves,
+                                               "ok": True})  # fmt: skip
+                return pos
+            self.ui.click(*cards[pos], f"untick #{pos + 1}", 0.6)
+            if k is None:
+                break
+            target = pos + (j - k)
+            for _ in range(max(0, target - (n - 1))):
+                self.ui.click(*LIST_NEXT, "next cards of the list (moving to the card)", 1.2)
+                self.list_turned = getattr(self, "list_turned", 0) + 1
+            for _ in range(max(0, -target)):
+                self.ui.click(*LIST_PREV, "previous cards of the list (moving to the card)", 1.2)
+                self.list_turned = max(0, getattr(self, "list_turned", 0) - 1)
+            pos = min(max(target, 0), n - 1)
+        self.trace.observe(list_check={"want": want, "by": "client list (its tick)", "index": j, "moves": moves,
+                                       "ok": False})  # fmt: skip
+        return None
+
     def find_by_client_list(self, want: int, want_uid: int, cards: list) -> int | None:
         """The screen position of the wanted card from the client's own list (memory; its order is the screen's,
         checked on run s33's lists), ticked and confirmed by the open-card read; None when the list does not tell
@@ -256,7 +313,9 @@ class ListsMixin:
         if n <= 1 or (len({pw(c) for c in cands}) <= 1 and not by_uid):
             return 0, False  # one card, or only copies of one card: any position is the wanted card
         self.list_turned = 0
-        direct = self.find_by_client_list(want, want_uid if by_uid else 0, cards)
+        direct = self.find_by_ticked(want, want_uid if by_uid else 0, cards)
+        if direct is None and not getattr(self, "ticked_tried", False):
+            direct = self.find_by_client_list(want, want_uid if by_uid else 0, cards)
         if direct is not None:
             self.pending_list = (self.ui.capture(), req)
             return direct, True
@@ -318,6 +377,20 @@ class ListsMixin:
                 return found[changed[0]]
             return None
 
+        client = getattr(self, "client", None)
+        try:
+            listed = client.list_cards(self.game.read(), places=True)[1] if client is not None else []
+        except Exception:  # noqa: BLE001
+            listed = []
+
+        def ticked_entry() -> int | None:
+            """The client list's entry the last tick reached (memory), when exactly one is ticked."""
+            try:
+                ticked = client.list_ticked() if client is not None and listed else None
+            except Exception:  # noqa: BLE001
+                return None
+            return ticked[0] if ticked is not None and len(ticked) == 1 and ticked[0] < len(listed) else None
+
         uids_seen: set = set()
         complete = False
         for page in range(LIST_PAGES):
@@ -331,11 +404,14 @@ class ListsMixin:
                 self.ui.click(*cards[i], f"#{i + 1} of {n}: which card?", 0.9)
                 img = self.ui.capture()
                 got, uid, how = None, 0, ""
-                if scan["still"] >= 2:
+                k = ticked_entry()
+                if k is not None and listed[k].cid in set(cands):
+                    (got, uid), how = (listed[k].cid, listed[k].uid), "memory (the list entry ticked)"
+                if got is None and scan["still"] >= 2:
                     found = scan_tick()
                     if found is not None and found[0] in set(cands):
                         (got, uid), how = found, "memory (the list's object)"
-                if selection is not None and prev is None:
+                if got is None and selection is not None and prev is None:
                     found = selection.opened(self.game.read(), pairs)  # the pair that changed with this tick
                     if found is not None and found[0] in set(cands):
                         (got, uid), how = found, "memory (calibrated on the list)"
