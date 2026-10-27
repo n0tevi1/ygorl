@@ -131,15 +131,18 @@ class NimBranchHooks:
     """Window branching on Nim (``RolloutCollector(branch=..., branch_hooks=NimBranchHooks())``): every learner decision
     of a pool game with two or more legal takes is a window; the branch set is the ``k`` takes of highest probability
     (Nim has no pass); the horizon is the learner's next decision; the opponent's "board" is 1 when the learner then
-    faces a multiple of 4 (a lost pile against perfect play), else 0. ``require_recovery`` (scripted lines only)
-    leaves no window."""
+    faces a multiple of 4 (a lost pile against perfect play), else 0. ``require_recovery`` (scripted lines only) and
+    ``cards`` (Nim has no cards) leave no window."""
 
-    def candidates(self, slot, ev, probs: Tensor, k: int, require_recovery: bool, effect: int,
-                   occurrence: int) -> tuple[int, list[int]] | None:  # fmt: skip
+    def candidates(self, slot, ev, probs: Tensor, k: int, require_recovery: bool, effect: int, occurrence: int,
+                   cards=()) -> tuple[int, list[int]] | None:  # fmt: skip
         legal = np.flatnonzero(ev.obs["action_mask"])
-        if require_recovery or slot.assignment.opponent is None or len(legal) < 2:
+        if require_recovery or cards or slot.assignment.opponent is None or len(legal) < 2:
             return None
         return -1, sorted((int(i) for i in legal), key=lambda i: (-float(probs[i]), i))[:k]
+
+    def recovered(self, slot, ev, fires: list[int], effect: int, occurrence: int) -> bool:
+        return False
 
     def turn(self, ev) -> int:
         return 0

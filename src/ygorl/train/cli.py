@@ -34,7 +34,8 @@ class Flag:
     choices: tuple[str | int, ...] | None = None
     metavar: str | None = None
     zero_none: bool = False  # 0 on the command line means None ("off")
-    listing: str | None = None  # tuple fields: "csv" (one comma-separated value) or "append" (repeatable flag)
+    listing: str | None = None  # tuple fields: "csv" (one comma-separated value), "append" (repeatable flag) or
+    # "nargs" (one flag, space-separated values)
     path: bool = False  # stored as an absolute path
     unset: str | None = None  # what a None default means, shown as the default in --help
 
@@ -194,6 +195,10 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--branch-fraction", "branch_fraction", "share of the qualifying windows that are branched"),
         _f("--no-branch-require-recovery", "branch_require_recovery", "also branch windows without a recovery line for "
            "the activation (the snapshot plays the broken line: biased towards firing)", negate=True),
+        _f("--branch-cards", "branch_cards", "only branch windows whose activations of the branch set are all of these "
+           "card passwords (cards with recovery lines for every recoverable occurrence: a window without one is a "
+           "real break); with the default --branch-require-recovery both conditions apply", metavar="PASSWORD",
+           listing="nargs"),
         _f("--branch-board-scale", "branch_board_scale", "branch value per board point (3 per interruption, 1 per "
            "monster, 0.5 per spell / trap)"),
         _f("--branch-mode", "ppo.branch_mode", "window counterfactual advantage on branched rows: replace the VRPO "
@@ -266,6 +271,8 @@ def add_arguments(parser: argparse.ArgumentParser, base=None, only: tuple[str, .
                 kw.update(action="append", default=list(default))
             elif f.listing == "csv":
                 kw.update(default=",".join(default))
+            elif f.listing == "nargs":
+                kw.update(nargs="+", type=tp, default=list(default))
             else:
                 kw.update(type=tp, default=0 if default is None and f.zero_none else default)
             shown = kw["default"]
@@ -293,7 +300,7 @@ def from_args(args: argparse.Namespace, decks, base=None, only: tuple[str, ...] 
             value = None
         elif f.listing == "csv":
             value = tuple(s for s in value.split(",") if s)
-        elif f.listing == "append":
+        elif f.listing in ("append", "nargs"):
             value = tuple(value)
         elif f.path and value is not None:
             value = str(Path(value).resolve())
@@ -330,6 +337,8 @@ def to_argv(cfg, base=None) -> list[str]:
         elif f.listing == "append":
             for item in value:
                 argv += [f.flag, item]
+        elif f.listing == "nargs":
+            argv += [f.flag, *map(str, value)]
         else:
             argv += [f.flag, ",".join(value) if f.listing == "csv" else str(value)]
     flagged = {k[4:] for f in _flags() for k in f.keys if k.startswith("net.")}

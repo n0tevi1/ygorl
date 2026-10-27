@@ -134,8 +134,10 @@ class TrainConfig:
     # the scripted games on the line's turn the slot is snapshotted and the pass and the branch_k - 1 likeliest
     # activations are each played on branch_rollouts times to the learner's next turn (branch_horizon: board score,
     # critic V or both; branch_board_scale per board point), in branch_fraction of the windows; branch_require_recovery:
-    # only where the line has a recovery line for those activations. The values feed ppo.branch_mode / branch_q_coef /
-    # branch_ce_coef (whose margin is in board points: times branch_board_scale)
+    # only where the line has a recovery line for those activations; branch_cards (non-empty): only where each of those
+    # activations is of one of these passwords (cards whose recovery lines are stored for every recoverable occurrence,
+    # plan §11.8; both given: both conditions). The values feed ppo.branch_mode / branch_q_coef / branch_ce_coef (whose
+    # margin is in board points: times branch_board_scale)
     branch_windows: bool = False
     branch_k: int = 2
     branch_rollouts: int = 1
@@ -143,6 +145,7 @@ class TrainConfig:
     branch_fraction: float = 1.0
     branch_require_recovery: bool = True
     branch_board_scale: float = 0.1
+    branch_cards: tuple[int, ...] = ()
     snapshot_every: int = 10  # updates
     pool_sampling: str = (
         "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
@@ -217,11 +220,15 @@ class TrainConfig:
         if self.line_labelled_only and not self.line_labels:
             raise ValueError("line_labelled_only needs line_labels")
         self.branch_config()  # validates the branch_* values
+        if self.branch_cards and not self.branch_windows:
+            raise ValueError("branch_cards needs branch_windows")
         if self.branch_windows:
             if not (self.line_demos and self.line_share > 0):
                 raise ValueError("branch_windows needs line_demos and a line_share above 0 (it branches their windows)")
             if self.branch_require_recovery and not self.line_recovery:
                 raise ValueError("branch_require_recovery needs line_recovery (or --no-branch-require-recovery)")
+            if self.branch_cards and not self.line_recovery:
+                raise ValueError("branch_cards needs line_recovery (the covered cards' recovery lines)")
             if self.complete_games:
                 raise ValueError("branch_windows needs fixed-length segments, not complete_games")
         uses_branch = self.ppo.branch_mode != "off" or self.ppo.branch_q_coef > 0 or self.ppo.branch_ce_coef > 0
@@ -234,7 +241,7 @@ class TrainConfig:
     def branch_config(self) -> BranchConfig:
         return BranchConfig(fraction=self.branch_fraction, k=self.branch_k, rollouts=self.branch_rollouts,
                             horizon=self.branch_horizon, require_recovery=self.branch_require_recovery,
-                            board_scale=self.branch_board_scale)  # fmt: skip
+                            board_scale=self.branch_board_scale, cards=tuple(self.branch_cards))  # fmt: skip
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -243,6 +250,7 @@ class TrainConfig:
         d["pin_opponents"] = list(self.pin_opponents)
         d["line_demos"] = list(self.line_demos)
         d["line_recovery"] = list(self.line_recovery)
+        d["branch_cards"] = list(self.branch_cards)
         return d
 
     @property
@@ -259,7 +267,7 @@ class TrainConfig:
         known = {f.name for f in fields(cls)}
         d = {k: v for k, v in data.items() if k in known}
         d["ppo"] = PPOConfig.from_dict(d.get("ppo", {}))
-        for key in ("decks", "eval_opponents", "pin_opponents", "line_demos", "line_recovery"):
+        for key in ("decks", "eval_opponents", "pin_opponents", "line_demos", "line_recovery", "branch_cards"):
             if key in d:
                 d[key] = tuple(d[key])
         return cls(**d)
@@ -649,6 +657,8 @@ class Trainer:
                  + (f", line CE rows {record['line_ce_rows']} ({record['line_ce_fire_targets']} fire targets, loss "
                     f"{record.get('line_ce_loss', 0.0):.4f})" if "line_ce_rows" in record else "")
                  + (f", branched windows {record['branch_windows']} ({record['branch_decisions']} branch decisions"
+                    + (f", no-recovery share {record['branch_no_recovery_share']:.2f}"
+                       if record.get("branch_no_recovery_share") is not None else "")
                     + (f", {record['branch_rows']} rows used, mean adv {record['branch_adv_mean']:.3f}, fire share "
                        f"{record['branch_fire_share']:.2f}, tie share {record['branch_tie_share']:.2f}, hold share "
                        f"{record['branch_hold_share']:.2f}" if "branch_rows" in record else "")
@@ -769,8 +779,9 @@ class Trainer:
             "pool_games": len(pool_scores), "pool_win_rate": None if not pool_scores else round(_mean(pool_scores), 3),
             "first_player_win_rate": None if not first_wins else round(_mean(first_wins), 3),
             **({"discarded_rows": ro.discarded_rows} if ro.complete_games else {}),
-            **({"branch_windows": ro.branch_windows, "branch_decisions": ro.branch_decisions}
-               if ro.branch_value is not None else {}),
+            **({"branch_windows": ro.branch_windows, "branch_decisions": ro.branch_decisions,
+                "branch_no_recovery_share": round(ro.branch_no_recovery / ro.branch_windows, 3)
+                if ro.branch_windows else None} if ro.branch_value is not None else {}),
             "truncated_games": sum(g.truncated for g in games), "errors": sum(g.reason == "error" for g in games),
             "reasons": dict(Counter(g.reason for g in games)),
             "mean_game_decisions": _mean(int(g.result.get("decisions", 0)) for g in games),

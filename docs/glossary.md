@@ -107,6 +107,7 @@ CLAUDE.md 的「游戏王术语约定」是本表的核心子集。
 | branch horizon / board score | 分支视界 / 场面分 | 分支推演停下取值的点（学习方下一个自己回合的第一个决策，或终局）；场面分 = 3 × 阻断点 + 怪兽数 + 0.5 × 魔陷数（`rollout.board_score`） |
 | window counterfactual supervision / `branch_ce_coef` | 窗口反事实监督项 | 把分支值最高的候选当作分支行的交叉熵目标（不经过优势，不受 COMA 基线在近确定策略上的收缩），最高与次高之差不超过边距的平局行不给目标（training.md §8.2，先手打断计划 §11.8） |
 | branch tie / `branch_ce_margin` | 分支平局 / 平局边距 | 分支集最高与次高的分支值之差 ≤ 边距（场面分单位 × `branch_board_scale`，默认 0.5 分）的窗口；不给监督目标，份额记为 `branch_tie_share` |
+| solver-covered card / `branch_cards` | 有求解覆盖的卡 | 每个可恢复的（被回应效果，次数）都已存了恢复线的打断卡（灰流丽、效果遮蔽者）；对它们，窗口没有恢复线基本等于打了真的破场，按卡分支只分支这些卡的窗口（training.md §8.1「按卡分支」，先手打断计划 §11.8） |
 | prefix start / `Position` | 前缀起局 / 局面 | 用种子 + 动作前缀在环境里重放到某个局面（如回合 1 结束）再开始训练（同上 §5.2） |
 | recovery line / `RecoveryLine` | 恢复线 | 对手的线在某时点被打断后，求解器（`--fire`）找到的到达原终场的续线；按（线，窗口身份 =（被回应效果，次数），打断卡）索引，脚本线对手被学习方在该时点打断时改走它（`LinePlayer.interrupt`，状态 `recovering`；同上 §5.3，training.md §8.3） |
 | reactive line | 反应式线 | 按学习者实际回合 1 场面重新求解的对手回合 2 线（同上 §5.3） |

@@ -16,6 +16,7 @@ import pytest
 torch = pytest.importorskip("torch")
 from torch import nn  # noqa: E402
 
+from ygorl.engine.constants import MSG_SELECT_CHAIN  # noqa: E402
 from ygorl.engine.duel import DuelConfig  # noqa: E402
 from ygorl.env.encoded import EncodedVecEnv  # noqa: E402
 from ygorl.nets import NetConfig  # noqa: E402
@@ -335,3 +336,123 @@ def test_board_score_reads_the_line_seats_board_from_the_card_table_and_the_grou
     # without the ground truth the hand and the set card are unknown
     blind = board_interruptions({"players": [{**side, "szone": [], "hand": []}]}, db, 0)
     assert board_score({"cards": cards}, None, db, vocab) == 3 * blind.interruptions + 2 + 0.5
+
+
+# ------------------------------------------------------------------------------------------ branch cards (T13)
+
+VEILER = 97268402  # Effect Veiler: a covered card the learner's deck does not hold
+
+
+class _Line:
+    first_seat, status = False, "playing"
+
+    def __init__(self, recovery=()):
+        self.recovery = set(recovery)
+
+
+class _Slot:
+    def __init__(self, line):
+        self.line = line
+
+
+class _Ev:
+    def __init__(self, rows):
+        """``rows``: (kind, card vocab index) per action row, all legal; the line's turn 1, its chain window."""
+        from ygorl.env.encoding import A_ACTION
+
+        actions = np.zeros((len(rows), A_ACTION), dtype=np.int64)
+        for i, (kind, index) in enumerate(rows):
+            actions[i, 0], actions[i, 2] = kind, index
+        g = np.zeros(32, dtype=np.int64)
+        g[18], g[3], g[2] = MSG_SELECT_CHAIN, 1, 0
+        self.obs = {"globals": g, "actions": actions, "action_mask": np.ones(len(rows), dtype=bool)}
+
+
+def test_branch_cards_need_every_activation_of_the_set_to_be_a_listed_card(db, vocab):
+    """The pass row is not counted; only the activations that made the branch set (the k - 1 likeliest) are."""
+    from ygorl.train.rollout import EncodedBranchHooks
+
+    hooks = EncodedBranchHooks(vocab, db)
+    ash, veiler = vocab.index(FIRE), vocab.index(VEILER)
+    ev = _Ev([(PASS_KIND, 0), (CHAIN_KIND, ash), (CHAIN_KIND, veiler)])
+    probs = torch.tensor([0.2, 0.5, 0.3])
+    slot = _Slot(_Line())
+
+    def found(k, cards, require=False, at=None):
+        return hooks.candidates(at or slot, ev, probs, k, require, 4, 1, frozenset(cards))
+
+    assert found(2, ()) == (0, [0, 1])
+    assert found(2, (FIRE,)) == (0, [0, 1])  # Veiler is not in the branch set
+    assert found(3, (FIRE,)) is None
+    assert found(3, (FIRE, VEILER)) == (0, [0, 1, 2])
+    assert found(2, (VEILER,)) is None
+    # with require_recovery both conditions: a recovery line for the Ash and the Ash listed
+    covered = _Slot(_Line([(4, 1, ash)]))
+    assert found(2, (FIRE,), True, covered) == (0, [0, 1]) and found(2, (VEILER,), True, covered) is None
+    assert found(2, (FIRE,), True) is None
+    assert hooks.recovered(covered, ev, [1], 4, 1) and not hooks.recovered(slot, ev, [1], 4, 1)
+    assert not hooks.recovered(covered, ev, [1, 2], 4, 1)
+
+
+def test_engine_branch_cards_branch_the_listed_cards_without_a_recovery_line(db, vocab, plain):
+    """Without recovery lines the listed card's windows are branched (all of them without one); an unlisted card's
+    are not."""
+    col, env = engine_collector(db, vocab, plain.scripts, BranchConfig(require_recovery=False, cards=(FIRE,)))
+    ro = col.collect()
+    assert ro.branch_windows > 0 and ro.branch_valid.any() and env.snapshot_count() == 0
+    assert ro.branch_no_recovery == ro.branch_windows
+    col, env = engine_collector(db, vocab, plain.scripts, BranchConfig(require_recovery=False, cards=(VEILER,)))
+    ro = col.collect()
+    assert ro.branch_windows == 0 and ro.branch_no_recovery == 0 and not ro.branch_valid.any()
+
+
+def test_engine_branch_cards_with_require_recovery_take_both_conditions(db, vocab, library):
+    """With recovery lines for the Ash and require_recovery, listing the Ash changes nothing (bit for bit, branch
+    fields included); listing only Veiler leaves no window."""
+    a, _ = engine_collector(db, vocab, library.scripts, BranchConfig())
+    b, _ = engine_collector(db, vocab, library.scripts, BranchConfig(cards=(FIRE, VEILER)))
+    ra, rb = a.collect(), b.collect()
+    assert_same_rollout(ra, rb)
+    for name in ("branch_valid", "branch_pass", "branch_windows", "branch_decisions", "branch_no_recovery"):
+        assert same(getattr(ra, name), getattr(rb, name)), name
+    assert torch.equal(ra.branch_value.nan_to_num(9.0), rb.branch_value.nan_to_num(9.0))
+    assert ra.branch_windows > 0 and ra.branch_no_recovery == 0
+    c, _ = engine_collector(db, vocab, library.scripts, BranchConfig(cards=(VEILER,)))
+    assert c.collect().branch_windows == 0
+
+
+def test_branch_no_recovery_share_in_the_rollout_stats():
+    from ygorl.train.trainer import Trainer
+
+    col, _, _ = nim_collector(BranchConfig(require_recovery=False))
+    ro = col.collect()
+    assert ro.branch_windows > 0 and ro.branch_no_recovery == ro.branch_windows  # Nim has no recovery lines
+    assert Trainer._rollout_stats(ro, 0.0)["branch_no_recovery_share"] == 1.0
+    ro.branch_windows, ro.branch_no_recovery = 4, 1
+    assert Trainer._rollout_stats(ro, 0.0)["branch_no_recovery_share"] == 0.25
+    ro.branch_windows = ro.branch_no_recovery = 0
+    assert Trainer._rollout_stats(ro, 0.0)["branch_no_recovery_share"] is None
+
+
+def test_branch_cards_config_and_flag():
+    import argparse
+
+    from ygorl.train import cli
+    from ygorl.train.trainer import TrainConfig
+
+    cfg = TrainConfig(line_demos=("l.jsonl",), line_share=1.0, line_recovery=("r.jsonl",), branch_windows=True,
+                      branch_require_recovery=False, branch_cards=(14558127, VEILER))  # fmt: skip
+    assert cfg.branch_config().cards == (14558127, VEILER)
+    assert TrainConfig.from_dict(cfg.to_dict()) == cfg
+    argv = cli.to_argv(cfg)
+    i = argv.index("--branch-cards")
+    assert argv[i + 1 : i + 3] == ["14558127", str(VEILER)]
+    parser = argparse.ArgumentParser()
+    cli.add_arguments(parser)
+    assert cli.from_args(parser.parse_args(argv), cfg.decks).branch_cards == (14558127, VEILER)
+    assert cli.from_args(parser.parse_args([]), ()).branch_cards == ()
+    with pytest.raises(ValueError, match="branch_cards"):
+        TrainConfig(branch_cards=(14558127,))
+    with pytest.raises(ValueError, match="branch_cards"):
+        TrainConfig(line_demos=("l.jsonl",), line_share=1.0, branch_windows=True, branch_require_recovery=False,
+                    branch_cards=(14558127,))  # fmt: skip

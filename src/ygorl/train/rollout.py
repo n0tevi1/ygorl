@@ -103,7 +103,12 @@ class BranchConfig:
     critic V) or ``"both"`` (V minus the board term); a decided game is +1 / -1 / 0 for the learner whatever the
     horizon, a game cut by a limit or an error invalidates the window. ``require_recovery``: only branch windows at
     which the line is still being played and has a recovery line for every activation of the branch set (§5.1 risk 1:
-    a snapshot that takes over a broken line favours firing).
+    a snapshot that takes over a broken line favours firing). ``cards``: card passwords with solver coverage (every
+    recoverable occurrence of the card has its recovery lines, so a window without one is a window where firing really
+    breaks the line); non-empty: only branch windows at which every activation of the branch set (the pass not
+    counted) is one of these cards -- the activations with a recovery line take it, the others leave the rest of the
+    game to the snapshot (plan §11.8: a recovery-only branching never teaches the windows to fire). With
+    ``require_recovery`` too, a window must meet both; () = no card condition.
     """
 
     fraction: float = 1.0
@@ -112,6 +117,7 @@ class BranchConfig:
     horizon: str = "board"
     require_recovery: bool = True
     board_scale: float = 0.1
+    cards: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not 0 <= self.fraction <= 1:
@@ -171,12 +177,13 @@ class EncodedBranchHooks:
         self.vocab = vocab
         self.cards = cards
 
-    def candidates(self, slot, ev, probs: Tensor, k: int, require_recovery: bool, effect: int,
-                   occurrence: int) -> tuple[int, list[int]] | None:  # fmt: skip
+    def candidates(self, slot, ev, probs: Tensor, k: int, require_recovery: bool, effect: int, occurrence: int,
+                   cards: frozenset[int] | tuple[int, ...] = ()) -> tuple[int, list[int]] | None:  # fmt: skip
         """``(pass row, branch set)`` at a qualifying window, None elsewhere: a chain window of a scripted game on the
         line's turn (not the learner's) with a pass row and an activation; the set is the pass and the ``k - 1``
         activations of highest probability. ``require_recovery``: the line must still be played and have a recovery
-        line for each of those activations at this window (``effect`` / ``occurrence``)."""
+        line for each of those activations at this window (``effect`` / ``occurrence``, :meth:`recovered`).
+        ``cards`` (non-empty): each of those activations must be of a card with one of these passwords."""
         obs = ev.obs
         g = obs.get("globals")
         line = slot.line
@@ -193,12 +200,22 @@ class EncodedBranchHooks:
         if not passes or not fires:
             return None
         fires = sorted(fires, key=lambda i: (-float(probs[i]), i))[: k - 1]
-        if require_recovery:
-            if line.status != "playing" or effect < 0:
-                return None
-            if any((effect, occurrence, int(obs["actions"][i][2])) not in line.recovery for i in fires):
-                return None
+        if cards and any(self._password(int(obs["actions"][i][2])) not in cards for i in fires):
+            return None
+        if require_recovery and not self.recovered(slot, ev, fires, effect, occurrence):
+            return None
         return passes[0], [passes[0], *fires]
+
+    def _password(self, index: int) -> int:
+        return int(self.vocab.password(index)) if index > 1 else 0  # 0 / 1: padding / unknown card
+
+    def recovered(self, slot, ev, fires: list[int], effect: int, occurrence: int) -> bool:
+        """Whether the line is still played and has a recovery line for each activation row of ``fires`` at this
+        window."""
+        line = slot.line
+        if line is None or line.status != "playing" or effect < 0:
+            return False
+        return all((effect, occurrence, int(ev.obs["actions"][i][2])) in line.recovery for i in fires)
 
     def turn(self, ev) -> int:
         return int(ev.obs["globals"][3])
@@ -296,6 +313,7 @@ class Rollout:
     branch_pass: Tensor | None = None  # [T, B]
     branch_windows: int = 0
     branch_decisions: int = 0
+    branch_no_recovery: int = 0  # branched windows with an activation of the set without a recovery line
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -355,6 +373,7 @@ class _BranchState:
     phase: str = "snapshot"  # "snapshot" / "restore": waiting for the window's observation; "run": rolling out
     sums: list[float] = field(default_factory=list)
     ok: bool = True
+    recovered: bool = True  # every activation of the set has a recovery line here (else the snapshot takes over)
     gen: torch.Generator = field(default_factory=torch.Generator)
 
 
@@ -400,7 +419,9 @@ class RolloutCollector:
         self.seed = seed
         self._branch_rng = random.Random(_mix(seed, 0xB4A9C4))  # the fraction draws (never the main generator)
         self._branching = 0  # slots with a window being branched
-        self._branch_counts = [0, 0]  # windows branched, decisions stepped in branches (this collection)
+        self._branch_cards = frozenset(branch.cards) if branch is not None else frozenset()
+        # windows branched, decisions stepped in branches, branched windows without a recovery line (this collection)
+        self._branch_counts = [0, 0, 0]
         self.env = env
         self.model = model
         self.next_game = next_game
@@ -450,7 +471,7 @@ class RolloutCollector:
         opponent_decisions = 0
         ready = list(self._held.values())
         self._held.clear()
-        self._branch_counts = [0, 0]
+        self._branch_counts = [0, 0, 0]
         lockstep = self.min_batch >= B
         deferred: list = []  # lockstep: the other slots' decisions, held back while a window is branched
         while True:
@@ -669,14 +690,16 @@ class RolloutCollector:
         cfg = self.branch
         if cfg.fraction <= 0:
             return None
-        found = self.branch_hooks.candidates(slot, ev, probs, cfg.k, cfg.require_recovery, effect, occurrence)
+        hooks = self.branch_hooks
+        found = hooks.candidates(slot, ev, probs, cfg.k, cfg.require_recovery, effect, occurrence, self._branch_cards)
         if found is None or (cfg.fraction < 1 and self._branch_rng.random() >= cfg.fraction):
             return None
         pass_row, candidates = found
-        return _BranchState(None, ev, a, candidates, pass_row, self.branch_hooks.turn(ev),
+        recovered = hooks.recovered(slot, ev, [c for c in candidates if c != pass_row], effect, occurrence)
+        return _BranchState(None, ev, a, candidates, pass_row, hooks.turn(ev),
                             _mix(self.seed, slot.serial, slot.rows), counted, effect, occurrence, slot.windows,
                             dict(slot.occurrences), None if slot.line is None else slot.line.copy(),
-                            sums=[0.0] * len(candidates))  # fmt: skip
+                            sums=[0.0] * len(candidates), recovered=recovered)  # fmt: skip
 
     def _sort_branch(self, events: list) -> tuple[list, list, dict[int, list]]:
         """Answer what needs no network among the decisions of slots being branched -- the window's observation after
@@ -780,6 +803,7 @@ class RolloutCollector:
         slot.branch = None
         self._branching -= 1
         self._branch_counts[0] += 1
+        self._branch_counts[2] += not st.recovered
         self.env.step(env_id, st.action)
 
     def _act_line(self, slot: _Slot, ev) -> bool:
@@ -912,7 +936,8 @@ class RolloutCollector:
         return {"branch_value": value.reshape(T, B, width),
                 "branch_valid": torch.tensor([r.branch_valid for r in rows], dtype=torch.bool).reshape(T, B),
                 "branch_pass": torch.tensor([r.branch_pass for r in rows], dtype=torch.long).reshape(T, B),
-                "branch_windows": self._branch_counts[0], "branch_decisions": self._branch_counts[1]}  # fmt: skip
+                "branch_windows": self._branch_counts[0], "branch_decisions": self._branch_counts[1],
+                "branch_no_recovery": self._branch_counts[2]}  # fmt: skip
 
 
 __all__ = [

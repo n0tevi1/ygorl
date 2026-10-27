@@ -279,6 +279,14 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
   可选行里有 pass 也有至少一个发动（chain 类）；`--branch-fraction`（默认 1.0）按独立的随机数抽样。默认还要求 `--branch-require-recovery`
   （`--no-branch-require-recovery` 关掉）：线还在按线走，且分支集里的每个发动在这个窗口（被回应效果，次数）都有恢复线（§8.3「恢复线」）。
   没有恢复线时被打断的线交给快照策略，P0b 的配对证据显示这会把反事实系统性地推向「打」（计划 §10.2）。自博弈局不分支。
+- **按卡分支**（`--branch-cards 14558127 97268402`，`TrainConfig.branch_cards` / `BranchConfig.cards`，默认空 = 不加条件，行为不变）：
+  只分支「分支集里的每个发动（pass 不计）都是这些卡密码的卡」的窗口。用于有**求解覆盖**的卡——每个可恢复的（被回应效果，次数）都已存了恢复线
+  （灰流丽 `recovery_full.jsonl`、效果遮蔽者 `recovery_multi_97268402.pruned.jsonl`）——对它们，窗口没有恢复线就基本等于「打了真的破场」，
+  这时交给快照的反事实方向（打更好）是对的；有恢复线的发动照旧走恢复线。只要求恢复线会造成选择偏差：分支的只有「打了对手还能恢复」的窗口，
+  反事实几乎只教「忍」，动点窗口从不分支（计划 §11.8 第 6 条）。没有覆盖的卡（增殖的 G、泡影等）没有线仍是偏差，不要列入。
+  与 `--branch-require-recovery`（默认开）同时生效时取交集，所以要分支没有恢复线的窗口须同时给 `--no-branch-require-recovery`；
+  `branch_cards` 要求 `--line-recovery`。分支窗口里有发动没有恢复线的份额记为 `branch_no_recovery_share`（日志行与 metrics；
+  `Rollout.branch_no_recovery` 是计数）。
 - **分支集**：pass 加上策略概率最高的 `--branch-k − 1` 个发动（默认 K = 2：打 π 最想打的那张 / 不打）。
 - **推演**：`snapshot` → 走候选 → 推进到**视界**（学习方下一个自己回合的第一个决策：先手回合 3、后手回合 2）或终局 → 取值 → `restore`；
   每个候选 `--branch-rollouts`（M，默认 1）次取均值，全部跑完后 `release`，再走这一行真实采样的动作。分支内学习方与快照对手用分支专用的
@@ -290,7 +298,7 @@ Trainer.resume("out/train/run1/checkpoints/latest.pt").train(max_minutes=60)   #
   0.5 × 魔陷区卡数，从观测卡表读出，手牌与盖放魔陷取特权真值（`rollout.board_score`）；`critic` = 学习方 critic 的 V；`both` = V − 场面项。
   默认用场面分，是因为 P0b 里回合 2 起点的 critic 差与标签无关（计划 §10.2 / §10.5 第 2 条）。推演中局被上限或错误截断时，这个窗口作废。
 - **写进 Rollout**：`branch_value [T, B, A]`（分支集各候选的均值，其余 NaN）、`branch_valid [T, B]`（全部推演有效）、`branch_pass [T, B]`
-  （分支集里 pass 的行号）、`branch_windows` / `branch_decisions`；不开分支时这几个字段为 None / 0，其余字段与现在逐位相同（`branch_fraction = 0` 亦然）。
+  （分支集里 pass 的行号）、`branch_windows` / `branch_decisions` / `branch_no_recovery`；不开分支时这几个字段为 None / 0，其余字段与现在逐位相同（`branch_fraction = 0` 亦然）。
 - **不改变主对局**：`min_batch ≥ num_envs`（锁步）时，某个槽位在分支期间，其余槽位的决策先扣住、等分支结束再整轮处理，所以每一轮的前向成员与主生成器的抽样顺序和不分支时相同，
   主对局的行逐位相同（测试）。默认的异步收集（`min_batch = num_envs / 2`）本来就依赖线程时序；这时其余槽位照常推进，分支只是多出几次前向。
 - 吞吐见 §8.6「窗口分支的收集开销」。
