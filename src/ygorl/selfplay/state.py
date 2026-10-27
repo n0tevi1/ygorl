@@ -232,6 +232,8 @@ def classify(*, mine: bool, ours: bool, accepting: bool, mode: int, dialog_type:
     if screen in ("yesno", "panel") and dialog_type == OPTION_DIALOG and choices >= 2:
         screen = "option"
     if screen == "radio" and dialog_type != RADIO_DIALOG:
+        if not accepting:
+            return "settle"  # with no input taken: an animation (run s65: a Fusion Summon's big card, explored)
         screen = None  # rings without MD's radio dialog: selection frames or zone outlines (clicked a set card)
     if mine and mode == SUMMON_PICK and screen in (None, "banner"):
         return "summon_pick"
