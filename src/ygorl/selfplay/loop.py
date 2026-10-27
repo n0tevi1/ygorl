@@ -302,7 +302,7 @@ class Player(CommandsMixin, ListsMixin, PromptsMixin, BattleMixin, PolicyMixin, 
                 dialog = next((d for d in reversed(seen_dialogs) if d is not None), None)
             if dialog == "panel" and not mine and self.read_dialog_type() != OPTION_DIALOG:
                 dialog = None  # a dimmed board while MD works: nothing for us yet
-            if dialog and dialog not in NEUTRAL and inp.player != raw.me:
+            if dialog and dialog not in NEUTRAL and not self.dialog_is_ours(raw, inp, dialog):
                 dialog = None  # the opponent holds the input: their dialog, not ours to answer
             key = (inp.mode, mine, dialog, raw.turn, raw.phase)
             stable = stable + 1 if key == last and (mine or dialog) else 0
@@ -311,6 +311,19 @@ class Player(CommandsMixin, ListsMixin, PromptsMixin, BattleMixin, PolicyMixin, 
                 return raw, inp, dialog
             time.sleep(0.35)
         raise Stuck(f"nothing to do for {timeout:.0f} s")
+
+    def dialog_is_ours(self, raw: RawDuel, inp, dialog: str | None) -> bool:
+        """Whether MD's dialog on screen is ours to answer. MD's own dialogs while the engine takes no input can read
+        the opponent's input player (runs s68 / s69, our Artillery Catapult Turtle's Special Summon: its list, then
+        its position, each waited 120 s): ours when memory confirms it (the client's list holds our cards; the
+        dialog type is the position question)."""
+        if inp.player == raw.me:
+            return True
+        if inp.accepting:
+            return False
+        if dialog == "list":
+            return self.list_is_ours(raw)
+        return dialog == "position" and self.read_dialog_type() == POSITION_DIALOG
 
     def answer_turn_order(self) -> bool:
         """MD's "go first or second?" menu before a duel (some stages ask it after Retry, and once it came only
