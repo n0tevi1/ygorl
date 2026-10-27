@@ -137,3 +137,36 @@ def test_turn1_exit_pilot(ckpt, tmp_path):
         assert row["pairs"] == 6
     assert set(s["realised"]) == {"line", "free"}
     assert all(v["games_per_arm"] == 2 for v in s["realised"].values())
+
+
+def test_line_break_census_counts_interruption_cards_and_recovery_windows(ckpt, tmp_path):
+    """First-seat plan §5.1b / §10.2c: activations on the line's turn by card, the recovery-line coverage of the
+    windows of a playing line, and the switches (the collector's interrupt)."""
+    r = _twice(line_break_census.main, [ckpt, "--lines", DEMOS, "--line-recovery", FIRE, "--decks", *DECKS, "--games",
+                                        "4", "--max-turns", "4", "--envs", "2", "--threads", "1", "--torch-threads",
+                                        "1", "--rows"], tmp_path)  # fmt: skip
+    assert r["lines_with_recovery"] >= 1 and set(r["recovery_lines_by_card"]) == {"14558127"}
+    for name, seat in r["seats"].items():
+        rows = [x for x in r["rows"] if ("first" if x["seat"] == 0 else "second") == name]
+        assert (
+            sum(seat["fire_cards"].values()) == sum(x["fires"] for x in rows) == sum(len(x["fire_log"]) for x in rows)
+        )
+        assert sum(seat["fire_cards_playing"].values()) == sum(x["fires_before_break"] for x in rows)
+        rec = seat["recovery"]
+        assert rec["windows_with_recovery"] <= rec["windows_playing"]
+        assert rec["switches"] == sum(f["switched"] for x in rows for f in x["fire_log"]) <= rec["fires_with_recovery"]
+
+
+def test_window_counterfactual_probe_reads_one_card_of_a_multi_card_graded_file(ckpt, tmp_path):
+    """``--fire`` picks the card's records of a graded file with several hand traps (default Ash): the Ash rows are
+    those of the Ash-only file."""
+    multi = tmp_path / "graded_multi.jsonl"
+    with open(GRADED) as f, open(multi, "w") as out:
+        for line in f:
+            rec = json.loads(line)
+            out.write(json.dumps({**rec, "fire": 23434538, "values": {k: 0 for k in rec["values"]}}) + "\n")
+            out.write(line)
+    args = [ckpt, "--demos", DEMOS, FIRE, "--min-hand", "0", "--rollouts", "1", "--workers", "1"]
+    alone = window_counterfactual_probe.main([GRADED, *args, "--out", str(tmp_path / "a.json")])
+    mixed = window_counterfactual_probe.main([str(multi), *args, "--out", str(tmp_path / "b.json")])
+    assert mixed["fire"] == 14558127 and mixed["rows"] == alone["rows"]

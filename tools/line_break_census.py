@@ -16,8 +16,18 @@ answered with an activation, and the result. Causes of a break:
 Writes a JSON report: per seat, the status / cause distribution, the break position (step, fraction of the line,
 turn), the learner's win rate by status and cause, windows and fires per game; ``--rows`` adds every game.
 
+Interruption cards (first-seat plan §5.1b): every activation of the learner at a window of the line's turn is counted
+by the activated card's password (``fire_cards``; ``fire_cards_playing``: while the line was still being played,
+i.e. the activations that can switch to a recovery line). The windows are identified as the collector identifies
+them (``RolloutCollector._count_window``: effect and occurrence, counted on the line's turn in a first-seat game),
+and an activation at a window of a playing line calls :meth:`LinePlayer.interrupt` as the collector does.
+``--line-recovery`` (repeatable) loads recovery lines (``LineLibrary.load(recovery=)``); ``recovery`` in the report
+then counts the windows of a playing line with an activation row (``windows_playing``), those where one of the
+choosable activations has a recovery line (``windows_with_recovery``, per card in ``windows_with_recovery_by_card``),
+the activations that switched (``switches``, per card) and how the switched lines ended (``after_switch``).
+
   uv run --no-sync python tools/line_break_census.py CKPT --lines out/claude-scale/handtrap/lines_train.jsonl \\
-      [--games 512] [--opponent CKPT] [--envs 64] [--threads 8] [--seed 0] --out OUT.json
+      [--line-recovery FIRE.jsonl] [--games 512] [--opponent CKPT] [--envs 64] [--threads 8] [--seed 0] --out OUT.json
 """
 
 from __future__ import annotations
@@ -40,7 +50,7 @@ from ygorl.data import load_environment  # noqa: E402
 from ygorl.engine.duel import DuelConfig, default_cards  # noqa: E402
 from ygorl.env.encoded import EncodedVecEnv  # noqa: E402
 from ygorl.eval.arena import derive_seed  # noqa: E402
-from ygorl.train.lines import LineLibrary, LinePlayer  # noqa: E402
+from ygorl.train.lines import CHAIN_KIND, LineLibrary, LinePlayer, chain_effect  # noqa: E402
 
 CAUSES = ("learner_interrupt", "turn2_start", "other")
 
@@ -48,8 +58,10 @@ CAUSES = ("learner_interrupt", "turn2_start", "other")
 class ScriptedGame(Job):
     """One scripted-line game; the learner at ``seat`` (0: it moves first, the line is played on turn 2)."""
 
-    def __init__(self, index: int, spec, script, seat: int, skip_forced: bool, seed: int, *, info: dict) -> None:
+    def __init__(self, index: int, spec, script, seat: int, skip_forced: bool, seed: int, *, info: dict,
+                 vocab=None) -> None:  # fmt: skip
         self.index, self.spec, self.script, self.seat = index, spec, script, seat
+        self.vocab = vocab  # card vocabulary of the observations (an activation row carries the card's vocab index)
         self.line = LinePlayer(script, skip_forced, first_seat=seat == 0)
         self.line_turn = 2 if seat == 0 else 1
         self.learner_gen = generator(seed, 1)
@@ -60,6 +72,30 @@ class ScriptedGame(Job):
         self.break_turn: int | None = None
         self.max_turn = 0
         self._window = False
+        self._identity: tuple[int, int] | None = None  # (effect, occurrence) of the pending window, as the collector's
+        self._occurrences: dict[int, int] = {}
+        self.fire_log: list[dict] = []  # the learner's activations on the line's turn
+        self.recovery_windows: list[list[int]] = []  # per window of a playing line: cards with a recovery line there
+
+    def _password(self, index: int) -> int:
+        return int(self.vocab.password(index)) if self.vocab is not None else int(index)
+
+    def _count_window(self, obs) -> None:
+        """``RolloutCollector._count_window``: the identity of a learner window for the line (None: not counted)."""
+        self._identity = None
+        if decision(obs) != CHAIN or len(legal_rows(obs)) < 2:
+            return
+        if self.seat == 0 and not (turn(obs) == 2 and not own_turn(obs)):
+            return
+        effect = chain_effect(obs)
+        self._occurrences[effect] = self._occurrences.get(effect, 0) + 1
+        self._identity = (effect, self._occurrences[effect])
+        if self.line.status != "playing" or not self._line_turn(obs):
+            return
+        cards = {int(obs["actions"][r][2]) for r in legal_rows(obs) if int(obs["actions"][r][0]) == CHAIN_KIND}
+        if cards:
+            recovery = self.line.recovery
+            self.recovery_windows.append(sorted(self._password(c) for c in cards if (*self._identity, c) in recovery))
 
     def _line_turn(self, obs) -> bool:
         return turn(obs) == self.line_turn and not own_turn(obs)
@@ -70,6 +106,7 @@ class ScriptedGame(Job):
         if ev.player == self.seat:
             self._window = decision(obs) == CHAIN and len(legal_rows(obs)) > 1 and self._line_turn(obs)
             self.windows += self._window
+            self._count_window(obs)
             return Net("learner", self.learner_gen)
         before = self.line.status
         row = self.line.act(obs)
@@ -86,12 +123,31 @@ class ScriptedGame(Job):
         return Net("opponent", self.opponent_gen)
 
     def chosen(self, ev, row: int) -> None:
-        if ev.player == self.seat and self._window and not is_pass(ev.obs, row):
+        if ev.player != self.seat:
+            return
+        obs = ev.obs
+        card = int(obs["actions"][row][2])
+        chain = int(obs["actions"][row][0]) == CHAIN_KIND
+        if self._window and not is_pass(obs, row):
             self.fires += 1
-            if self.line.status == "playing":
+            playing = self.line.status == "playing"
+            if playing:
                 self.fires_before_break += 1
-        if ev.player == self.seat:
-            self._window = False
+            ident = self._identity
+            has = chain and ident is not None and (*ident, card) in self.line.recovery
+            # a recovery line of this card for the same effect at another occurrence: the identity did not match
+            near = (
+                chain
+                and ident is not None
+                and not has
+                and any(k[0] == ident[0] and k[2] == card for k in self.line.recovery)
+            )
+            self.fire_log.append({"card": self._password(card), "playing": playing, "recovery": has, "near": near,
+                                  "switched": False, "window": list(ident) if ident else None})  # fmt: skip
+        if self._identity is not None and chain and self.line.interrupt(*self._identity, card) and self.fire_log:
+            self.fire_log[-1]["switched"] = True  # RolloutCollector._line_interrupt
+        self._window = False
+        self._identity = None
 
     def finish(self, result):
         line = self.line.finish()
@@ -99,13 +155,17 @@ class ScriptedGame(Job):
         score = 0.5 if winner is None else float(winner == self.seat)
         return {"game": self.index, "seat": self.seat, **self.info, "status": line["status"], "cause": self.cause,
                 "broken_at": line["broken_at"], "steps": line["steps"], "played": line["played"],
-                "skipped": line["skipped"], "extra": line["extra"], "break_turn": self.break_turn,
+                "skipped": line["skipped"], "extra": line["extra"], "passed_over": line["passed_over"],
+                "break_turn": self.break_turn,
                 "windows": self.windows, "fires": self.fires, "fires_before_break": self.fires_before_break,
+                "fire_log": self.fire_log, "recovery_windows": self.recovery_windows,
+                "recoveries": line.get("recoveries", 0), "recovered_at": line.get("recovered_at"),
                 "score": score, "reason": None if result is None else str(result.get("reason", "")),
                 "turns": None if result is None else int(result.get("turns", self.max_turn))}  # fmt: skip
 
 
-def deal(library: LineLibrary, decks, config: DuelConfig, games: int, seat: int, seed: int, skip_forced: bool):
+def deal(library: LineLibrary, decks, config: DuelConfig, games: int, seat: int, seed: int, skip_forced: bool,
+         vocab=None):  # fmt: skip
     rng = np.random.default_rng(derive_seed(seed, 17, seat))
     jobs = []
     for g in range(games):
@@ -114,7 +174,7 @@ def deal(library: LineLibrary, decks, config: DuelConfig, games: int, seat: int,
         game_seed = derive_seed(seed, seat, g)
         spec = script.spec(learner, game_seed, config, learner_seat=seat)
         info = {"learner_deck": learner.name, "line": script.id, "line_name": script.name}
-        jobs.append(ScriptedGame(g, spec, script, seat, skip_forced, game_seed, info=info))
+        jobs.append(ScriptedGame(g, spec, script, seat, skip_forced, game_seed, info=info, vocab=vocab))
     return jobs
 
 
@@ -150,8 +210,40 @@ def summarize(rows: list[dict]) -> dict:
         "fire_rate": sum(r["fires"] for r in rows) / max(1, sum(r["windows"] for r in rows)),
         "games_with_fire": sum(r["fires"] > 0 for r in rows) / max(1, n),
         "turns": mean_se([r["turns"] for r in rows if r["turns"] is not None]),
+        **fire_cards(rows),
     }
     return out
+
+
+def _by_card(counter: Counter) -> dict:
+    return {str(k): v for k, v in sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))}
+
+
+def fire_cards(rows: list[dict]) -> dict:
+    """The learner's activations on the line's turn by card password, and the recovery-line coverage of the windows."""
+    fires = [f for r in rows for f in r["fire_log"]]
+    playing = [f for f in fires if f["playing"]]
+    windows = [w for r in rows for w in r["recovery_windows"]]
+    switched = [r for r in rows if r["recoveries"]]
+    return {
+        "fire_cards": _by_card(Counter(f["card"] for f in fires)),
+        "fire_cards_playing": _by_card(Counter(f["card"] for f in playing)),
+        "games_with_fire_by_card": _by_card(Counter(c for r in rows for c in {f["card"] for f in r["fire_log"]})),
+        "recovery": {
+            "windows_playing": len(windows),
+            "windows_with_recovery": sum(bool(w) for w in windows),
+            "windows_with_recovery_share": sum(bool(w) for w in windows) / max(1, len(windows)),
+            "windows_with_recovery_by_card": _by_card(Counter(c for w in windows for c in w)),
+            "fires_playing": len(playing),
+            "fires_with_recovery": sum(f["recovery"] for f in playing),
+            "fires_with_recovery_by_card": _by_card(Counter(f["card"] for f in playing if f["recovery"])),
+            "fires_near_recovery": sum(f.get("near", False) for f in playing),
+            "switches": len(switched),
+            "switches_by_card": _by_card(Counter(f["card"] for f in fires if f["switched"])),
+            "after_switch": dict(Counter(r["status"] for r in switched)),
+            "win_rate_after_switch": _rate(switched),
+        },
+    }
 
 
 def main(argv: list[str] | None = None) -> dict:
@@ -169,6 +261,7 @@ def main(argv: list[str] | None = None) -> dict:
     p.add_argument("--torch-threads", type=int, default=4)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--max-lines", type=int, default=None, help="load only the first N lines (smoke tests)")
+    p.add_argument("--line-recovery", action="append", default=[], help="recovery lines (fire records); repeatable")
     p.add_argument("--rows", action="store_true", help="also write every game")
     p.add_argument("--out", default=None)
     a = p.parse_args(argv)
@@ -180,7 +273,8 @@ def main(argv: list[str] | None = None) -> dict:
     brains = {"learner": learner, "opponent": learner if a.opponent in (None, a.ckpt) else Brain(a.opponent)}
     if brains["opponent"].signature != learner.signature:
         raise SystemExit("the opponent's vocabulary / event length differ from the learner's")
-    library = LineLibrary.load(a.lines, learner.vocab, cards=cards, env=env)
+    library = LineLibrary.load(a.lines, learner.vocab, cards=cards, env=env, recovery=a.line_recovery,
+                               event_length=learner.event_length)  # fmt: skip
     if a.max_lines is not None:
         library = LineLibrary(library.scripts[: a.max_lines], library.problems)
     paths = a.decks or sorted(str(x) for x in (Path(env.root) / "meta").glob("*.ydk"))
@@ -192,10 +286,13 @@ def main(argv: list[str] | None = None) -> dict:
                          attack_history=cfg.attack_history)  # fmt: skip
     report = {"ckpt": a.ckpt, "opponent": a.opponent or a.ckpt, "lines": len(library), "line_problems":
               len(library.problems), "decks": [d.name for d in decks], "games_per_seat": a.games, "seed": a.seed,
-              "seats": {}}  # fmt: skip
+              "line_recovery": a.line_recovery, "recovery_lines": library.recovery_windows,
+              "lines_with_recovery": sum(bool(s.recovery) for s in library.scripts),
+              "recovery_lines_by_card": _by_card(Counter(r.password for s in library.scripts for r in s.recovery)),
+              "recovery_problems": len(library.recovery_problems), "seats": {}}  # fmt: skip
     rows_all = []
     for seat in (int(s) for s in a.seats.split(",")):
-        jobs = deal(library, decks, config, a.games, seat, a.seed, venv.skip_forced)
+        jobs = deal(library, decks, config, a.games, seat, a.seed, venv.skip_forced, learner.vocab)
         rows = run_jobs(venv, jobs, brains)
         report["seats"]["first" if seat == 0 else "second"] = summarize(rows)
         rows_all += rows
