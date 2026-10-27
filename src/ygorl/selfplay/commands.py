@@ -383,7 +383,9 @@ class CommandsMixin:
             self.ui.click(*icons[0], "change position", 1.5)
             return
         if where.location != C.LOCATION_HAND:
-            raise Stuck(f"no click script for {best.kind} from location {where.location}")
+            # no click script yet (a Special Summon from the Extra Deck, run s67): nothing was clicked, so the action
+            # is masked for this phase and the policy decides again, rather than a generic recovery
+            return self.refused(raw, best, f"no click script for {best.kind} from location {where.location}")
         xy = self.hand_xy(raw, cid)
         icons = self.ui.open_hand_card(xy, f"hand {self.name(cid)}")
         if not icons:
