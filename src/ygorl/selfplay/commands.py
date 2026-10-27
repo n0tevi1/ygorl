@@ -235,8 +235,11 @@ class CommandsMixin:
     def outlined_zone(self, raw: RawDuel) -> tuple[str, int]:
         """The first zone MD outlines for a placement (Monster Zones, then Spell & Trap Zones)."""
         img = self.ui.capture()
+        slots = raw.players[raw.me].slots
         for location in ("mzone", "szone"):
             for zone in range(5):
+                if slots[zone if location == "mzone" else 7 + zone] is not None:
+                    continue  # occupied (memory): a lit card's frame there is no outline (run s64: Gaia's zone)
                 xy = L.my_zone(location, zone)
                 if yellow_highlight(img, *xy) or zone_outlined(img, *xy):
                     return location, zone
