@@ -190,11 +190,14 @@ class SeriesMixin:
             self.recent = (self.recent + [state])[-8:]
             # the Draw Phase takes a few clicks (badge, Deck) by design: it has its own budget of attempts
             in_draw = inp.mode == 1 and dialog is None and self.draw_attempts < 6
-            if len(self.recent) >= 3 and len(set(self.recent[-3:])) == 1 and not in_draw:
+            # a card list may be asked up to three times in a row with nothing in memory to tell the picks apart
+            # (Beginning of Heaven and Earth's three Deck reveals, run s100: the client reused its list objects)
+            same = 4 if dialog == "list" else 3
+            if len(self.recent) >= same and len(set(self.recent[-same:])) == 1 and not in_draw:
                 if not self.recover("the same state three steps in a row", raw, inp, dialog, state):
                     return 3
                 continue
-            if self.recent.count(state) >= 3 and not in_draw:  # a cycle: answers that keep undoing each other
+            if self.recent.count(state) >= same and not in_draw:  # a cycle: answers that keep undoing each other
                 self.recent = []
                 if not self.recover("the same state three times in eight steps", raw, inp, dialog, state):
                     return 3
