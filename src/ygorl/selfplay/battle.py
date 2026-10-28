@@ -187,8 +187,9 @@ class BattleMixin:
         return tuple(c is not None for c in opp.slots[:7]) != board[1]
 
     def field_target(self, raw: RawDuel, lit) -> tuple[int, int] | None:
-        """The field card the policy picks through the shadow for MD's field selection (tributes, targets), if the
-        shadow matches and the card is one MD highlights; else None (the caller's rule decides)."""
+        """The field card the policy picks through the shadow for MD's field selection (tributes, targets): its spot,
+        which the caller confirms by its Confirm icon (MD shows one only on a card it allows); None when the shadow
+        does not match (the caller's rule decides)."""
         req = None
         try:
             req = self.request_now(raw)
@@ -197,7 +198,13 @@ class BattleMixin:
         spots = self.lit_candidates(raw, lit)
         framed = {(c.player, c.sequence) for c, _ in spots}
         on_field = [c for c in req.candidates if c.location == "mzone" and (c.player, c.sequence) in framed]
-        if spots and len(on_field) < len(spots):
+        if not req.candidates:
+            # no list in memory (a target "on the field"): every card on the field is a candidate, both players'
+            # Monster, Spell & Trap and Field Zones (run s93: only the three framed monsters were offered, the
+            # shadow's six targets shrank to one and Spiral Discharge destroyed our own monster)
+            req = replace(req, candidates=tuple(c for c, _ in self.field_candidates(raw)))
+            self.trace.observe(field_candidates=[[c.cid, c.player, c.location, c.sequence] for c in req.candidates])
+        elif spots and len(on_field) < len(spots):
             # memory's request does not name every framed card (a Tribute's check has no list, or it is stale and
             # named only one of three Tributes): the cards MD frames, read from memory at their places, are the
             # candidates (a Tribute for Obelisk fell to a rule that never takes the opponent's monster)
@@ -207,18 +214,42 @@ class BattleMixin:
         if pick is None or pick < 0:  # (a declined optional trigger is no field pick)
             return None
         c = req.candidates[pick]
-        xy = None
-        if c.location == "mzone" and c.sequence is not None:
-            xy = my_monster_xy(c.sequence) if c.player == raw.me else opp_monster_xy(c.sequence)
-        elif c.location == "szone" and c.player == raw.me and c.sequence is not None and c.sequence <= 5:
-            xy = L.my_zone("szone", c.sequence)
-        # frames are found a little off the slot's measured point ((1219, 740) for (1232, 750)): near is enough
-        near = [q for q in lit if xy is not None and abs(q[0] - xy[0]) + abs(q[1] - xy[1]) < 60]
-        if not near:
-            self.observer.shadow = None  # it took a pick MD will not see: rebuild at the next command point
-            self.trace.observe(lockstep_field=f"no highlighted card at {xy} for candidate {pick}")
+        xy = self.field_spot(raw, c)
+        if xy is None:
+            self.observer.shadow = None
+            self.trace.observe(lockstep_field=f"no measured spot for candidate {pick}")
             return None
-        return near[0]
+        # frames are found a little off the slot's measured point ((1219, 740) for (1232, 750)): a frame near it is
+        # clicked where it was seen; an unframed card (its frame hidden under an attack arrow) at its own spot
+        near = [q for q in lit if abs(q[0] - xy[0]) + abs(q[1] - xy[1]) < 60]
+        self.field_shadow_spot = near[0] if near else xy  # (no Confirm there: the shadow is dropped by the caller)
+        return self.field_shadow_spot
+
+    def field_spot(self, raw: RawDuel, c) -> tuple[int, int] | None:
+        """The screen spot of a field candidate of either player (Monster, Spell & Trap or Field Zone)."""
+        if c.sequence is None:
+            return None
+        mine = c.player == raw.me
+        if c.location == "mzone":
+            return my_monster_xy(c.sequence) if mine else opp_monster_xy(c.sequence)
+        if c.location == "szone" and 0 <= c.sequence <= 5:
+            return my_spell_xy(c.sequence) if mine else opp_spell_xy(c.sequence)
+        return None
+
+    def field_candidates(self, raw: RawDuel) -> list:
+        """(candidate, spot) for every card on the field, both players: card ids of ours and face-up ones only."""
+        out = []
+        for player in (raw.me, 1 - raw.me):
+            for i, c in enumerate(raw.players[player].slots):
+                if c is None or i in (5, 6):  # (the Extra Monster Zones are not measured)
+                    continue
+                loc, seq = ("mzone", i) if i < 7 else ("szone", i - 7)
+                cid = c.cid if (player == raw.me or c.face) else 0
+                cand = Candidate(cid, c.uid, player, loc, seq)
+                xy = self.field_spot(raw, cand)
+                if xy is not None:
+                    out.append((cand, xy))
+        return out
 
     def lit_candidates(self, raw: RawDuel, lit) -> list:
         """(candidate, spot) for every monster card MD frames: its player / zone / sequence and card from memory."""
@@ -410,6 +441,9 @@ class BattleMixin:
             if self.ui.card_command(target, "highlighted card", "confirm"):
                 picked.append(target)
                 return
+            if target == getattr(self, "field_shadow_spot", None):
+                self.observer.shadow = None  # the shadow's pick shows no Confirm: MD does not allow it
+                self.field_shadow_spot = None
             # no Confirm on this one (Millennium Seeker, framed among three Tribute candidates): another
             self.trace.observe(field_pick_no_confirm=list(target))
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
