@@ -460,6 +460,11 @@ class PromptsMixin:
                 # an optional trigger's one-card list the shadow only tolerates ("forced": it is elsewhere, run s89
                 # took Gaia the Magical Knight's trigger without the policy): the rebuild below decides
                 pick = None
+            if pick is not None and pick < 0 and not (shown == 1 and L._two_button_panel(self.ui.capture())):
+                # a decline belongs to an optional trigger's own one-card list; on another list (a Tribute list read
+                # while the shadow was at the trigger's yes / no, run s102 audit) it would cancel that list
+                self.trace.observe(list_decline="not an optional trigger's list: kept for the rule")
+                pick = None
             if pick is not None and pick < 0:
                 # the policy does not use this optional trigger: cancel the list (MD's "no")
                 self.ui.click(*L.PROMPT_CANCEL, "cancel: the policy declines the optional trigger", 1.5)

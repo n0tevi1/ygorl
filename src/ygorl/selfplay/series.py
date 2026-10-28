@@ -173,6 +173,11 @@ class SeriesMixin:
                 self.ui.wait_still()  # e.g. the drawn card flying to the hand: hand positions count it already
             if raw.turn != self.turn_seen:
                 self.turn_seen, self.attacked, self.activated = raw.turn, set(), set()
+            # a monster that left our Monster Zones is a new one when it comes back, even with the same uid (run
+            # s102: Curse of Dragon, revived by Spiral Reborn after its attack, was taken as having attacked and its
+            # direct attack was never offered)
+            on_field = {c.uid for c in raw.players[raw.me].slots[:7] if c is not None}
+            self.attacked &= on_field
             if inp.mode not in (FIELD_PICK, FIELD_PICK_TRIBUTE):
                 self.field_picked = ((-1, -1), [])  # the field selection is over: the next one starts fresh
             me, op = raw.players[raw.me], raw.players[1 - raw.me]
