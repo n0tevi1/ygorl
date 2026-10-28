@@ -241,8 +241,8 @@ class BattleMixin:
         out = []
         for player in (raw.me, 1 - raw.me):
             for i, c in enumerate(raw.players[player].slots):
-                if c is None or i in (5, 6):  # (the Extra Monster Zones are not measured)
-                    continue
+                if c is None:
+                    continue  # (Extra Monster Zones 5 / 6 included: a Link monster there was the only target, s95)
                 loc, seq = ("mzone", i) if i < 7 else ("szone", i - 7)
                 cid = c.cid if (player == raw.me or c.face) else 0
                 cand = Candidate(cid, c.uid, player, loc, seq)
