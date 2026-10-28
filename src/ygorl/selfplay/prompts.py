@@ -29,6 +29,7 @@ from ygorl.selfplay.state import (
     PHASE_CHANGES,
     RA,
     SLIFER,
+    GRAVE_LOCATION,
     HAND_LOCATION,
     option_tab,
     option_tabs,
@@ -126,6 +127,7 @@ class PromptsMixin:
                 return
             self.ui.click(*L.PROMPT_ACTIVATE, "activate", 2.0)
             self.context = "respond"
+            self.note_response(want, listed)
             if getattr(self, "prompted", 0):
                 # the card activated names the monster a summon's position question is about next (Millennium
                 # Seeker's own Special Summon took the Attack Position rule: "the summoned monster is not known")
@@ -139,6 +141,16 @@ class PromptsMixin:
                 # no list named the card (Palladium Oracle Mahad's "You drew card(s)"): the card just drawn is the
                 # one summoned, so the position question that follows goes to the policy, not to a rule
                 self.listed = (self.expect, (hand[-1].cid,))
+
+    def note_response(self, password: int, listed) -> None:
+        """Record a chain response of a card off the field (hand, Graveyard) as activated this turn, like the
+        policy's own activations: its once-per-turn use is spent for the rebuild (run s98: Origin's Graveyard effect,
+        chained by the rebuild, was chosen again by the policy the same turn and refused)."""
+        where = {HAND_LOCATION: "hand", GRAVE_LOCATION: "grave"}
+        for c in listed or ():
+            if self.passwords.get(c.cid) == password and c.location in where:
+                self.activated.add((password, where[c.location]))
+                return
 
     def tick_and_name(self, index: int) -> bool:
         """Tick the list card at screen position ``index`` and read which card it is from the client list's ticked

@@ -29,6 +29,7 @@ RA = 10000010  # The Winged Dragon of Ra
 FIELD_ICON_STEP, FIELD_ICON_DY = 172, -150  # a field card's command icons: apart, and above the card
 SLIFER = 10000020  # Slifer the Sky Dragon
 HAND_LOCATION = 13  # MD's location number of the hand (the client's lists)
+GRAVE_LOCATION = 16  # and of the Graveyard (PILES order from 13)
 # the command bits of each action kind (MD's CommandBit; Pendulum activation counts as activate)
 COMMAND_BITS = {"summon": CommandBit.SUMMON, "mset": CommandBit.SETMONST, "sset": CommandBit.SET,
                 "spsummon": CommandBit.SPSUMMON, "activate": CommandBit.ACTION | CommandBit.PENDULUM,
