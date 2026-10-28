@@ -108,6 +108,7 @@ class Expectation:
     action: object
     before: RawDuel
     phase: str
+    stats: dict | None = None  # uid -> (ATK, DEF) MD showed when the policy chose (an effect may change only these)
 
 
 def _cards(pl, location: str) -> list:

@@ -205,6 +205,11 @@ class SeriesMixin:
             try:
                 if self.expect is not None and not dialog and inp.mode in (MAIN, BATTLE):
                     problem = check_expectation(self.expect, raw, self.passwords)
+                    if (problem is not None and problem.endswith("nothing changed on the board")
+                            and self.expect.stats is not None and self.field_stats(raw) != self.expect.stats):  # fmt: skip
+                        # only ATK / DEF changed (Gaia the Magical Knight of Dragons loses 2600 while its target,
+                        # destroyed, comes back in the same zone: run s97 took the activation for one without effect)
+                        problem = None
                     self.trace.check(self.expect.action, problem)
                     self.learn_panel(raw)
                     self.learn_list(raw)

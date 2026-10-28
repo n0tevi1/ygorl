@@ -177,7 +177,7 @@ class PolicyMixin:
         print(f"policy ({snap.phase}): {top.action.kind} {name} p={top.prob:.2f}", flush=True)
         self.trace.policy(top.action, top.prob, snap.phase, allowed)
         self.trace.observe(shadow_build=self.observer.decided(top.action, snap, deck))
-        self.expect = Expectation(top.action, raw, snap.phase)
+        self.expect = Expectation(top.action, raw, snap.phase, dict(stats))
         return top.action, allowed
 
     def _score(self, shadow, point):
