@@ -10,6 +10,7 @@ import time
 
 
 from ygorl.engine import constants as C
+from ygorl.md import layout as L
 from ygorl.md.memory import RawDuel, own_deck, to_snapshot
 from ygorl.md.ui import Stuck
 from ygorl.md.client import aura_kinds
@@ -75,8 +76,19 @@ class PolicyMixin:
             return lambda action: True
         if not lit and not getattr(client, "views_complete", False):
             return lambda action: True  # (the highlight not readable: no test)
+        if not lit:
+            # a resolution's animation can still dim the board (Harpie's Feather Duster's, runs s89 / s93): settle,
+            # read again, and with a panel still up no test
+            self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=4.0)
+            for _ in range(5):
+                try:
+                    lit = client.highlighted(self.game.read())
+                except Exception:  # noqa: BLE001
+                    lit = {}
+                if lit:
+                    break
+                time.sleep(0.3)
         if not lit and self.ui.dialog() is not None:
-            # a panel still up (Harpie's Feather Duster's, run s89) hides the highlight: no test
             return lambda action: True
         if not lit:
             # every card masked by an empty highlight, trusted: the client lit cards earlier in this phase

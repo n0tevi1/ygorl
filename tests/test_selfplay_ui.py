@@ -881,7 +881,8 @@ def test_md_offers_masks_actions_the_highlight_rules_out(monkeypatch):
     # views not read yet means no test
     monkeypatch.setattr("ygorl.selfplay.policy.time.sleep", lambda s: None)
     # (an empty highlight counts only in a phase where the client lit something before: it has caught up)
-    player.ui = SimpleNamespace(dialog=lambda: None)  # (no panel up: one hides the highlight)
+    player.ui = SimpleNamespace(dialog=lambda: None, wait_still=lambda *a, **k: None)  # (no panel up)
+    player.game = SimpleNamespace(read=lambda: raw)
     player.client, player.lit_phase = SimpleNamespace(highlighted=lambda r: {}, views_complete=True), None
     assert player.md_offers(raw)(act("activate", 111))  # nothing lit yet in this phase: no test
     player.lit_phase = (2, 2)
