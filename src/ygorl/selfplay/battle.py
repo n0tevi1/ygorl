@@ -451,7 +451,11 @@ class BattleMixin:
         # s59). Every other card on the field is opened and taken only when MD's command mask (memory) says it
         # can be selected (the Decide bit)
         tried = [xy] + fresh
-        for target in self.field_spots(raw):
+        # the opponent's cards first, as the rule above (run s98: our own Field Spell was taken by Curse of
+        # Dragonfire's destroy while the opponent's Giant Ballpark was never tried)
+        spots = self.field_spots(raw)
+        theirs = [p for p in spots if p[1] < 640]
+        for target in theirs + [p for p in spots if p not in theirs]:
             if any(abs(target[0] - q[0]) + abs(target[1] - q[1]) < 80 for q in tried + picked):
                 continue
             selectable = self.selectable_in_memory(target)
