@@ -97,6 +97,15 @@ class PromptsMixin:
                 self.ui.click(*L.PROMPT_ACTIVATE, "activate", 2.0)
                 self.context, self.hand_trigger = "respond", seen  # the same prompt again: it did not take, pass
                 return
+        if pick is None and not respond:
+            try:
+                mandatory = self.request_now(raw).min >= 1
+            except Exception:  # noqa: BLE001
+                mandatory = False
+            if mandatory:
+                # MD's request has to be answered with a card (a mandatory trigger: Burning Land, run s93, was passed
+                # by the rule; MD resolved it anyway): respond
+                respond = True
         if pick is None:
             self.trace.rule("prompt-respond" if respond else "prompt-pass")
         want = getattr(self, "respond_card", None) if pick is not None else None
