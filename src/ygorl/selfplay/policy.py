@@ -209,6 +209,7 @@ class PolicyMixin:
         """The option the policy picks for MD's ``dialog`` through the shadow duel (None: no shadow, or it does not
         match; the caller's rule decides). Recorded as the step's decision."""
         observer = getattr(self, "observer", None)  # tests build players without one
+        self.last_lockstep = {}  # (never an earlier step's)
         if observer is None or observer.shadow is None:
             return None
         if callable(req):  # read only when there is a shadow to ask

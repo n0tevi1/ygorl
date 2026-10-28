@@ -432,6 +432,7 @@ class PromptsMixin:
                                 if [self.passwords.get(c.cid), c.location] in hidden)  # fmt: skip
             if exclude:
                 self.trace.observe(list_hidden=sorted(exclude))
+            self.last_lockstep = {}
             pick = None if stale else self.lockstep("list", raw, req, exclude=exclude)
             if (pick is not None and shown == 1 and getattr(self, "last_lockstep", {}).get("by") == "forced"
                     and L._two_button_panel(self.ui.capture())):  # fmt: skip
@@ -452,6 +453,12 @@ class PromptsMixin:
                 # Palladium Oracle Mahad's trigger on Ultimate Divine-Beast's probabilities)
                 answer = self.rebuilt("respond", raw, offered=tuple(
                     p for c in req.candidates if (p := self.passwords.get(c.cid))) or None)  # fmt: skip
+                yes = (getattr(self, "last_lockstep", None) or {}).get("policy_yes")
+                if answer is None and yes is not None:
+                    # no rebuild reaches the window (a prompt inside our own action, every case of run s91): the
+                    # shadow's policy yes / no for the trigger decides, not the first-on-screen rule
+                    answer = 0 if yes >= 0.5 else 1
+                    self.trace.observe(optional_trigger={"by": "shadow policy_yes", "yes": yes})
                 if answer == 1:
                     self.ui.click(*L.PROMPT_CANCEL, "cancel: the policy passes the optional effect", 1.5)
                     self.context = "list"
