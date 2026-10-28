@@ -306,6 +306,12 @@ class _Game:
                 self.add("minor", rec, "position-by-rule", "a rule chose the position: the summoned monster was "
                          "not known to the rebuild", rule=rule)  # fmt: skip
                 return
+        if rule == "rebuild-failed-end-phase":
+            # the turn was given up without a policy decision (the rebuild could not set the board up: runs s93 / s95,
+            # Burning Land's Standby damage replayed at low LP)
+            self.add("minor", rec, "turn-passed-unrebuilt", "the board could not be rebuilt and the turn was ended "
+                     "by rule", rule=rule)  # fmt: skip
+            return
         if rule in MECHANICAL_RULES or rule.startswith("recover-"):
             return
         if rule in ACCEPTED_ANY or card in ACCEPTED.get(rule, ()):
