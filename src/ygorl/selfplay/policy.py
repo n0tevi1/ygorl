@@ -195,6 +195,7 @@ class PolicyMixin:
             return None
         if question == "target":
             self.trace.sub("target", by="rebuild", **record)
+            self.target_probs = dict(record.get("probs") or {})  # (a replay asks whether another target is wanted)
             if choice.shadow is not None:
                 self.observer.adopt(choice.shadow, "attack")  # in lockstep again for what the attack asks next
         else:

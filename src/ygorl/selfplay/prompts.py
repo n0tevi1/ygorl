@@ -360,11 +360,12 @@ class PromptsMixin:
                 # a Normal Summon / Set of Level <= 4 asks no Tribute question: this is no yes / no of ours
                 self.trace.observe(yesno="ignored: a Level <= 4 summon asks no Tribute question")
                 return
-            if pick is None and self.is_replay(raw):
+            if pick is None and (self.is_replay(raw) or (self.context.startswith("attack")
+                                                         and getattr(self, "attacker", None))):  # fmt: skip
                 # MD's replay question ("Replay happens. Continue to attack?") comes first: a chain response inside
                 # the attack left the context at "respond", and the own-effect rule answered yes (run s89: Origin
                 # attacked a 2800 monster and was destroyed). The policy decides on the new board
-                pick = 0 if self.still_attacks(raw) else 1
+                pick = 0 if self.replay_answer(raw) else 1
                 self.trace.rule("replay-by-policy", attack=pick == 0)
                 self.replay_target = pick == 0  # the new target comes next: the rebuild picks it
             elif pick is None and self.context in ("summon", "tribute"):
@@ -382,11 +383,6 @@ class PromptsMixin:
                 # the policy chose the change, so no (a yes would stay in the phase it chose to leave)
                 pick = 1
                 self.trace.rule("phase-change-continue")
-            elif pick is None and self.context.startswith("attack") and getattr(self, "attacker", None):
-                # a replay ("the opponent's monsters changed: continue the attack?"): the policy on the new board,
-                # its attacker not counted as having attacked: yes when it still attacks with it
-                pick = 0 if self.still_attacks(raw) else 1
-                self.trace.rule("replay-by-policy", attack=pick == 0)
             elif pick is None:
                 self.trace.rule("yesno-no")
             self.ui.yesno(pick == 0)

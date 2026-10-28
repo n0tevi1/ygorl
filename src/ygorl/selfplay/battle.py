@@ -138,6 +138,7 @@ class BattleMixin:
                 _, _, s = max(targets)
                 self.trace.sub("target", by="rule", rule="target-most-valuable-beaten", slot=s)
             self.trace.observe(target_slot=s)
+            self.attack_slot = s
             self.attack_target_uid = opp.slots[s].uid if opp.slots[s] is not None else 0
             self.attack_expected_win = getattr(self, "_values", {}).get(s, 0) < power
             if not self.ui.pick_target(opp_monster_xy(s), f"target {s}"):
@@ -158,6 +159,21 @@ class BattleMixin:
             return False
         self.trace.observe(target_slot=s, replay=True)
         return self.ui.pick_target(opp_monster_xy(s), f"target {s} (replay)")
+
+    def replay_answer(self, raw: RawDuel) -> bool:
+        """Yes to MD's replay question? The policy must still attack with the attacker on the new board; and when the
+        opponent's monster zones did not change (the declared target became one MD forbids: Corrosive Scales, run
+        s91, where the rebuild still saw it attackable), another target must have been wanted at the declaration
+        (its rebuilt probability at least 0.5), else the attack ends here."""
+        if not self.still_attacks(raw):
+            return False
+        if self.is_replay(raw):
+            return True
+        opp = raw.players[1 - raw.me]
+        declared = getattr(self, "attack_slot", None)
+        others = [float(p) for s, p in getattr(self, "target_probs", {}).items()
+                  if str(s).isdigit() and int(s) != declared and 0 <= int(s) < 7 and opp.slots[int(s)] is not None]  # fmt: skip
+        return bool(others) and max(others) >= 0.5
 
     def is_replay(self, raw: RawDuel) -> bool:
         """Whether a yes / no now is MD's replay question ("continue to attack?"): in the Battle Phase of the attack,
