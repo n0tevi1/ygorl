@@ -535,6 +535,12 @@ class CommandsMixin:
         oc = self.open_command(raw, cid)
         if oc is None:
             self.ui.click(*NEUTRAL_SPOT, "close the card", 0.8)
+            if self.unlit_on_field(raw, best):
+                # no command object, and MD lights other cards but not this one: it offers this card no command
+                # (run s88: Curse of Dragonfire's "activate" went to the glyph search, which clicked a mark 123 px
+                # off the card that was no icon)
+                self.mask_refused = True
+                self.refused(raw, best, f"{self.name(cid)}: not lit and no command object (memory)")
             return False
         want = COMMAND_BITS[kind]
         if not oc.mask & want:
@@ -616,6 +622,20 @@ class CommandsMixin:
                 return seen
             self.ui.sleep(0.35)
         return []
+
+    def unlit_on_field(self, raw: RawDuel, best) -> bool:
+        """Whether MD's highlight (memory) lights some of our cards but not ``best``'s card on the field."""
+        client, loc = getattr(self, "client", None), best.card.loc if best.card is not None else None
+        if client is None or loc is None:
+            return False
+        slots = raw.players[raw.me].slots
+        idx = loc.sequence if loc.location == C.LOCATION_MZONE else 7 + loc.sequence
+        card = slots[idx] if 0 <= idx < len(slots) else None
+        try:
+            lit = client.highlighted(self.game.read())
+        except Exception:  # noqa: BLE001
+            return False
+        return bool(lit) and card is not None and card.uid not in lit
 
     def open_command(self, raw: RawDuel, cid: int):
         """MD's command mask of the card open now (memory), when it is card ``cid`` of ours; else None."""
