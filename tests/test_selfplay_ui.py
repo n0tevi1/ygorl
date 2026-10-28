@@ -884,8 +884,8 @@ def test_md_offers_masks_actions_the_highlight_rules_out(monkeypatch):
     player.ui = SimpleNamespace(dialog=lambda: None, wait_still=lambda *a, **k: None)  # (no panel up)
     player.game = SimpleNamespace(read=lambda: raw)
     player.client, player.lit_phase = SimpleNamespace(highlighted=lambda r: {}, views_complete=True), None
-    assert player.md_offers(raw)(act("activate", 111))  # nothing lit yet in this phase: no test
-    player.lit_phase = (2, 2)
+    assert player.md_offers(raw)(act("activate", 111))  # nothing lit yet this turn: no test
+    player.lit_phase = (2, 1)  # (lit earlier this turn, another phase)
     offered = player.md_offers(raw)
     assert not offered(act("activate", 111)) and offered(SimpleNamespace(kind="end_phase", card=None))
     player.client = SimpleNamespace(highlighted=lambda r: {}, views_complete=False)
