@@ -31,6 +31,7 @@ from ygorl.advisor.snapshot import UNKNOWN, BoardSnapshot, SnapshotCard, Snapsho
 PROCESS_NAME = "masterduel.exe"
 DLL_NAME = "duel.dll"
 MD_APP_ID = 1449850
+UNMAPPED_TOKEN = 91512836  # Insect Monster Token: an opponent's monster whose MD id has no password (a Token)
 PHASES = ("draw", "standby", "main1", "battle", "main2", "end")  # DLL_DuelGetCurrentPhase values
 STATE_SIZE = 0x3C40  # S .. past the turn/phase fields; covers both player blocks and the uid table
 MAX_NODES = 0x100  # effect-table entries (the DLL's list walks stop at an index >= 0x100)
@@ -410,6 +411,13 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[
     for p in (raw.me, 1 - raw.me):
         pl, mine = raw.players[p], p == raw.me
         cards: list[SnapshotCard] = []
+
+        def seen(cid: int, mine: bool = mine) -> int:
+            """A known card's password; an opponent's card md_cid.json lacks is a Token (MD id 3900, Metamorphosed
+            Insect Queen's, run s97: every rebuild of that board failed and the turn was ended by recoveries): the
+            generic Insect Monster Token, its ATK / DEF set to what MD shows like any monster's."""
+            return pw(cid) if mine or cid in passwords else UNMAPPED_TOKEN
+
         for i, c in enumerate(pl.slots):
             if c is None:
                 continue
@@ -433,9 +441,9 @@ def to_snapshot(raw: RawDuel, passwords: Mapping[int, int], attacked: frozenset[
             cards.append(SnapshotCard(location=loc, sequence=seq, position=pos, position_locked=locked,
                                       attacked=hit, set_this_turn=set_turn, effect_used=used,
                                       card_activated=card_activated, summoned=summoned, attack=attack,
-                                      defense=defense, password=pw(c.cid) if known else UNKNOWN,
-                                      materials=tuple(pw(m) for m in c.materials) if known else ()))  # fmt: skip
-        cards += [SnapshotCard("grave", pw(c.cid)) for c in pl.piles["grave"]]
+                                      defense=defense, password=seen(c.cid) if known else UNKNOWN,
+                                      materials=tuple(seen(m) for m in c.materials) if known else ()))  # fmt: skip
+        cards += [SnapshotCard("grave", pw(c.cid)) for c in pl.piles["grave"] if mine or c.cid in passwords]
         for c in pl.piles["removed"]:
             down = c.facedown
             cards.append(SnapshotCard("removed", pw(c.cid) if mine or not down else UNKNOWN,
