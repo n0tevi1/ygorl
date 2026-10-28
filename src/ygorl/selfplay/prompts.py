@@ -430,6 +430,11 @@ class PromptsMixin:
             if exclude:
                 self.trace.observe(list_hidden=sorted(exclude))
             pick = None if stale else self.lockstep("list", raw, req, exclude=exclude)
+            if pick is not None and pick < 0:
+                # the policy does not use this optional trigger: cancel the list (MD's "no")
+                self.ui.click(*L.PROMPT_CANCEL, "cancel: the policy declines the optional trigger", 1.5)
+                self.context = "list"
+                return
             if (pick is None and shown == 1 and L._two_button_panel(self.ui.capture())
                     and self.ra_pays_lp(raw, req) is None):  # fmt: skip
                 # "Select a optional effect to activate" with one card (Mahad's Graveyard trigger): an optional

@@ -212,7 +212,11 @@ class PolicyMixin:
         pick, record = observer.choose(dialog, req, raw.me, self.passwords, count=count, zone=zone, exclude=exclude)
         if record:
             self.trace.observe(lockstep=record)
-        if pick is not None:
+        if pick is not None and pick < 0:
+            self.trace.shadow(dialog, pick, action="decline")
+            print(f"  shadow ({record.get('ygo')}): {dialog}: the policy declines (yes {record.get('policy_yes')})",
+                  flush=True)  # fmt: skip
+        elif pick is not None:
             self.trace.shadow(dialog, pick, action=record.get("action"))
             print(f"  shadow ({record.get('ygo')}): {dialog} option {pick + 1} of {record.get('options')}", flush=True)
         elif record:

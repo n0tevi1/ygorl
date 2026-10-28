@@ -46,6 +46,7 @@ from ygorl.selfplay.shadow import ShadowDuel
 # MD request kind -> bridge kind. Mode 7 is both the position dialog and the zone pick (after a Tribute Summon);
 # the dialog type tells them apart (10: the position dialog with its buttons).
 POSITION_DIALOG = 10
+LIST_DECLINE = -1  # :meth:`Observer.choose`'s pick for a list the policy cancels (an optional trigger it does not use)
 DECLINE = ("pass", "no", "cancel", "finish")
 SHUFFLED = ("deck", "extra")  # piles whose order the shadow does not share with MD (it shuffles them)
 
@@ -244,15 +245,23 @@ class ShadowObserver:
                     return None, {**record, "desync": f"the shadow stopped ({shadow.stopped})"}
                 record["ygo"] = type(point.decision).__name__
             if dialog == "list" and isinstance(point.decision, M.SelectEffectYn) and point.player == 0:
-                # MD merges an optional trigger's "activate?" into the list of its cards (cancel = no): the list
-                # means the trigger is used; the policy's own preference is recorded
+                # MD merges an optional trigger's "activate?" into the list of its cards (cancel = no): the policy
+                # decides yes or no (run s85 picked the card while the policy said no, policy_yes 0.334)
                 yes = next((i for i in point.choosable if point.actions[i].kind == "yes"), None)
+                no = next((i for i in point.choosable if point.actions[i].kind == "no"), None)
                 if yes is not None:
                     if self.scorer is not None:
                         logits = self.scorer(shadow, point)
                         kept = [i for i in point.choosable if i < len(logits)]
                         z = np.exp(np.array([logits[i] for i in kept]) - max(logits[i] for i in kept))
                         record["policy_yes"] = round(float(z[kept.index(yes)] / z.sum()), 4) if yes in kept else None
+                    if no is not None and record.get("policy_yes") is not None and record["policy_yes"] < 0.5:
+                        self._log(shadow.step(no))
+                        return LIST_DECLINE, {
+                            **record,
+                            "pick": LIST_DECLINE,
+                            "by": "policy declines the optional trigger",
+                        }
                     self._log(shadow.step(yes))
                     point = shadow.point
                     if point is None:

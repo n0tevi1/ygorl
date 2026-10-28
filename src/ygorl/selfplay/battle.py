@@ -163,7 +163,7 @@ class BattleMixin:
             req = replace(req, candidates=tuple(c for c, _ in spots))
             self.trace.observe(field_candidates=[[c.cid, c.player, c.sequence] for c, _ in spots])
         pick = self.lockstep("list", raw, req)
-        if pick is None:
+        if pick is None or pick < 0:  # (a declined optional trigger is no field pick)
             return None
         c = req.candidates[pick]
         xy = None
