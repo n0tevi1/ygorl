@@ -357,7 +357,11 @@ class CommandsMixin:
                 return
             if getattr(self, "mask_refused", False):
                 return
-            icons = self.ui.open_card(xy, f"field {self.name(cid)}")
+            # a field card's icons sit one row above it, at x or x +- 86 (a mark at (967, 514) for a card at
+            # (844, 750) was clicked as the position change on run s91, and nothing happened)
+            near = lambda ps: [p for p in ps if abs(p[1] - (xy[1] + FIELD_ICON_DY)) <= 60  # noqa: E731
+                               and min(abs(p[0] - (xy[0] + d)) for d in (-86, 0, 86)) <= 45]  # fmt: skip
+            icons = near(self.ui.open_card(xy, f"field {self.name(cid)}"))
             oc = self.open_command(raw, cid)
             want = COMMAND_BITS["reposition"]
             if oc is not None and not oc.mask & want:
@@ -368,7 +372,7 @@ class CommandsMixin:
             if oc is not None and not icons:
                 # MD offers it (memory) but no icon was seen yet: the board can still be animating; look again
                 self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
-                icons = self.ui.open_card(xy, f"field {self.name(cid)} (again: MD offers the position change)")
+                icons = near(self.ui.open_card(xy, f"field {self.name(cid)} (again: MD offers the position change)"))
             nth = [i for i, c in enumerate(oc.commands) if want & (1 << c)] if oc is not None else []
             if nth and len(icons) == len(oc.commands):
                 self.trace.observe(open_command={"mask": oc.mask, "commands": list(oc.commands), "icon": nth[0]})

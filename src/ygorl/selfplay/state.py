@@ -189,7 +189,14 @@ def check_expectation(exp: Expectation, now: RawDuel, passwords: dict[int, int])
                     c for i, c in enumerate(me1.slots) if i != loc.sequence]:  # fmt: skip
                 return "activate: only the monster's position changed (the Change Position icon was clicked)"
         return None
-    return None  # reposition and others: not checked yet
+    if kind == "reposition" and act.card is not None and 0 <= act.card.loc.sequence < 7:
+        # the monster's face / position changed, or it left its zone (run s91: a click on a mark that was no icon
+        # went unnoticed and was recorded as done)
+        before, after = me0.slots[act.card.loc.sequence], me1.slots[act.card.loc.sequence]
+        same = before is not None and after is not None and before.uid == after.uid
+        ok = not same or (before.face, before.sideways) != (after.face, after.sideways)
+        return None if ok else "reposition: the monster's position did not change"
+    return None  # others: not checked yet
 
 
 EFFECT_LIST_END = 0x3C80  # S + uid_table (0x1bec) .. here: the uid table and the effect list (S + 0x2bec)
