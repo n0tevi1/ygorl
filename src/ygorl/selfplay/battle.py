@@ -313,6 +313,12 @@ class BattleMixin:
 
     def field_pick(self, raw: RawDuel) -> None:
         """Mode 8 outside an attack: pick the highlighted cards one by one and confirm each."""
+        self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=4.0)
+        if self.ui.dialog() == "list":
+            # a card list was still sliding in when the step was classified (run s87: Spiral Spear Strike's
+            # "discard 1 card from your hand", mode 8): the loop answers it as a list
+            self.trace.observe(field_pick="a card list came up: answered as a list")
+            return
         episode = (raw.turn, raw.phase)
         if self.field_picked[0] != episode:
             self.field_picked = (episode, [])

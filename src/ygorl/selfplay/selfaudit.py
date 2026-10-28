@@ -262,7 +262,7 @@ class _Game:
                 if (
                     d.get("action") in ("battle_phase", "main2", "end_phase")
                     and masked
-                    and o.get("md_nothing_lit", True)
+                    and o.get("md_nothing_lit")  # (absent: cards were lit, the masks are MD's own)
                     and not o.get("md_lit_this_phase")  # (trusted: the client had lit cards in this phase)
                 ):
                     # the phase was left because MD's highlight masked the cards' actions (run s83: an empty
