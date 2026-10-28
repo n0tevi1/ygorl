@@ -536,6 +536,11 @@ critic 参数（例如新加的辅助头）从零开始。这是 2026-10-21 A/B 
   同槽位快照，每个候选由快照（对手座位）与当前模型（学习者座位，不记行）推演到回合结束，按前瞻分（己方场面分 − 学习者场面分 + LP 差 / 1000，终局 ±100）取最高，恢复后走它。
   收集器把这类槽位当作分支中的槽位（锁步收集同样暂停其它槽位）；`Rollout.lookahead_decisions / _branched / _changed / _steps` 计数。需要 `privileged_critic`（推演要看双方场面），环境开 `snapshots`。
   `lookahead_share = 0`（默认）时不抽额外随机数，发局与收集逐位不变。测试：`tests/test_lookahead.py`。
+  吞吐（§13.4「实测与优化」）：一个前瞻回合是上千次「前向 → 引擎步」的串行往返，瓶颈是链长与每轮的 GPU 延迟，不是算力。三项等价优化（选择逐位不变）：
+  `lookahead_forks`（`--lookahead-forks`，默认 64）个备用环境槽位按前缀重放前瞻局、之后逐个动作跟随（`ygorl.train.lookahead.Forks`），一个决策的候选在主槽位与分叉上同时推演（`look_ahead(runners=…)`，`LookTask` 驱动）；
+  前瞻的前向并入同一轮的快照 / 学习者前向；异步收集在主事件不够 `min_batch` 时先让前瞻局单独走一轮（`lookahead_rounds`，`--lookahead-rounds`，两个整轮之间至多 4 轮）。
+  分叉要求环境 `record_actions`（训练器总是开）；环境槽位数 = `num_envs + lookahead_forks`，每个分叉多占约 3 MiB 核心 + 3 MiB 快照。共用 GPU 上收集从原样对手的 ×5.1 降到 ×1.8–2.1（未达 ×1.5，剩下的是长回合的串行深度）。
+  基准：`tools/lookahead_bench.py CKPT --collect RUN/config.json --device cuda`（`plain` / `seq` / `look` 三臂）与评估驱动 `play(forks=…)`。
 
 ### 8.4 评估
 

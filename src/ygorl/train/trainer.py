@@ -154,6 +154,11 @@ class TrainConfig:
     lookahead_k: int = 8
     lookahead_rollouts: int = 1
     lookahead_second: bool = False
+    # throughput of the look-ahead (first-seat plan §13.4; the choices do not change): lookahead_forks spare environment
+    # slots replay a look-ahead game so a decision's candidates roll out side by side (ygorl.train.lookahead.Forks);
+    # lookahead_rounds look-ahead-only rounds between two full rounds of asynchronous collection
+    lookahead_forks: int = 64
+    lookahead_rounds: int = 4
     snapshot_every: int = 10  # updates
     pool_sampling: str = (
         "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
@@ -247,6 +252,8 @@ class TrainConfig:
                 raise ValueError("lookahead_share needs fixed-length segments, not complete_games")
             if not self.privileged_critic:
                 raise ValueError("lookahead_share needs the privileged environment (the rollouts score both boards)")
+        if self.lookahead_forks < 0 or self.lookahead_rounds < 0:
+            raise ValueError("lookahead_forks and lookahead_rounds must not be negative")
         uses_branch = self.ppo.branch_mode != "off" or self.ppo.branch_q_coef > 0 or self.ppo.branch_ce_coef > 0
         if uses_branch and not self.branch_windows:
             raise ValueError(
@@ -425,7 +432,8 @@ class Trainer:
                                          lookahead=cfg.lookahead_config() if cfg.lookahead_share > 0 else None,
                                          lookahead_share=cfg.lookahead_share,
                                          lookahead_second=cfg.lookahead_second)  # fmt: skip
-        self.env = EncodedVecEnv(cfg.num_envs, cfg.env_threads, cards=self.cards, vocab=self.vocab,
+        forks = cfg.lookahead_forks if cfg.lookahead_share > 0 else 0
+        self.env = EncodedVecEnv(cfg.num_envs + forks, cfg.env_threads, cards=self.cards, vocab=self.vocab,
                                  privileged=cfg.privileged_critic, event_length=cfg.event_length,
                                  skip_forced=cfg.skip_forced, record_actions=True, record_games=cfg.trace_games,
                                  selection_history=self.net_config.selection_history, attack_history=self.net_config.attack_history, cancel_budget=cfg.cancel_budget,
@@ -439,7 +447,8 @@ class Trainer:
                                           seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
                                           device=self.device, stall_timeout=cfg.stall_timeout,
                                           turn_discount=cfg.turn_discount, complete_games=cfg.complete_games,
-                                          branch=cfg.branch_config() if cfg.branch_windows else None)  # fmt: skip
+                                          branch=cfg.branch_config() if cfg.branch_windows else None,
+                                          forks=forks, look_rounds=cfg.lookahead_rounds)  # fmt: skip
         self._warmup_ev: list[float] = []
         self.counters = {"critic_warmup_done": 0, "updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0, "snapshots": 0, "snapshots_skipped": 0}  # fmt: skip

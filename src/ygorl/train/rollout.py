@@ -60,6 +60,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -391,13 +392,15 @@ class _BranchState:
 
 @dataclass
 class _LookState:
-    """A look-ahead opponent's decision in progress: the generator (:func:`ygorl.train.lookahead.look_ahead`), the
-    decision's event, and a snapshot whose event is awaited."""
+    """A look-ahead opponent's decision in progress: the decision's event, the running look-ahead
+    (:class:`ygorl.train.lookahead.LookTask`; None while it waits for its forks, ``pending``: the generator without
+    its runner count and the forks wanted) and the forks lent to it."""
 
-    gen: Any
     ev: Any
     turn: int
-    wait_sid: int | None = None
+    task: Any = None
+    pending: Any = None
+    forks: list[int] = field(default_factory=list)
 
 
 @dataclass
@@ -413,6 +416,7 @@ class _Slot:
     branch: _BranchState | None = None  # a window being branched
     look: _LookState | None = None  # a look-ahead opponent's decision being rolled out (Assignment.lookahead)
     looks: int = 0  # look-ahead decisions of the opponent so far in this game (their random-number keys)
+    turn: int = 0  # the turn of the game's latest decision seen (look-ahead games: _look_slot)
 
 
 class RolloutCollector:
@@ -420,16 +424,29 @@ class RolloutCollector:
 
     ``next_game() -> Assignment`` chooses every new game (deck pairing, first player, opponent);
     ``opponents(snapshot_id) -> module`` returns the frozen snapshot for pool games. ``min_batch``: wait for
-    at least this many ready decisions before a forward pass (default: half the environments).
+    at least this many ready decisions before a forward pass (default: half the environments). ``forks``: the last
+    ``forks`` environment slots are not game slots but :class:`~ygorl.train.lookahead.Forks` of look-ahead games (an
+    opponent's candidates roll out side by side; the choices do not change; needs ``record_actions``).
     """
 
     def __init__(self, env, model: nn.Module, next_game: Callable[[], Assignment], num_steps: int, *,
                  opponents: Callable[[int], nn.Module] | None = None, seed: int = 0, min_batch: int | None = None,
                  device: torch.device | str = "cpu", stall_timeout: float | None = 900.0,
                  turn_discount: float = 1.0, complete_games: bool = False, branch: BranchConfig | None = None,
-                 branch_hooks=None) -> None:  # fmt: skip
+                 branch_hooks=None, forks: int = 0, look_rounds: int = 4) -> None:  # fmt: skip
         if num_steps < 1:
             raise ValueError("num_steps must be at least 1")
+        self.num_envs = env.num_envs - forks  # game slots; the forks come after them
+        if forks < 0 or self.num_envs < 1:
+            raise ValueError("forks must leave at least one environment slot for the games")
+        self._forks = None
+        if forks:
+            from ygorl.train.lookahead import Forks
+
+            if complete_games or not getattr(env, "snapshots", False) or getattr(env, "_action_traces", None) is None:
+                raise ValueError("look-ahead forks need fixed-length segments and EncodedVecEnv(snapshots=True, "
+                                 "record_actions=True)")  # fmt: skip
+            self._forks = Forks(env, range(self.num_envs, env.num_envs))
         # window branching (BranchConfig): the environment must take snapshots; branch_hooks are the game-specific
         # parts (EncodedBranchHooks by default, train.toy.NimBranchHooks for the toy game)
         if branch is not None:
@@ -448,6 +465,11 @@ class RolloutCollector:
         # windows branched, decisions stepped in branches, branched windows without a recovery line (this collection)
         self._branch_counts = [0, 0, 0]
         self._look_counts = [0, 0, 0, 0]  # look-ahead decisions, branched, changed, rollout steps (this collection)
+        self._look_stepped = 0  # look-aheads finished this round (their action played)
+        self._look_games = 0  # game slots playing a look-ahead game (asynchronous look-only rounds, _recv_looking)
+        self._early: list = []  # events kept back by a look-only round for the next full round
+        self.look_rounds = look_rounds
+        self._look_only_rounds = 0  # look-only rounds since the last full round
         self.env = env
         self.model = model
         self.next_game = next_game
@@ -459,14 +481,14 @@ class RolloutCollector:
         if not 0 < turn_discount <= 1:
             raise ValueError("turn_discount must be in (0, 1]")
         self.turn_discount = turn_discount
-        self.min_batch = max(1, min_batch if min_batch is not None else env.num_envs // 2)
+        self.min_batch = max(1, min_batch if min_batch is not None else self.num_envs // 2)
         self.device = torch.device(device)
         # no event from any environment for this long while some are still owed rows: an engine stuck inside one
         # duel (its worker thread never returns) -- raise instead of waiting forever; None = wait forever
         self.stall_timeout = stall_timeout
         self._watch = StallWatch(env, stall_timeout, describe=self._describe, error=RolloutStalled)
         self.generator = torch.Generator().manual_seed(seed)
-        self._slots: list[_Slot | None] = [None] * env.num_envs
+        self._slots: list[_Slot | None] = [None] * self.num_envs
         self._held: dict[int, Any] = {}  # env -> pending learner decision (the bootstrap state)
         self.games_started = 0
         # snapshot module id -> (the module, its copy with Linear parameters in the autocast dtype, that dtype); the
@@ -486,7 +508,7 @@ class RolloutCollector:
 
     def _collect(self) -> Rollout:
         t0 = time.perf_counter()
-        B, T = self.env.num_envs, self.num_steps
+        B, T = self.num_envs, self.num_steps
         for env_id, slot in enumerate(self._slots):
             if slot is None:
                 self._new_game(env_id)
@@ -495,12 +517,13 @@ class RolloutCollector:
         cols: list[list[_Row]] = [[] for _ in range(B)]
         games: list[FinishedGame] = []
         opponent_decisions = 0
-        ready = list(self._held.values())
+        ready, self._early = [*self._early, *self._held.values()], []
         self._held.clear()
         self._branch_counts = [0, 0, 0]
         self._look_counts = [0, 0, 0, 0]
         lockstep = self.min_batch >= B
         deferred: list = []  # lockstep: the other slots' decisions, held back while a window is branched
+        look_only = False  # asynchronous look-ahead round: only the look-ahead games' events (_recv_looking)
         while True:
             learner, others, branching, looking, look_starts = [], defaultdict(list), [], [], []
             # Full batches provide stable membership; worker order must not reassign RNG draws or deals.
@@ -508,7 +531,20 @@ class RolloutCollector:
             if lockstep:
                 ready.sort(key=lambda ev: ev.env_id)
             for ev in ready:
+                if ev.env_id >= B:  # a fork (Forks): of a running look-ahead, or a replay / catch-up step
+                    if ev.env_id in self._forks.lent:
+                        looking.append(ev)
+                    else:
+                        self._forks.event(ev)
+                    continue
                 slot = self._slots[ev.env_id]
+                if self._forks is not None and ev.env_id in self._forks.owned:
+                    self._fork_turn(ev, slot)
+                if look_only and not self._look_critical(ev):
+                    self._early.append(ev)
+                    continue
+                if ev.result is None and slot.assignment.lookahead is not None:
+                    slot.turn = int(ev.obs["globals"][3])
                 if slot.branch is not None:
                     branching.append(ev)
                 elif slot.look is not None:
@@ -529,21 +565,32 @@ class RolloutCollector:
                     look_starts.append(ev)
                 else:
                     others[id(slot.opponent)].append(ev)
-            if looking or look_starts:
-                opponent_decisions += self._look_round(looking, look_starts)
+            l_learner, l_groups = self._look_events(looking, look_starts) if looking or look_starts else ([], {})
             b_learner, b_horizon, b_groups = self._sort_branch(branching) if branching else ([], [], {})
-            pending, b_pending = self._forward_opponents(others, b_groups)  # queued before the learner's wait
-            if learner or b_learner or b_horizon:
-                self._act_learner(learner, cols, b_learner, b_horizon)
+            # queued before the learner's wait
+            pending, b_pending, l_pending = self._forward_opponents(others, b_groups, l_groups)
+            l_probs = []
+            if learner or b_learner or b_horizon or l_learner:
+                l_probs = self._act_learner(learner, cols, b_learner, b_horizon, [r[3] for r in l_learner])
             opponent_decisions += self._step_opponents(pending)
             self._step_branch_opponents(b_pending)
+            if l_learner or l_pending:
+                self._look_answers(l_learner, l_probs, l_pending)
+            if self._forks is not None:
+                self._fork_round()
+            opponent_decisions += self._look_stepped  # finished look-aheads: the snapshot's decisions played
+            self._look_stepped = 0
             if len(self._held) == B:
                 break
             if lockstep and self._branching:
                 ready = self._recv(1)
             elif deferred:  # the branches are done: the held-back round, completed
                 owed = B - len(self._held) - len(deferred)
-                ready, deferred = deferred + (self._recv(owed) if owed > 0 else []), []
+                ready, deferred = deferred + (self._recv_games(owed) if owed > 0 else []), []
+            elif lockstep:
+                ready = self._recv_games(B - len(self._held))
+            elif self._look_games:
+                ready, look_only = self._recv_looking(min(self.min_batch, B - len(self._held)))
             else:
                 ready = self._recv(min(self.min_batch, B - len(self._held)))
         return self._assemble(cols, games, opponent_decisions, time.perf_counter() - t0)
@@ -557,7 +604,7 @@ class RolloutCollector:
         if self._held or any(slot is not None for slot in self._slots):
             raise ValueError("complete-game collection cannot continue fixed-length segments")
         t0 = time.perf_counter()
-        B = self.env.num_envs
+        B = self.num_envs
         cols: list[list[_Row]] = [[] for _ in range(B)]
         games: list[FinishedGame] = []
         opponent_decisions = discarded = 0
@@ -598,7 +645,77 @@ class RolloutCollector:
         return ro
 
     def _recv(self, n: int) -> list:
-        return self._watch.recv(n, owing=[e for e in range(self.env.num_envs) if e not in self._held])
+        return self._watch.recv(n, owing=[e for e in range(self.num_envs) if e not in self._held])
+
+    def _look_critical(self, ev) -> bool:
+        """An event on a look-ahead game's critical path: of a running look-ahead (its game slot or a fork), or of a
+        look-ahead game inside its look-ahead turns."""
+        if ev.env_id >= self.num_envs:
+            return True
+        slot = self._slots[ev.env_id]
+        if slot.look is not None:
+            return True
+        cfg = slot.assignment.lookahead
+        if cfg is None or ev.result is not None or slot.branch is not None:
+            return False
+        turn = int(ev.obs["globals"][3])
+        return cfg.first_turn <= turn and (cfg.last_turn is None or turn <= cfg.last_turn)
+
+    def _recv_looking(self, n: int) -> tuple[list, bool]:
+        """Asynchronous collection with look-ahead games: ``(events, look_only)``. A round needs ``n`` events of the
+        other games (as :meth:`_recv`), but a look-ahead game's turn is a chain of many short round trips (every
+        rollout step waits for a forward), so while those wait for ``n`` the look-ahead games' events run in rounds of
+        their own (``look_only``: the other events are kept in ``_early`` for the next full round). A look-only
+        round starts once every running look-ahead has all the events it waits for."""
+        ready, self._early = self._early, []
+        awaited = sum(s.look.task.waiting for s in self._slots if s is not None and s.look is not None
+                      and s.look.task is not None)  # fmt: skip
+        # the other game slots: their next events are what a full round waits for
+        expected = {e for e, s in enumerate(self._slots) if e not in self._held and not self._look_slot(s)}
+        while True:
+            critical = [self._look_critical(ev) for ev in ready]
+            main = len(ready) - sum(critical)
+            left = len(expected.difference(ev.env_id for ev in ready))
+            if main >= n or (left == 0 and main > 0):
+                self._look_only_rounds = 0
+                return ready, False
+            if any(critical) and (self._look_only_rounds < self.look_rounds or left == 0):
+                answered = sum(1 for ev, c in zip(ready, critical) if c and self._look_answer_event(ev))
+                if answered >= awaited:
+                    self._look_only_rounds += 1
+                    return ready, True
+            ready += self._recv(1)
+
+    def _look_slot(self, slot: _Slot | None) -> bool:
+        """A game slot whose events are all on a look-ahead game's critical path for now (:meth:`_look_critical`)."""
+        if slot is None:
+            return False
+        if slot.look is not None:
+            return True
+        cfg = slot.assignment.lookahead
+        return (cfg is not None and slot.branch is None and cfg.first_turn <= slot.turn
+                and (cfg.last_turn is None or slot.turn <= cfg.last_turn))  # fmt: skip
+
+    def _look_answer_event(self, ev) -> bool:
+        """``ev`` answers a running look-ahead's environment job."""
+        if ev.env_id >= self.num_envs:
+            return ev.env_id in self._forks.lent
+        look = self._slots[ev.env_id].look
+        return look is not None and look.task is not None
+
+    def _recv_games(self, n: int) -> list:
+        """At least ``n`` events of game slots; forks' events received meanwhile go to :class:`Forks` (they are
+        catch-up steps then: no look-ahead runs), so a lockstep round keeps its membership."""
+        out: list = []
+        while len(out) < n:
+            for ev in self._recv(n - len(out)):
+                if self._forks is not None and ev.env_id >= self.num_envs:
+                    if ev.env_id in self._forks.lent:
+                        raise RuntimeError(f"fork {ev.env_id} answered a look-ahead outside a look-ahead round")
+                    self._forks.event(ev)
+                else:
+                    out.append(ev)
+        return out
 
     def _describe(self, env_id: int) -> str:
         """A slot's game, for a stall report (the stuck duel is among the silent ones)."""
@@ -629,7 +746,13 @@ class RolloutCollector:
                 raise RuntimeError("a scripted-line game needs a snapshot opponent to continue the line")
             line = LinePlayer(assignment.line, bool(getattr(self.env, "skip_forced", False)),
                               first_seat=assignment.learner_seat == 0)  # fmt: skip
-        self._slots[env_id] = _Slot(assignment, opponent, line=line, serial=self.games_started)
+        if self._forks is not None:
+            self._forks.drop(env_id)
+        old = self._slots[env_id]
+        self._look_games += (assignment.lookahead is not None) - (
+            old is not None and old.assignment.lookahead is not None
+        )
+        self._slots[env_id] = _Slot(assignment, opponent, line=line, serial=self.games_started, turn=1)
         self._watch.started(env_id)
         self.games_started += 1
         self.env.reset(env_id, assignment.spec)
@@ -651,15 +774,26 @@ class RolloutCollector:
 
     # -- acting ---------------------------------------------------------------------------------------
     def _act_learner(self, events: list, cols: list[list[_Row]], branch_learner: list = (),
-                     branch_horizon: list = ()) -> None:  # fmt: skip
+                     branch_horizon: list = (), look: list = ()) -> list[np.ndarray]:  # fmt: skip
         """One forward over the learner's ready decisions: ``events`` become rows (sampled with the collector's
-        generator), the branch decisions after them (:meth:`_sort_branch`) only share the forward."""
+        generator), the branch decisions after them (:meth:`_sort_branch`) and the look-ahead's decisions of the
+        learner's seat (``look``, last; their probabilities are returned) only share the forward."""
         model = self.model
         extra = [*branch_learner, *branch_horizon]
-        both = [*events, *extra] if extra else events
+        if look and not events and not extra:  # only the look-ahead's: the actor alone
+            batch = model.collate([ev.obs for ev in look], self.device)
+            return list(torch.softmax(policy_logits(model, batch).float(), -1).cpu().numpy().astype(np.float64))
+        both = [*events, *extra, *look] if extra or look else events
         batch = model.collate([ev.obs for ev in both], self.device)
         priv = model.collate_privileged([ev.privileged for ev in both], self.device)
         out = model(batch, priv)
+        look_probs: list[np.ndarray] = []
+        if look:
+            tail = torch.softmax(out.logits[len(both) - len(look) :].float(), -1)
+            look_probs = list(tail.cpu().numpy().astype(np.float64))
+            out = type(out)(*(None if t is None else t[: len(both) - len(look)] for t in out))
+            if not events and not extra:
+                return look_probs
         logp = torch.log_softmax(out.logits.float(), -1)
         width = logp.shape[1]
         # everything the rows keep (probabilities, log-probabilities, Q, V) in one device-to-host copy
@@ -668,7 +802,7 @@ class RolloutCollector:
             self._act_branch_learner(list(branch_learner), list(branch_horizon), packed[len(events) :], width)
             packed = packed[: len(events)]
             if not events:
-                return
+                return look_probs
         probs, logp = packed[:, :width].contiguous(), packed[:, width : 2 * width]
         q, v = packed[:, 2 * width : 3 * width], packed[:, 3 * width]
         actions = torch.multinomial(probs, 1, generator=self.generator).squeeze(-1)
@@ -696,6 +830,7 @@ class RolloutCollector:
                 slot.branch = branch
                 self._branching += 1
                 branch.sid = self.env.snapshot(ev.env_id)
+        return look_probs
 
     @staticmethod
     def _count_window(slot: _Slot, ev) -> tuple[int, int, int, bool]:
@@ -847,96 +982,154 @@ class RolloutCollector:
         self.env.step(env_id, st.action)
 
     # -- look-ahead opponents ------------------------------------------------------------------------
-    def _look_round(self, events: list, starts: list) -> int:
-        """Advance the look-ahead opponents (``Assignment.lookahead``; :func:`ygorl.train.lookahead.look_ahead`):
-        ``starts`` are qualifying snapshot decisions (the look-ahead begins), ``events`` the environment's answers to
-        running ones. Their forwards are batched by module (the snapshot for its seat, the learner's model for the
-        learner's seat, no rows); a finished look-ahead steps its action in the main game. Returns the snapshot's
-        main-game decisions stepped. The slots count as branching (``_branching``), so lockstep collection holds the
-        other slots back as it does for window branches."""
-        from ygorl.train.lookahead import GameHooks, Uniforms, look_ahead, lookahead_value
-
-        stepped = 0
-        env_of: dict[int, int] = {}
-        forwards: list[tuple[_Slot, int, Any, str]] = []
-
-        def send(slot: _Slot, value) -> None:
-            nonlocal stepped
-            st, env_id = slot.look, env_of[id(slot)]
-            while True:
-                try:
-                    req = st.gen.send(value)
-                except StopIteration as stop:
-                    action, info = stop.value
-                    counts = self._look_counts
-                    counts[0] += 1
-                    counts[1] += info["branched"]
-                    counts[2] += info["changed"]
-                    counts[3] += info["steps"]
-                    slot.look = None
-                    slot.looks += 1
-                    self._branching -= 1
-                    stepped += 1
-                    self.env.step(env_id, int(action))
-                    return
-                kind = req[0]
-                if kind == "forward":
-                    forwards.append((slot, req[1], req[2], "co"))
-                    return
-                if kind == "release":
-                    self.env.release(env_id, req[1])
-                    value = None
-                    continue
-                if kind == "step":
-                    self.env.step(env_id, int(req[1]))
-                elif kind == "restore":
-                    self.env.restore(env_id, req[1])
-                elif kind == "snapshot":
-                    st.wait_sid = self.env.snapshot(env_id)
-                else:
-                    raise RuntimeError(f"unknown look-ahead request {kind!r}")
-                return
-
-        for ev in [*events, *starts]:
-            env_of[id(self._slots[ev.env_id])] = ev.env_id
-        forwards.extend((self._slots[ev.env_id], int(ev.player), ev, "start") for ev in starts)
+    def _look_events(self, events: list, starts: list) -> tuple[list, dict]:
+        """Advance the look-ahead opponents (``Assignment.lookahead``; :class:`ygorl.train.lookahead.LookTask`) with
+        ``events``, the environment's answers to running ones (their game slots' and their forks'), and return the
+        forwards they and ``starts`` (qualifying snapshot decisions: the look-ahead begins) wait for: the learner
+        seat's (they join the learner's forward, :meth:`_act_learner`) and the snapshot's by module (they join
+        :meth:`_forward_opponents`); entries ``(slot, runner, seat, event)``, runner None for a start. The slots
+        count as branching (``_branching``), so lockstep collection holds the other slots back as it does for window
+        branches."""
+        B = self.num_envs
+        touched: dict[int, _Slot] = {}
         for ev in events:
-            slot = self._slots[ev.env_id]
-            if slot.look.wait_sid is not None:
-                sid, slot.look.wait_sid = slot.look.wait_sid, None
-                send(slot, sid)
+            game = self._forks.owner[ev.env_id] if ev.env_id >= B else ev.env_id
+            slot = self._slots[game]
+            slot.look.task.event(ev.env_id, ev)
+            touched[game] = slot
+        rows = [(slot, None, int(ev.player), ev) for ev in starts for slot in (self._slots[ev.env_id],)]
+        for game, slot in touched.items():
+            rows.extend(self._look_progress(game, slot))
+        learner, groups = [], {}
+        for row in rows:
+            slot, _, seat, _ = row
+            if seat == slot.assignment.learner_seat:
+                learner.append(row)
             else:
-                send(slot, ev)
-        while forwards:
-            batch = list(forwards)
-            forwards.clear()
+                groups.setdefault(id(slot.opponent), (slot.opponent, []))[1].append(row)
+        return learner, groups
+
+    def _look_progress(self, game: int, slot: _Slot) -> list:
+        """The forwards ``slot``'s look-ahead waits for; once it returned, its action is played in the game."""
+        st = slot.look
+        rows = [(slot, r, seat, ev) for r, seat, ev in st.task.pending_forwards()]
+        if st.task.result is None:
+            return rows
+        action, info = st.task.result
+        counts = self._look_counts
+        counts[0] += 1
+        counts[1] += info["branched"]
+        counts[2] += info["changed"]
+        counts[3] += info["steps"]
+        if st.forks:
+            self._forks.give_back(st.forks, st.ev)
+        slot.look = None
+        slot.looks += 1
+        self._branching -= 1
+        self._look_stepped += 1
+        self.env.step(game, int(action))
+        return rows
+
+    def _look_answers(self, learner: list, learner_probs: list, pending: list) -> None:
+        """Hand the look-ahead forwards' probabilities (:meth:`_look_events`) to their look-ahead or, for a start,
+        begin it."""
+        from ygorl.train.lookahead import GameHooks, Uniforms, candidates, look_ahead, lookahead_value
+
+        answers = list(zip(learner, learner_probs, strict=True))
+        for rows, probs in pending:
+            p = probs.float().cpu().numpy().astype(np.float64)
+            answers.extend(zip(rows, p))
+        touched: dict[int, _Slot] = {}
+        for (slot, runner, seat, ev), p in answers:
+            if runner is not None:
+                slot.look.task.answer(runner, p)
+                touched[id(slot)] = slot
+                continue
+            cfg = slot.assignment.lookahead
+
+            def score(cur, s, w, cfg=cfg):
+                return lookahead_value(cur, s, w, cfg, self.env.cards, self.env.vocab)
+
+            draws = Uniforms(_mix(self.seed, 0x100CA, slot.serial))
+            n = slot.looks
+            cands = candidates(cfg, p, ev.obs["action_mask"], lambda j, n=n, d=draws, s=seat: d.candidate(s, n, j))
+            gen = partial(look_ahead, cfg, seat, n, ev, p, draws, GameHooks(), score, cands=cands)
+            want = 0
+            if self._forks is not None and len(cands) > 1:
+                want = len(cands) - 1
+                self._forks.acquire(ev.env_id, want, slot.assignment.spec, self.env.actions(ev.env_id))
+            slot.look = _LookState(ev, int(ev.obs["globals"][3]), pending=(gen, want))
+            self._branching += 1
+            self._look_begin(ev.env_id, slot)
+        for slot in touched.values():
+            game = slot.look.ev.env_id
+            if slot.look.task.forwards:  # a forward without an environment step in between (none today): run it now
+                self._look_now(self._look_progress(game, slot))
+            else:
+                self._look_progress(game, slot)
+
+    def _look_begin(self, game: int, slot: _Slot) -> None:
+        """Start ``slot``'s waiting look-ahead once its forks are at the decision (else wait: :meth:`_fork_round`)."""
+        from ygorl.train.lookahead import LookTask
+
+        st = slot.look
+        gen, want = st.pending
+        lent = self._forks.ready(game, want, len(self.env.actions(game))) if want else []
+        if lent is None:
+            return
+        st.pending = None
+        if lent:
+            self._forks.lend(lent, st.ev)
+        st.forks = list(lent)
+        st.task = LookTask(gen(runners=1 + len(lent)), self.env, [game, *lent])
+        st.task.start()
+        if st.task.forwards:
+            self._look_now(self._look_progress(game, slot))
+        else:
+            self._look_progress(game, slot)
+
+    def _look_now(self, rows: list) -> None:
+        """Forward look-ahead rows outside the round's shared forwards and answer them (until none are left)."""
+        while rows:
+            probs: list[Any] = [None] * len(rows)
             groups: dict[int, list[int]] = defaultdict(list)
             modules: dict[int, nn.Module] = {}
-            for k, (slot, seat, _, _) in enumerate(batch):
+            for k, (slot, _, seat, _) in enumerate(rows):
                 module = self.model if seat == slot.assignment.learner_seat else self._opponent_module(slot.opponent)
                 modules[id(module)] = module
                 groups[id(module)].append(k)
-            probs: list[Any] = [None] * len(batch)
             for key, ks in groups.items():
-                obs = self.model.collate([batch[k][2].obs for k in ks], self.device)
+                obs = self.model.collate([rows[k][3].obs for k in ks], self.device)
                 p = torch.softmax(policy_logits(modules[key], obs).float(), -1).cpu().numpy().astype(np.float64)
                 for r, k in enumerate(ks):
                     probs[k] = p[r]
-            for (slot, seat, ev, kind), p in zip(batch, probs, strict=True):
-                if kind == "co":
-                    send(slot, p)
-                    continue
-                cfg = slot.assignment.lookahead
+            nxt = []
+            for (slot, runner, _, _), p in zip(rows, probs, strict=True):
+                slot.look.task.answer(runner, p)
+            for slot in {id(s): s for s, _, _, _ in rows}.values():
+                nxt.extend(self._look_progress(slot.look.ev.env_id, slot))
+            rows = nxt
 
-                def score(cur, s, w, cfg=cfg):
-                    return lookahead_value(cur, s, w, cfg, self.env.cards, self.env.vocab)
+    def _fork_turn(self, ev, slot: _Slot) -> None:
+        """A game event of a slot with forks: past the look-ahead's last turn (or over), they go back to the pool."""
+        if slot.branch is not None or slot.look is not None:
+            return
+        last = slot.assignment.lookahead.last_turn
+        if ev.result is not None or (last is not None and int(ev.obs["globals"][3]) > last):
+            self._forks.drop(ev.env_id)
 
-                gen = look_ahead(cfg, seat, slot.looks, ev, p, Uniforms(_mix(self.seed, 0x100CA, slot.serial)),
-                                 GameHooks(), score)  # fmt: skip
-                slot.look = _LookState(gen, ev, int(ev.obs["globals"][3]))
-                self._branching += 1
-                send(slot, None)
-        return stepped
+    def _fork_round(self) -> None:
+        """Bring the forks of games at rest (no look-ahead running, no window branched) towards their games and start
+        look-aheads whose forks are now ready; drop the forks of games past their look-ahead turns."""
+        forks = self._forks
+        for game in list(forks.owned):
+            slot = self._slots[game]
+            look = slot.look
+            if slot.branch is not None or (look is not None and look.task is not None):
+                continue
+            forks.sync(game, self.env.actions(game))
+            if look is not None and look.pending is not None:
+                self._look_begin(game, slot)
 
     def _act_line(self, slot: _Slot, ev) -> bool:
         """Play the opponent seat's decision from its scripted line; False once the line is over (the snapshot plays)."""
@@ -946,23 +1139,38 @@ class RolloutCollector:
         self.env.step(ev.env_id, row)
         return True
 
-    def _forward_opponents(self, groups: Mapping[int, list], branch_groups: Mapping[int, list] | None = None):
+    def _forward_opponents(self, groups: Mapping[int, list], branch_groups: Mapping[int, list] | None = None,
+                           look_groups: Mapping[int, tuple] | None = None):  # fmt: skip
         """Queue one forward per snapshot module (``groups``: the ready decisions of each) and return the candidate
         probabilities on the device, without waiting for them (:meth:`_step_opponents` samples). With
         ``branch_groups`` (window branching: the snapshot's decisions inside branches, by module) they share the
-        module's forward, after the main ones, and ``(pending, branch_pending)`` is returned."""
-        pending, branch_pending = [], []
-        for key in [*groups, *(k for k in branch_groups or () if k not in groups)]:
-            main, extra = groups.get(key, []), (branch_groups or {}).get(key, [])
-            evs = [*main, *extra] if extra else main
-            module = self._opponent_module(self._slots[evs[0].env_id].opponent)
-            batch = self.model.collate([ev.obs for ev in evs], self.device)
-            probs = torch.softmax(policy_logits(module, batch).float(), -1)
+        module's forward, after the main ones, and ``(pending, branch_pending)`` is returned; with ``look_groups``
+        too (look-ahead forwards, :meth:`_look_events`: module key -> (the snapshot, rows)) they come last and
+        ``(pending, branch_pending, look_pending)`` is returned."""
+        pending, branch_pending, look_pending = [], [], []
+        two = branch_groups is not None
+        branch_groups = branch_groups or {}
+        keys = [*groups, *(k for k in branch_groups if k not in groups)]
+        keys += [k for k in look_groups or () if k not in groups and k not in branch_groups]
+        jobs = []
+        for key in keys:
+            main, extra = groups.get(key, []), branch_groups.get(key, [])
+            look = look_groups[key][1] if look_groups and key in look_groups else []
+            evs = [*main, *extra, *(row[3] for row in look)] if extra or look else main
+            snapshot = self._slots[evs[0].env_id].opponent if main or extra else look_groups[key][0]
+            jobs.append((main, extra, look, self._opponent_module(snapshot), [ev.obs for ev in evs]))
+        outs = [torch.softmax(policy_logits(m, self.model.collate(obs, self.device)).float(), -1)
+                for _, _, _, m, obs in jobs]  # fmt: skip
+        for (main, extra, look, _, _), probs in zip(jobs, outs, strict=True):
             if main:
-                pending.append((main, probs[: len(main)] if extra else probs))
+                pending.append((main, probs[: len(main)] if extra or look else probs))
             if extra:
-                branch_pending.append((extra, probs[len(main) :]))
-        return pending if branch_groups is None else (pending, branch_pending)
+                branch_pending.append((extra, probs[len(main) : len(main) + len(extra)]))
+            if look:
+                look_pending.append((look, probs[len(main) + len(extra) :]))
+        if look_groups is not None:
+            return pending, branch_pending, look_pending
+        return (pending, branch_pending) if two else pending
 
     def _opponent_module(self, module: nn.Module) -> nn.Module:
         """The module a snapshot's forward runs through. Under autocast on the device it is a frozen copy whose

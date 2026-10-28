@@ -208,6 +208,10 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--lookahead-rollouts", "lookahead_rollouts", "rollouts per look-ahead candidate, averaged"),
         _f("--lookahead-second", "lookahead_second", "the look-ahead snapshot also looks ahead on turn 1 of the game "
            "where the learner moves second"),
+        _f("--lookahead-forks", "lookahead_forks", "spare environment slots that replay look-ahead games so a "
+           "decision's candidates roll out side by side (0: one after another; the choices are the same)"),
+        _f("--lookahead-rounds", "lookahead_rounds", "look-ahead-only rounds between two full rounds of asynchronous "
+           "collection (the look-ahead games' turns are long chains of short round trips)"),
         _f("--branch-mode", "ppo.branch_mode", "window counterfactual advantage on branched rows: replace the VRPO "
            "advantage, add branch-coef times it, or off", choices=("off", "replace", "add")),
         _f("--branch-coef", "ppo.branch_coef", "weight of the counterfactual advantage with --branch-mode add"),

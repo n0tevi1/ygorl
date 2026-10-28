@@ -182,6 +182,13 @@ class EncodedVecEnv:
             return list(self._final_responses[env_id])
         return list(self._pool.responses(env_id))
 
+    def actions(self, env_id: int) -> list[int]:
+        """The action indices played in ``env_id``'s current game so far (``record_actions`` / ``record_games``): with
+        the game's spec, :meth:`reset` ``prefix`` replays them to the same decision. The live list (do not change it)."""
+        if self._action_traces is None:
+            raise RuntimeError("actions() needs EncodedVecEnv(record_actions=True)")
+        return self._action_traces[env_id]
+
     def snapshot_count(self) -> int:
         return self._pool.snapshot_count()
 

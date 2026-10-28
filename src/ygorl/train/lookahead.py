@@ -24,6 +24,11 @@ batches forwards over many slots can run it: :func:`play` here (evaluation) and 
 opponent in self-play, ``Assignment.lookahead``). Requests: ``("forward", seat, event)`` -> the seat's action
 probabilities (numpy); ``("step", action)`` / ``("restore", sid)`` -> the next event; ``("snapshot",)`` -> the
 snapshot id (once its event arrived); ``("release", sid)`` -> None. The generator returns ``(action, info)``.
+It yields them as lists of ``(runner, request)``: a decision's candidates can roll out side by side on several
+environment slots (runner 0 the game's own, the others :class:`Forks` -- prefix replays of the game that follow it
+action by action), all runners advancing together; :class:`LookTask` drives one decision for a driver. The rollouts
+and so the choices do not depend on the number of runners (common random numbers), only the depth in environment
+round trips -- a look-ahead turn is a chain of several hundred of them, which is what bounds the throughput.
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ import time
 from collections import defaultdict
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -195,58 +201,90 @@ class GameHooks:
 
 
 def look_ahead(cfg: LookaheadConfig, seat: int, n: int, ev, probs: np.ndarray, draws: Uniforms, hooks: GameHooks,
-               score: Callable[[Any, int, float], float | None],
-               record: bool = False) -> Generator[tuple, Any, tuple[int, dict]]:  # fmt: skip
+               score: Callable[[Any, int, float], float | None], record: bool = False, runners: int = 1,
+               cands: list[int] | None = None) -> Generator[list, Any, tuple[int, dict]]:  # fmt: skip
     """Best-of-K at decision ``ev`` of engine ``seat`` (its ``n``-th decision; ``probs`` its policy there).
 
-    Yields environment requests (module docstring) and returns ``(action, info)``: ``info`` has ``candidates``
-    (distinct), ``branched`` (rolled out), ``changed`` (the action is not the policy's own draw), ``steps``
-    (decisions stepped in rollouts) and, with ``record``, ``values`` per candidate. On return the environment is
-    back at ``ev`` (byte for byte) and ``hooks`` as they were before it: the caller plays the action."""
-    cands = candidates(cfg, probs, ev.obs["action_mask"], lambda j: draws.candidate(seat, n, j))
+    ``runners``: environment slots the candidates are rolled out on side by side (runner 0 is the game's own slot,
+    runner ``r`` a fork of the game at ``ev``, :class:`Forks`); runner ``r`` takes candidates ``r, r + R, ...`` one
+    after another from its own snapshot. The rollouts, their random numbers and so the values and the chosen action
+    do not depend on ``runners`` -- only how many environment round trips the decision takes. More than one runner
+    needs per-game hooks without state (:class:`GameHooks` itself). ``cands``: the distinct candidates when the caller
+    drew them already (:func:`candidates`).
+
+    Yields lists of ``(runner, request)`` (module docstring; all runners advance together) and receives the answers
+    in the same order (None for a release); returns ``(action, info)``: ``info`` has ``candidates`` (distinct),
+    ``branched`` (rolled out), ``changed`` (the action is not the policy's own draw), ``steps`` (decisions stepped in
+    rollouts) and, with ``record``, ``values`` per candidate. On return every runner is back at ``ev`` (byte for
+    byte) and ``hooks`` as they were before it: the caller plays the action."""
+    if cands is None:
+        cands = candidates(cfg, probs, ev.obs["action_mask"], lambda j: draws.candidate(seat, n, j))
     info = {"candidates": len(cands), "branched": len(cands) > 1, "changed": False, "steps": 0}
     if len(cands) == 1:
         return cands[0], info
+    if runners > 1 and type(hooks) is not GameHooks:
+        raise ValueError("look-ahead on more than one runner needs hooks without state (GameHooks)")
     g = ev.obs["globals"]
-    turn = int(g[3])
-    horizon = turn + cfg.extra_turns
+    horizon = int(g[3]) + cfg.extra_turns
     own_weight = cfg.own_weight if cfg.own_weight is not None else float(bool(int(g[2])) or cfg.extra_turns > 0)
     state = hooks.save()
-    sid = yield ("snapshot",)
-    values: list[float | None] = []
-    fresh = True  # the environment is at the window (just snapshotted / restored)
-    for a in cands:
-        total, ok = 0.0, True
-        for m in range(cfg.rollouts):
-            if not fresh:
-                yield ("restore", sid)
-            fresh = False
-            hooks.load(state)
-            hooks.note(ev, a)
-            cur = yield ("step", a)
-            counts: dict[int, int] = defaultdict(int)
-            steps = 0
-            while True:
-                if cur.result is not None or int(cur.obs["globals"][3]) > horizon or steps >= ROLLOUT_CAP:
-                    v = score(cur, seat, own_weight)
-                    break
-                row = hooks.scripted(cur)
-                if row is None:
-                    p = yield ("forward", int(cur.player), cur)
-                    mover = int(cur.player)
-                    row = sample(p, draws.rollout(seat, n, m, mover, counts[mover]))
-                    counts[mover] += 1
-                    hooks.note(cur, row)
-                cur = yield ("step", row)
-                steps += 1
-            info["steps"] += steps + 1
-            if v is None:
-                ok = False
-            else:
-                total += v
-        values.append(total / cfg.rollouts if ok else None)
-    yield ("restore", sid)
-    yield ("release", sid)
+    values: list[float | None] = [None] * len(cands)
+    width = max(1, min(runners, len(cands)))
+
+    def runner(order: range) -> Generator[tuple, Any, None]:
+        """Candidates ``order`` (positions in ``cands``) one after another from this runner's snapshot."""
+        sid = yield ("snapshot",)
+        fresh = True  # the environment is at the window (just snapshotted / restored)
+        for i in order:
+            a = cands[i]
+            total, ok = 0.0, True
+            for m in range(cfg.rollouts):
+                if not fresh:
+                    yield ("restore", sid)
+                fresh = False
+                hooks.load(state)
+                hooks.note(ev, a)
+                cur = yield ("step", a)
+                counts: dict[int, int] = defaultdict(int)
+                steps = 0
+                while True:
+                    if cur.result is not None or int(cur.obs["globals"][3]) > horizon or steps >= ROLLOUT_CAP:
+                        v = score(cur, seat, own_weight)
+                        break
+                    row = hooks.scripted(cur)
+                    if row is None:
+                        p = yield ("forward", int(cur.player), cur)
+                        mover = int(cur.player)
+                        row = sample(p, draws.rollout(seat, n, m, mover, counts[mover]))
+                        counts[mover] += 1
+                        hooks.note(cur, row)
+                    cur = yield ("step", row)
+                    steps += 1
+                info["steps"] += steps + 1
+                if v is None:
+                    ok = False
+                else:
+                    total += v
+            values[i] = total / cfg.rollouts if ok else None
+        yield ("restore", sid)
+        yield ("release", sid)
+
+    subs = [runner(range(r, len(cands), width)) for r in range(width)]
+    answers: list[Any] = [None] * width
+    live = list(range(width))
+    while live:
+        batch = []
+        for r in live:
+            try:
+                batch.append((r, subs[r].send(answers[r])))
+            except StopIteration:
+                pass
+        if not batch:
+            break
+        live = [r for r, _ in batch]
+        got = yield batch
+        for (r, _), a in zip(batch, got, strict=True):
+            answers[r] = a
     hooks.load(state)
     best = 0
     for i, v in enumerate(values):
@@ -257,6 +295,179 @@ def look_ahead(cfg: LookaheadConfig, seat: int, n: int, ev, probs: np.ndarray, d
         info["values"] = values
         info["actions"] = list(cands)
     return cands[best], info
+
+
+class LookTask:
+    """One look-ahead decision being driven: the generator of :func:`look_ahead` over its runners' environment slots
+    (``envs[r]``: runner ``r``'s slot). A driver submits nothing itself: :meth:`start` and every answer (:meth:`event`
+    for an environment event, :meth:`answer` for the probabilities of a requested forward) advance the generator as
+    soon as all runners are answered, submitting their next environment jobs. ``forwards`` holds the forwards the
+    generator waits for, ``(runner, seat, event)``; ``result`` is ``(action, info)`` once it returned."""
+
+    __slots__ = ("gen", "env", "envs", "answers", "kinds", "waiting", "forwards", "result")
+
+    def __init__(self, gen, env, envs: Sequence[int]) -> None:
+        self.gen, self.env, self.envs = gen, env, list(envs)
+        self.answers: list[Any] = []
+        self.kinds: list[str] = []
+        self.waiting = 0  # environment events still awaited
+        self.forwards: list[tuple[int, int, Any]] = []
+        self.result: tuple[int, dict] | None = None
+
+    def start(self) -> None:
+        self._resume(None)
+
+    def runner_of(self, env_id: int) -> int:
+        return self.envs.index(env_id)
+
+    def event(self, env_id: int, ev) -> None:
+        """The event of runner slot ``env_id``'s job (the snapshot id stands in for a snapshot's event)."""
+        r = self.runner_of(env_id)
+        k = next(i for i, (rr, kind) in enumerate(self.kinds) if rr == r and kind != "forward" and kind != "done")
+        if self.kinds[k][1] != "snapshot":
+            self.answers[k] = ev
+        self.kinds[k] = (r, "done")
+        self.waiting -= 1
+        self._maybe_resume()
+
+    def pending_forwards(self) -> list[tuple[int, int, Any]]:
+        out, self.forwards = self.forwards, []
+        return out
+
+    def answer(self, runner: int, probs: np.ndarray) -> None:
+        k = next(i for i, (rr, kind) in enumerate(self.kinds) if rr == runner and kind == "forward")
+        self.answers[k] = probs
+        self.kinds[k] = (runner, "done")
+        self._maybe_resume()
+
+    def _maybe_resume(self) -> None:
+        if self.waiting == 0 and all(kind == "done" for _, kind in self.kinds):
+            self._resume(self.answers)
+
+    def _resume(self, answers) -> None:
+        while True:
+            try:
+                batch = self.gen.send(answers)
+            except StopIteration as stop:
+                self.result = stop.value
+                self.answers, self.kinds = [], []
+                return
+            self.answers = [None] * len(batch)
+            self.kinds = []
+            for k, (r, req) in enumerate(batch):
+                kind, env_id = req[0], self.envs[r]
+                if kind == "forward":
+                    self.forwards.append((r, req[1], req[2]))
+                elif kind == "release":
+                    self.env.release(env_id, req[1])
+                    kind = "done"
+                elif kind == "step":
+                    self.env.step(env_id, int(req[1]))
+                    self.waiting += 1
+                elif kind == "restore":
+                    self.env.restore(env_id, req[1])
+                    self.waiting += 1
+                elif kind == "snapshot":
+                    self.answers[k] = self.env.snapshot(env_id)
+                    self.waiting += 1
+                else:
+                    raise RuntimeError(f"unknown look-ahead request {kind!r}")
+                self.kinds.append((r, kind))
+            if any(kind != "done" for _, kind in self.kinds):
+                return
+            answers = self.answers
+
+
+class Forks:
+    """Spare environment slots (``slots``) that copy a game so a look-ahead decision rolls its candidates out side by
+    side (:func:`look_ahead` ``runners``) instead of one after another in the game's own slot.
+
+    A game that branches gets up to K - 1 forks (:meth:`acquire`): each starts as a prefix replay of the game's actions
+    so far (:meth:`EncodedVecEnv.reset <ygorl.env.encoded.EncodedVecEnv.reset>` ``prefix``; the same core seed and
+    actions give the same game byte for byte) and then follows the game action by action (:meth:`sync`), so it is
+    ready at the game's next decision without another replay. A decision lends its ready forks to the look-ahead
+    (:meth:`ready` / :meth:`lend`), whose runners restore them to the decision when done. :meth:`drop` gives a game's
+    forks back (its look-ahead turn is over, or the game). The forks' environment events go to :meth:`event` (or to
+    the :class:`LookTask` they are lent to)."""
+
+    def __init__(self, env, slots: Sequence[int]) -> None:
+        self.env = env
+        self.slots = frozenset(slots)
+        self.free: list[int] = sorted(slots)
+        self.owner: dict[int, int | None] = {f: None for f in slots}
+        self.synced: dict[int, int] = {f: 0 for f in slots}  # actions of the owner's game the fork has played
+        self.busy: set[int] = set()  # forks with a job in flight
+        self.lent: set[int] = set()  # forks running a look-ahead (their events go to the task)
+        self.owned: dict[int, list[int]] = {}
+        self.last: dict[int, Any] = {}  # the fork's latest event (checked against the game's decision when lent)
+        self.replays = 0
+
+    def __contains__(self, env_id: int) -> bool:
+        return env_id in self.slots
+
+    def acquire(self, game: int, want: int, spec, trace: Sequence[int]) -> None:
+        """Give ``game`` (its slot) up to ``want`` forks in all: idle free forks start a replay of ``trace``."""
+        have = self.owned.setdefault(game, [])
+        for f in list(self.free):
+            if len(have) >= want:
+                break
+            if f in self.busy:
+                continue
+            self.free.remove(f)
+            self.owner[f] = game
+            self.env.reset(f, spec, prefix=list(trace))
+            self.synced[f] = len(trace)
+            self.busy.add(f)
+            self.replays += 1
+            have.append(f)
+
+    def ready(self, game: int, want: int, trace_len: int) -> list[int] | None:
+        """The forks a decision of ``game`` at its ``trace_len``-th action can lend (up to ``want``), or None while
+        some of them are still catching up."""
+        use = self.owned.get(game, [])[:want]
+        if any(f in self.busy or self.synced[f] != trace_len for f in use):
+            return None
+        return use
+
+    def lend(self, forks: Sequence[int], ev) -> None:
+        for f in forks:
+            last = self.last.get(f)
+            if (
+                last is None
+                or last.result is not None
+                or any(not np.array_equal(last.obs[k], ev.obs[k]) for k in ("globals", "action_mask", "actions"))
+            ):
+                raise RuntimeError(f"fork {f} is not at its game's decision (a replay that diverged)")
+            self.lent.add(f)
+
+    def give_back(self, forks: Sequence[int], ev) -> None:
+        """The look-ahead is done: the forks are back at the decision ``ev`` (their last restore)."""
+        for f in forks:
+            self.lent.discard(f)
+            self.last[f] = ev
+
+    def event(self, ev) -> None:
+        """A replay or a catch-up step of an idle fork finished."""
+        self.busy.discard(ev.env_id)
+        self.last[ev.env_id] = ev
+
+    def sync(self, game: int, trace: Sequence[int]) -> None:
+        """Step ``game``'s idle forks towards the game's ``trace`` (one action per fork and round trip)."""
+        for f in self.owned.get(game, ()):
+            if f not in self.busy and f not in self.lent and self.synced[f] < len(trace):
+                last = self.last.get(f)
+                if last is None or last.result is not None:
+                    raise RuntimeError(f"fork {f} ended before its game")
+                self.env.step(f, int(trace[self.synced[f]]))
+                self.synced[f] += 1
+                self.busy.add(f)
+
+    def drop(self, game: int) -> None:
+        for f in self.owned.pop(game, ()):
+            self.owner[f] = None
+            self.lent.discard(f)
+            self.free.append(f)
+        self.free.sort()
 
 
 # ------------------------------------------------------------------------------------------ evaluation driver
@@ -361,40 +572,50 @@ class LineHooks(GameHooks):
 
 
 class _Game:
-    __slots__ = ("setup", "index", "env_id", "hooks", "decisions", "actions", "stats", "co", "co_seat", "co_ev",
-                 "co_turn", "wait_sid", "t0")  # fmt: skip
+    __slots__ = ("setup", "index", "env_id", "hooks", "decisions", "actions", "stats", "task", "co_seat", "co_ev",
+                 "co_turn", "co_forks", "pending", "look_until")  # fmt: skip
 
     def __init__(self, setup: GameSetup, index: int, env_id: int, hooks: GameHooks) -> None:
         self.setup, self.index, self.env_id, self.hooks = setup, index, env_id, hooks
         self.decisions = [0, 0]
         self.actions: list[int] = []
         self.stats = LookaheadStats()
-        self.co = None  # the running look-ahead (generator)
+        self.task: LookTask | None = None  # the running look-ahead
         self.co_seat = -1
         self.co_ev = None  # the main decision it answers
         self.co_turn = 0
-        self.wait_sid: int | None = None  # a snapshot whose event is awaited
+        self.co_forks: list[int] = []  # the forks lent to it
+        self.pending = None  # a look-ahead waiting for its forks: (generator arguments, forks wanted)
+        turns = [s.lookahead.last_turn for s in setup.seats if s.lookahead is not None]
+        self.look_until = None if not turns or None in turns else max(turns)  # forks are dropped after this turn
 
 
 @torch.no_grad()
 def play(env, games: Sequence[GameSetup], *, cards=None, vocab=None, min_batch: int | None = None,
-         device: str = "cpu", progress: Callable[[int, int], None] | None = None) -> tuple[list[Outcome], dict]:  # fmt: skip
+         device: str = "cpu", progress: Callable[[int, int], None] | None = None, forks: int = 0,
+         slots: int | None = None) -> tuple[list[Outcome], dict]:  # fmt: skip
     """Play ``games`` on ``env`` (an :class:`~ygorl.env.encoded.EncodedVecEnv` with ``snapshots=True`` and
-    ``privileged=True`` when any seat looks ahead; ``skip_forced`` as the policies were trained). Returns one
-    :class:`Outcome` per game (in order) and timing (``seconds``, ``forwards`` rows, ``main_decisions``)."""
+    ``privileged=True`` when any seat looks ahead; ``skip_forced`` as the policies were trained). The games run on the
+    first ``slots`` environment slots (default: all but the forks), the next ``forks`` slots are :class:`Forks` (games
+    without a scripted line roll a decision's candidates out side by side; the outcomes do not change). Returns one :class:`Outcome` per game (in
+    order) and timing (``seconds``, ``forward_rows``, ``forward_calls``, ``main_decisions``, ``fork_replays``)."""
     from ygorl.nets.batch import collate, policy_logits
     from ygorl.train.lines import LinePlayer
 
     looks = any(s.lookahead is not None for g in games for s in g.seats)
     if looks and not (getattr(env, "snapshots", False) and getattr(env, "privileged", False)):
         raise ValueError("look-ahead needs EncodedVecEnv(snapshots=True, privileged=True)")
+    slots = env.num_envs - forks if slots is None else slots
+    if forks < 0 or slots < 1 or slots + forks > env.num_envs:
+        raise ValueError("the games' slots and the forks must fit the environment, with at least one game slot")
+    pool = Forks(env, range(slots, slots + forks)) if forks and looks else None
     cards = cards if cards is not None else env.cards
     vocab = vocab if vocab is not None else env.vocab
-    min_batch = max(1, min_batch or env.num_envs // 2)
+    min_batch = max(1, min_batch or slots // 2)
     outcomes: list[Outcome | None] = [None] * len(games)
     queue = iter(range(len(games)))
     running: dict[int, _Game] = {}
-    timing = {"forward_rows": 0, "main_decisions": 0, "forward_seconds": 0.0}
+    timing = {"forward_rows": 0, "forward_calls": 0, "main_decisions": 0, "forward_seconds": 0.0}
     t0 = time.perf_counter()
 
     def launch(env_id: int) -> None:
@@ -427,49 +648,67 @@ def play(env, games: Sequence[GameSetup], *, cards=None, vocab=None, min_batch: 
         game.actions.append(int(a))
         timing["main_decisions"] += 1
         env.step(game.env_id, int(a))
+        if pool is not None:
+            pool.sync(game.env_id, game.actions)
 
-    forwards: list[tuple[_Game, int, Any, str]] = []  # (game, seat, event, "main" / "start" / "co")
+    forwards: list[tuple[_Game, int, Any, Any]] = []  # (game, seat, event, "main" / "start" / runner)
 
-    def advance(game: _Game, value) -> None:
-        """Run the game's look-ahead until it waits for an event or a forward, or returns."""
-        while True:
-            try:
-                req = game.co.send(value)
-            except StopIteration as stop:
-                a, info = stop.value
-                game.stats.add(game.co_turn, info)
-                ev = game.co_ev
-                game.co = game.co_ev = None
-                step_main(game, ev, a)
-                return
-            kind = req[0]
-            if kind == "forward":
-                forwards.append((game, req[1], req[2], "co"))
-                return
-            if kind == "step":
-                env.step(game.env_id, int(req[1]))
-                return
-            if kind == "restore":
-                env.restore(game.env_id, req[1])
-                return
-            if kind == "snapshot":
-                game.wait_sid = env.snapshot(game.env_id)
-                return
-            if kind == "release":
-                env.release(game.env_id, req[1])
-                value = None
-                continue
-            raise RuntimeError(f"unknown look-ahead request {kind!r}")
+    def advance(game: _Game) -> None:
+        """Queue the look-ahead's forwards; once it returned, play its action in the game."""
+        task = game.task
+        for r, seat, ev in task.pending_forwards():
+            forwards.append((game, seat, ev, r))
+        if task.result is None:
+            return
+        a, info = task.result
+        game.stats.add(game.co_turn, info)
+        ev = game.co_ev
+        if game.co_forks:
+            pool.give_back(game.co_forks, ev)
+        game.task = game.co_ev = None
+        game.co_forks = []
+        step_main(game, ev, a)
+
+    def begin(game: _Game) -> None:
+        """Start the waiting look-ahead once its forks are at the decision."""
+        args, want = game.pending
+        lent = pool.ready(game.env_id, want, len(game.actions)) if want else []
+        if lent is None:
+            return
+        game.pending = None
+        if lent:
+            pool.lend(lent, game.co_ev)
+        game.co_forks = list(lent)
+        game.task = LookTask(args(runners=1 + len(lent)), env, [game.env_id, *lent])
+        game.task.start()
+        advance(game)
 
     def on_event(ev) -> None:
-        game = running[ev.env_id]
-        if game.co is not None:
-            if game.wait_sid is not None:
-                sid, game.wait_sid = game.wait_sid, None
-                advance(game, sid)
-            else:
-                advance(game, ev)
+        if pool is not None and ev.env_id in pool:
+            owner = pool.owner[ev.env_id]
+            if ev.env_id in pool.lent:
+                game = running[owner]
+                game.task.event(ev.env_id, ev)
+                advance(game)
+                return
+            pool.event(ev)
+            game = running.get(owner) if owner is not None else None
+            if game is not None and game.task is None:
+                pool.sync(owner, game.actions)
+                if game.pending is not None:
+                    begin(game)
             return
+        game = running[ev.env_id]
+        if game.task is not None:
+            game.task.event(ev.env_id, ev)
+            advance(game)
+            return
+        if (
+            pool is not None
+            and ev.env_id in pool.owned
+            and (ev.result is not None or (game.look_until is not None and int(ev.obs["globals"][3]) > game.look_until))
+        ):
+            pool.drop(ev.env_id)
         if ev.result is not None:
             finish(game, ev.result)
             launch(ev.env_id)
@@ -498,6 +737,7 @@ def play(env, games: Sequence[GameSetup], *, cards=None, vocab=None, min_batch: 
                 probs[k] = p[r]
         timing["forward_seconds"] += time.perf_counter() - tf
         timing["forward_rows"] += len(batch)
+        timing["forward_calls"] += len(groups)
         for (game, seat, ev, kind), p in zip(batch, probs, strict=True):
             draws = Uniforms(game.setup.key)
             n = game.decisions[seat]
@@ -509,27 +749,36 @@ def play(env, games: Sequence[GameSetup], *, cards=None, vocab=None, min_batch: 
                 def score(cur, s, w, cfg=cfg):
                     return lookahead_value(cur, s, w, cfg, cards, vocab)
 
-                game.co = look_ahead(cfg, seat, n, ev, p, draws, game.hooks, score)
+                cands = candidates(cfg, p, ev.obs["action_mask"], lambda j, n=n, d=draws: d.candidate(seat, n, j))
+                want = 0
+                if pool is not None and len(cands) > 1 and type(game.hooks) is GameHooks:
+                    want = len(cands) - 1
+                    pool.acquire(game.env_id, want, game.setup.spec, game.actions)
                 game.co_seat, game.co_ev, game.co_turn = seat, ev, int(ev.obs["globals"][3])
-                advance(game, None)
+                game.pending = (partial(look_ahead, cfg, seat, n, ev, p, draws, game.hooks, score, cands=cands), want)
+                begin(game)
             else:
-                advance(game, p)
+                game.task.answer(kind, p)
+                advance(game)
 
     for m in {id(s.module): s.module for g in games for s in g.seats}.values():
         m.eval()
-    for env_id in range(env.num_envs):
+    for env_id in range(slots):
         launch(env_id)
     while running:
         if forwards:
             events = env.recv(0) if env.pending() else []
         else:
-            waiting = len(running)
-            events = env.recv(min(min_batch, waiting))
+            events = env.recv(min(min_batch, len(running)))
         for ev in events:
             on_event(ev)
         if forwards:
             run_forwards()
+    while pool is not None and pool.busy:  # forks still catching up: leave the environment idle
+        for ev in env.recv(1):
+            pool.event(ev)
     timing["seconds"] = time.perf_counter() - t0
+    timing["fork_replays"] = pool.replays if pool is not None else 0
     return outcomes, timing  # type: ignore[return-value]
 
 
