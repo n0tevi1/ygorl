@@ -11,7 +11,7 @@ import time
 
 from ygorl.engine import constants as C
 from ygorl.md import layout as L
-from ygorl.md.memory import RawDuel, own_deck, to_snapshot
+from ygorl.md.memory import PHASES, RawDuel, own_deck, to_snapshot
 from ygorl.md.ui import Stuck
 from ygorl.md.client import aura_kinds
 from ygorl.selfplay.state import (
@@ -141,24 +141,25 @@ class PolicyMixin:
         """The policy's top action for the current Main or Battle Phase board (and every legal suggestion)."""
         from ygorl.advisor.advise import advise
 
+        from ygorl.advisor.reconstruct import ReconstructError
+        from ygorl.advisor.snapshot import SnapshotError
+
         stats = self.field_stats(raw)
-        snap = to_snapshot(raw, self.passwords, frozenset(self.attacked), frozenset(self.activated), stats)
         # recorded: what the rebuild restores (auditors could not tell otherwise)
         self.trace.observe(field_stats={str(u): list(v) for u, v in stats.items()})
-        deck = own_deck(raw, self.passwords, self.cards)
-        from ygorl.advisor.reconstruct import ReconstructError
-
         try:
+            snap = to_snapshot(raw, self.passwords, frozenset(self.attacked), frozenset(self.activated), stats)
+            deck = own_deck(raw, self.passwords, self.cards)
             advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
                             samples=self.samples, seed=random.randrange(1 << 30),
                             starting_lp=self.env.player.starting_lp)  # fmt: skip
-        except ReconstructError as exc:
+        except (ReconstructError, SnapshotError) as exc:
             # no rebuild of this board (run s93: at 300 LP the rebuild's own Standby Phase replayed Burning Land's 500
             # damage and the duel ended while being set up; four generic recoveries followed): the turn is passed,
             # a rule recorded with its cause
             self.trace.rule("rebuild-failed-end-phase", reason=str(exc))
             end = SimpleNamespace(kind="end_phase", card=None, description=0)
-            self.expect = Expectation(end, raw, snap.phase)
+            self.expect = Expectation(end, raw, PHASES[raw.phase])
             return end, []
         key = (raw.turn, raw.phase)
         no_attacks = (key, ATTACKS_MASKED) in self.forbidden
