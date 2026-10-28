@@ -9,6 +9,7 @@ import time
 
 
 from ygorl.engine import constants as C
+from ygorl.md import layout as L
 from ygorl.md.memory import RawDuel, own_deck, to_snapshot
 from ygorl.md.ui import Stuck
 from ygorl.md.client import aura_kinds
@@ -64,8 +65,23 @@ class PolicyMixin:
                 if lit:
                     break
                 time.sleep(0.3)
+        if not lit and getattr(client, "views_complete", False):
+            # nothing lit yet: right after the Draw Phase memory is in Main Phase 1 while the client still draws
+            # (its "Turn N Draw" badge up, nothing lit for seconds; run s83 masked every card and skipped whole
+            # turns). Only an empty highlight on a settled screen counts as "no card has a command"
+            self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
+            for _ in range(10):
+                try:
+                    lit = client.highlighted(self.game.read())
+                except Exception:  # noqa: BLE001
+                    lit = {}
+                if lit:
+                    break
+                time.sleep(0.3)
         if not lit and not getattr(client, "views_complete", False):
             return lambda action: True  # (the highlight not readable: no test)
+        if not lit:
+            self.trace.observe(md_nothing_lit=True)  # every card masked by an empty highlight (audited)
         # every own card's view read and none lit: MD offers no hand / field card a command (a set Pot of
         # Extravagance the rebuild could activate in Main Phase 2, run s64: MD refused it twice)
         me = raw.players[raw.me]

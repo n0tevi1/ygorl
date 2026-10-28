@@ -880,11 +880,18 @@ def test_md_offers_masks_actions_the_highlight_rules_out(monkeypatch):
     # nothing lit: every card's view read means no card command (a set Pot of Extravagance after Main Phase 1);
     # views not read yet means no test
     monkeypatch.setattr("ygorl.selfplay.policy.time.sleep", lambda s: None)
+    # (an empty highlight counts only once the screen settled and a re-read is still empty)
+    player.ui, player.game = SimpleNamespace(wait_still=lambda *a, **k: None), SimpleNamespace(read=lambda: raw)
     player.client = SimpleNamespace(highlighted=lambda r: {}, views_complete=True)
     offered = player.md_offers(raw)
     assert not offered(act("activate", 111)) and offered(SimpleNamespace(kind="end_phase", card=None))
     player.client = SimpleNamespace(highlighted=lambda r: {}, views_complete=False)
     assert player.md_offers(raw)(act("activate", 111))
+    # lit only after the client caught up (the Draw Phase's animation): no false mask
+    reads = iter([{}] * 10 + [{11: 0x18}])
+    player.client = SimpleNamespace(highlighted=lambda r: next(reads, {11: 0x18}), views_complete=True)
+    offered = player.md_offers(raw)
+    assert offered(act("summon", 111))
 
 
 def test_list_card_found_from_the_client_list():

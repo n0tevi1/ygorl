@@ -250,6 +250,16 @@ class _Game:
                     self.rule(rec, dd.get("rule") or "?", dd.get("card") or last_card)
             if d.get("by") == "policy" and float(d.get("p", 1.0)) < 0.01:
                 low_p.append(rec.get("seq"))
+                masked = o.get("md_masked") or []
+                if (
+                    d.get("action") in ("battle_phase", "main2", "end_phase")
+                    and masked
+                    and o.get("md_nothing_lit", True)
+                ):
+                    # the phase was left because MD's highlight masked the cards' actions (run s83: an empty
+                    # highlight during the Draw Phase's animation skipped whole turns): the policy wanted otherwise
+                    self.add("major", rec, "masked-phase", f"{d['action']} at p={float(d.get('p', 0)):.3f} with "
+                             f"{len(masked)} card actions masked by MD's highlight", masked=masked)  # fmt: skip
             if (r := rec.get("refusal")) is not None:
                 refusals.setdefault((rec.get("turn"), r.get("action"), r.get("card"), r.get("reason")), []).append(rec)
             if (c := rec.get("check")) is not None and not c.get("ok", True):
