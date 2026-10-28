@@ -216,8 +216,16 @@ class _Game:
                                          rec.get("seq") if rec else None, kind, message, evidence))  # fmt: skip
 
     def later_memories(self, i: int, n: int) -> list[dict]:
-        """The memory digests of the next ``n`` steps after step ``i`` (this game) that have one."""
-        return [r["memory"] for r in self.steps[i + 1 :] if "memory" in r][:n]
+        """The memory digests of the next ``n`` steps after step ``i`` (this game) that have one, up to the next
+        policy decision (a later action's moves are not this pick's: run s85, a revealed card stays in the hand and
+        the next action's summon of another hand card read as the pick's)."""
+        out = []
+        for r in self.steps[i + 1 :]:
+            if "memory" in r:
+                out.append(r["memory"])
+            if (r.get("decision") or {}).get("by") == "policy" or len(out) >= n:
+                break
+        return out
 
     def next_memory(self, i: int) -> dict | None:
         """The memory digest of the first step after step ``i`` (this game) that has one."""
@@ -255,6 +263,7 @@ class _Game:
                     d.get("action") in ("battle_phase", "main2", "end_phase")
                     and masked
                     and o.get("md_nothing_lit", True)
+                    and not o.get("md_lit_this_phase")  # (trusted: the client had lit cards in this phase)
                 ):
                     # the phase was left because MD's highlight masked the cards' actions (run s83: an empty
                     # highlight during the Draw Phase's animation skipped whole turns): the policy wanted otherwise

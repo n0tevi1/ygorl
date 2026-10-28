@@ -75,7 +75,8 @@ class PolicyMixin:
         if not lit and not getattr(client, "views_complete", False):
             return lambda action: True  # (the highlight not readable: no test)
         if not lit:
-            self.trace.observe(md_nothing_lit=True)  # every card masked by an empty highlight (audited)
+            # every card masked by an empty highlight, trusted: the client lit cards earlier in this phase
+            self.trace.observe(md_nothing_lit=True, md_lit_this_phase=True)
         # every own card's view read and none lit: MD offers no hand / field card a command (a set Pot of
         # Extravagance the rebuild could activate in Main Phase 2, run s64: MD refused it twice)
         me = raw.players[raw.me]
