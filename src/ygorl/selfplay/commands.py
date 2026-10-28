@@ -659,12 +659,18 @@ class CommandsMixin:
         grave = raw.players[raw.me].piles["grave"]
         seq = best.card.loc.sequence
         guess = len(grave) - 1 - seq if 0 <= seq < len(grave) else 0  # the strip shows the top card first
+        # a copy of the same card nearer the top does the same (run s89: Origin refused as #8, past the strip, with
+        # another Origin at #1; and only #5 was tried with one at #2)
+        copies = [len(grave) - 1 - k for k, c in enumerate(grave) if c.cid == cid]
+        guess = min(copies) if copies else guess
         tries = [guess] + [i for i in range(len(grave)) if i != guess]
         if guess >= GY_STRIP_SHOWN:
             # deeper than the strip shows (it is not scrolled yet): refused for the turn without opening the viewer
             # (Ancient Chant at position 10 was tried twice a turn on cards 1-5)
             self.forbidden.add(((raw.turn, "*"), _action_key(best)))
-            return self.refused(raw, best, f"{self.name(cid)} is #{guess + 1} in the Graveyard, past the strip")
+            return self.refused(
+                raw, best, f"{self.name(cid)} is #{guess + 1} in the Graveyard, past the strip (masked for the turn)"
+            )
         self.gy_before = self.ui.capture()
         self.ui.open_graveyard()
         for i in [t for t in tries if t < GY_STRIP_SHOWN]:  # deeper cards need the strip scrolled: not yet
