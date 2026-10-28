@@ -9,7 +9,6 @@ import time
 
 
 from ygorl.engine import constants as C
-from ygorl.md import layout as L
 from ygorl.md.memory import RawDuel, own_deck, to_snapshot
 from ygorl.md.ui import Stuck
 from ygorl.md.client import aura_kinds
@@ -65,19 +64,14 @@ class PolicyMixin:
                 if lit:
                     break
                 time.sleep(0.3)
-        if not lit and getattr(client, "views_complete", False):
-            # nothing lit yet: right after the Draw Phase memory is in Main Phase 1 while the client still draws
-            # (its "Turn N Draw" badge up, nothing lit for seconds; run s83 masked every card and skipped whole
-            # turns). Only an empty highlight on a settled screen counts as "no card has a command"
-            self.ui.wait_still((0, 0, L.REF_W, L.REF_H), timeout=6.0)
-            for _ in range(10):
-                try:
-                    lit = client.highlighted(self.game.read())
-                except Exception:  # noqa: BLE001
-                    lit = {}
-                if lit:
-                    break
-                time.sleep(0.3)
+        phase = (raw.turn, raw.phase)
+        if lit:
+            self.lit_phase = phase  # the client lit cards in this phase: it has caught up with memory
+        elif getattr(self, "lit_phase", None) != phase:
+            # nothing lit, and nothing yet in this phase: the client may still be playing the Draw / Standby Phase
+            # while memory is in Main Phase 1 (lit 28 s later on run s84; run s83 masked every card and skipped
+            # whole turns): no test. Once it lit something in this phase, an empty highlight means no command
+            return lambda action: True
         if not lit and not getattr(client, "views_complete", False):
             return lambda action: True  # (the highlight not readable: no test)
         if not lit:

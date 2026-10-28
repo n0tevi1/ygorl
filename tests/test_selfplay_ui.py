@@ -862,7 +862,7 @@ def test_md_offers_masks_actions_the_highlight_rules_out(monkeypatch):
 
     hand = (SimpleNamespace(cid=1, uid=11), SimpleNamespace(cid=2, uid=12))
     me = SimpleNamespace(piles={"hand": hand}, slots=[None] * 13)
-    raw = SimpleNamespace(me=0, players=(me, me))
+    raw = SimpleNamespace(me=0, players=(me, me), turn=2, phase=2)
     player = Player.__new__(Player)
     player.passwords = {1: 111, 2: 222}
     player.client = SimpleNamespace(highlighted=lambda r: {11: 0x18})  # group 1 + 2: Summon / Set, no activate
@@ -880,18 +880,14 @@ def test_md_offers_masks_actions_the_highlight_rules_out(monkeypatch):
     # nothing lit: every card's view read means no card command (a set Pot of Extravagance after Main Phase 1);
     # views not read yet means no test
     monkeypatch.setattr("ygorl.selfplay.policy.time.sleep", lambda s: None)
-    # (an empty highlight counts only once the screen settled and a re-read is still empty)
-    player.ui, player.game = SimpleNamespace(wait_still=lambda *a, **k: None), SimpleNamespace(read=lambda: raw)
-    player.client = SimpleNamespace(highlighted=lambda r: {}, views_complete=True)
+    # (an empty highlight counts only in a phase where the client lit something before: it has caught up)
+    player.client, player.lit_phase = SimpleNamespace(highlighted=lambda r: {}, views_complete=True), None
+    assert player.md_offers(raw)(act("activate", 111))  # nothing lit yet in this phase: no test
+    player.lit_phase = (2, 2)
     offered = player.md_offers(raw)
     assert not offered(act("activate", 111)) and offered(SimpleNamespace(kind="end_phase", card=None))
     player.client = SimpleNamespace(highlighted=lambda r: {}, views_complete=False)
     assert player.md_offers(raw)(act("activate", 111))
-    # lit only after the client caught up (the Draw Phase's animation): no false mask
-    reads = iter([{}] * 10 + [{11: 0x18}])
-    player.client = SimpleNamespace(highlighted=lambda r: next(reads, {11: 0x18}), views_complete=True)
-    offered = player.md_offers(raw)
-    assert offered(act("summon", 111))
 
 
 def test_list_card_found_from_the_client_list():
