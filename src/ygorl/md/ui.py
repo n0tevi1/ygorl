@@ -146,6 +146,7 @@ DECLARE_SEARCH, DECLARE_CLEAR, DECLARE_GO = (1026, 717), (1289, 717), (759, 717)
 # the advisor's Graveyard pile and the strip its viewer opens at the right edge (measured: 2 cards at y 280, 430)
 GY_PILE, GY_STRIP_X, GY_STRIP_Y0, GY_STRIP_STEP = (1600, 812), 1946, 280, 150
 GY_STRIP_SHOWN = 5  # strip positions on screen without scrolling (y 280 .. 880)
+CONFIRM_DX = 60  # how far a Confirm icon may sit from straight above its card
 GY_ICON = (1624, 690)  # where MD draws the opened Graveyard card's command, above the pile
 GY_ICON_BOX = (1544, 610, 1704, 770)  # GY_ICON +- 80: wider boxes took the lava's glow for icons
 
@@ -543,6 +544,11 @@ class UI:
                 if icons:
                     break
                 self.sleep(0.35)
+        if why.startswith("confirm"):
+            # a Confirm is one icon straight above the card (our Field Zone's 78 px right of it): a mark elsewhere is
+            # no Confirm (runs s85 / s87: a spot at (967, 514), mid-field, was taken for one four times)
+            x0 = L.MY_FIELD_ICON_X if tuple(xy) == L.MY_FIELD_ZONE else xy[0]
+            icons = [p for p in icons if abs(p[0] - x0) <= CONFIRM_DX]
         if not icons:
             return False
         self.click(*min(icons, key=lambda p: abs(p[0] - xy[0])), why, pause)

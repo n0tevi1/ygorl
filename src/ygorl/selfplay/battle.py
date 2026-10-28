@@ -212,6 +212,10 @@ class BattleMixin:
             else:
                 if n:
                     return  # MD took the tributes: the summoned monster glowing in their zone is not another pick
+                # MD never asked for a Tribute (its yes / no was "Normal Summon without Tributing?": Charging Gaia,
+                # run s87, summoned without one while a monster was clicked as a Tribute): nothing to pick
+                self.trace.observe(tributes="MD asked for none")
+                return
             lit = set(self.ui.highlighted())
             # frames found off the measured spot (Apprentice Illusion Magician's at (644, 739) for (650, 750)) count
             # within 80 px; the monsters MD's request offers (memory) count too: an exact match missed one, and the
