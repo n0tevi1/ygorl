@@ -269,6 +269,9 @@ class _Game:
                     # highlight during the Draw Phase's animation skipped whole turns): the policy wanted otherwise
                     self.add("major", rec, "masked-phase", f"{d['action']} at p={float(d.get('p', 0)):.3f} with "
                              f"{len(masked)} card actions masked by MD's highlight", masked=masked)  # fmt: skip
+            if (gu := o.get("graveyard_unverified")) is not None:
+                self.add("minor", rec, "graveyard-unverified", f"{self.ctx.name(gu.get('want'))} in the Graveyard was "
+                         "taken as refused without reading which card was open (masked for the phase)")  # fmt: skip
             if (r := rec.get("refusal")) is not None:
                 refusals.setdefault((rec.get("turn"), r.get("action"), r.get("card"), r.get("reason")), []).append(rec)
             if (c := rec.get("check")) is not None and not c.get("ok", True):
