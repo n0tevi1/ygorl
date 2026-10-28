@@ -5,6 +5,7 @@ rebuilt from the current board (:meth:`rebuilt`)."""
 from __future__ import annotations
 
 import random
+from types import SimpleNamespace
 import time
 
 
@@ -133,8 +134,20 @@ class PolicyMixin:
         # recorded: what the rebuild restores (auditors could not tell otherwise)
         self.trace.observe(field_stats={str(u): list(v) for u, v in stats.items()})
         deck = own_deck(raw, self.passwords, self.cards)
-        advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
-                        samples=self.samples, seed=random.randrange(1 << 30), starting_lp=self.env.player.starting_lp)  # fmt: skip
+        from ygorl.advisor.reconstruct import ReconstructError
+
+        try:
+            advice = advise(snap, deck, self.policy, self.prior, self.env.rule_flags, cards=self.cards,
+                            samples=self.samples, seed=random.randrange(1 << 30),
+                            starting_lp=self.env.player.starting_lp)  # fmt: skip
+        except ReconstructError as exc:
+            # no rebuild of this board (run s93: at 300 LP the rebuild's own Standby Phase replayed Burning Land's 500
+            # damage and the duel ended while being set up; four generic recoveries followed): the turn is passed,
+            # a rule recorded with its cause
+            self.trace.rule("rebuild-failed-end-phase", reason=str(exc))
+            end = SimpleNamespace(kind="end_phase", card=None, description=0)
+            self.expect = Expectation(end, raw, snap.phase)
+            return end, []
         key = (raw.turn, raw.phase)
         no_attacks = (key, ATTACKS_MASKED) in self.forbidden
         offered = self.md_offers(raw)
