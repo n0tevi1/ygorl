@@ -710,6 +710,10 @@ class CommandsMixin:
                 # the card was not confirmed (no open-card read): a missing icon may be the wrong card's, so only
                 # this phase is masked (run s85: Origin's Graveyard effect, legal, was masked for the whole turn)
                 self.trace.observe(graveyard_unverified={"want": cid, "index": i})
+                try:  # what the viewer showed (Origin's Graveyard effect, three runs: no icon where it is measured)
+                    np.save(self.out / f"graveyard-unverified-{time.strftime('%Y%m%d-%H%M%S')}-{i}.npy", shot)
+                except Exception:  # noqa: BLE001
+                    pass
             break  # the right card (or the one the order names), and MD shows it no Activate
         self.ui.click(*NEUTRAL_SPOT, "close the graveyard", 0.8)
         self.refused(raw, best, f"no Activate for {self.name(cid)} in the Graveyard")
