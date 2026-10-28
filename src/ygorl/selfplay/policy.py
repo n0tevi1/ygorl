@@ -69,8 +69,8 @@ class PolicyMixin:
             self.lit_phase = phase  # the client lit cards in this phase: it has caught up with memory
         elif getattr(self, "lit_phase", None) != phase:
             # nothing lit, and nothing yet in this phase: the client may still be playing the Draw / Standby Phase
-            # while memory is in Main Phase 1 (lit 28 s later on run s84; run s83 masked every card and skipped
-            # whole turns): no test. Once it lit something in this phase, an empty highlight means no command
+            # while memory is in Main Phase 1 (run s83 masked every card and skipped whole turns; waiting for a
+            # settled screen did not cure it on s84): no test. Once it lit something in this phase, an empty highlight means no command
             return lambda action: True
         if not lit and not getattr(client, "views_complete", False):
             return lambda action: True  # (the highlight not readable: no test)
