@@ -95,15 +95,20 @@ def describe(point) -> dict:
                         for a in point.actions[:12]]}  # fmt: skip
 
 
+MD_FIRST_CARD_ID = 3900  # MD's card ids start here (Blue-Eyes White Dragon is 4007); system strings are below
+
+
 def md_option_desc(choice: int, passwords: Mapping[int, int]) -> int | None:
     """A dialog choice (enabled << 31 | default << 30 | text id) as a ygopro option description: card strings are
     MD card id | (10 + index) << 16 -> ``aux.Stringid(password, index)`` = password << 20 | index (Project Ignis'
-    utility.lua); system strings keep their number (not verified to agree with ygopro's, so they only pair by
-    order)."""
+    utility.lua). Some cards number them from 0 instead (Galloping Gaia's two effects: 0x3bb3 | 0 << 16 and
+    | 1 << 16, the second greyed exactly when the hand held no Level 5 Dragon, its Stringid 1; run s83 audit): an
+    index below 10 is taken as the Stringid itself. System strings keep their number (not verified to agree with
+    ygopro's, so they only pair by order)."""
     text = choice & 0x3FFFFFFF
     index, cid = text >> 16, text & 0xFFFF
-    if index >= 10 and cid in passwords:
-        return passwords[cid] << 20 | (index - 10)
+    if cid in passwords and (index >= 10 or cid >= MD_FIRST_CARD_ID):  # (low numbers are system strings)
+        return passwords[cid] << 20 | (index - 10 if index >= 10 else index)
     return None
 
 

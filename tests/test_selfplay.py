@@ -315,6 +315,7 @@ def test_md_option_descriptions_pair_with_ygopro_options():
 
     pw = {0x4064: 1234}
     assert md_option_desc(0x800A4064, pw) == 1234 << 20 | 0  # card string 10 -> aux.Stringid(1234, 0)
+    assert md_option_desc(0x80014064, pw) == 1234 << 20 | 1  # numbered from 0 (Galloping Gaia): Stringid(1234, 1)
     assert md_option_desc(0x800B4064, pw) == 1234 << 20 | 1
     assert md_option_desc(0xC00001AC, pw) is None  # a system string
     assert option_pairs([1234 << 20 | 1, 1234 << 20], [1234 << 20, 1234 << 20 | 1]) == {0: 1, 1: 0}
