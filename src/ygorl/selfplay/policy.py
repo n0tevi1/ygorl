@@ -74,6 +74,9 @@ class PolicyMixin:
             return lambda action: True
         if not lit and not getattr(client, "views_complete", False):
             return lambda action: True  # (the highlight not readable: no test)
+        if not lit and self.ui.dialog() is not None:
+            # a panel still up (Harpie's Feather Duster's, run s89) hides the highlight: no test
+            return lambda action: True
         if not lit:
             # every card masked by an empty highlight, trusted: the client lit cards earlier in this phase
             self.trace.observe(md_nothing_lit=True, md_lit_this_phase=True)
