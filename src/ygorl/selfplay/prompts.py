@@ -437,6 +437,11 @@ class PromptsMixin:
             if exclude:
                 self.trace.observe(list_hidden=sorted(exclude))
             pick = None if stale else self.lockstep("list", raw, req, exclude=exclude)
+            if (pick is not None and shown == 1 and getattr(self, "last_lockstep", {}).get("by") == "forced"
+                    and L._two_button_panel(self.ui.capture())):  # fmt: skip
+                # an optional trigger's one-card list the shadow only tolerates ("forced": it is elsewhere, run s89
+                # took Gaia the Magical Knight's trigger without the policy): the rebuild below decides
+                pick = None
             if pick is not None and pick < 0:
                 # the policy does not use this optional trigger: cancel the list (MD's "no")
                 self.ui.click(*L.PROMPT_CANCEL, "cancel: the policy declines the optional trigger", 1.5)

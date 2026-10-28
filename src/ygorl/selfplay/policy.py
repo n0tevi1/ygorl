@@ -213,6 +213,7 @@ class PolicyMixin:
         if callable(req):  # read only when there is a shadow to ask
             req = req()
         pick, record = observer.choose(dialog, req, raw.me, self.passwords, count=count, zone=zone, exclude=exclude)
+        self.last_lockstep = record
         if record:
             self.trace.observe(lockstep=record)
         if pick is not None and pick < 0:
