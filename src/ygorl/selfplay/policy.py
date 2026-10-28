@@ -164,7 +164,7 @@ class PolicyMixin:
 
         return _logits(replace(shadow.rec, point=point), self.policy, self.cards, self.env.player.starting_lp)
 
-    def rebuilt(self, question: str, raw: RawDuel, *args):
+    def rebuilt(self, question: str, raw: RawDuel, *args, offered: tuple[int, ...] | None = None):
         """The policy's answer to ``question`` ("target", "position", "respond") rebuilt from the current board
         (:class:`ygorl.selfplay.decide.Decider`); None when the rebuild cannot tell (the caller's rule decides).
         Recorded as the step's decision (the target: as the attack decision's ``target``)."""
@@ -185,8 +185,9 @@ class PolicyMixin:
         else:
             # the cards MD offers (memory: the client's prompt list): the window's other activations are not this
             # prompt's (Millennium Seeker's trigger was passed on Sun God Unification's probabilities)
-            listed = self.prompt_list()
-            offered = tuple(p for c in listed if (p := self.passwords.get(c.cid))) or None
+            if offered is None:
+                listed = self.prompt_list()
+                offered = tuple(p for c in listed if (p := self.passwords.get(c.cid))) or None
             choice = decider.respond(raw, self.request_now(raw), offered=offered)
             self.respond_card = choice.detail.get("card")  # the card the policy would activate (a password)
         record = choice.record()

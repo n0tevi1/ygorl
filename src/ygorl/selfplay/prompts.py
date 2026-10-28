@@ -435,7 +435,10 @@ class PromptsMixin:
                 # "Select a optional effect to activate" with one card (Mahad's Graveyard trigger): an optional
                 # trigger, so the policy decides through a rebuild of the window, as a prompt does (it was
                 # activated by the first-on-screen rule without asking)
-                answer = self.rebuilt("respond", raw)
+                # (the one card the list offers: without it the window's other activations decided, run s83 declined
+                # Palladium Oracle Mahad's trigger on Ultimate Divine-Beast's probabilities)
+                answer = self.rebuilt("respond", raw, offered=tuple(
+                    p for c in req.candidates if (p := self.passwords.get(c.cid))) or None)  # fmt: skip
                 if answer == 1:
                     self.ui.click(*L.PROMPT_CANCEL, "cancel: the policy passes the optional effect", 1.5)
                     self.context = "list"
