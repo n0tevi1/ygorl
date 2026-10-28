@@ -360,7 +360,14 @@ class PromptsMixin:
                 # a Normal Summon / Set of Level <= 4 asks no Tribute question: this is no yes / no of ours
                 self.trace.observe(yesno="ignored: a Level <= 4 summon asks no Tribute question")
                 return
-            if pick is None and self.context in ("summon", "tribute"):
+            if pick is None and self.is_replay(raw):
+                # MD's replay question ("Replay happens. Continue to attack?") comes first: a chain response inside
+                # the attack left the context at "respond", and the own-effect rule answered yes (run s89: Origin
+                # attacked a 2800 monster and was destroyed). The policy decides on the new board
+                pick = 0 if self.still_attacks(raw) else 1
+                self.trace.rule("replay-by-policy", attack=pick == 0)
+                self.replay_target = pick == 0  # the new target comes next: the rebuild picks it
+            elif pick is None and self.context in ("summon", "tribute"):
                 # our own summon asks to confirm the Tribute Summon (message 335): the tributes come next; still
                 # up after a yes that did not take ("tribute"), it is the same question, not one to answer no
                 pick = 0

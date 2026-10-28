@@ -9,7 +9,7 @@ from dataclasses import replace
 
 
 from ygorl.md import layout as L
-from ygorl.md.memory import MemoryReadError, RawDuel, own_deck, to_snapshot
+from ygorl.md.memory import PHASES, MemoryReadError, RawDuel, own_deck, to_snapshot
 from ygorl.md.client import CommandBit
 from ygorl.md.request import Candidate
 from ygorl.md.ui import (
@@ -144,6 +144,31 @@ class BattleMixin:
                 raise Stuck("no Confirm icon above the attack target")
         self.context = f"attack lp {opp.lp}"
         self.attacker = (card.uid, best.card.code)
+        self.attack_board = (raw.turn, tuple(c is not None for c in opp.slots[:7]))  # (a replay: these change)
+
+    def replay_pick(self, raw: RawDuel) -> bool:
+        """The new attack target after a replay, rebuilt like a declared attack's (run s89: a rule took the
+        opponent's first monster, a 2800 one, and the attacker was destroyed). False when the rebuild cannot tell."""
+        me, opp = raw.players[raw.me], raw.players[1 - raw.me]
+        slot = next((i for i, c in enumerate(me.slots[:7]) if c is not None and c.uid == self.attacker[0]), None)
+        if slot is None:
+            return False
+        s = self.rebuilt("target", raw, slot, frozenset(self.attacked - {self.attacker[0]}))
+        if s is None or not 0 <= s < 7 or opp.slots[s] is None:
+            return False
+        self.trace.observe(target_slot=s, replay=True)
+        return self.ui.pick_target(opp_monster_xy(s), f"target {s} (replay)")
+
+    def is_replay(self, raw: RawDuel) -> bool:
+        """Whether a yes / no now is MD's replay question ("continue to attack?"): in the Battle Phase of the attack,
+        the attacker still on our field, and the opponent's monster zones changed since it was declared."""
+        attacker, board = getattr(self, "attacker", None), getattr(self, "attack_board", None)
+        if attacker is None or board is None or board[0] != raw.turn or raw.phase != PHASES.index("battle"):
+            return False
+        me, opp = raw.players[raw.me], raw.players[1 - raw.me]
+        if not any(c is not None and c.uid == attacker[0] for c in me.slots[:7]):
+            return False
+        return tuple(c is not None for c in opp.slots[:7]) != board[1]
 
     def field_target(self, raw: RawDuel, lit) -> tuple[int, int] | None:
         """The field card the policy picks through the shadow for MD's field selection (tributes, targets), if the
@@ -323,6 +348,10 @@ class BattleMixin:
             # "discard 1 card from your hand", mode 8): the loop answers it as a list
             self.trace.observe(field_pick="a card list came up: answered as a list")
             return
+        if getattr(self, "replay_target", False):
+            self.replay_target = False
+            if self.replay_pick(raw):
+                return
         episode = (raw.turn, raw.phase)
         if self.field_picked[0] != episode:
             self.field_picked = (episode, [])
