@@ -928,3 +928,40 @@ uv run --no-sync python tools/branch_adv_diagnosis.py out/claude-scale/ab1/LL-lo
 | S3-CE2-s2（种子 2） | 0.596 | 0.843 | 0.905 | 0.633 / 0.66 / 0.87 |
 
 两个种子一致：对 G576 −4 ～ −5 pp，先手持平，后手 −1 ～ −1.5 pp；尺子的分辨效果种子 2 更弱。§12 的结论不变。
+
+## 14. 阶段 4 读数与交接（2026-10-28，实验暂停）
+
+### 14.1 前瞻对手训练（LA）：无效
+
+起点 S3-A0 u2112，128×128，各 512 次更新到 u2624；`line_share 0.5, selfplay_fraction 0.5`，恢复线灰流丽 + 遮蔽者。LA = `lookahead_share 1.0, lookahead_k 8`（学习者先手的池对局里对手回合 2 前瞻，约 9–12% 的对局）；收集吞吐约为对照的 1/3（批处理后，fa80013）。
+
+| 臂 | 面板末 4 点（G576 / 先手 / 后手） | 先手对前瞻 G576（`la_ruler`，200 局，按检查点） | 末 4 点均值 |
+|---|---|---|---|
+| 起点 S3-A0 u2112 | 0.650 / 0.847 / 0.920 | 0.490（base 0.580） | — |
+| LA-CTRL | 0.665 / 0.863 / 0.925 | 0.495, 0.525, 0.490, 0.460, 0.490, 0.510, 0.460, 0.535 | 0.499（base 0.624） |
+| LA | 0.655 / 0.863 / 0.923 | 0.460, 0.520, 0.460, 0.480, 0.530, 0.510, 0.500 | 0.505（base 0.586） |
+| LA-s2 | 0.657 / 0.862 / 0.923 | 0.445, 0.415, 0.510, 0.500（到 u2368） | 0.468 |
+
+训练内（`games.jsonl.gz`，学习者先手的池对局 = 前瞻局）：LA 的学习者胜率按 128 次更新分桶为 0.438 / 0.456 / 0.453 / 0.428，对照为 0.488 / 0.491 / 0.501 / 0.483。前瞻对手让先手多输约 5 pp，但 512 次更新里策略**没有任何适应**。验收（先手对前瞻 ≥ 0.55、降幅 ≤ 6 pp）未达成，两种子一致。
+
+### 14.2 结论：先手差是结构性的
+
+- 镜像对局（同一策略自己打自己）先手只赢 0.43（§13）；回合 1 候选选择余量 +2.6 pp（§10.4）；回合 2 回应 oracle 余量 +0（§13）；对手会反应时先手 −12 pp 但训练对此不适应（§14.1）；手坑时机能被 CE 推动但不是净收益（§12）。
+- 四轮先手专项干预（势能塑形、席位加权、窗口反事实、前瞻对手）都没有缩小 8–10 pp 的差距。对这套牌组与对手池，先手劣势主要来自席位本身（后攻多一张牌、先进攻），不是某个回合的技能缺口。
+- 仍有的大余量在**回合 3 以后的进攻与斩杀**（§13：两个席位各 +7–12 pp，一半是漏斩杀），它涨通用强度而不缩差。建议把目标从「先手专项」转到这里（致死搜索 / 进攻回合的 ExIt，先做不开天眼的检查）。两席位脚本线 + 恢复线的 LL 配方仍是主线的推荐配方（§6.4、§12.1：续训到 u2624 强锚点与先手还在小涨）。
+
+### 14.3 交接清单（换机继续）
+
+代码：分支 `claude/rl-methodology-review`（本节提交后推送到 origin），含 T1–T13、C0/C0b、前瞻对手、分解工具与本文档；实验驱动脚本从 `out/claude-scale/` 复制到了 `tools/scale/`（`run_arm.py` 续跑器、`panel.py` 面板、`panel_g576.py` 统一口径、`la_ruler.sh` 前瞻尺子循环、`panel_watch.sh` / `colab/rulers_colab.sh` 评估循环、`handtrap_labels_graded.py` 分级标签与恢复线生成、`prune_recovery.py`），里面的绝对路径（`/home/ya0guang/Code/ygorl/out/...`）要改。
+
+数据（不在 git，按需 `rsync`，共约 2.7 GB）：
+- 线库与恢复线 `out/claude-scale/handtrap/`：`lines_train.jsonl`（4 MB）、`recovery_full.jsonl`（18 MB，灰流丽）、`recovery_multi_97268402.pruned.jsonl`（14 MB，遮蔽者）、`graded_full.jsonl`、`full_fire8.jsonl`（尺子标签）、`recovery_multi.jsonl` / `graded_multi.jsonl`（78 + 4 MB，含 G/Fuwalos/泡影，§10.2c）。
+- 检查点（各 377 MB）：`ab1/S3-A0/checkpoints/update_002112.pt`（当前最佳起点）、`ab1/LA-CTRL/checkpoints/update_002624.pt`（续训最远）、`ab1/LA/…/update_002624.pt`、`ab1/LA-s2/…/update_002624.pt`、`ab1/G-sepcritic-init-bf16/checkpoints/update_000576.pt`（强锚点 G576）、`ab1/LL-local/checkpoints/update_001088.pt`、`ab1/S2-CTRL/checkpoints/update_001600.pt`。
+- 面板对手（`tools/scale/panel.py` 顶部的字典）：`out/claude-scale/teacher/teacher_full.pt`（36 MB）、`out/research/terminal-critic-policy-long-2026-10-06/seed-0/{cold/run/checkpoints/update_00000000.pt, warm/run/checkpoints/update_00000128.pt}`。E2016 已丢失（§12.1），`mean_strong` = G576。
+- 结果：`out/claude-scale/phase0/`（阶段 0）、`out/claude-scale/la_ruler/`（前瞻尺子 JSON）、各臂 `checkpoints/panel/update_*/summary.json`、`metrics.jsonl`、`run.log`、`colab_arms/rulers.jsonl`（手坑尺子）。
+
+Apple GPU（MPS）上要先验证的点：
+1. `uv sync` 需要 CMake 与 C++17 编译器；`csrc/arena.h` 在固定地址（`0x400000000000`）预留 256 MB 做快照，macOS 上先跑 `tests/test_host_snapshot.py`、`tests/test_prefix_start.py`、`tests/test_lookahead.py` 确认 T1/T2/前瞻可用。
+2. `--bf16` 走 `torch.autocast(device_type=dev.type, dtype=bfloat16)`，MPS 的 bf16 支持有限，不行就去掉 `--bf16`；`run_arm.py` 里的 `YGORL_GPU_FRACTION` 只在 CUDA/ROCm 生效。
+3. `la_ruler.sh` 用了 `taskset`，`systemd-run` 不存在：改为 `nohup` / `caffeinate`。
+4. 求解器二进制只在 Linux/GCC 下构建过（`docs/spikes/combo-solver.md`）；恢复线与标签已生成，不重解就不需要它。
