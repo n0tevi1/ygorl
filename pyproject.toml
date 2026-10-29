@@ -40,6 +40,7 @@ select = ["E4", "E7", "E9", "F"]
 
 [tool.ruff.lint.per-file-ignores]
 "tools/tsan/run_pool.py" = ["E402", "E731"]  # must import the instrumented build from a custom path first
+"tools/scale/*.py" = ["E402", "E741"]  # experiment drivers copied from out/: sys.path setup before imports, `l` loop names
 
 [tool.scikit-build]
 minimum-version = "build-system.requires"
