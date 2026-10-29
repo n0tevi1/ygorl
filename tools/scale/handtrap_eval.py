@@ -12,7 +12,11 @@ Score = (broken + held) / hands. Also reported: break rate over hands with a bre
 import torch
 
 torch.set_num_threads(2)
-import argparse, json, os, sys, time
+import argparse
+import json
+import os
+import sys
+import time
 from collections import Counter
 from pathlib import Path
 

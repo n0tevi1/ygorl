@@ -2,7 +2,9 @@
 opponents except E2016 from each summary.json's per-opponent entries (old and new rows alike).
 usage: python panel_g576.py ARM[/uNNNN] ...   (ARM = dir name under ab1 or colab_arms; prints one row per checkpoint)"""
 
-import glob, json, sys
+import glob
+import json
+import sys
 
 D = "/home/ya0guang/Code/ygorl/out/claude-scale"
 

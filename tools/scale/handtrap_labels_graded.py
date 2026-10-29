@@ -15,8 +15,13 @@ has the card appended to the responder's deck. --hands deck:index,... restricts 
 --max-levels N solves only the N highest levels of a hand (budget cut: the labels then only see those levels).
 """
 
-import argparse, json, multiprocessing, os, shutil, sys, tempfile, time
-from dataclasses import replace
+import argparse
+import json
+import multiprocessing
+import os
+import sys
+import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(os.environ.get("YGORL_ROOT", "/home/ya0guang/Code/ygorl/.claude/worktrees/claude-rl-review"))
@@ -132,7 +137,6 @@ def main():
     p.add_argument("--hands", default=None, help="deck:index,... only these hands")
     p.add_argument("--max-levels", type=int, default=0, help="solve only the N highest levels (0: all)")
     a = p.parse_args()
-    from ygorl.cards.ydk import load_ydk
     from ygorl.solver import HandJob, Workdir
     from ygorl.solver.batch import hand_seed
 

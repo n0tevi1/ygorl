@@ -4,7 +4,11 @@
       [--adv-keep 0.75] [--bf16] [--freeze-id-embedding] [--envs 1024 --steps 16] [--overlap]
 """
 
-import argparse, json, os, sys, time
+import argparse
+import json
+import os
+import sys
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -164,7 +168,11 @@ if not (out / "arm.json").exists():
 say(f"resumed from {src} at update {t.learner.updates}; adv_keep={t.cfg.ppo.adv_keep} overrides={ov}")
 target = json.loads((out / "arm.json").read_text())["start_updates"] + a.updates
 if a.branch_replay:
-    import glob, pickle, random, numpy as np, torch
+    import glob
+    import pickle
+    import random
+    import numpy as np
+    import torch
     from ygorl.nets import collate
     from ygorl.nets.actor_critic import collate_privileged
 

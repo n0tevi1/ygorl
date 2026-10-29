@@ -1,6 +1,8 @@
 """print one line per panel summary: arm update mean strong first second gap turns teacher(first/second)"""
 
-import json, sys, glob
+import json
+import sys
+import glob
 
 for pat in sys.argv[1:]:
     for p in sorted(glob.glob(pat)):

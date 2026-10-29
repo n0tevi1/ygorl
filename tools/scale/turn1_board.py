@@ -7,8 +7,11 @@ scored with ygorl.solver.blocking.board_interruptions, and compared with the sol
 import torch
 
 torch.set_num_threads(2)
-import argparse, json, os, sys, time
-from collections import Counter
+import argparse
+import json
+import os
+import sys
+import time
 
 os.chdir("/home/ya0guang/Code/ygorl/.claude/worktrees/claude-rl-review")
 sys.path.insert(0, "src")

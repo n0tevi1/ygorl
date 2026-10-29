@@ -7,7 +7,11 @@ the top-level `overall` report the candidate's win rate going first and second a
 Writes <ckpt dir>/panel/<ckpt stem>/<opponent>.jsonl + summary.json; prints score per opponent and the mean.
 """
 
-import argparse, json, multiprocessing, os, sys, time
+import argparse
+import json
+import multiprocessing
+import os
+import time
 from dataclasses import asdict
 from pathlib import Path
 
