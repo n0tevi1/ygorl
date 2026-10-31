@@ -419,6 +419,24 @@ class _Slot:
     turn: int = 0  # the turn of the game's latest decision seen (look-ahead games: _look_slot)
 
 
+class _ProbSlice:
+    """Rows ``start:stop`` of a threaded opponent forward's probabilities, padded back to ``width`` columns (the C++
+    graph slices actions to the true prefix; the zero-probability columns keep the eager path's arity)."""
+
+    __slots__ = ("future", "start", "stop", "width")
+
+    def __init__(self, future, start: int, stop: int, width: int) -> None:
+        self.future, self.start, self.stop, self.width = future, start, stop, width
+
+    def result(self) -> Tensor:
+        p = self.future.result()[self.start : self.stop]
+        return p if p.shape[-1] == self.width else torch.nn.functional.pad(p, (0, self.width - p.shape[-1]))
+
+
+def _resolve(probs) -> Tensor:
+    return probs if isinstance(probs, Tensor) else probs.result()
+
+
 class RolloutCollector:
     """Collect ``num_steps`` learner rows per environment slot from ``env`` with ``model``.
 
@@ -977,7 +995,7 @@ class RolloutCollector:
 
     def _step_branch_opponents(self, pending: list[tuple[list, Tensor]]) -> None:
         for evs, probs in pending:
-            probs = probs.cpu()
+            probs = _resolve(probs).cpu()
             for i, ev in enumerate(evs):
                 a = int(torch.multinomial(probs[i], 1, generator=self._slots[ev.env_id].branch.gen))
                 self._branch_counts[1] += 1
@@ -1085,7 +1103,7 @@ class RolloutCollector:
 
         answers = list(zip(learner, learner_probs, strict=True))
         for rows, probs in pending:
-            p = probs.float().cpu().numpy().astype(np.float64)
+            p = _resolve(probs).float().cpu().numpy().astype(np.float64)
             answers.extend(zip(rows, p))
         touched: dict[int, _Slot] = {}
         for (slot, runner, seat, ev), p in answers:
@@ -1207,7 +1225,28 @@ class RolloutCollector:
             evs = [*main, *extra, *(row[3] for row in look)] if extra or look else main
             snapshot = self._slots[evs[0].env_id].opponent if main or extra else look_groups[key][0]
             jobs.append((main, extra, look, self._opponent_module(snapshot), [ev.obs for ev in evs]))
-        threaded = self._opp_executor is not None and not branch_groups and not look_groups
+        threaded = self._opp_executor is not None
+        if threaded and (branch_groups or look_groups):
+            # Branch / look-ahead decisions share their module's CPU forward with the main ones, as on the device
+            # path: one job per module, its probabilities split afterwards (each part resolves the future).
+            for main, extra, look, m, obs in jobs:
+                batch = self.model.collate(obs, "cpu")
+                runner = self._opp_runner(m)
+                target = self._opp_cpp_forward if runner is not None else self._opp_cpu_forward
+                fut = self._opp_executor.submit(
+                    target, runner if runner is not None else self._opp_cpu_module(m), batch
+                )
+                width = batch["action_mask"].shape[1]
+                a, b = len(main), len(main) + len(extra)
+                if main:
+                    pending.append((main, _ProbSlice(fut, 0, a, width)))
+                if extra:
+                    branch_pending.append((extra, _ProbSlice(fut, a, b, width)))
+                if look:
+                    look_pending.append((look, _ProbSlice(fut, b, len(obs), width)))
+            if look_groups is not None:
+                return pending, branch_pending, look_pending
+            return (pending, branch_pending) if two else pending
         if threaded:
             # Each opponent group's CPU forward runs on a thread (the GIL is released by torch compute) and
             # overlaps the learner's forward on the main thread. The strictly-CPU module copies and the collate

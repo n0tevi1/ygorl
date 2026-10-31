@@ -22,7 +22,7 @@ from torch import Tensor
 
 AUX_TARGETS = ("opp_monsters", "own_monsters", "lp_swing", "first_hand")
 _MY_TURN, _TURN, _MY_LP, _OP_LP = 2, 3, 5, 6  # globals columns
-_IS_FIRST, _MY_HAND = 1, 8  # g[1]=1 when the viewer is the first player; g[8]=viewer's hand card count
+_IS_FIRST, _MY_HAND, _OP_HAND = 1, 8, 13  # g[1]=1: the viewer moves first; g[8] / g[13]: viewer's / opponent's hand
 _LOCATION, _CONTROLLER, _MZONE = 1, 4, 3  # card columns and the monster-zone code
 
 
@@ -37,6 +37,7 @@ def aux_targets(obs, players: Tensor, dones: Tensor) -> tuple[Tensor, Tensor]:
     opp = (mz & (cards[..., _CONTROLLER] == 1)).sum(-1).float().cpu().view(T, B)
     turn = g[:, _TURN].long().cpu().view(T, B)
     hand = g[:, _MY_HAND].float().cpu().view(T, B)  # viewer's hand count at each row
+    op_hand = g[:, _OP_HAND].float().cpu().view(T, B)
     is_first = g[:, _IS_FIRST].long().cpu().view(T, B) == 1  # True when this row's viewer went first
     adv = (g[:, _MY_LP] - g[:, _OP_LP]).float().cpu().view(T, B)
     players, dones = players.cpu(), dones.cpu()
@@ -65,7 +66,7 @@ def aux_targets(obs, players: Tensor, dones: Tensor) -> tuple[Tensor, Tensor]:
                 # extra card on aggression; audit R4 2026-10-31: the policy over-extends from the
                 # first seat, converting handtrap resources into board pieces with no threat value).
                 if bool(is_first[t, b]):
-                    h_u = hand[u, b] if same else hand[t, b]  # own hand at next own turn (or current if not same)
+                    h_u = hand[u, b] if same else op_hand[u, b]  # the decider's hand at row u, from either view
                     targets[t, b, 3] = h_u / 6.0
                 valid[t, b] = True
             start = end + 1

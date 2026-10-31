@@ -32,10 +32,10 @@ def test_targets_look_at_the_first_row_after_the_turn_ends_from_the_deciders_vie
     t, v = aux_targets(_obs(rows), players, dones)
     assert t.shape == (4, 1, len(AUX_TARGETS)) and v.tolist() == [[True], [True], [True], [False]]
     # turn-1 rows target the turn-2 row, seen by seat 1: seat 0's opponent monsters = seat 1's own (1), own = 2
-    assert t[0, 0].tolist() == pytest.approx([1 / 5, 2 / 5, ((7000 - 8000) - 0) / 8000])
-    assert t[1, 0].tolist() == pytest.approx([1 / 5, 2 / 5, ((7000 - 8000) - 0) / 8000])
+    assert t[0, 0, :3].tolist() == pytest.approx([1 / 5, 2 / 5, ((7000 - 8000) - 0) / 8000])
+    assert t[1, 0, :3].tolist() == pytest.approx([1 / 5, 2 / 5, ((7000 - 8000) - 0) / 8000])
     # the turn-2 row (seat 1, lp 8000/7000 from its view) targets the turn-3 row seen by seat 0 (6000/7000)
-    assert t[2, 0].tolist() == pytest.approx([2 / 5, 1 / 5, ((7000 - 6000) - 1000) / 8000])
+    assert t[2, 0, :3].tolist() == pytest.approx([2 / 5, 1 / 5, ((7000 - 6000) - 1000) / 8000])
 
 
 def test_targets_do_not_cross_an_episode_end():

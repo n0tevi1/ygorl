@@ -71,6 +71,15 @@ def perturbed(key: str):
         base = replace(
             base, line_demos=("demos.jsonl",), line_share=0.5, line_labels=str(Path("/tmp/graded.jsonl").resolve())
         )  # resolve() is in the round trip
+    # fields that are only valid together (TrainConfig.__post_init__)
+    if key == "critic_aux":
+        return replace(base, critic_aux=value, ppo=replace(base.ppo, aux_coef=0.1))
+    if key == "ppo.aux_coef":
+        return replace(base, critic_aux=3, ppo=replace(base.ppo, aux_coef=value))
+    if key == "ppo.phi_coef":
+        return replace(base, critic_phi=True, ppo=replace(base.ppo, phi_coef=value))
+    if key == "ppo.phi_shape_coef":
+        return replace(base, critic_phi=True, ppo=replace(base.ppo, phi_coef=0.2, phi_shape_coef=value))
     owner = key.partition(".")[0]
     if owner == "net":
         return replace(base, net={**base.net, **{k[4:]: v for k, v in values.items()}})

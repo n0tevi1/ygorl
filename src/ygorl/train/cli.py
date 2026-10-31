@@ -231,6 +231,9 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            "pfsp (design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power",
            choices=("uniform", "pfsp")),
         _f("--pfsp-power", "pfsp_power"),
+        _f("--pool-active-k", "pool_active_k", "pool deals draw from an active cohort of K snapshots (0 = the whole "
+           "pool), so in-flight games share a few batched opponent forwards"),
+        _f("--pool-active-deals", "pool_active_deals", "deals between two cohort draws (0 = --envs)"),
         _f("--snapshot-min-win-rate", "snapshot_min_win_rate",
            "a due snapshot joins the pool only if the learner scored above this against the pool"),
         _f("--snapshot-min-games", "snapshot_min_games"),

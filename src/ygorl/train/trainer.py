@@ -167,6 +167,10 @@ class TrainConfig:
         "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
     )
     pfsp_power: float = 2.0
+    # active snapshot cohort (SelfPlaySchedule active_k): pool deals draw from pool_active_k snapshots redrawn every
+    # pool_active_deals deals (0 = the number of environments), so in-flight games batch into few opponent forwards
+    pool_active_k: int = 0
+    pool_active_deals: int = 0
     # a due snapshot joins the pool only if the learner scored above this in its pool games since the last one joined
     # (at least snapshot_min_games of them; ygo-agent's OSFP uses 0.55); None = always; an empty pool always takes one
     snapshot_min_win_rate: float | None = None
@@ -275,6 +279,18 @@ class TrainConfig:
                 raise ValueError("lookahead_share needs the privileged environment (the rollouts score both boards)")
         if self.lookahead_forks < 0 or self.lookahead_rounds < 0:
             raise ValueError("lookahead_forks and lookahead_rounds must not be negative")
+        from ygorl.train.aux import AUX_TARGETS
+
+        if not 0 <= self.critic_aux <= len(AUX_TARGETS):
+            raise ValueError(f"critic_aux must be in [0, {len(AUX_TARGETS)}]")
+        if (self.critic_aux > 0) != (self.ppo.aux_coef > 0):
+            # heads without a loss train nothing (the fs-aux runs of 2026-10-31 were silent no-ops this way)
+            raise ValueError("critic_aux and ppo.aux_coef go together: auxiliary heads need --aux-coef > 0 and back")
+        if self.ppo.phi_coef > 0 and not self.critic_phi:
+            raise ValueError("ppo.phi_coef needs critic_phi")
+        if self.ppo.phi_shape_coef > 0 and not (self.critic_phi and self.ppo.phi_coef > 0):
+            raise ValueError("ppo.phi_shape_coef needs critic_phi and ppo.phi_coef > 0 (an untrained potential "
+                             "only adds noise)")  # fmt: skip
         uses_branch = self.ppo.branch_mode != "off" or self.ppo.branch_q_coef > 0 or self.ppo.branch_ce_coef > 0
         if uses_branch and not self.branch_windows:
             raise ValueError(
@@ -385,7 +401,8 @@ def build_collection(
                                 line_first_share=cfg.line_first_share,
                                 lookahead=cfg.lookahead_config() if cfg.lookahead_share > 0 else None,
                                 lookahead_share=cfg.lookahead_share,
-                                lookahead_second=cfg.lookahead_second)  # fmt: skip
+                                lookahead_second=cfg.lookahead_second, active_k=cfg.pool_active_k,
+                                active_deals=cfg.pool_active_deals or max(1, num_envs))  # fmt: skip
     forks = cfg.lookahead_forks if cfg.lookahead_share > 0 else 0
     env = EncodedVecEnv(num_envs + forks, env_threads, cards=cards, vocab=vocab,
                         privileged=cfg.privileged_critic, event_length=cfg.event_length,

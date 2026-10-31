@@ -232,7 +232,9 @@ class AshOrPass(ActorCritic):
         return out._replace(logits=logits)
 
 
-def engine_collector(db, vocab, scripts, branch, *, first_seat=False, steps=48, num_envs=2, skip_forced=True):
+def engine_collector(
+    db, vocab, scripts, branch, *, first_seat=False, steps=48, num_envs=2, skip_forced=True, opp_cpu_threads=0
+):
     torch.manual_seed(0)
     model = AshOrPass(NetConfig(vocab_size=len(vocab), **TINY), privileged=True, privileged_dim=8, critic_hidden=16)
     model.ash = vocab.index(FIRE)
@@ -250,7 +252,7 @@ def engine_collector(db, vocab, scripts, branch, *, first_seat=False, steps=48, 
     env = EncodedVecEnv(num_envs, 1, cards=db, vocab=vocab, privileged=True, event_length=16, skip_forced=skip_forced,
                         snapshots=branch is not None)  # fmt: skip
     col = RolloutCollector(env, model, next_game, steps, opponents=pool.get, seed=5, min_batch=num_envs,
-                           branch=branch)  # fmt: skip
+                           branch=branch, opp_cpu_threads=opp_cpu_threads)  # fmt: skip
     return col, env
 
 
@@ -277,6 +279,18 @@ def test_engine_branching_leaves_the_main_game_unchanged_and_values_fire_and_hol
         assert b.line_effect[t, c] >= 0  # a counted window of the line (its recovery key)
         assert (value[rows].abs() <= 1.0 + 0.1 * 40).all()
     assert not valid[b.line_effect < 0].any()
+
+
+def test_threaded_opponents_keep_branching_rollouts_identical(db, vocab, library):
+    """--opp-cpu-threads also serves the snapshot's decisions inside branches (one job per module, split after):
+    on a CPU learner the threaded rollout, branch values included, is the synchronous one bit for bit."""
+    sync, _ = engine_collector(db, vocab, library.scripts, BranchConfig(rollouts=2))
+    threaded, env = engine_collector(db, vocab, library.scripts, BranchConfig(rollouts=2), opp_cpu_threads=1)
+    a, b = sync.collect(), threaded.collect()
+    assert_same_rollout(a, b)
+    assert b.branch_windows > 0 and env.snapshot_count() == 0
+    torch.testing.assert_close(a.branch_value, b.branch_value, rtol=0, atol=0, equal_nan=True)
+    assert same(a.branch_valid, b.branch_valid) and int(b.branch_valid.sum()) > 0
 
 
 def test_engine_branching_needs_a_recovery_line_unless_told_otherwise(db, vocab, plain):

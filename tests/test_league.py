@@ -1,6 +1,8 @@
 """The league (ygorl.train.league): finished games in, snapshot admission / keep-best / evolved-deck scores out,
 without engines or a Trainer."""
 
+from pathlib import Path
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -88,3 +90,37 @@ def test_state_round_trips():
     other = League(SnapshotPool(4))
     other.load_state_dict(state, lambda: torch.nn.Linear(2, 2))
     assert other.best == league.best and other.window == league.window and other.pool.ids() == league.pool.ids()
+
+
+def test_active_cohort_restricts_pool_deals_and_is_off_by_default():
+    import numpy as np
+
+    from ygorl.cards.ydk import load_ydk
+    from ygorl.train.selfplay import DeckPool, SelfPlaySchedule
+
+    pool = SnapshotPool(8, sampling="uniform")
+    for u in range(6):
+        pool.add(torch.nn.Linear(1, 1), update=u)
+    decks = [load_ydk(p) for p in sorted(Path("tests/decks").glob("*.ydk"))[:2]]
+
+    def opponents(sched, deals):
+        seen = []
+        for _ in range(deals):
+            a = sched()
+            sched()  # the paired game
+            seen.append(a.opponent)
+        return seen
+
+    base = opponents(SelfPlaySchedule(DeckPool(decks), pool, selfplay_fraction=0.0, seed=1), 40)
+    again = opponents(SelfPlaySchedule(DeckPool(decks), pool, selfplay_fraction=0.0, seed=1, active_k=0), 40)
+    assert base == again and len(set(base)) > 2
+    sched = SelfPlaySchedule(DeckPool(decks), pool, selfplay_fraction=0.0, seed=1, active_k=2, active_deals=10)
+    seen = opponents(sched, 40)
+    for i in range(0, 40, 10):
+        assert len(set(seen[i : i + 10])) <= 2
+    assert len(set(seen)) > 2  # the cohort is redrawn
+    state = sched.state_dict()
+    resumed = SelfPlaySchedule(DeckPool(decks), pool, selfplay_fraction=0.0, seed=1, active_k=2, active_deals=10)
+    resumed.load_state_dict(state)
+    assert opponents(resumed, 15) == opponents(sched, 15)
+    assert np.isfinite(len(seen))
