@@ -666,6 +666,8 @@ R2b 的 G u576 读数在诱饵侧复现了方法论回顾里的 0.65；动点侧
 
 - `overlap_collect`（`--overlap`）：更新进行时在另一个线程（GPU 上另一个 stream）用「更新开始前的权重」的副本收集下一段；联赛记账
   （快照、评估、checkpoint）只在两步之间、没有收集在跑时进行。代价是每段数据落后一次更新，偏离设计的同步 PPO（[scaling.md](scaling.md) S3），采用前要先改设计。
+  MPS 上没有 stream，且 Metal 不允许两个线程并发编码：此时收集侧（acting 网络与快照池的副本）在 **CPU** 上前向，学习者独占 GPU；采样仍在主机侧的
+  CPU 生成器上（与设备无关），只有前向的数值随设备变化。学习者把每段 rollout 的观测一次性搬回自己的设备（`PPOLearner.update` 开头）。
 - `bf16`（`--bf16`）：行动与更新都在 bf16 autocast 下跑，包含critic-only warmup。
   2026-10-05修复warmup引入时的缩进回归：此前该选项只覆盖采样，update实际在autocast之外。
   更新作用域关闭参数cast缓存，保证每个Adam步后的forward读取新权重；采样时权重不变，保留缓存。
