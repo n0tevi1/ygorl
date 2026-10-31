@@ -73,7 +73,10 @@ class CategoricalEmbedding(nn.Module):
         idx = torch.minimum(x.clamp(min=0), self.limits) + self.offsets
         flat = idx.reshape(-1, idx.shape[-1])
         weight = self.table.weight
-        if weight.shape[0] <= SMALL_TABLE:
+        # Inference (no grad) always takes the embedding_bag path: identical forward values, but traceable /
+        # serializable for the C++ snapshot-inference module (tools/export_snapshot_actor.py; _SummedRows's
+        # autograd wrapper is not). Training keeps the small-table custom backward.
+        if weight.shape[0] <= SMALL_TABLE and torch.is_grad_enabled():
             out = _SummedRows.apply(flat, weight)
         else:  # e.g. the action encoder's system-string buckets: a count matrix would be too large
             out = nn.functional.embedding_bag(flat, weight, mode="sum")

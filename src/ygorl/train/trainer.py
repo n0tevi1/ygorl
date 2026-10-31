@@ -16,8 +16,10 @@ game, :meth:`Trainer._log_games`), ``checkpoints/latest.pt`` + ``checkpoints/upd
 from __future__ import annotations
 
 import copy
+import fcntl
 import gzip
 import json
+import os
 import shutil
 import statistics
 import time
@@ -59,6 +61,7 @@ from ygorl.train.league import League
 from ygorl.train.line_labels import LineLabels
 from ygorl.train.lines import LineLibrary
 from ygorl.train.selfplay import DeckPool, EvolvedDecks, SelfPlaySchedule, SnapshotPool
+from ygorl.train.shards import ShardSupervisor
 
 SMALL_NET = {"d_model": 64, "n_heads": 4, "board_layers": 1, "history_layers": 1}
 
@@ -182,6 +185,24 @@ class TrainConfig:
     eval_greedy_policy: bool = False  # evaluate the argmax policy (policy-greedy) instead of sampling
     seed: int = 0
     device: str = "cpu"  # PyTorch device of the learner and the acting network ("cuda" also covers ROCm)
+    # Acting-side device override: e.g. "cpu" keeps the learner alone on the GPU (MPS wedges its kernels when
+    # several processes stream inference commands concurrently; docs/benchmarks.md "Apple M5 Ultra(MPS)"). None:
+    # the acting side shares ``device``. No effect on the algorithm: still synchronous PPO, the acting copy is
+    # refreshed after every update (as with ``overlap_collect``).
+    collect_device: str | None = None
+    # Sharded segment collection: N actor subprocesses each run their own env shard and collector under the
+    # same weights, and the parent merges the [T, B/N] rollouts along B before the update. Algorithmically
+    # identical to synchronous PPO (every row is on-policy w.r.t. the pre-update weights; no staleness).
+    collect_shards: int = 1
+    # Snapshot-opponent inference on N CPU threads, overlapping the learner's GPU forward (profiling: the
+    # opponents' small-batch forwards were ~58% of a segment). Sampling stays on the collect thread with the
+    # same generator order; the draws' distribution is unchanged, their exact stream differs from on-device
+    # forwards exactly as between device choices. 0 = the previous in-loop forwards.
+    opp_cpu_threads: int = 0
+    # Opponent inference through the traced actor graph in ygorl._infer (C++, GIL-free): several collection
+    # threads forward concurrently. Needs a libtorch build of _infer and opp_cpu_threads >= 1; the graph is
+    # exported from the run's actor at startup (net changes need a fresh export, checked by fingerprint).
+    opp_cpp: bool = False
     # Experimental, not in the design (synchronous PPO; docs/scaling.md S3): collect the next rollout on a thread with
     # a copy of the weights the update starts from, while the update runs; every rollout is then one update stale
     overlap_collect: bool = False
@@ -331,6 +352,57 @@ def line_stats(games, recovery: bool = False) -> dict:
     return out
 
 
+def build_collection(
+    cfg: "TrainConfig",
+    *,
+    model,
+    cards,
+    vocab,
+    net_config,
+    pool,
+    lines,
+    evolved,
+    duel_config,
+    environment,
+    num_envs: int,
+    env_threads: int,
+    seed: int,
+    device,
+    record_games: bool = False,
+    opp_artifact: str | None = None,
+):
+    """Schedule + env + RolloutCollector of one collection process — the trainer itself or a shard worker.
+
+    One construction site for both keeps the sharded and the in-process collections bit-compatible; the
+    trainer-only extras (look-ahead forks, window branching, deck-pool evolution) activate through ``cfg``
+    just as before. Shard workers must run with those extras off (asserted in :mod:`ygorl.train.shards`).
+    """
+
+    decks = [load_ydk(p) for p in cfg.decks]
+    schedule = SelfPlaySchedule(DeckPool(decks, cfg.pairings), pool, duel_config,
+                                selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed,
+                                evolved=evolved, lines=lines, line_share=cfg.line_share,
+                                line_first_share=cfg.line_first_share,
+                                lookahead=cfg.lookahead_config() if cfg.lookahead_share > 0 else None,
+                                lookahead_share=cfg.lookahead_share,
+                                lookahead_second=cfg.lookahead_second)  # fmt: skip
+    forks = cfg.lookahead_forks if cfg.lookahead_share > 0 else 0
+    env = EncodedVecEnv(num_envs + forks, env_threads, cards=cards, vocab=vocab,
+                        privileged=cfg.privileged_critic, event_length=cfg.event_length,
+                        skip_forced=cfg.skip_forced, record_actions=True, record_games=record_games,
+                        selection_history=net_config.selection_history, attack_history=net_config.attack_history,
+                        cancel_budget=cfg.cancel_budget,
+                        snapshots=cfg.branch_windows or cfg.lookahead_share > 0)  # fmt: skip
+    collector = RolloutCollector(env, model, schedule, cfg.steps, opponents=schedule.opponent,
+                                 seed=seed, min_batch=cfg.min_batch,
+                                 device=device, stall_timeout=cfg.stall_timeout,
+                                 turn_discount=cfg.turn_discount, complete_games=cfg.complete_games,
+                                 branch=cfg.branch_config() if cfg.branch_windows else None,
+                                 forks=forks, look_rounds=cfg.lookahead_rounds,
+                                 opp_cpu_threads=cfg.opp_cpu_threads, opp_artifact=opp_artifact)  # fmt: skip
+    return schedule, env, collector
+
+
 class Trainer:
     """Build with a :class:`TrainConfig` and a run directory, or :meth:`resume` from a checkpoint."""
 
@@ -341,6 +413,25 @@ class Trainer:
         self.cfg = cfg
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        # Exclusive run lock: two trainers writing one run directory corrupt metrics and checkpoints (the OS
+        # releases the lock when the holder dies, so a crashed run never leaves a stale lock behind).
+        lock_path = self.run_dir / ".lock"
+        try:
+            holder = int(lock_path.read_text().strip() or 0)
+        except (OSError, ValueError):
+            holder = 0
+        if holder == os.getpid():  # same-process re-entry (save-then-resume in place): retire the old inode
+            lock_path.unlink()
+        self._lock_file = lock_path.open("a+")  # never truncates: a refused process must not clobber the holder
+        try:
+            fcntl.flock(self._lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            self._lock_file.close()
+            raise RuntimeError(f"another trainer is already running in {self.run_dir}") from None
+        self._lock_file.seek(0)
+        self._lock_file.truncate()
+        self._lock_file.write(f"{os.getpid()}\n")
+        self._lock_file.flush()
         self.log = log or (lambda _msg: None)
         self.environment = None
         if cfg.env is not None:
@@ -353,6 +444,19 @@ class Trainer:
         self.decks = [load_ydk(p) for p in cfg.decks]
         self.cards = default_cards()
         self.device = torch_device(cfg.device)
+        # An overlapped collection must not encode Metal work next to the learner (MPS has no streams): on MPS
+        # the acting side then runs on CPU, leaving the GPU to the learner alone. Sampling stays on the host
+        # either way (the collector's generator is a CPU generator), so only the forward's numerics move.
+        # An overlapped collection must not encode Metal work next to the learner (MPS has no streams): on MPS
+        # the acting side then runs on CPU, leaving the GPU to the learner alone. An explicit ``collect_device``
+        # does the same split for synchronous training (same algorithm: the acting copy is refreshed every step).
+        self._collect_device = (
+            torch_device(cfg.collect_device)
+            if cfg.collect_device is not None
+            else torch.device("cpu")
+            if cfg.overlap_collect and self.device.type == "mps"
+            else self.device
+        )
         init = load_actor(cfg.init_from, cfg.text_dir) if cfg.init_from and state is None else None
         cfg = self.cfg = self._event_length(cfg, init)
         if state is not None:
@@ -389,8 +493,9 @@ class Trainer:
             prior = loaded.net.to(self.device)
         self.lines = self.line_labels = None
         if cfg.line_demos and cfg.line_share > 0:
-            self.lines = LineLibrary.load(cfg.line_demos, self.vocab, cards=self.cards, env=self.environment,
-                                          recovery=cfg.line_recovery, event_length=cfg.event_length)  # fmt: skip
+            self.lines = LineLibrary.load_cached(cfg.line_demos, self.vocab, cards=self.cards, env=self.environment,
+                                                 recovery=cfg.line_recovery, event_length=cfg.event_length,
+                                                 cache=Path("out") / "linecache" / "lib.pkl")  # fmt: skip
             self.log(f"scripted lines: {len(self.lines)} from {len(cfg.line_demos)} file(s) in {self.lines.seconds:.0f} s"
                      + "".join(f"; left out {p}" for p in self.lines.problems[:10])
                      + (f"; ... {len(self.lines.problems)} left out" if len(self.lines.problems) > 10 else ""))  # fmt: skip
@@ -410,14 +515,16 @@ class Trainer:
                     self.log(f"scripted lines dealt from the {len(self.lines.dealable)} labelled lines only")
         self.learner = PPOLearner(self.model, cfg.ppo, prior, line_labels=self.line_labels,
                                   branch_board_scale=cfg.branch_board_scale)  # fmt: skip
-        self.pool = SnapshotPool(cfg.pool_size, cfg.pinned_share, cfg.pool_sampling, cfg.pfsp_power)
+        self.pool = SnapshotPool(
+            cfg.pool_size, cfg.pinned_share, cfg.pool_sampling, cfg.pfsp_power, device=self._collect_device
+        )
         for path in cfg.pin_opponents:
             pinned = load_actor(path, cfg.text_dir)
             if why := signature.mismatches(pinned.signature):
                 raise ValueError(f"{path}: the run and the pinned opponent differ: {'; '.join(why)}"
                                  + (" (the run's event length came from --init-from; set --event-length)"
                                     if self._adopted_event_length else ""))  # fmt: skip
-            self.pool.pin(pinned.net.to(self.device), tag=f"pinned:{Path(path).name}")
+            self.pool.pin(pinned.net.to(self._collect_device), tag=f"pinned:{Path(path).name}")
         self.evolved = None
         if cfg.deck_pool is not None:
             env = self.environment
@@ -425,30 +532,65 @@ class Trainer:
                                         validate=None if env is None else lambda d: [str(v) for v in env.validate_deck(d, self.cards)])  # fmt: skip
             if state is None:
                 self._reload_deck_pool()
-        self.schedule = SelfPlaySchedule(DeckPool(self.decks, cfg.pairings), self.pool, self.duel_config,
-                                         selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed,
-                                         evolved=self.evolved, lines=self.lines, line_share=cfg.line_share,
-                                         line_first_share=cfg.line_first_share,
-                                         lookahead=cfg.lookahead_config() if cfg.lookahead_share > 0 else None,
-                                         lookahead_share=cfg.lookahead_share,
-                                         lookahead_second=cfg.lookahead_second)  # fmt: skip
-        forks = cfg.lookahead_forks if cfg.lookahead_share > 0 else 0
-        self.env = EncodedVecEnv(cfg.num_envs + forks, cfg.env_threads, cards=self.cards, vocab=self.vocab,
-                                 privileged=cfg.privileged_critic, event_length=cfg.event_length,
-                                 skip_forced=cfg.skip_forced, record_actions=True, record_games=cfg.trace_games,
-                                 selection_history=self.net_config.selection_history, attack_history=self.net_config.attack_history, cancel_budget=cfg.cancel_budget,
-                                 snapshots=cfg.branch_windows or cfg.lookahead_share > 0)  # fmt: skip
-        # the acting network: the model itself, or a copy refreshed before each overlapped collection
-        self.acting = copy.deepcopy(self.model) if cfg.overlap_collect else self.model
+        if cfg.collect_shards > 1:
+            for unsupported, flag in (
+                ("deck_pool", cfg.deck_pool),
+                ("lookahead_share", cfg.lookahead_share),
+                ("branch_windows", cfg.branch_windows),
+                ("overlap_collect", cfg.overlap_collect),
+                ("text_dir", cfg.text_dir),
+                ("trace_games", cfg.trace_games),
+                ("complete_games", cfg.complete_games),
+            ):
+                if flag:
+                    raise ValueError(f"collect_shards does not support {unsupported} (yet)")
+            self.schedule = self.env = self.collector = None
+            self.acting = self.model  # the shards hold their own acting copies; the parent only sends weights
+            self.shards = ShardSupervisor(
+                self.cfg.to_dict(), cfg.collect_shards, self.model, self.pool, self.run_dir, log=self.log
+            )
+            self.log(f"sharded collection: {cfg.collect_shards} x {max(1, cfg.num_envs // cfg.collect_shards)} envs")
+        else:
+            opp_artifact = None
+            if cfg.opp_cpp:
+                from ygorl.train.export_actor import export_actor
+
+                class _Loaded:  # export_actor's interface: the run's actor + its event window
+                    pass
+
+                import copy as _copy
+
+                _l = _Loaded()
+                # the traced graph must be strictly CPU (a C++ forward on device tensors would encode Metal
+                # from collection threads — forbidden; copy first, same values)
+                _l.net = _copy.deepcopy(self.model.actor).cpu().eval()
+                _l.event_length = cfg.event_length
+                artifact = self.run_dir / "actor_actpath.pt"
+                meta = export_actor(_l, artifact)
+                self.log(f"opponent inference: traced actor graph {meta['fingerprint']} -> {artifact}")
+                opp_artifact = str(artifact)
+            self.schedule, self.env, self.collector = build_collection(
+                cfg, model=None, cards=self.cards, vocab=self.vocab, net_config=self.net_config,
+                pool=self.pool, lines=self.lines, evolved=self.evolved, duel_config=self.duel_config,
+                environment=self.environment, num_envs=cfg.num_envs, env_threads=cfg.env_threads,
+                seed=derive_seed(cfg.seed, 3), device=self._collect_device, record_games=cfg.trace_games,
+                opp_artifact=opp_artifact)  # fmt: skip
+            # the acting copy: the model itself, or a device copy refreshed before each (overlapped or split-device) collection
+            self.acting = (
+                copy.deepcopy(self.model).to(self._collect_device)
+                if cfg.overlap_collect or self._collect_device != self.device
+                else self.model
+            )
+            self.collector.model = self.acting
+            self.shards = None
+            if cfg.overlap_collect and self._collect_device != self.device:
+                self.log(
+                    "overlapped collection acts on CPU: Metal cannot encode two threads' GPU work concurrently"
+                    " (the learner keeps the GPU; bf16 acting is off)"
+                )
         self._pending: Rollout | None = None
         self._executor = ThreadPoolExecutor(1, thread_name_prefix="collect") if cfg.overlap_collect else None
         self._stream = torch.cuda.Stream(self.device) if cfg.overlap_collect and self.device.type == "cuda" else None
-        self.collector = RolloutCollector(self.env, self.acting, self.schedule, cfg.steps, opponents=self.schedule.opponent,
-                                          seed=derive_seed(cfg.seed, 3), min_batch=cfg.min_batch,
-                                          device=self.device, stall_timeout=cfg.stall_timeout,
-                                          turn_discount=cfg.turn_discount, complete_games=cfg.complete_games,
-                                          branch=cfg.branch_config() if cfg.branch_windows else None,
-                                          forks=forks, look_rounds=cfg.lookahead_rounds)  # fmt: skip
         self._warmup_ev: list[float] = []
         self.counters = {"critic_warmup_done": 0, "updates": 0, "rows": 0, "decisions": 0, "games": 0, "seconds": 0.0, "truncated": 0,
                          "errors": 0, "snapshots": 0, "snapshots_skipped": 0}  # fmt: skip
@@ -509,7 +651,10 @@ class Trainer:
         return cls(cfg, Path(run_dir), state=state, log=log)
 
     def state_dict(self) -> dict:
-        rng = {"torch": torch.get_rng_state(), "collector": self.collector.generator.get_state()}
+        rng = {
+            "torch": torch.get_rng_state(),
+            "collector": None if self.collector is None else self.collector.generator.get_state(),
+        }
         if self.device.type == "cuda":
             # PPO shuffles minibatches on the learner device, independently of the CPU acting generator.
             rng["cuda"] = torch.cuda.get_rng_state(self.device)
@@ -534,7 +679,8 @@ class Trainer:
         self.schedule.load_state_dict(state["schedule"])
         self.counters.update(state["counters"])
         torch.set_rng_state(state["rng"]["torch"])
-        self.collector.generator.set_state(state["rng"]["collector"])
+        if self.collector is not None:
+            self.collector.generator.set_state(state["rng"]["collector"])
         if self.device.type == "cuda" and "cuda" in state["rng"]:
             torch.cuda.set_rng_state(state["rng"]["cuda"], self.device)
 
@@ -577,6 +723,9 @@ class Trainer:
             self.log(f"rollout stalled, saving checkpoints/latest.pt: {exc}")
             self.save()
             raise
+        finally:
+            if self.shards is not None:
+                self.shards.close()
         if cfg.register_every:
             self.counters["wall_seconds"] = wall_before + time.monotonic() - wall_start
         self.save()
@@ -593,9 +742,18 @@ class Trainer:
         enabled = self.cfg.bf16
         if learner and self.cfg.learner_precision != "inherit":
             enabled = self.cfg.learner_precision == "bf16"
-        return torch.autocast(self.device.type, dtype=torch.bfloat16, enabled=enabled, cache_enabled=not learner)
+        if not learner and enabled and self._collect_device.type == "cpu" and self.device.type != "cpu":
+            enabled = False  # CPU-acting fallback of overlapped collection: bf16 CPU inference is slower
+        return torch.autocast(
+            self.device.type if learner else self._collect_device.type,
+            dtype=torch.bfloat16,
+            enabled=enabled,
+            cache_enabled=not learner,
+        )
 
     def _collect(self) -> Rollout:
+        if self.shards is not None:
+            return self.shards.collect()
         model_update = self._acting_update if self.cfg.overlap_collect else self.learner.updates
         self.env.trace_model_update = model_update
         if self._stream is None:
@@ -634,6 +792,9 @@ class Trainer:
             future = self._executor.submit(self._collect)
         else:
             ro = self._collect()
+            if self.acting is not self.model:  # split-device acting: the copy tracks the post-update weights
+                self.acting.load_state_dict(self.model.state_dict())
+                self._acting_update = self.learner.updates
         torch.set_num_threads(cfg.torch_threads)
         t0 = time.perf_counter()
         # Adam mutates weights between minibatches: cached BF16 casts would become stale within this context.
@@ -641,6 +802,11 @@ class Trainer:
             warm = self.cfg.critic_warmup > 0 and not self.counters.get("critic_warmup_done")
             stats = self.learner.update(ro, policy=not warm)
         update_s = time.perf_counter() - t0
+        if self.device.type == "mps":
+            # The MPS allocator deadlocks after ~100-600 s of sustained kernel encoding (pytorch/pytorch#201378);
+            # the confirmed workaround is periodic cache clearing + synchronize, done once per update here.
+            torch.mps.empty_cache()
+            torch.mps.synchronize()
         if warm:
             self._warmup_ev.append(stats["q_explained_var"])
             recent = self._warmup_ev[-5:]
@@ -844,10 +1010,13 @@ class Trainer:
         path = self.save(f"update_{u:06d}.pt")
         shutil.copyfile(path, self.run_dir / "checkpoints" / "latest.pt")
         results = {}
+        # Spawned eval workers initializing Metal next to a live trainer deadlocked the run twice on MPS
+        # (2026-10-29, both arms at their first eval): single-process evaluation there.
+        workers = 1 if self.device.type == "mps" else cfg.eval_workers
         for opponent in cfg.eval_opponents:
             rep, seconds = evaluate_checkpoint(path, self.decks, opponent, pairings=self.eval_pairings(),
                                                pairs=cfg.eval_pairs, config=self.duel_config, env=self.environment,
-                                               workers=cfg.eval_workers, seed=derive_seed(cfg.seed, 4),
+                                               workers=workers, seed=derive_seed(cfg.seed, 4),
                                                greedy_policy=cfg.eval_greedy_policy)  # fmt: skip
             results[opponent] = {"update": u, "vs": opponent, "games": rep.games, "attempted_games": rep.attempted_games,
                                  "valid": rep.errors == 0 and rep.games > 0, "win_rate": rep.win_rate,

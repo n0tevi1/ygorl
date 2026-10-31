@@ -87,6 +87,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--history", "net.history", choices=("transformer", "lstm", "none")),
         _f("--attack-history", "net.attack_history", "record actor-private attack choices before target selection"),
         _f("--selection-history", "net.selection_history", "record actor-private selection actions in history"),
+        _f("--battle-context", "net.battle_context", "attacker/target relation rows at attack-target prompts"
+           " (needs --attack-history)"),
         _f("--no-id-embedding", "net.id_embedding", "drop the per-card ID embedding", negate=True),
         _f("--text-dir", "text_dir", "card feature directory: frozen text tables and/or card_facts.npz (docs/nets.md)",
            path=True),
@@ -96,7 +98,7 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--separate-critic", "shared_backbone", "critic gets its own trunk", negate=True),
         _f("--critic-init", "critic_init", "separate critic on a warm start: actor (trunk copied from the actor, heads "
            "from a PPO checkpoint; #434) or fresh"),
-        _f("--critic-aux", "critic_aux", "auxiliary critic heads: 0 = none, 3 = train.aux.AUX_TARGETS (#440)"),
+        _f("--critic-aux", "critic_aux", "auxiliary critic heads: 0 = none, 3 = the first three aux targets, 4 = all of train.aux.AUX_TARGETS (the 4th is the seat-aware hand-preservation target)"),
         _f("--critic-phi", "critic_phi", "survival-potential head on the critic trunk (docs/training.md 8.2)"),
         _f("--critic-deck-order", "critic_deck_order",
            "the privileged critic also sees both players' next 10 draws (docs/encoding.md)"),
@@ -245,7 +247,17 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--eval-greedy-policy", "eval_greedy_policy",
            "evaluate the argmax policy (policy-greedy) instead of sampling"),
         _f("--seed", "seed"),
-        _f("--device", "device", "PyTorch device of the learner and acting network (cpu, cuda)"),
+        _f("--device", "device", "PyTorch device of the learner and acting network (cpu, cuda, mps; "
+           "with --collect-device the learner only)"),
+        _f("--collect-device", "collect_device", "device of the acting side (e.g. cpu leaves the GPU to the "
+           "learner; MPS stability under several processes)"),
+        _f("--collect-shards", "collect_shards", "N actor subprocesses collect the segment in parallel under the "
+           "same weights (algorithmically identical synchronous PPO; not with overlap / lookahead / branch "
+           "windows / deck pool)"),
+        _f("--opp-cpu-threads", "opp_cpu_threads", "snapshot-opponent inference on N CPU threads, overlapping the "
+           "learner's forward (0 = in-loop forwards on the collect device)"),
+        _f("--opp-cpp", "opp_cpp", "opponent inference through the traced actor graph in ygorl._infer (C++, "
+           "GIL-free; needs a libtorch build and --opp-cpu-threads >= 1)"),
         _f("--overlap", "overlap_collect",
            "experimental: collect the next rollout while updating (one update stale)"),
         _f("--bf16", "bf16", "experimental: bf16 autocast on a GPU"),

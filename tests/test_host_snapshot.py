@@ -8,6 +8,7 @@ played on from it must equal the uninterrupted game (result and response log).
 import ctypes
 import random
 import statistics
+import sys
 import time
 from pathlib import Path
 
@@ -341,6 +342,8 @@ def rss_bytes():
 
 
 def test_release_frees_snapshot_memory(db, vocab):
+    if sys.platform != "linux":  # RSS is read from /proc and trimmed via glibc's malloc_trim
+        pytest.skip("reads RSS from /proc and calls malloc_trim (Linux-only)")
     spec = specs(1, base=5800)[0]
     env = EncodedVecEnv(1, 1, cards=db, vocab=vocab, snapshots=True)
     env.reset(0, spec)

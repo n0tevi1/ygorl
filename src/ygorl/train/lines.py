@@ -338,6 +338,63 @@ class LineLibrary:
         lib.seconds = time.perf_counter() - t0
         return lib
 
+    @classmethod
+    def load_cached(
+        cls,
+        paths,
+        vocab,
+        *,
+        cards=None,
+        env=None,
+        variant="plain",
+        recovery=(),
+        event_length=64,
+        cache: str | Path | None = None,
+    ) -> "LineLibrary":
+        """:meth:`load` with a pickle cache: validation replays every line (~4 min for the handtrap corpus),
+        the pickled library is a few MB. The cache key covers the demo and recovery files (mtimes), the
+        environment stamp, the vocab and the event window; a stale or missing cache falls back to a full load
+        and rewrites itself. ``cache=None`` behaves exactly like :meth:`load`."""
+        import hashlib
+        import pickle
+
+        if cache is None:
+            return cls.load(
+                paths, vocab, cards=cards, env=env, variant=variant, recovery=recovery, event_length=event_length
+            )
+        files = [Path(p) for p in [*paths, *recovery]]
+        key = hashlib.sha256(
+            pickle.dumps(
+                [
+                    "line-cache-v1",
+                    [str(p) for p in files],
+                    [p.stat().st_mtime_ns for p in files],
+                    variant,
+                    event_length,
+                    env.stamp() if env is not None else None,
+                    len(vocab),
+                ]
+            )
+        ).hexdigest()[:16]
+        path = Path(cache)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        blob_file = path.with_name(f"{path.name}-{key}.pkl")
+        try:
+            t0 = time.perf_counter()
+            with blob_file.open("rb") as f:
+                lib = pickle.load(f)
+            lib.seconds = time.perf_counter() - t0
+            return lib
+        except (OSError, pickle.PickleError, EOFError):
+            lib = cls.load(
+                paths, vocab, cards=cards, env=env, variant=variant, recovery=recovery, event_length=event_length
+            )
+            tmp = blob_file.with_suffix(".tmp")
+            with tmp.open("wb") as f:
+                pickle.dump(lib, f, protocol=pickle.HIGHEST_PROTOCOL)
+            tmp.replace(blob_file)
+            return lib
+
     def _join_recovery(self, paths: Iterable[str | Path], plain: dict[str, list[tuple[int, Demonstration]]],
                        vocab: CardVocab, *, cards, env, event_length: int) -> None:  # fmt: skip
         found: dict[int, dict[tuple[int, int, int], RecoveryLine]] = {}

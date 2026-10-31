@@ -1009,3 +1009,30 @@ def test_aux_heads_train_on_real_duels(tmp_path):
     stats = trainer.step()
     assert stats["aux_valid_rows"] >= 0 and torch.isfinite(torch.tensor(stats["aux_loss"]))
     assert trainer.model.critic.aux_heads and len(trainer.model.critic.aux_heads) == 3
+
+
+def test_a_second_trainer_on_a_running_directory_is_refused(tmp_path):
+    """The run-directory lock: a concurrent trainer (another process pattern) cannot start; a fresh one can
+    after the holder is gone; same-process re-entry (save-then-resume in place) is allowed."""
+    import subprocess
+    import sys
+
+    cfg = TrainConfig(
+        decks=("tests/decks/snake_eye.ydk", "tests/decks/kashtira.ydk"),
+        num_envs=2,
+        steps=4,
+        eval_every=10**9,
+        snapshot_every=10**9,
+    )
+    t = Trainer(cfg, tmp_path / "run")
+    code = (
+        "import sys; sys.path.insert(0, 'src');"
+        "from ygorl.train.trainer import TrainConfig, Trainer;"
+        f"Trainer(TrainConfig(decks=('tests/decks/snake_eye.ydk', 'tests/decks/kashtira.ydk'),"
+        f" num_envs=2, steps=4, eval_every=10**9, snapshot_every=10**9), {str(tmp_path / 'run')!r})"
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=".")
+    assert out.returncode != 0 and "already running" in out.stderr
+    Trainer(cfg, tmp_path / "run")  # same process: allowed (the old inode is retired)
+    t2 = Trainer(cfg, tmp_path / "other")  # a different directory is unaffected
+    assert t2.run_dir != t.run_dir

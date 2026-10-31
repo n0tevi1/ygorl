@@ -16,7 +16,7 @@ from ygorl.train.trainer import TrainConfig  # noqa: E402
 
 DECKS = ("a.ydk", "b.ydk")
 # string fields without choices: a valid non-default value each
-STRINGS = {"env": "v1", "text_dir": str(Path("/tmp/feats").resolve()), "bc_prior": "bc.pt", "init_from": "init.pt", "device": "cuda:1",
+STRINGS = {"env": "v1", "text_dir": str(Path("/tmp/feats").resolve()), "bc_prior": "bc.pt", "init_from": "init.pt", "device": "cuda:1", "collect_device": "cpu",
            "register_matrix": str(Path("/tmp/matrix.json").resolve()), "keep_best_by": "random", "ppo.objective": "pg", "deck_pool": str(Path("/tmp/pool.json").resolve()), "critic_init": "fresh", "line_labels": str(Path("/tmp/graded.jsonl").resolve())}  # fmt: skip
 TUPLES = {"eval_opponents": ("random", "greedy", "policy:x.pt"), "pin_opponents": ("a.pt", "b.pt"),
           "line_demos": ("a.jsonl", "b.jsonl"), "line_recovery": ("fire.jsonl",), "branch_cards": (14558127, 97268402)}  # fmt: skip
@@ -53,7 +53,7 @@ def perturbed(key: str):
                  float: lambda: (default or 0.0) + 0.25}[cli._type(key)]()  # fmt: skip
     values = {k: value for k in flag.keys}
     if key == "register_every":
-        base = replace(base, register_matrix="/tmp/matrix.json")
+        base = replace(base, register_matrix=str(Path("/tmp/matrix.json").resolve()))  # resolve() is in the round trip
     if key == "ppo.critic_target":
         base = replace(base, complete_games=True)
     if key == "line_share":
@@ -68,7 +68,9 @@ def perturbed(key: str):
         base = replace(base, line_demos=("demos.jsonl",), line_share=0.5, line_recovery=("fire.jsonl",),
                        branch_windows=True)  # fmt: skip
     if key == "line_labelled_only":
-        base = replace(base, line_demos=("demos.jsonl",), line_share=0.5, line_labels="/tmp/graded.jsonl")
+        base = replace(
+            base, line_demos=("demos.jsonl",), line_share=0.5, line_labels=str(Path("/tmp/graded.jsonl").resolve())
+        )  # resolve() is in the round trip
     owner = key.partition(".")[0]
     if owner == "net":
         return replace(base, net={**base.net, **{k[4:]: v for k, v in values.items()}})

@@ -39,6 +39,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
+import torch
 from torch import nn
 
 from ygorl.cards.ydk import Deck, parse_ydk
@@ -81,7 +82,7 @@ class SnapshotPool:
     SAMPLING = ("uniform", "pfsp")
 
     def __init__(self, capacity: int = 8, pinned_share: float = 0.5, sampling: str = "uniform",
-                 pfsp_power: float = 2.0) -> None:  # fmt: skip
+                 pfsp_power: float = 2.0, *, device: torch.device | str | None = None) -> None:  # fmt: skip
         if capacity < 1:
             raise ValueError("capacity must be at least 1")
         if not 0 <= pinned_share <= 1:
@@ -93,15 +94,19 @@ class SnapshotPool:
         self.capacity = capacity
         self.pinned_share = pinned_share
         self.sampling = sampling
+        # Where frozen snapshots act from: None keeps each model's own device (the trainer sets it to the
+        # collection device, which differs from the learner's on MPS under overlapped collection).
+        self.device = None if device is None else torch.device(device)
         self.pfsp_power = pfsp_power
         self._snaps: OrderedDict[int, Snapshot] = OrderedDict()
         self._pinned: OrderedDict[int, Snapshot] = OrderedDict()
         self._next_id = 0
         self.best_id: int | None = None
 
-    @staticmethod
-    def _freeze(model: nn.Module) -> nn.Module:
+    def _freeze(self, model: nn.Module) -> nn.Module:
         m = copy.deepcopy(model)
+        if self.device is not None:
+            m.to(self.device)
         m.eval()
         m.requires_grad_(False)
         return m

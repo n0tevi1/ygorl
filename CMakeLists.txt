@@ -40,8 +40,35 @@ target_link_libraries(_core PRIVATE ocgcore)
 option(YGORL_ARENA "Per-duel arenas for snapshot/restore" ON)
 if(YGORL_ARENA)
     target_compile_definitions(_core PRIVATE YGORL_ARENA)
-    target_link_options(_core PRIVATE -static-libstdc++ -Wl,--exclude-libs,ALL
-                        -Wl,--version-script=${CMAKE_SOURCE_DIR}/csrc/exports.map)
+    if(NOT APPLE)
+        # libstdc++ is linked statically so its out-of-line code uses the same
+        # operators, and only the module init symbol is exported so the
+        # replacements stay local to the module.
+        target_link_options(_core PRIVATE -static-libstdc++ -Wl,--exclude-libs,ALL
+                            -Wl,--version-script=${CMAKE_SOURCE_DIR}/csrc/exports.map)
+    endif()
+    # On macOS no linker flags are needed: the two-level namespace keeps other
+    # images bound to libSystem's operators, so the replacements above stay
+    # local to the extension even when exported.
 endif()
 
 install(TARGETS _core LIBRARY DESTINATION ygorl)
+
+# Optional snapshot-inference module (ygorl._infer): needs libtorch at build time. The build backend's
+# isolated environment does not install torch, so pass the runtime torch's prefix explicitly:
+#   CMAKE_PREFIX_PATH=$(uv run python -c "import torch; print(torch.utils.cmake_prefix_path)") \
+#     uv sync --extra train --reinstall-package ygorl
+# Without it the module is skipped and training falls back to the Python-side opponent threads.
+find_package(Torch QUIET)
+if(Torch_FOUND)
+    pybind11_add_module(_infer csrc/infer.cpp)
+    target_link_directories(_infer PRIVATE "${TORCH_INSTALL_PREFIX}/lib")
+    target_link_libraries(_infer PRIVATE ${TORCH_LIBRARIES} torch_python)
+    set_target_properties(_infer PROPERTIES CXX_STANDARD 20
+                          BUILD_RPATH "${TORCH_INSTALL_PREFIX}/lib"
+                          INSTALL_RPATH "${TORCH_INSTALL_PREFIX}/lib")
+    install(TARGETS _infer LIBRARY DESTINATION ygorl)
+    message(STATUS "ygorl: _infer (libtorch opponent inference) enabled")
+else()
+    message(STATUS "ygorl: libtorch not found at build time; _infer is skipped (opp_cpp unavailable)")
+endif()

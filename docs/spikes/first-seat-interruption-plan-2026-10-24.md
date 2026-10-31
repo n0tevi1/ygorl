@@ -965,3 +965,14 @@ Apple GPU（MPS）上要先验证的点：
 2. `--bf16` 走 `torch.autocast(device_type=dev.type, dtype=bfloat16)`，MPS 的 bf16 支持有限，不行就去掉 `--bf16`；`run_arm.py` 里的 `YGORL_GPU_FRACTION` 只在 CUDA/ROCm 生效。
 3. `la_ruler.sh` 用了 `taskset`，`systemd-run` 不存在：改为 `nohup` / `caffeinate`。
 4. 求解器二进制只在 Linux/GCC 下构建过（`docs/spikes/combo-solver.md`）；恢复线与标签已生成，不重解就不需要它。
+
+## 15. 第二轮根因深挖（fs2/A–D、R1–R5）与干预复盘（2026-10-31）
+
+在 M5 Ultra 上围绕 `combined-ctrl` 展开的 9 项子代理审计（`out/research/fs2/{A,B,C,D,R1,R2,R3,R4,R5}/report.md`）与四项训练干预（`fs-bc`、`fs-pun`、`fs-aux`、`fs-aux-branch`）进一步锁定了先手劣势与回合数偏长的具体机制：
+
+1. **回合 1 过度展开为无阻抗“死重”（R4、R1、D）**：先手平均每局回合 1 特召额外卡组怪兽 **1.90 次**（参考锚点 0.62 次），但 **91% 为无打断能力的中间体/终端**（Galatea-I、White Binder、Requiem 留场、Dingirsu、Kitkallos、Kagari、回合 1 出访问码语者），并平均每局盖放 **0.46 张普通魔法**（`adv/sset = -0.215`）。这把先手手牌烧到 2.12–2.44 张（仅留 **0.33 张手坑**，参考 0.69 张），回合 1 结束仅 **0.79 个总阻抗**（求解器目标 2.33–3.15 个）；在 160 手无干扰求解器起手上完整达成目标终场的比例仅 **6.2%（10/160）**（`@szone:fd = 0%`，102/160 手在 3 步内提前停牌）。
+2. **回合 2 场面折旧与墓地/除外循环断链（R1、R5、A）**：先手回合 1 场面仅有 **34%** 存活过回合 2（后手回合 2 场面存活率 47%），后手多打 16 步并在回合 2 造成 **2,140–3,127 LP** 伤害（Maliss/Orcust 中 17% 直接回合 2 斩杀）；到回合 2 结束先手处于 **−2.42 卡差、−2,033 LP**（73–79% 局处于落后）。同时策略触发墓地特召与除外回收的频率仅为参考的 **31%–47%**（Raye 墓地苏生与 Maliss 除外回跳断链）。
+3. **回合 3+ 有怪场面拒攻与首窗手坑憋牌（B、C、R3）**：空场斩杀率达 100%，但在**有怪对抗场面**下策略有 **30%–38%** 的回合拒绝用攻击表示怪兽进攻（强锚点 0%–6%），并在领先 ≥4000 LP 的局里被翻盘 20%–25%（拖长对局至 5.6 回合）；后手首窗（`k=1`）憋 *增殖的 G* / *Fuwalos* 达 **52%–55%**（立即发动反事实胜率 +19 pp）。
+4. **干预复盘与运行缺陷**：`fs-bc`（`--kl-prior 0.05`）因全批均值与 `target_kl` 早停被稀释 15 倍（有效权重 0.3%），且 `lines_train.jsonl` 中 37/160 条线含抽卡阶段空窗误发手坑伪影；`fs-pun`（`--line-first-share 0.75`）因打断后无恢复线时回退弱快照早停，奖励了盲目乱打；`fs-aux` / `fs-aux-branch` 启动时漏传 `--aux-coef`（默认 `0.0`，`aux_loss = 0.0`），且 `--branch-windows` 禁用了 `--opp-cpu-threads 1` 导致吞吐下降 35%。
+5. **四支柱改进计划**：(a) 清洗 37 条抽卡阶段伪影线，改用按匹配行归一化的 `--line-ce-coef 0.15 --line-bonus-coef 0.30` 直接监督回合 1 终场；(b) 启用 `--critic-phi --phi-coef 0.2 --phi-shape-coef 0.15 --phi-shape-first-seat-only` 回合边界势函数塑形（并补齐 `--aux-coef 0.2`）；(c) 恢复分支窗口下的 CPU 对手异步线程，下调 `--branch-ce-margin 0.15` 并配合 `--response-weight 2.0`；(d) 将回合 2/3 进攻回合前瞻（`--lookahead-k 4`）蒸馏入策略以消除 30–38% 拒攻并缩短回合数。完整数据与命令见 [`docs/spikes/m5-ultra-throughput-and-top-level-plan-2026-10-31.md`](m5-ultra-throughput-and-top-level-plan-2026-10-31.md)。
+
