@@ -28,6 +28,7 @@ ALiBi relative position biases (so outputs do not depend on where a token sits i
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, fields
 from typing import NamedTuple
 
@@ -38,6 +39,38 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from ygorl.nets.config import NetConfig
 from ygorl.nets.encoders import EventEmbedding
+
+_WINDOW_FAST = True  # TransformerHistory's window-mode fast path (see window_fast_path)
+_BIAS_CACHE: dict = {}  # window-mode attention biases by (heads, length, dtype, device)
+
+
+@contextmanager
+def window_fast_path(enabled: bool):
+    """Turn the window-mode fast path of :class:`TransformerHistory` on or off (tests compare the two)."""
+    global _WINDOW_FAST
+    old, _WINDOW_FAST = _WINDOW_FAST, enabled
+    try:
+        yield
+    finally:
+        _WINDOW_FAST = old
+
+
+class _LazyState:
+    """A history state built on first attribute access: window-mode callers never read the state their forward
+    returns, so its construction (sort + gathers per layer) is skipped unless a streaming caller threads it."""
+
+    __slots__ = ("_make", "_value")
+
+    def __init__(self, make) -> None:
+        self._make, self._value = make, None
+
+    def _get(self):
+        if self._value is None:
+            self._value, self._make = self._make(), None
+        return self._value
+
+    def __getattr__(self, name: str):
+        return getattr(self._get(), name)
 
 
 class HistoryOutput(NamedTuple):
@@ -175,8 +208,31 @@ class TransformerHistory(HistoryEncoder):
                                 torch.zeros(batch, 0, dtype=torch.bool, device=device),
                                 torch.zeros(batch, 0, dtype=torch.long, device=device))  # fmt: skip
 
+    def _window_bias(self, t: int, dtype: torch.dtype, device: torch.device) -> Tensor:
+        """The ``[1, H, t, t]`` attention bias of a window-mode chunk (no state, valid tokens a prefix): causal with
+        ALiBi distance ``q - k``. For every valid query this equals the general mask (its causal keys are all valid and
+        their positions are their indices); padding queries' outputs are never read."""
+        key = (self.slopes.shape[0], t, dtype, device)
+        bias = _BIAS_CACHE.get(key)
+        if bias is None:
+            idx = torch.arange(t, device=device)
+            causal = idx[None, :] <= idx[:, None]
+            dist = (idx[:, None] - idx[None, :]).clamp(min=0).to(dtype)
+            bias = (-self.slopes.view(1, -1, 1, 1).to(dtype) * dist.unsqueeze(0)).masked_fill(~causal, float("-inf"))
+            _BIAS_CACHE[key] = bias
+        return bias
+
     def _run(self, x: Tensor, mask: Tensor, state: TransformerState | None):
         b, t, _ = x.shape
+        if state is None and t > 0 and _WINDOW_FAST and not torch.jit.is_tracing():
+            # window mode: one cached bias for the batch, and the streaming state is only built if someone reads it
+            bias = self._window_bias(t, x.dtype, x.device)
+            h, inputs = x, []
+            for block in self.blocks:
+                inputs.append(h)
+                h = block(h, None, bias)
+            last = self._last(h, mask, torch.zeros(b, self.d_model, device=x.device))
+            return h, last, _LazyState(lambda: self._first_state(b, x.device, inputs, mask, last))
         if state is None:
             state = self.initial_state(b, x.device)
         if t == 0:
@@ -200,6 +256,12 @@ class TransformerHistory(HistoryEncoder):
             h = block(h, None if m == 0 else state.memory[i], bias)
         last = self._last(h, mask, state.last)
         return h, last, self._next_state(state, inputs, kvalid, kpos, mask, last)
+
+    def _first_state(self, b: int, device, inputs, mask: Tensor, last: Tensor) -> TransformerState:
+        """The state after a first chunk (what the general path of :meth:`_run` returns for ``state=None``)."""
+        state = self.initial_state(b, device)
+        pos = mask.long().cumsum(1) - 1
+        return self._next_state(state, inputs, mask, pos, mask, last)
 
     def _next_state(self, state, inputs, kvalid, kpos, mask, last) -> TransformerState:
         keep = min(kvalid.shape[1], self.mem_len)
