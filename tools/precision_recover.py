@@ -324,7 +324,7 @@ else:
   tmp=lease.with_suffix('.tmp');tmp.write_text(json.dumps(old));tmp.replace(lease)
  pid=int((root/'worker.pid').read_text())
  try:
-  os.kill(pid,0);alive=pathlib.Path(f'/proc/{{pid}}/stat').read_text().split(') ',1)[1].split()[0]!='Z'
+  os.kill(pid,0);stat=pathlib.Path(f'/proc/{{pid}}/stat');alive=(not stat.exists()) or stat.read_text().split(') ',1)[1].split()[0]!='Z'
  except (ProcessLookupError,FileNotFoundError): alive=False
  def read(name):
   p=root/name;return json.loads(p.read_text()) if p.exists() else None

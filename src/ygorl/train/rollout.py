@@ -433,7 +433,8 @@ class RolloutCollector:
                  opponents: Callable[[int], nn.Module] | None = None, seed: int = 0, min_batch: int | None = None,
                  device: torch.device | str = "cpu", stall_timeout: float | None = 900.0,
                  turn_discount: float = 1.0, complete_games: bool = False, branch: BranchConfig | None = None,
-                 branch_hooks=None, forks: int = 0, look_rounds: int = 4) -> None:  # fmt: skip
+                 branch_hooks=None, forks: int = 0, look_rounds: int = 4,
+                 opp_cpu_threads: int = 0, opp_artifact: str | None = None) -> None:  # fmt: skip
         if num_steps < 1:
             raise ValueError("num_steps must be at least 1")
         self.num_envs = env.num_envs - forks  # game slots; the forks come after them
@@ -486,6 +487,30 @@ class RolloutCollector:
         # no event from any environment for this long while some are still owed rows: an engine stuck inside one
         # duel (its worker thread never returns) -- raise instead of waiting forever; None = wait forever
         self.stall_timeout = stall_timeout
+        # Snapshot-opponent inference on a CPU thread pool: torch CPU compute releases the GIL, so the opponents'
+        # collate+forwards overlap the learner's GPU forward instead of serializing the collect loop (profiling
+        # 2026-10-30: the opponents' small-batch forwards were ~58% of a segment). 0 keeps every forward on
+        # ``device`` exactly as before.
+        self._opp_executor = None
+        if opp_cpu_threads > 0:
+            from concurrent.futures import ThreadPoolExecutor
+
+            self._opp_executor = ThreadPoolExecutor(opp_cpu_threads, thread_name_prefix="opp")
+        self._opp_cpu: dict[int, tuple[nn.Module, nn.Module]] = {}  # id(module) -> (module, cpu copy)
+        # The C++ runner path (ygorl._infer): the traced actor graph runs with the GIL released, so several
+        # collection threads forward concurrently (built when ``opp_artifact`` is given AND the module exists).
+        self._opp_runners: dict[int, tuple[nn.Module, object]] = {}
+        if opp_artifact is not None:
+            try:
+                from ygorl import _infer
+            except ImportError as exc:  # a build without CMAKE_PREFIX_PATH pointing at torch
+                raise ImportError("opp_cpp needs the ygorl._infer module (build with libtorch; see CMakeLists.txt)"
+                                  ) from exc  # fmt: skip
+            self._infer_module = _infer
+            self._opp_artifact = opp_artifact
+        else:
+            self._infer_module = self._opp_artifact = None
+        self.timing: dict[str, float] = {}  # per-segment collect-loop phase seconds (docs: profiling the loop)
         self._watch = StallWatch(env, stall_timeout, describe=self._describe, error=RolloutStalled)
         self.generator = torch.Generator().manual_seed(seed)
         self._slots: list[_Slot | None] = [None] * self.num_envs
@@ -509,11 +534,13 @@ class RolloutCollector:
     def _collect(self) -> Rollout:
         t0 = time.perf_counter()
         B, T = self.num_envs, self.num_steps
+        _t = time.perf_counter()
         for env_id, slot in enumerate(self._slots):
             if slot is None:
                 self._new_game(env_id)
             else:
                 slot.rows_here = 0
+        self.timing["setup"] = time.perf_counter() - _t
         cols: list[list[_Row]] = [[] for _ in range(B)]
         games: list[FinishedGame] = []
         opponent_decisions = 0
@@ -524,12 +551,18 @@ class RolloutCollector:
         lockstep = self.min_batch >= B
         deferred: list = []  # lockstep: the other slots' decisions, held back while a window is branched
         look_only = False  # asynchronous look-ahead round: only the look-ahead games' events (_recv_looking)
+        t0 = time.perf_counter()
+        tm: dict[str, float] = self.timing
+        tm.update(recv=0.0, classify=0.0, opp_fwd=0.0, learner=0.0, step=0.0, rounds=0)
         while True:
+            _lw = time.perf_counter()
+            tm["rounds"] += 1
             learner, others, branching, looking, look_starts = [], defaultdict(list), [], [], []
             # Full batches provide stable membership; worker order must not reassign RNG draws or deals.
             # Partial asynchronous collection retains its existing scheduling/sampling behavior.
             if lockstep:
                 ready.sort(key=lambda ev: ev.env_id)
+            _t = time.perf_counter()
             for ev in ready:
                 if ev.env_id >= B:  # a fork (Forks): of a running look-ahead, or a replay / catch-up step
                     if ev.env_id in self._forks.lent:
@@ -567,21 +600,31 @@ class RolloutCollector:
                     others[id(slot.opponent)].append(ev)
             l_learner, l_groups = self._look_events(looking, look_starts) if looking or look_starts else ([], {})
             b_learner, b_horizon, b_groups = self._sort_branch(branching) if branching else ([], [], {})
+            tm["classify"] += time.perf_counter() - _t
+            _t = time.perf_counter()
             # queued before the learner's wait
             pending, b_pending, l_pending = self._forward_opponents(others, b_groups, l_groups)
+            tm["opp_fwd"] += time.perf_counter() - _t
+            _t = time.perf_counter()
             l_probs = []
             if learner or b_learner or b_horizon or l_learner:
                 l_probs = self._act_learner(learner, cols, b_learner, b_horizon, [r[3] for r in l_learner])
+            tm["learner"] += time.perf_counter() - _t
+            _t = time.perf_counter()
             opponent_decisions += self._step_opponents(pending)
             self._step_branch_opponents(b_pending)
             if l_learner or l_pending:
                 self._look_answers(l_learner, l_probs, l_pending)
+            tm["step"] += time.perf_counter() - _t
             if self._forks is not None:
                 self._fork_round()
             opponent_decisions += self._look_stepped  # finished look-aheads: the snapshot's decisions played
             self._look_stepped = 0
             if len(self._held) == B:
+                tm["loop_wall"] = tm.get("loop_wall", 0.0) + time.perf_counter() - _lw
+                tm.update(loop_wall=tm["loop_wall"])  # key present even on the first break
                 break
+            _t = time.perf_counter()
             if lockstep and self._branching:
                 ready = self._recv(1)
             elif deferred:  # the branches are done: the held-back round, completed
@@ -593,7 +636,12 @@ class RolloutCollector:
                 ready, look_only = self._recv_looking(min(self.min_batch, B - len(self._held)))
             else:
                 ready = self._recv(min(self.min_batch, B - len(self._held)))
-        return self._assemble(cols, games, opponent_decisions, time.perf_counter() - t0)
+            tm["recv"] += time.perf_counter() - _t
+            tm["loop_wall"] = tm.get("loop_wall", 0.0) + time.perf_counter() - _lw
+        _t = time.perf_counter()
+        ro = self._assemble(cols, games, opponent_decisions, time.perf_counter() - t0)
+        self.timing["assemble"] = time.perf_counter() - _t
+        return ro
 
     def _collect_complete(self) -> Rollout:
         """Exactly one new game per slot, packed in slot order as [rows, 1]. No padding or open tails.
@@ -1159,6 +1207,29 @@ class RolloutCollector:
             evs = [*main, *extra, *(row[3] for row in look)] if extra or look else main
             snapshot = self._slots[evs[0].env_id].opponent if main or extra else look_groups[key][0]
             jobs.append((main, extra, look, self._opponent_module(snapshot), [ev.obs for ev in evs]))
+        threaded = self._opp_executor is not None and not branch_groups and not look_groups
+        if threaded:
+            # Each opponent group's CPU forward runs on a thread (the GIL is released by torch compute) and
+            # overlaps the learner's forward on the main thread. The strictly-CPU module copies and the collate
+            # happen on the main thread (device commands must not be encoded from two threads at once); sampling
+            # also stays on the main thread, one multinomial over all groups in order — the generator draws are
+            # exactly the synchronous path's.
+            jobs2 = []
+            for main, extra, look, m, obs in jobs:
+                if not main:
+                    continue
+                batch = self.model.collate([ev.obs for ev in main], "cpu")
+                runner = self._opp_runner(m)
+                # the C++ traced graph when configured, else the eager CPU copy: both run on the pool
+                jobs2.append(
+                    (main, runner if runner is not None else self._opp_cpu_module(m), batch, runner is not None)
+                )
+            for main, net, batch, cpp in jobs2:
+                target = self._opp_cpp_forward if cpp else self._opp_cpu_forward
+                pending.append((main, self._opp_executor.submit(target, net, batch)))
+            if look_groups is not None:  # keep the caller's unpacking arity (the sets are empty by construction)
+                return pending, [], []
+            return pending
         outs = [torch.softmax(policy_logits(m, self.model.collate(obs, self.device)).float(), -1)
                 for _, _, _, m, obs in jobs]  # fmt: skip
         for (main, extra, look, _, _), probs in zip(jobs, outs, strict=True):
@@ -1197,13 +1268,82 @@ class RolloutCollector:
         self._cast[id(module)] = (module, cast, dtype)
         return cast
 
+    def _opp_cpu_module(self, module: nn.Module) -> nn.Module:
+        """A cached strictly-CPU copy of a snapshot, built on the calling (main) thread: copying an on-device
+        tensor is itself a device command, and Metal forbids encoding from two threads at once."""
+        entry = self._opp_cpu.get(id(module))
+        if entry is None or entry[0] is not module:
+            if len(self._opp_cpu) >= 64:
+                live = {id(s.opponent) for s in self._slots if s is not None and s.opponent is not None}
+                self._opp_cpu = {k: v for k, v in self._opp_cpu.items() if k in live}
+            net = copy.deepcopy(module).cpu()
+            for m in net.modules():  # plain tensor attributes (constants) that cpu() leaves on their device
+                for name, attr in list(m.__dict__.items()):
+                    if isinstance(attr, Tensor) and attr.device.type != "cpu":
+                        m.__dict__[name] = attr.cpu()
+            left = [n for n, p in net.named_parameters() if p.device.type != "cpu"]
+            left += [n for n, b in net.named_buffers() if b.device.type != "cpu"]
+            if left:
+                raise RuntimeError(f"opponent CPU copy still has non-CPU tensors: {left[:4]}")
+            entry = (module, net)
+            self._opp_cpu[id(module)] = entry
+        return entry[1]
+
+    @staticmethod
+    def _opp_cpu_forward(net: nn.Module, batch) -> Tensor:
+        """One opponent group's CPU forward (called on a worker thread; ``net`` is a strictly-CPU module and
+        ``batch`` host tensors, so no device command is encoded from this thread)."""
+        with torch.no_grad():
+            return torch.softmax(policy_logits(net, batch).float(), -1)
+
+    def _opp_runner(self, module: nn.Module):
+        """The C++ runner of a snapshot (main thread): one traced-graph instance per snapshot, weights
+        copied in place. None when the artifact path is not configured."""
+        if self._opp_artifact is None:
+            return None
+        entry = self._opp_runners.get(id(module))
+        if entry is None or entry[0] is not module:
+            if len(self._opp_runners) >= 64:
+                live = {id(s.opponent) for s in self._slots if s is not None and s.opponent is not None}
+                self._opp_runners = {k: v for k, v in self._opp_runners.items() if k in live}
+            runner = self._infer_module.OpponentRunner(self._opp_artifact)
+            runner.set_state({k: v.detach().cpu() for k, v in module.state_dict().items()})
+            entry = (module, runner)
+            self._opp_runners[id(module)] = entry
+        return entry[1]
+
+    @staticmethod
+    def _opp_cpp_forward(runner, batch) -> Tensor:
+        """One opponent group's forward through the C++ traced graph (worker thread; no Python interpreter
+        inside). ``batch`` is the full-width collate; the runner slices to the true prefix like trim_padding."""
+        nc, na, ne = batch.lengths
+        empty = torch.empty(0, dtype=torch.long)
+        marker = lambda key: batch.get(key, empty)  # noqa: E731
+        return runner.forward(
+            batch["cards"],
+            batch["globals"],
+            batch["actions"],
+            batch["action_mask"],
+            batch["events"],
+            batch["event_mask"],
+            nc,
+            na,
+            ne,
+            marker("selection_history"),
+            marker("attack_history"),
+        )
+
     def _step_opponents(self, pending: list[tuple[list, Tensor]]) -> int:
         """Sample and step the opponents' decisions of :meth:`_forward_opponents`: one device-to-host copy and one
         sampling call over all groups (``torch.multinomial`` draws row by row, so the draws are those of one call per
         group, in group order); the number of decisions stepped."""
         if not pending:
             return 0
-        probs = torch.cat([p for _, p in pending]).cpu() if len(pending) > 1 else pending[0][1].cpu()
+        parts = [p if isinstance(p, Tensor) else p.result() for _, p in pending]
+        width = max(p.shape[-1] for p in parts)  # the C++ graph slices to the true prefix; pad back so the
+        # single multinomial sees the same arity as the full-width eager path (zero-probability columns)
+        parts = [p if p.shape[-1] == width else torch.nn.functional.pad(p, (0, width - p.shape[-1])) for p in parts]
+        probs = torch.cat(parts).cpu()
         actions = torch.multinomial(probs, 1, generator=self.generator).squeeze(-1).tolist()
         events = [ev for evs, _ in pending for ev in evs]
         for ev, a in zip(events, actions):

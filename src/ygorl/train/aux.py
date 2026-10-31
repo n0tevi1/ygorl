@@ -20,8 +20,9 @@ from typing import NamedTuple
 import torch
 from torch import Tensor
 
-AUX_TARGETS = ("opp_monsters", "own_monsters", "lp_swing")
+AUX_TARGETS = ("opp_monsters", "own_monsters", "lp_swing", "first_hand")
 _MY_TURN, _TURN, _MY_LP, _OP_LP = 2, 3, 5, 6  # globals columns
+_IS_FIRST, _MY_HAND = 1, 8  # g[1]=1 when the viewer is the first player; g[8]=viewer's hand card count
 _LOCATION, _CONTROLLER, _MZONE = 1, 4, 3  # card columns and the monster-zone code
 
 
@@ -35,6 +36,8 @@ def aux_targets(obs, players: Tensor, dones: Tensor) -> tuple[Tensor, Tensor]:
     own = (mz & (cards[..., _CONTROLLER] == 0)).sum(-1).float().cpu().view(T, B)
     opp = (mz & (cards[..., _CONTROLLER] == 1)).sum(-1).float().cpu().view(T, B)
     turn = g[:, _TURN].long().cpu().view(T, B)
+    hand = g[:, _MY_HAND].float().cpu().view(T, B)  # viewer's hand count at each row
+    is_first = g[:, _IS_FIRST].long().cpu().view(T, B) == 1  # True when this row's viewer went first
     adv = (g[:, _MY_LP] - g[:, _OP_LP]).float().cpu().view(T, B)
     players, dones = players.cpu(), dones.cpu()
     targets = torch.zeros(T, B, len(AUX_TARGETS))
@@ -57,6 +60,13 @@ def aux_targets(obs, players: Tensor, dones: Tensor) -> tuple[Tensor, Tensor]:
                 targets[t, b, 0] = o / 5.0
                 targets[t, b, 1] = w / 5.0
                 targets[t, b, 2] = (a_u - adv[t, b]) / 8000.0
+                # Seat-aware "hand preservation" target: only the first player's rows learn to value
+                # keeping cards in hand (the second seat should NOT be penalized for spending its
+                # extra card on aggression; audit R4 2026-10-31: the policy over-extends from the
+                # first seat, converting handtrap resources into board pieces with no threat value).
+                if bool(is_first[t, b]):
+                    h_u = hand[u, b] if same else hand[t, b]  # own hand at next own turn (or current if not same)
+                    targets[t, b, 3] = h_u / 6.0
                 valid[t, b] = True
             start = end + 1
     return targets, valid

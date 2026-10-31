@@ -61,7 +61,28 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         if args.resume is not None:
-            trainer = Trainer.resume(args.resume, args.out)
+            # The checkpoint restores its saved config; these schedule knobs are the ones a resume may want to
+            # change (a dropped --eval-every 0 once silently re-enabled 6,000-game evaluations mid-run).
+            ppo_over = {}
+            if args.resume is not None:
+                # resume restores the saved PPO config; forward explicitly given --kl-prior / --target-kl
+                # resume restores the saved PPO config; forward explicitly given --kl-prior / --target-kl
+                from ygorl.train.checkpoint import load_checkpoint
+                from ygorl.train.ppo import PPOConfig as _PC
+
+                saved = dict(load_checkpoint(args.resume)["config"].get("ppo", {}))
+                changed = False
+                if args.kl_prior is not None and args.kl_prior != saved.get("kl_prior_coef"):
+                    saved["kl_prior_coef"], changed = args.kl_prior, True
+                if args.target_kl is not None and args.target_kl != saved.get("target_kl"):
+                    saved["target_kl"], changed = args.target_kl, True
+                if changed:
+                    ppo_over = {"ppo": _PC(**saved)}
+            trainer = Trainer.resume(
+                args.resume, args.out,
+                eval_every=args.eval_every, eval_pairings=args.eval_pairings, eval_pairs=args.eval_pairs,
+                eval_workers=args.eval_workers, checkpoint_every=args.checkpoint_every,
+                collect_device=args.collect_device, line_first_share=args.line_first_share, **ppo_over)  # fmt: skip
         else:
             if not args.decks:
                 raise CommandError("give at least one DECK (or --resume)")
@@ -87,6 +108,31 @@ def main(argv: list[str] | None = None) -> int:
     print(trainer.model.actor.parameter_report())
     from ygorl.train.rollout import RolloutStalled
 
+    # Progress watchdog: a stall that still trickles events (so the collector's own watchdog never fires) or
+    # wedges outside the collector leaves no trace; dump every thread's stack and exit so the run self-reports.
+    import faulthandler
+    import threading
+
+    def _progress_watch() -> None:
+        metrics = trainer.run_dir / "metrics.jsonl"
+        last_line, last_change = -1, time.monotonic()
+        while not _progress_watch.stop.wait(60):
+            try:
+                n = sum(1 for _ in metrics.open())
+            except OSError:
+                n = 0
+            if n != last_line:
+                last_line, last_change = n, time.monotonic()
+            elif time.monotonic() - last_change > 1200:  # 20 min without an update line
+                print(f"error: no update for {time.monotonic() - last_change:.0f}s; thread stacks:", file=sys.stderr)
+                faulthandler.dump_traceback(file=sys.stderr)
+                sys.stdout.flush()
+                sys.stderr.flush()
+                os._exit(4)
+
+    _progress_watch.stop = threading.Event()
+    threading.Thread(target=_progress_watch, name="progress-watch", daemon=True).start()
+
     try:
         trainer.train(max_updates=args.updates, max_minutes=args.minutes)
     except RolloutStalled as exc:
@@ -95,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(3)
+    finally:
+        _progress_watch.stop.set()
     print(json.dumps(summarize_metrics(trainer.run_dir / "metrics.jsonl"), indent=2))
     return 0
 

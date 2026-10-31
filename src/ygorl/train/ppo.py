@@ -32,7 +32,7 @@ from dataclasses import asdict, dataclass, fields
 import torch
 from torch import Tensor, nn
 
-from ygorl.nets.batch import policy_logits
+from ygorl.nets.batch import Batch, policy_logits
 from ygorl.nets.policy import trim_padding
 from ygorl.train.advantages import (
     ESTIMATORS,
@@ -618,23 +618,34 @@ class PPOLearner:
         # Cut the rollout's padding once (nets.policy.trim_padding): every minibatch then gathers from the smaller
         # tensors, and logits / masks only span the rollout's longest action list (same values, see tests).
         obs = trim_padding(ro.obs)
+        if dev.type != "cpu":
+            # With an overlapped collection the rollout was built on another device (the acting side runs on CPU
+            # when the learner owns the GPU); move it once instead of per minibatch.
+            moved = {k: (v.to(dev) if isinstance(v, Tensor) else v) for k, v in obs.items()}
+            obs = Batch(moved, lengths=obs.lengths) if isinstance(obs, Batch) else moved
+            if ro.privileged is not None:
+                ro.privileged = {k: v.to(dev) for k, v in ro.privileged.items()}
         mask = ro.action_mask.reshape(actions.shape[0], -1)[:, : obs["action_mask"].shape[1]].to(dev)
         n = actions.shape[0]
+        stat_dtype = torch.float32 if dev.type == "mps" else torch.float64  # MPS has no float64 kernel
         bq = None
         if self._branch_q is not None:
             bq = self._branch_q.reshape(n, -1)[:, : mask.shape[1]].to(dev)
-            bq_sum = torch.zeros((), dtype=torch.float64, device=dev)
+            bq_sum = torch.zeros((), dtype=stat_dtype, device=dev)
         ce_t = ce_w = None
         if self._line_ce is not None and policy:
             ce_t, ce_w = (x.reshape(-1).to(dev) for x in self._line_ce)
-            ce_sum = ce_batches = torch.zeros((), dtype=torch.float64, device=dev)
+            ce_sum = ce_batches = torch.zeros((), dtype=stat_dtype, device=dev)
         bce_t = bce_w = None
         if self._branch_ce is not None and policy:
             bce_t, bce_w = (x.reshape(-1).to(dev) for x in self._branch_ce)
-            bce_sum = bce_batches = torch.zeros((), dtype=torch.float64, device=dev)
+            bce_sum = bce_batches = torch.zeros((), dtype=stat_dtype, device=dev)
         aux_t = aux_v = None
         if cfg.aux_coef > 0:
             at, av = aux_targets(ro.obs, ro.players, ro.dones)
+            n_aux = len(self.model.critic.aux_heads) if hasattr(self.model.critic, "aux_heads") else 0
+            if at.shape[-1] > n_aux > 0:
+                at = at[..., :n_aux]  # the model may have fewer heads than targets (e.g. critic_aux=3, 4 targets)
             aux_t, aux_v = at.reshape(n, -1).to(dev), av.reshape(n).to(dev)
         phi_t = phi_v = None
         if cfg.phi_coef > 0:
@@ -709,46 +720,66 @@ class PPOLearner:
                     pl = phi_loss(out.phi.float(), phi_t[idx], phi_v[idx])
                     loss = loss + cfg.phi_coef * pl
                 laps.lap("forward")
-                if not bool(torch.isfinite(loss)):
-                    # A NaN / inf loss would poison every parameter through clip_grad_norm_ (the total norm scales
-                    # all gradients): skip the minibatch entirely, neither stepped nor averaged into the stats.
-                    nonfinite_loss += 1
-                    continue
+                # The three skip decisions below (non-finite loss, KL guard, non-finite gradient norm) each cost
+                # a device sync when read inline, draining the kernel queue after every minibatch. The first two
+                # are computed as device predicates instead and read only after the gradient-norm sync below has
+                # drained the queue, so a minibatch synchronizes once: the decisions, the stats and the parameter
+                # updates are exactly those of evaluating them inline (tests/test_ppo.py; a batch the guards skip
+                # runs a wasted backward, which is never visible in the state).
+                loss_finite = torch.isfinite(loss)
                 kl_now = extra.get("approx_kl")
-                rejected = (
-                    policy and cfg.target_kl is not None and kl_now is not None and float(kl_now) > 1.5 * cfg.target_kl
+                kl_over = (
+                    kl_now > 1.5 * cfg.target_kl
+                    if policy and cfg.target_kl is not None and isinstance(kl_now, Tensor)
+                    else None
                 )
                 laps.lap("kl_guard")
+                self.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                if not policy:
+                    for p in self._policy_params():
+                        p.grad = None  # Adam skips these parameters: the policy does not move
+                laps.lap("backward")
+                grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
+                grad_finite = bool(torch.isfinite(grad_norm))  # the minibatch's single sync; the queue is empty
+                # afterwards, so the deferred predicates above are read without another wait.
+                if not bool(loss_finite):
+                    # A NaN / inf loss would poison every parameter through clip_grad_norm_ (the total norm scales
+                    # all gradients): skip the minibatch entirely, neither stepped nor averaged into the stats.
+                    self.optimizer.zero_grad(set_to_none=True)  # drop the gradients the skipped backward produced
+                    nonfinite_loss += 1
+                    continue
+                rejected = (
+                    policy
+                    and cfg.target_kl is not None
+                    and kl_now is not None
+                    and (bool(kl_over) if kl_over is not None else float(kl_now) > 1.5 * cfg.target_kl)
+                )
                 if not rejected:
-                    self.optimizer.zero_grad(set_to_none=True)
-                    loss.backward()
-                    if not policy:
-                        for p in self._policy_params():
-                            p.grad = None  # Adam skips these parameters: the policy does not move
-                    laps.lap("backward")
-                    grad_norm = nn.utils.clip_grad_norm_(model.parameters(), cfg.max_grad_norm)
-                    if bool(torch.isfinite(grad_norm)):
+                    if grad_finite:
                         self.optimizer.step()
-                        grad_sum = grad_sum + grad_norm.double()  # read once after the loop, not per minibatch
+                        grad_sum = grad_sum + grad_norm.to(stat_dtype)  # read once after the loop, not per minibatch
                         steps += 1
                     else:  # finite loss, overflowing gradient: the step is skipped, the forward stats still count
                         self.optimizer.zero_grad(set_to_none=True)
                         nonfinite_grad += 1
                     laps.lap("optimizer")
+                else:
+                    self.optimizer.zero_grad(set_to_none=True)  # the speculative backward of a rejected batch
                 # Forward diagnostics include a rejected batch; grad_norm counts only applied steps.
                 for key, val in (("loss", loss), ("policy_loss", policy_loss), ("entropy", ent), ("kl_ref", kl_ref),
                                  ("kl_prior", kl_prior), ("q_loss", ql), ("v_loss", vl), ("aux_loss", al),
                                  *extra.items(), *((("phi_loss", pl),) if phi_t is not None else ())):  # fmt: skip
-                    # device sums in float64: the same values as summing the floats one by one, without a wait
-                    sums[key] += val.detach().double() if isinstance(val, Tensor) else float(val)
+                    # device sums in float64 (float32 on MPS): the same values as summing the floats one by one, without a wait
+                    sums[key] += val.detach().to(stat_dtype) if isinstance(val, Tensor) else float(val)
                 if bq is not None:
-                    bq_sum = bq_sum + bql.detach().double()
+                    bq_sum = bq_sum + bql.detach().to(stat_dtype)
                 if ce_t is not None:  # the mean over the minibatches that hold a labelled row
-                    ce_sum = ce_sum + ce.detach().double()
-                    ce_batches = ce_batches + (ce_t[idx] >= 0).any().double()
+                    ce_sum = ce_sum + ce.detach().to(stat_dtype)
+                    ce_batches = ce_batches + (ce_t[idx] >= 0).any().to(stat_dtype)
                 if bce_t is not None:
-                    bce_sum = bce_sum + bce.detach().double()
-                    bce_batches = bce_batches + (bce_t[idx] >= 0).any().double()
+                    bce_sum = bce_sum + bce.detach().to(stat_dtype)
+                    bce_batches = bce_batches + (bce_t[idx] >= 0).any().to(stat_dtype)
                 checked += 1
                 laps.lap("bookkeeping")
                 if rejected:
