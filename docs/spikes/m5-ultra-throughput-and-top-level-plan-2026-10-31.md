@@ -140,3 +140,26 @@ Tested with `tools/bench_train.py` (`d128×2`, `--separate-critic`, `--selfplay-
    - Run `--branch-windows --branch-k 4 --branch-rollouts 4 --branch-fraction 1.0 --branch-mode replace --branch-ce-coef 0.10 --branch-ce-margin 0.15 --branch-horizon board` alongside `--response-weight 2.0 --first-seat-weight 1.4`.
 4. **Pillar 4 — Turn 2/3 Combat & Lethal Lookahead Distillation (Shortening Game Length)**:
    - Use rollout lookahead (`Forks` in `src/ygorl/train/rollout.py`) on the learner's attacking turns (`t=2,3`, `K=4`) to evaluate entering Battle Phase + attacking vs passing on contested boards, writing the best candidate into `_branch_ce` targets. This directly captures the **+10.2 to +11.8 pp** combat lookahead headroom (`first-seat-interruption-plan §13.2`), doubles Turn-3 lethal conversion (`12.5% -> 24.5%`), and brings mean game length down from `~5.6` turns to `~4.0` turns.
+
+---
+
+## 5. Status (2026-11-01)
+
+Implemented and measured (docs/benchmarks.md "M5 Ultra 训练管线修复与宽几何实测"):
+- §2.2.1 fixed by validation: `critic_aux > 0` without `--aux-coef > 0` (and `--phi-shape-coef` without a trained
+  `--critic-phi`) now fail at configuration time. The `first_hand` target also read the wrong hand when the next-turn row
+  was from the opponent's view; fixed.
+- §2.2.3 / §3.3.4: threaded CPU opponents now also serve branch and look-ahead decisions (bit-identical on a CPU learner).
+  Branch arm: ~600 -> 1,869 rows/s.
+- §3.3.1 + §3.3.2: `512×32, min_batch 384` + `--pool-active-k 2`: 1,117 -> 1,959 rows/s on the production config
+  (with `lam = 0.5` the 32-row segments barely change the advantages). This is the `tools/hero_ppo.sh` configuration.
+- §3.3.3: window-mode history fast path (bit-identical logits; lazily built streaming state) and trim-before-head
+  `policy_logits`. The privileged-encoder concatenation was not done (critic-only, small).
+
+Corrections to §4:
+- Pillar 1 describes `--line-ce-coef` / `--line-bonus-coef` as supervising the learner's turn-1 end board. They do not:
+  both act only on the learner's *response* rows at labelled Ash Blossom windows of the scripted opponent line
+  (docs/training.md "标签的监督项"). Turn-1 board quality has no direct supervised signal in the current pipeline.
+- Pillar 3: with the margin lowered, branch-CE still sees only 2–11 target rows per 16,384-row update on the 20-deck
+  meta (few windows have recovery lines). It cannot be a main 先手 lever until windows are far denser
+  (e.g. `--branch-cards` on covered hand traps, or `--no-branch-require-recovery` with a fraction).

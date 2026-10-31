@@ -680,6 +680,12 @@ R2b 的 G u576 读数在诱饵侧复现了方法论回顾里的 0.65；动点侧
   `--device cuda --bf16 --learner-precision fp32`则反过来。配置和checkpoint保存该选择，benchmark也输出此字段。
   用相同训练预算独立验证成本、实际minibatch数与棋力后再决定是否采用，不能仅据微基准提速替换正式配方。
 
+**Apple M5 Ultra（MPS）长跑配置**（`tools/hero_ppo.sh`，实测见 [benchmarks.md](benchmarks.md)「M5 Ultra 训练管线修复与宽几何实测」）：
+`--envs 512 --steps 32 --min-batch 384 --pool-active-k 2 --opp-cpu-threads 1 --collect-threads 8 --env-threads 8 --device mps --eval-every 0`，
+每次更新仍是 16,384 行，约 1,960 行/秒（此前 `128×128` 约 1,120）。`--pool-active-k K`（`TrainConfig.pool_active_k`）让池局只从一个
+K 个快照的活跃子群里抽对手，子群每 `--pool-active-deals` 个牌局（0 = `--envs`）按池的权重无放回重抽，在跑的对局因此只需几个合批的快照前向；
+默认 0 关闭（逐位不变）。续训时用 `RESUME=1 tools/hero_ppo.sh`，它总是带上 `--eval-every 0`。
+
 `tools/bench_train.py` 测 `Trainer.step()` 的收集 / 更新耗时、行/秒与（AMD GPU 上的）忙碌率。
 另外输出一次更新内部的细分（#72）：
 - 各段：`targets`（优势估计）、`setup`（数据搬运、裁剪填充、打乱）、`reference`（参考策略与 BC 先验的前向，设计 I8 的 KL 项）、
