@@ -74,7 +74,10 @@ def main(argv: list[str] | None = None) -> int:
 
             overrides = {k: getattr(args, k) for k in ("eval_every", "eval_pairings", "eval_pairs", "eval_workers",
                                                         "checkpoint_every", "collect_device", "line_first_share",
-                                                        "score_opp_board", "opp_board_kind") if k in given}  # fmt: skip
+                                                        "score_opp_board", "opp_board_kind", "pinned_share")
+                         if k in given}  # fmt: skip
+            if "pin" in given:  # pinned opponents live outside the saved pool, so a resume can add them
+                overrides["pin_opponents"] = tuple(str(p) for p in args.pin)
             # resume restores the saved PPO config; forward explicitly given PPO knobs
             saved = dict(load_checkpoint(args.resume)["config"].get("ppo", {}))
             ppo_keys = {"kl_prior": "kl_prior_coef", "target_kl": "target_kl", "opp_board_coef": "opp_board_coef",
