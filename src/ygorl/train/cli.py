@@ -238,6 +238,10 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--pool-active-k", "pool_active_k", "pool deals draw from an active cohort of K snapshots (0 = the whole "
            "pool), so in-flight games share a few batched opponent forwards"),
         _f("--pool-active-deals", "pool_active_deals", "deals between two cohort draws (0 = --envs)"),
+        _f("--position-starts", "position_starts", "position JSONL (ygorl.train.positions; tools/make_line_positions.py) "
+           "to start games from (repeatable)", metavar="JSONL", listing="append"),
+        _f("--position-share", "position_share", "share of the deals that start one game from a --position-starts "
+           "position"),
         _f("--score-opp-board", "score_opp_board", "record the opponent's board on the first seat's turn 3 "
            "(metrics opp_board_mean) without rewarding it"),
         _f("--opp-board-kind", "opp_board_kind", "opponent board score: board (3 per interruption + material) or "

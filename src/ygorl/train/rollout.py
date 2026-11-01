@@ -254,6 +254,9 @@ class Assignment:
     # a look-ahead opponent (ygorl.train.lookahead.LookaheadConfig; needs a snapshot opponent, no line, an environment
     # with snapshots): at its qualifying decisions the snapshot plays best-of-K by snapshot branching; None: none
     lookahead: Any = None
+    # a prefix start (ygorl.train.positions): the env plays these action indices right after the start, so the game
+    # begins at a recorded position (e.g. a solver line's turn-1 end); None: from the start
+    prefix: tuple[int, ...] | None = None
 
     def is_learner(self, seat: int) -> bool:
         return self.opponent is None or seat == self.learner_seat
@@ -835,7 +838,10 @@ class RolloutCollector:
         self._slots[env_id] = _Slot(assignment, opponent, line=line, serial=self.games_started, turn=1)
         self._watch.started(env_id)
         self.games_started += 1
-        self.env.reset(env_id, assignment.spec)
+        if assignment.prefix is not None:
+            self.env.reset(env_id, assignment.spec, assignment.prefix)
+        else:
+            self.env.reset(env_id, assignment.spec)
 
     def _finish(self, ev, col: list[_Row]) -> FinishedGame:
         slot = self._slots[ev.env_id]

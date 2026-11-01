@@ -19,7 +19,7 @@ DECKS = ("a.ydk", "b.ydk")
 STRINGS = {"env": "v1", "text_dir": str(Path("/tmp/feats").resolve()), "bc_prior": "bc.pt", "init_from": "init.pt", "device": "cuda:1", "collect_device": "cpu",
            "register_matrix": str(Path("/tmp/matrix.json").resolve()), "keep_best_by": "random", "ppo.objective": "pg", "deck_pool": str(Path("/tmp/pool.json").resolve()), "critic_init": "fresh", "line_labels": str(Path("/tmp/graded.jsonl").resolve())}  # fmt: skip
 TUPLES = {"eval_opponents": ("random", "greedy", "policy:x.pt"), "pin_opponents": ("a.pt", "b.pt"),
-          "line_demos": ("a.jsonl", "b.jsonl"), "line_recovery": ("fire.jsonl",), "branch_cards": (14558127, 97268402)}  # fmt: skip
+          "line_demos": ("a.jsonl", "b.jsonl"), "line_recovery": ("fire.jsonl",), "position_starts": ("p.jsonl",), "branch_cards": (14558127, 97268402)}  # fmt: skip
 
 
 def parse(argv, base=None):
@@ -72,6 +72,8 @@ def perturbed(key: str):
             base, line_demos=("demos.jsonl",), line_share=0.5, line_labels=str(Path("/tmp/graded.jsonl").resolve())
         )  # resolve() is in the round trip
     # fields that are only valid together (TrainConfig.__post_init__)
+    if key == "position_share":
+        return replace(base, position_starts=("positions.jsonl",), position_share=0.5)
     if key == "critic_aux":
         return replace(base, critic_aux=value, ppo=replace(base.ppo, aux_coef=0.1))
     if key == "ppo.aux_coef":

@@ -380,13 +380,20 @@ class SelfPlaySchedule:
                  selfplay_fraction: float = 0.75, seed: int = 0, evolved: EvolvedDecks | None = None,
                  lines: LineLibrary | None = None, line_share: float = 0.0,
                  line_first_share: float = 0.0, lookahead=None, lookahead_share: float = 0.0,
-                 lookahead_second: bool = False, active_k: int = 0, active_deals: int = 64) -> None:  # fmt: skip
+                 lookahead_second: bool = False, active_k: int = 0, active_deals: int = 64,
+                 positions=None, position_share: float = 0.0) -> None:  # fmt: skip
         if not 0 <= selfplay_fraction <= 1:
             raise ValueError("selfplay_fraction must be in [0, 1]")
         if not 0 <= line_share <= 1:
             raise ValueError("line_share must be in [0, 1]")
         if not 0 <= line_first_share <= 1:
             raise ValueError("line_first_share must be in [0, 1]")
+        if not 0 <= position_share <= 1 or (position_share > 0 and not positions):
+            raise ValueError("position_share must be in [0, 1] and needs positions when above 0")
+        # position starts (ygorl.train.positions.PositionLibrary): with probability position_share a deal is one game
+        # from a recorded position, the learner on the position's learner seat (both seats in self-play)
+        self.positions = positions if positions else None
+        self.position_share = position_share
         if not 0 <= lookahead_share <= 1 or (lookahead_share > 0 and lookahead is None):
             raise ValueError("lookahead_share must be in [0, 1] and needs a look-ahead configuration when above 0")
         self.lookahead = lookahead
@@ -440,6 +447,9 @@ class SelfPlaySchedule:
         return deck_a, deck_b, None
 
     def _deal(self) -> None:
+        if self.positions is not None and self.position_share > 0 and self.rng.random() < self.position_share:
+            self._deal_position()
+            return
         deck_a, deck_b, evolved = self._sample_decks()
         seed = derive_seed(self.seed, 2, self.deals)
         self.deals += 1
@@ -478,6 +488,24 @@ class SelfPlaySchedule:
         if stale or self.deals - self._active_at >= self.active_deals:
             self._active, self._active_at = self.pool.cohort(self._active_rng, self.active_k), self.deals
         return self._active
+
+    def _deal_position(self) -> None:
+        """One game from a recorded position (the opponent drawn as in any deal: self-play or a pool snapshot)."""
+        self.deals += 1
+        self._held.clear()
+        pos = self.positions.sample(self.rng)
+        opponent = None
+        if self.rng.random() >= self.selfplay_fraction:
+            opponent = self.pool.sample(self.rng, self._cohort())
+            if opponent is not None:
+                self._held[opponent] = self.pool.get(opponent)
+        spec = pos.spec()
+        seat = 0 if pos.learner_seat is None else pos.learner_seat
+        info = {"deck_a": spec.deck_a.name, "deck_b": spec.deck_b.name, "first": spec.first, "position": True,
+                **{k: v for k, v in pos.origin.items() if k in ("line_id", "line_deck", "opponent_deck")}}  # fmt: skip
+        if opponent is not None:
+            info["learner_deck"] = (spec.deck_a, spec.deck_b)[0 if spec.seat_of_deck(0) == seat else 1].name
+        self._queue.append(Assignment(spec, opponent, seat, info, prefix=pos.prefix))
 
     def _lookahead(self, learner_seat: int):
         """The snapshot's look-ahead in a game where the learner holds ``learner_seat``: its first own turn (2 when the

@@ -1075,3 +1075,36 @@ def test_score_opp_board_records_the_first_seats_turn_3_board(tmp_path):
     material = Trainer(replace(cfg, opp_board_kind="material"), tmp_path / "m", log=None).collector.collect()
     m = material.opp_board[torch.isfinite(material.opp_board)]
     assert m.numel() > 0 and bool(((m * 2) == (m * 2).round()).all())  # monsters + 0.5 per spell / trap
+
+
+def test_position_starts_begin_games_at_the_recorded_position(tmp_path):
+    from ygorl.train.positions import Position, write_positions
+
+    cfg = TrainConfig(decks=PAIR, num_envs=2, env_threads=1, steps=16, event_length=16, net=TINY, privileged_dim=8,
+                      critic_hidden=16, max_decisions=400, ppo=PPOConfig(epochs=1, minibatch_size=16),
+                      snapshot_every=0, checkpoint_every=0, eval_every=0, torch_threads=1, collect_threads=1, seed=5,
+                      selfplay_fraction=1.0)  # fmt: skip
+    db = CardDB.load()
+    env = EncodedVecEnv(1, 1, cards=db, vocab=CardVocab.from_db(db), event_length=16, skip_forced=cfg.skip_forced,
+                        cancel_budget=cfg.cancel_budget, record_actions=True)  # fmt: skip
+    spec = GameSpec(seed=3, deck_a=load_ydk(PAIR[0]), deck_b=load_ydk(PAIR[1]), first=0,
+                    config=DuelConfig(max_decisions=400))  # fmt: skip
+    env.reset(0, spec)
+    turn = 1
+    while turn < 2:  # play the first legal row until turn 2: the position is the first decision of turn 2
+        ev = env.recv(1)[0]
+        assert ev.result is None
+        turn = int(ev.obs["globals"][3])
+        if turn < 2:
+            env.step(0, int(np.flatnonzero(ev.obs["action_mask"])[0]))
+    pos = Position.from_spec(spec, list(env.actions(0)), skip_forced=cfg.skip_forced, cancel_budget=cfg.cancel_budget,
+                             learner_seat=0)  # fmt: skip
+    path = tmp_path / "pos.jsonl"
+    write_positions(path, [pos])
+    trainer = Trainer(replace(cfg, position_starts=(str(path),), position_share=1.0), tmp_path / "run", log=None)
+    ro = trainer.collector.collect()
+    first = ro.obs["globals"].view(ro.shape[0], ro.shape[1], -1)[0].cpu()
+    assert bool((first[:, 3] >= 2).all())  # every column's first row is past turn 1
+    assert all(g.assignment.info.get("position") for g in ro.games)
+    with pytest.raises(ValueError, match="position_share"):
+        replace(cfg, position_share=0.5)

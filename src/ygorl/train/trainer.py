@@ -174,6 +174,10 @@ class TrainConfig:
     # record Rollout.opp_board (the opponent's board on the first seat's first turn-3 row; metrics opp_board_mean)
     # without rewarding it; ppo.opp_board_coef > 0 records it too
     score_opp_board: bool = False
+    # position starts (ygorl.train.positions JSONL, e.g. tools/make_line_positions.py: solver turn-1-end positions,
+    # learner seat 0): position_share of the deals start one game from a position instead of from the beginning
+    position_starts: tuple[str, ...] = ()
+    position_share: float = 0.0
     opp_board_kind: str = "board"  # "board" (board_score) or "material" (its monster + spell / trap part only)
     # a due snapshot joins the pool only if the learner scored above this in its pool games since the last one joined
     # (at least snapshot_min_games of them; ygo-agent's OSFP uses 0.55); None = always; an empty pool always takes one
@@ -290,6 +294,8 @@ class TrainConfig:
         if (self.critic_aux > 0) != (self.ppo.aux_coef > 0):
             # heads without a loss train nothing (the fs-aux runs of 2026-10-31 were silent no-ops this way)
             raise ValueError("critic_aux and ppo.aux_coef go together: auxiliary heads need --aux-coef > 0 and back")
+        if not 0 <= self.position_share <= 1 or (self.position_share > 0 and not self.position_starts):
+            raise ValueError("position_share must be in [0, 1] and needs position_starts when above 0")
         if self.opp_board_kind not in ("board", "material"):
             raise ValueError("opp_board_kind must be 'board' or 'material'")
         if self.ppo.opp_board_coef > 0 and not self.privileged_critic:
@@ -403,6 +409,15 @@ def build_collection(
     """
 
     decks = [load_ydk(p) for p in cfg.decks]
+    positions = None
+    if cfg.position_starts and cfg.position_share > 0:
+        from ygorl.train.positions import PositionLibrary
+
+        positions = PositionLibrary.load(list(cfg.position_starts), env=environment)
+        for i, p in enumerate(positions.positions):  # the env below must replay each prefix as it was recorded
+            if p.skip_forced != cfg.skip_forced or p.cancel_budget != cfg.cancel_budget:
+                raise ValueError(f"position {i} was recorded with skip_forced={p.skip_forced}, cancel_budget="
+                                 f"{p.cancel_budget}; the run has {cfg.skip_forced}, {cfg.cancel_budget}")  # fmt: skip
     schedule = SelfPlaySchedule(DeckPool(decks, cfg.pairings), pool, duel_config,
                                 selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed,
                                 evolved=evolved, lines=lines, line_share=cfg.line_share,
@@ -410,7 +425,8 @@ def build_collection(
                                 lookahead=cfg.lookahead_config() if cfg.lookahead_share > 0 else None,
                                 lookahead_share=cfg.lookahead_share,
                                 lookahead_second=cfg.lookahead_second, active_k=cfg.pool_active_k,
-                                active_deals=cfg.pool_active_deals or max(1, num_envs))  # fmt: skip
+                                active_deals=cfg.pool_active_deals or max(1, num_envs), positions=positions,
+                                position_share=cfg.position_share if positions else 0.0)  # fmt: skip
     forks = cfg.lookahead_forks if cfg.lookahead_share > 0 else 0
     env = EncodedVecEnv(num_envs + forks, env_threads, cards=cards, vocab=vocab,
                         privileged=cfg.privileged_critic, event_length=cfg.event_length,
