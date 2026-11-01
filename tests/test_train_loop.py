@@ -1108,3 +1108,25 @@ def test_position_starts_begin_games_at_the_recorded_position(tmp_path):
     assert all(g.assignment.info.get("position") for g in ro.games)
     with pytest.raises(ValueError, match="position_share"):
         replace(cfg, position_share=0.5)
+
+
+def test_first_seat_lam_replaces_only_the_first_seats_advantages(tmp_path):
+    cfg = TrainConfig(decks=PAIR, num_envs=2, env_threads=1, steps=48, event_length=16, net=TINY, privileged_dim=8,
+                      critic_hidden=16, max_decisions=400, ppo=PPOConfig(epochs=1, minibatch_size=32, adv_norm="none"),
+                      snapshot_every=0, checkpoint_every=0, eval_every=0, torch_threads=1, collect_threads=1, seed=5,
+                      selfplay_fraction=1.0)  # fmt: skip
+    trainer = Trainer(cfg, tmp_path, log=None)
+    ro = trainer.collector.collect()
+    learner = trainer.learner
+    base = learner.targets(ro)
+    learner.cfg = replace(cfg.ppo, lam=0.95)
+    long = learner.targets(ro)
+    learner.cfg = replace(cfg.ppo, first_seat_lam=0.95)
+    mixed = learner.targets(ro)
+    seat0 = ro.players == 0
+    assert bool(seat0.any()) and bool((~seat0).any())
+    assert torch.equal(mixed.advantages[~seat0], base.advantages[~seat0])
+    torch.testing.assert_close(mixed.advantages[seat0], long.advantages[seat0])
+    assert torch.equal(mixed.q_targets, base.q_targets)  # the critic keeps its λ
+    learner.cfg = replace(cfg.ppo, first_seat_lam=cfg.ppo.lam)
+    assert torch.equal(learner.targets(ro).advantages, base.advantages)

@@ -84,7 +84,8 @@ def main(argv: list[str] | None = None) -> int:
             # resume restores the saved PPO config; forward explicitly given PPO knobs
             saved = dict(load_checkpoint(args.resume)["config"].get("ppo", {}))
             ppo_keys = {"kl_prior": "kl_prior_coef", "target_kl": "target_kl", "opp_board_coef": "opp_board_coef",
-                        "opp_board_scale": "opp_board_scale", "opp_board_center": "opp_board_center"}  # fmt: skip
+                        "opp_board_scale": "opp_board_scale", "opp_board_center": "opp_board_center",
+                        "lam": "lam", "first_seat_lam": "first_seat_lam"}  # fmt: skip
             changed = {key: getattr(args, arg) for arg, key in ppo_keys.items() if arg in given}
             if changed:
                 overrides["ppo"] = _PC(**{**saved, **changed})

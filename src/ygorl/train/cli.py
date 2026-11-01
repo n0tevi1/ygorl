@@ -130,6 +130,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            "first seat's turn 3 / --opp-board-scale, on its last row before turn 3 (needs the privileged critic)"),
         _f("--opp-board-scale", "ppo.opp_board_scale", "board points per unit of --opp-board-coef"),
         _f("--opp-board-center", "ppo.opp_board_center", "subtracted from the opponent's board score first"),
+        _f("--first-seat-lam", "ppo.first_seat_lam", "advantage λ of the first seat's rows only (default: --lam); "
+           "the critic targets keep theirs"),
         _f("--phi-shape-first-seat-only", "ppo.phi_shape_first_seat_only",
            "shape only the rows of the seat that moved first"),
         _f("--v-coef", "ppo.v_coef", "V-head loss coefficient"),
