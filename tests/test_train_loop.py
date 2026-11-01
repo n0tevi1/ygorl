@@ -1051,6 +1051,8 @@ def test_opp_board_reward_lands_on_the_first_seats_last_row_before_turn_3():
     ro = SimpleNamespace(shape=(5, 1), opp_board=board, players=players, dones=dones)
     out, stats = opp_board_rewards(ro, 0.1)
     assert out[:, 0].tolist() == pytest.approx([-1.2, 0, 0, 0, 0])
+    centred, _ = opp_board_rewards(ro, 0.1, center=2.0)
+    assert centred[0, 0].item() == pytest.approx(-1.0)
     assert stats["opp_board_rows"] == 2 and stats["opp_board_placed"] == 1 and stats["opp_board_mean"] == 8.5
 
 
@@ -1070,3 +1072,6 @@ def test_score_opp_board_records_the_first_seats_turn_3_board(tmp_path):
     assert bool((g[:, 3] >= 3).all()) and bool((g[:, 2] == 1).all())
     stats = trainer.learner.update(ro)
     assert "opp_board_rows" in stats
+    material = Trainer(replace(cfg, opp_board_kind="material"), tmp_path / "m", log=None).collector.collect()
+    m = material.opp_board[torch.isfinite(material.opp_board)]
+    assert m.numel() > 0 and bool(((m * 2) == (m * 2).round()).all())  # monsters + 0.5 per spell / trap

@@ -53,8 +53,8 @@ BRANCH_CE_WEIGHTS = ("delta", "uniform")
 
 
 @torch.no_grad()
-def opp_board_rewards(ro: Rollout, coef: float) -> tuple[Tensor, dict[str, float]]:
-    """``-coef * opp_board`` on the first seat's last row before each scored turn-3 row (PPOConfig.opp_board_coef),
+def opp_board_rewards(ro: Rollout, coef: float, center: float = 0.0) -> tuple[Tensor, dict[str, float]]:
+    """``-coef * (opp_board - center)`` on the first seat's last row before each scored turn-3 row (PPOConfig.opp_board_coef),
     found backwards in the column without crossing a game end; a scored row whose earlier seat-0 rows are all in a
     previous rollout gives nothing. Also the stats: scored rows and the mean opponent board (the turn-2 end board)."""
     T, B = ro.shape
@@ -68,7 +68,7 @@ def opp_board_rewards(ro: Rollout, coef: float) -> tuple[Tensor, dict[str, float
         while u >= 0 and not dones[u][b] and players[u][b] != 0:
             u -= 1
         if u >= 0 and not dones[u][b]:
-            out[u, b] -= coef * float(board[t, b])
+            out[u, b] -= coef * (float(board[t, b]) - center)
             placed += 1
     vals = board[torch.isfinite(board)]
     return out, {"opp_board_rows": len(hit), "opp_board_placed": placed,
@@ -187,6 +187,7 @@ class PPOConfig:
     # monster, 0.5 per spell / trap). Only seat-0 rows; the second seat's objective is unchanged. 0 = off
     opp_board_coef: float = 0.0
     opp_board_scale: float = 10.0
+    opp_board_center: float = 0.0  # subtracted from the score first (e.g. its mean, so the reward is centred)
     # window counterfactual advantages (TrainConfig.branch_windows, Rollout.branch_value; docs/training.md §8.2
     # 「窗口反事实优势」): on a branched row whose taken action is in the branch set, Â = V_b(a_taken) - Σ π̃(a) V_b(a)
     # (π̃ the behaviour policy renormalized on the set); "replace" puts Â in place of the row's VRPO advantage,
@@ -512,7 +513,7 @@ class PPOLearner:
         if cfg.phi_shape_coef > 0:
             rewards = rewards + self.phi_shaping(ro)
         if ro.opp_board is not None:
-            shaped, ob_stats = opp_board_rewards(ro, cfg.opp_board_coef / cfg.opp_board_scale)
+            shaped, ob_stats = opp_board_rewards(ro, cfg.opp_board_coef / cfg.opp_board_scale, cfg.opp_board_center)
             self._phi_stats.update(ob_stats)
             if cfg.opp_board_coef > 0:
                 rewards = rewards + shaped.to(rewards)

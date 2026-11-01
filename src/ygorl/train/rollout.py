@@ -131,14 +131,16 @@ class BranchConfig:
             raise ValueError("branch board_scale must be positive")
 
 
-def board_score(obs, privileged, cards, vocab, side: int = 1) -> float:
+def board_score(obs, privileged, cards, vocab, side: int = 1, interruptions: bool = True) -> float:
     """The board of the decider's opponent (the line seat, at the learner's horizon) in the phase-0 probe's units
     (tools/window_counterfactual_probe.py ``board_score``): 3 per interruption (:func:`ygorl.solver.blocking.
     board_interruptions`: face-up monsters and spells / traps, set spells / traps, cards in hand, cards in the
     graveyard) + 1 per monster + 0.5 per spell / trap zone card. Read from the encoded card table; the hand and the
     set spells / traps from the privileged tensors (training mode), without them those are unknown (no
     interruption). ``side`` 0 scores the decider's own board instead (its hand and set cards are in the observation;
-    look-ahead, :mod:`ygorl.train.lookahead`)."""
+    look-ahead, :mod:`ygorl.train.lookahead`). ``interruptions=False``: only the material part (1 per monster + 0.5
+    per spell / trap zone card), the part of the score that predicts the first seat's losses (out/research/fs3/
+    ob-signal)."""
     from ygorl.engine import constants as C
     from ygorl.solver.blocking import board_interruptions
 
@@ -160,6 +162,8 @@ def board_score(obs, privileged, cards, vocab, side: int = 1) -> float:
             grave.append(c)
         elif loc == 2 and c and side == 0:
             own_hand.append(c)
+    if not interruptions:
+        return len(monsters) + 0.5 * len(spells)
     hand = own_hand
     if privileged is not None and side == 1:
         hand = [c for c in (code(int(row[0])) for row in privileged["op_hand"]) if c]
@@ -458,7 +462,7 @@ class RolloutCollector:
                  turn_discount: float = 1.0, complete_games: bool = False, branch: BranchConfig | None = None,
                  branch_hooks=None, forks: int = 0, look_rounds: int = 4,
                  opp_cpu_threads: int = 0, opp_artifact: str | None = None,
-                 score_opp_board: bool = False) -> None:  # fmt: skip
+                 score_opp_board: bool | str = False) -> None:  # fmt: skip
         if num_steps < 1:
             raise ValueError("num_steps must be at least 1")
         self.num_envs = env.num_envs - forks  # game slots; the forks come after them
@@ -515,6 +519,9 @@ class RolloutCollector:
         # collate+forwards overlap the learner's GPU forward instead of serializing the collect loop (profiling
         # 2026-10-30: the opponents' small-batch forwards were ~58% of a segment). 0 keeps every forward on
         # ``device`` exactly as before.
+        # False: off; True / "board": board_score; "material": board_score without the interruption term
+        if score_opp_board not in (False, True, "board", "material"):
+            raise ValueError("score_opp_board must be False, True, 'board' or 'material'")
         self.score_opp_board = score_opp_board
         self._opp_executor = None
         if opp_cpu_threads > 0:
@@ -896,7 +903,14 @@ class RolloutCollector:
                 g = ev.obs["globals"]
                 if int(g[3]) >= 3 and int(g[2]) == 1:  # the first seat's first own row from turn 3 on
                     slot.opp_scored = True
-                    row.opp_board = board_score(ev.obs, ev.privileged, self.env.cards, self.env.vocab, side=1)
+                    row.opp_board = board_score(
+                        ev.obs,
+                        ev.privileged,
+                        self.env.cards,
+                        self.env.vocab,
+                        side=1,
+                        interruptions=self.score_opp_board != "material",
+                    )
             cols[ev.env_id].append(row)
             slot.rows += 1
             slot.rows_here += 1

@@ -174,6 +174,7 @@ class TrainConfig:
     # record Rollout.opp_board (the opponent's board on the first seat's first turn-3 row; metrics opp_board_mean)
     # without rewarding it; ppo.opp_board_coef > 0 records it too
     score_opp_board: bool = False
+    opp_board_kind: str = "board"  # "board" (board_score) or "material" (its monster + spell / trap part only)
     # a due snapshot joins the pool only if the learner scored above this in its pool games since the last one joined
     # (at least snapshot_min_games of them; ygo-agent's OSFP uses 0.55); None = always; an empty pool always takes one
     snapshot_min_win_rate: float | None = None
@@ -289,6 +290,8 @@ class TrainConfig:
         if (self.critic_aux > 0) != (self.ppo.aux_coef > 0):
             # heads without a loss train nothing (the fs-aux runs of 2026-10-31 were silent no-ops this way)
             raise ValueError("critic_aux and ppo.aux_coef go together: auxiliary heads need --aux-coef > 0 and back")
+        if self.opp_board_kind not in ("board", "material"):
+            raise ValueError("opp_board_kind must be 'board' or 'material'")
         if self.ppo.opp_board_coef > 0 and not self.privileged_critic:
             raise ValueError("ppo.opp_board_coef needs the privileged environment (the opponent's hand and set cards)")
         if self.ppo.phi_coef > 0 and not self.critic_phi:
@@ -422,7 +425,8 @@ def build_collection(
                                  branch=cfg.branch_config() if cfg.branch_windows else None,
                                  forks=forks, look_rounds=cfg.lookahead_rounds,
                                  opp_cpu_threads=cfg.opp_cpu_threads, opp_artifact=opp_artifact,
-                                 score_opp_board=cfg.score_opp_board or cfg.ppo.opp_board_coef > 0)  # fmt: skip
+                                 score_opp_board=cfg.opp_board_kind
+                                 if cfg.score_opp_board or cfg.ppo.opp_board_coef > 0 else False)  # fmt: skip
     return schedule, env, collector
 
 

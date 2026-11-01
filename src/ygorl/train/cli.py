@@ -129,6 +129,7 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--opp-board-coef", "ppo.opp_board_coef", "first-seat reward: -coef * the opponent's board score on the "
            "first seat's turn 3 / --opp-board-scale, on its last row before turn 3 (needs the privileged critic)"),
         _f("--opp-board-scale", "ppo.opp_board_scale", "board points per unit of --opp-board-coef"),
+        _f("--opp-board-center", "ppo.opp_board_center", "subtracted from the opponent's board score first"),
         _f("--phi-shape-first-seat-only", "ppo.phi_shape_first_seat_only",
            "shape only the rows of the seat that moved first"),
         _f("--v-coef", "ppo.v_coef", "V-head loss coefficient"),
@@ -239,6 +240,8 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--pool-active-deals", "pool_active_deals", "deals between two cohort draws (0 = --envs)"),
         _f("--score-opp-board", "score_opp_board", "record the opponent's board on the first seat's turn 3 "
            "(metrics opp_board_mean) without rewarding it"),
+        _f("--opp-board-kind", "opp_board_kind", "opponent board score: board (3 per interruption + material) or "
+           "material (1 per monster + 0.5 per spell / trap)", choices=("board", "material")),
         _f("--snapshot-min-win-rate", "snapshot_min_win_rate",
            "a due snapshot joins the pool only if the learner scored above this against the pool"),
         _f("--snapshot-min-games", "snapshot_min_games"),
