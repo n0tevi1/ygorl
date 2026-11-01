@@ -1036,3 +1036,37 @@ def test_a_second_trainer_on_a_running_directory_is_refused(tmp_path):
     Trainer(cfg, tmp_path / "run")  # same process: allowed (the old inode is retired)
     t2 = Trainer(cfg, tmp_path / "other")  # a different directory is unaffected
     assert t2.run_dir != t.run_dir
+
+
+def test_opp_board_reward_lands_on_the_first_seats_last_row_before_turn_3():
+    from types import SimpleNamespace
+
+    from ygorl.train.ppo import opp_board_rewards
+
+    nan = float("nan")
+    # one column: seat 0, seat 1, seat 0 (scored turn-3 row), then a new game whose first row is scored (nothing before)
+    board = torch.tensor([[nan], [nan], [12.0], [nan], [5.0]])
+    players = torch.tensor([[0], [1], [0], [0], [0]])
+    dones = torch.tensor([[False], [False], [False], [True], [False]])
+    ro = SimpleNamespace(shape=(5, 1), opp_board=board, players=players, dones=dones)
+    out, stats = opp_board_rewards(ro, 0.1)
+    assert out[:, 0].tolist() == pytest.approx([-1.2, 0, 0, 0, 0])
+    assert stats["opp_board_rows"] == 2 and stats["opp_board_placed"] == 1 and stats["opp_board_mean"] == 8.5
+
+
+def test_score_opp_board_records_the_first_seats_turn_3_board(tmp_path):
+    cfg = TrainConfig(decks=PAIR, num_envs=2, env_threads=1, steps=96, event_length=16, net=TINY, privileged_dim=8,
+                      critic_hidden=16, max_decisions=400, ppo=PPOConfig(epochs=1, minibatch_size=32,
+                      opp_board_coef=0.1), snapshot_every=0, checkpoint_every=0, eval_every=0, torch_threads=1,
+                      collect_threads=1, seed=5)  # fmt: skip
+    trainer = Trainer(cfg, tmp_path, log=None)
+    ro = trainer.collector.collect()
+    hit = torch.isfinite(ro.opp_board)
+    assert ro.opp_board.shape == ro.players.shape
+    assert bool((ro.players[hit] == 0).all())
+    i = hit.reshape(-1).nonzero().squeeze(1)
+    assert i.numel() > 0
+    g = ro.obs["globals"][i].cpu()
+    assert bool((g[:, 3] >= 3).all()) and bool((g[:, 2] == 1).all())
+    stats = trainer.learner.update(ro)
+    assert "opp_board_rows" in stats

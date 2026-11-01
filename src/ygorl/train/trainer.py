@@ -171,6 +171,9 @@ class TrainConfig:
     # pool_active_deals deals (0 = the number of environments), so in-flight games batch into few opponent forwards
     pool_active_k: int = 0
     pool_active_deals: int = 0
+    # record Rollout.opp_board (the opponent's board on the first seat's first turn-3 row; metrics opp_board_mean)
+    # without rewarding it; ppo.opp_board_coef > 0 records it too
+    score_opp_board: bool = False
     # a due snapshot joins the pool only if the learner scored above this in its pool games since the last one joined
     # (at least snapshot_min_games of them; ygo-agent's OSFP uses 0.55); None = always; an empty pool always takes one
     snapshot_min_win_rate: float | None = None
@@ -286,6 +289,8 @@ class TrainConfig:
         if (self.critic_aux > 0) != (self.ppo.aux_coef > 0):
             # heads without a loss train nothing (the fs-aux runs of 2026-10-31 were silent no-ops this way)
             raise ValueError("critic_aux and ppo.aux_coef go together: auxiliary heads need --aux-coef > 0 and back")
+        if self.ppo.opp_board_coef > 0 and not self.privileged_critic:
+            raise ValueError("ppo.opp_board_coef needs the privileged environment (the opponent's hand and set cards)")
         if self.ppo.phi_coef > 0 and not self.critic_phi:
             raise ValueError("ppo.phi_coef needs critic_phi")
         if self.ppo.phi_shape_coef > 0 and not (self.critic_phi and self.ppo.phi_coef > 0):
@@ -416,7 +421,8 @@ def build_collection(
                                  turn_discount=cfg.turn_discount, complete_games=cfg.complete_games,
                                  branch=cfg.branch_config() if cfg.branch_windows else None,
                                  forks=forks, look_rounds=cfg.lookahead_rounds,
-                                 opp_cpu_threads=cfg.opp_cpu_threads, opp_artifact=opp_artifact)  # fmt: skip
+                                 opp_cpu_threads=cfg.opp_cpu_threads, opp_artifact=opp_artifact,
+                                 score_opp_board=cfg.score_opp_board or cfg.ppo.opp_board_coef > 0)  # fmt: skip
     return schedule, env, collector
 
 

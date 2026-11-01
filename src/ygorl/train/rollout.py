@@ -311,6 +311,9 @@ class Rollout:
     line_effect: Tensor | None = None  # [T, B] effect (card vocab index) a chain window answers; -1 elsewhere
     line_occurrence: Tensor | None = None  # [T, B] answers to that effect so far in the game (1-based); 0 elsewhere
     line_seat: Tensor | None = None  # [T, B] the learner's seat of the row's scripted game (0 / 1), -1 without one
+    # score_opp_board: board_score of the opponent's board on the first seat's first own row of turn 3 (what the
+    # second seat built through turn 2 against the first seat's turn-1 board), NaN on every other row
+    opp_board: Tensor | None = None  # [T, B]
     # window branching (BranchConfig; None without it): each branch-set candidate's mean value from the learner's view
     # (NaN off the set and on rows without a branch), whether the row was branched with every rollout valid, and the
     # pass row of the set (-1 without one); branch_windows / branch_decisions count the branched windows and the engine
@@ -356,6 +359,7 @@ class _Row:
     line_effect: int = -1
     line_occurrence: int = 0
     line_seat: int = -1
+    opp_board: float = float("nan")
     branch_value: Tensor | None = None
     branch_valid: bool = False
     branch_pass: int = -1
@@ -417,6 +421,7 @@ class _Slot:
     look: _LookState | None = None  # a look-ahead opponent's decision being rolled out (Assignment.lookahead)
     looks: int = 0  # look-ahead decisions of the opponent so far in this game (their random-number keys)
     turn: int = 0  # the turn of the game's latest decision seen (look-ahead games: _look_slot)
+    opp_scored: bool = False  # score_opp_board: the first seat's turn-3 opponent board is recorded
 
 
 class _ProbSlice:
@@ -452,7 +457,8 @@ class RolloutCollector:
                  device: torch.device | str = "cpu", stall_timeout: float | None = 900.0,
                  turn_discount: float = 1.0, complete_games: bool = False, branch: BranchConfig | None = None,
                  branch_hooks=None, forks: int = 0, look_rounds: int = 4,
-                 opp_cpu_threads: int = 0, opp_artifact: str | None = None) -> None:  # fmt: skip
+                 opp_cpu_threads: int = 0, opp_artifact: str | None = None,
+                 score_opp_board: bool = False) -> None:  # fmt: skip
         if num_steps < 1:
             raise ValueError("num_steps must be at least 1")
         self.num_envs = env.num_envs - forks  # game slots; the forks come after them
@@ -509,6 +515,7 @@ class RolloutCollector:
         # collate+forwards overlap the learner's GPU forward instead of serializing the collect loop (profiling
         # 2026-10-30: the opponents' small-batch forwards were ~58% of a segment). 0 keeps every forward on
         # ``device`` exactly as before.
+        self.score_opp_board = score_opp_board
         self._opp_executor = None
         if opp_cpu_threads > 0:
             from concurrent.futures import ThreadPoolExecutor
@@ -885,6 +892,11 @@ class RolloutCollector:
             row = _Row(ev.obs, ev.privileged, int(ev.player), a, float(chosen[i]), probs[i], q[i], float(v[i]),
                        line_id=line_id, line_window=window, line_effect=effect, line_occurrence=occurrence,
                        line_seat=slot.assignment.learner_seat if scripted else -1)  # fmt: skip
+            if self.score_opp_board and not slot.opp_scored and int(ev.player) == 0:
+                g = ev.obs["globals"]
+                if int(g[3]) >= 3 and int(g[2]) == 1:  # the first seat's first own row from turn 3 on
+                    slot.opp_scored = True
+                    row.opp_board = board_score(ev.obs, ev.privileged, self.env.cards, self.env.vocab, side=1)
             cols[ev.env_id].append(row)
             slot.rows += 1
             slot.rows_here += 1
@@ -1443,6 +1455,7 @@ class RolloutCollector:
             line_effect=grid([r.line_effect for r in rows], torch.long),
             line_occurrence=grid([r.line_occurrence for r in rows], torch.long),
             line_seat=grid([r.line_seat for r in rows], torch.long),
+            opp_board=grid([r.opp_board for r in rows], torch.float32) if self.score_opp_board else None,
             lookahead_decisions=self._look_counts[0], lookahead_branched=self._look_counts[1],
             lookahead_changed=self._look_counts[2], lookahead_steps=self._look_counts[3],
             **(self._branch_fields(rows, T, B) if self.branch is not None else {}),

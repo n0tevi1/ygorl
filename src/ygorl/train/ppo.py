@@ -53,6 +53,29 @@ BRANCH_CE_WEIGHTS = ("delta", "uniform")
 
 
 @torch.no_grad()
+def opp_board_rewards(ro: Rollout, coef: float) -> tuple[Tensor, dict[str, float]]:
+    """``-coef * opp_board`` on the first seat's last row before each scored turn-3 row (PPOConfig.opp_board_coef),
+    found backwards in the column without crossing a game end; a scored row whose earlier seat-0 rows are all in a
+    previous rollout gives nothing. Also the stats: scored rows and the mean opponent board (the turn-2 end board)."""
+    T, B = ro.shape
+    out = torch.zeros(T, B)
+    board = ro.opp_board
+    hit = torch.isfinite(board).nonzero().tolist()
+    players, dones = ro.players.tolist(), ro.dones.tolist()
+    placed = 0
+    for t, b in hit:
+        u = t - 1
+        while u >= 0 and not dones[u][b] and players[u][b] != 0:
+            u -= 1
+        if u >= 0 and not dones[u][b]:
+            out[u, b] -= coef * float(board[t, b])
+            placed += 1
+    vals = board[torch.isfinite(board)]
+    return out, {"opp_board_rows": len(hit), "opp_board_placed": placed,
+                 "opp_board_mean": float(vals.mean()) if len(hit) else float("nan")}  # fmt: skip
+
+
+@torch.no_grad()
 def branch_advantages(ro: Rollout) -> tuple[Tensor, Tensor, Tensor]:
     """The window counterfactual advantage of each branched row (first-seat plan §5.1 A, a COMA-style baseline):
     ``(adv, used, in_set)`` -- ``adv`` [T, B] is ``V_b(a_taken) - Σ_{a in set} π̃(a) V_b(a)`` with π̃ the behaviour
@@ -158,6 +181,12 @@ class PPOConfig:
     phi_coef: float = 0.0
     phi_shape_coef: float = 0.0
     phi_shape_first_seat_only: bool = False  # shape only the rows of engine player 0 (the seat that moved first)
+    # first-seat opponent-board reward (Rollout.opp_board; TrainConfig turns on the collector's scoring): the first
+    # seat's last row before its turn 3 gets -opp_board_coef * board_score(opponent board then) / opp_board_scale —
+    # how much the second seat still built through turn 2 against the turn-1 board (3 per interruption, 1 per
+    # monster, 0.5 per spell / trap). Only seat-0 rows; the second seat's objective is unchanged. 0 = off
+    opp_board_coef: float = 0.0
+    opp_board_scale: float = 10.0
     # window counterfactual advantages (TrainConfig.branch_windows, Rollout.branch_value; docs/training.md §8.2
     # 「窗口反事实优势」): on a branched row whose taken action is in the branch set, Â = V_b(a_taken) - Σ π̃(a) V_b(a)
     # (π̃ the behaviour policy renormalized on the set); "replace" puts Â in place of the row's VRPO advantage,
@@ -213,6 +242,8 @@ class PPOConfig:
             raise ValueError("line_bonus_coef must be nonnegative")
         if self.line_ce_coef < 0:
             raise ValueError("line_ce_coef must be nonnegative")
+        if self.opp_board_coef < 0 or self.opp_board_scale <= 0:
+            raise ValueError("opp_board_coef must be nonnegative and opp_board_scale positive")
         if self.phi_coef < 0 or self.phi_shape_coef < 0:
             raise ValueError("phi_coef and phi_shape_coef must be nonnegative")
         if self.branch_mode not in BRANCH_MODES:
@@ -480,6 +511,11 @@ class PPOLearner:
             self._boundaries = turn_boundaries(ro.obs, ro.players, ro.dones, ro.rewards, ro.truncated)
         if cfg.phi_shape_coef > 0:
             rewards = rewards + self.phi_shaping(ro)
+        if ro.opp_board is not None:
+            shaped, ob_stats = opp_board_rewards(ro, cfg.opp_board_coef / cfg.opp_board_scale)
+            self._phi_stats.update(ob_stats)
+            if cfg.opp_board_coef > 0:
+                rewards = rewards + shaped.to(rewards)
         bonus = None
         if self.line_labels is not None and cfg.line_bonus_coef > 0:
             bonus, self._line_stats = self.line_labels.bonus(ro)
