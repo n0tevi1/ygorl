@@ -167,6 +167,18 @@ class TrainConfig:
         "pfsp"  # "pfsp" (design I1) or "uniform" (SnapshotPool): opponents the learner loses to come up more
     )
     pfsp_power: float = 2.0
+    # active snapshot cohort (SelfPlaySchedule active_k): pool deals draw from pool_active_k snapshots redrawn every
+    # pool_active_deals deals (0 = the number of environments), so in-flight games batch into few opponent forwards
+    pool_active_k: int = 0
+    pool_active_deals: int = 0
+    # record Rollout.opp_board (the opponent's board on the first seat's first turn-3 row; metrics opp_board_mean)
+    # without rewarding it; ppo.opp_board_coef > 0 records it too
+    score_opp_board: bool = False
+    # position starts (ygorl.train.positions JSONL, e.g. tools/make_line_positions.py: solver turn-1-end positions,
+    # learner seat 0): position_share of the deals start one game from a position instead of from the beginning
+    position_starts: tuple[str, ...] = ()
+    position_share: float = 0.0
+    opp_board_kind: str = "board"  # "board" (board_score) or "material" (its monster + spell / trap part only)
     # a due snapshot joins the pool only if the learner scored above this in its pool games since the last one joined
     # (at least snapshot_min_games of them; ygo-agent's OSFP uses 0.55); None = always; an empty pool always takes one
     snapshot_min_win_rate: float | None = None
@@ -275,6 +287,24 @@ class TrainConfig:
                 raise ValueError("lookahead_share needs the privileged environment (the rollouts score both boards)")
         if self.lookahead_forks < 0 or self.lookahead_rounds < 0:
             raise ValueError("lookahead_forks and lookahead_rounds must not be negative")
+        from ygorl.train.aux import AUX_TARGETS
+
+        if not 0 <= self.critic_aux <= len(AUX_TARGETS):
+            raise ValueError(f"critic_aux must be in [0, {len(AUX_TARGETS)}]")
+        if (self.critic_aux > 0) != (self.ppo.aux_coef > 0):
+            # heads without a loss train nothing (the fs-aux runs of 2026-10-31 were silent no-ops this way)
+            raise ValueError("critic_aux and ppo.aux_coef go together: auxiliary heads need --aux-coef > 0 and back")
+        if not 0 <= self.position_share <= 1 or (self.position_share > 0 and not self.position_starts):
+            raise ValueError("position_share must be in [0, 1] and needs position_starts when above 0")
+        if self.opp_board_kind not in ("board", "material"):
+            raise ValueError("opp_board_kind must be 'board' or 'material'")
+        if self.ppo.opp_board_coef > 0 and not self.privileged_critic:
+            raise ValueError("ppo.opp_board_coef needs the privileged environment (the opponent's hand and set cards)")
+        if self.ppo.phi_coef > 0 and not self.critic_phi:
+            raise ValueError("ppo.phi_coef needs critic_phi")
+        if self.ppo.phi_shape_coef > 0 and not (self.critic_phi and self.ppo.phi_coef > 0):
+            raise ValueError("ppo.phi_shape_coef needs critic_phi and ppo.phi_coef > 0 (an untrained potential "
+                             "only adds noise)")  # fmt: skip
         uses_branch = self.ppo.branch_mode != "off" or self.ppo.branch_q_coef > 0 or self.ppo.branch_ce_coef > 0
         if uses_branch and not self.branch_windows:
             raise ValueError(
@@ -379,13 +409,24 @@ def build_collection(
     """
 
     decks = [load_ydk(p) for p in cfg.decks]
+    positions = None
+    if cfg.position_starts and cfg.position_share > 0:
+        from ygorl.train.positions import PositionLibrary
+
+        positions = PositionLibrary.load(list(cfg.position_starts), env=environment)
+        for i, p in enumerate(positions.positions):  # the env below must replay each prefix as it was recorded
+            if p.skip_forced != cfg.skip_forced or p.cancel_budget != cfg.cancel_budget:
+                raise ValueError(f"position {i} was recorded with skip_forced={p.skip_forced}, cancel_budget="
+                                 f"{p.cancel_budget}; the run has {cfg.skip_forced}, {cfg.cancel_budget}")  # fmt: skip
     schedule = SelfPlaySchedule(DeckPool(decks, cfg.pairings), pool, duel_config,
                                 selfplay_fraction=cfg.selfplay_fraction, seed=cfg.seed,
                                 evolved=evolved, lines=lines, line_share=cfg.line_share,
                                 line_first_share=cfg.line_first_share,
                                 lookahead=cfg.lookahead_config() if cfg.lookahead_share > 0 else None,
                                 lookahead_share=cfg.lookahead_share,
-                                lookahead_second=cfg.lookahead_second)  # fmt: skip
+                                lookahead_second=cfg.lookahead_second, active_k=cfg.pool_active_k,
+                                active_deals=cfg.pool_active_deals or max(1, num_envs), positions=positions,
+                                position_share=cfg.position_share if positions else 0.0)  # fmt: skip
     forks = cfg.lookahead_forks if cfg.lookahead_share > 0 else 0
     env = EncodedVecEnv(num_envs + forks, env_threads, cards=cards, vocab=vocab,
                         privileged=cfg.privileged_critic, event_length=cfg.event_length,
@@ -399,7 +440,9 @@ def build_collection(
                                  turn_discount=cfg.turn_discount, complete_games=cfg.complete_games,
                                  branch=cfg.branch_config() if cfg.branch_windows else None,
                                  forks=forks, look_rounds=cfg.lookahead_rounds,
-                                 opp_cpu_threads=cfg.opp_cpu_threads, opp_artifact=opp_artifact)  # fmt: skip
+                                 opp_cpu_threads=cfg.opp_cpu_threads, opp_artifact=opp_artifact,
+                                 score_opp_board=cfg.opp_board_kind
+                                 if cfg.score_opp_board or cfg.ppo.opp_board_coef > 0 else False)  # fmt: skip
     return schedule, env, collector
 
 

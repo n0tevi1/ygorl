@@ -131,14 +131,16 @@ class BranchConfig:
             raise ValueError("branch board_scale must be positive")
 
 
-def board_score(obs, privileged, cards, vocab, side: int = 1) -> float:
+def board_score(obs, privileged, cards, vocab, side: int = 1, interruptions: bool = True) -> float:
     """The board of the decider's opponent (the line seat, at the learner's horizon) in the phase-0 probe's units
     (tools/window_counterfactual_probe.py ``board_score``): 3 per interruption (:func:`ygorl.solver.blocking.
     board_interruptions`: face-up monsters and spells / traps, set spells / traps, cards in hand, cards in the
     graveyard) + 1 per monster + 0.5 per spell / trap zone card. Read from the encoded card table; the hand and the
     set spells / traps from the privileged tensors (training mode), without them those are unknown (no
     interruption). ``side`` 0 scores the decider's own board instead (its hand and set cards are in the observation;
-    look-ahead, :mod:`ygorl.train.lookahead`)."""
+    look-ahead, :mod:`ygorl.train.lookahead`). ``interruptions=False``: only the material part (1 per monster + 0.5
+    per spell / trap zone card), the part of the score that predicts the first seat's losses (out/research/fs3/
+    ob-signal)."""
     from ygorl.engine import constants as C
     from ygorl.solver.blocking import board_interruptions
 
@@ -160,6 +162,8 @@ def board_score(obs, privileged, cards, vocab, side: int = 1) -> float:
             grave.append(c)
         elif loc == 2 and c and side == 0:
             own_hand.append(c)
+    if not interruptions:
+        return len(monsters) + 0.5 * len(spells)
     hand = own_hand
     if privileged is not None and side == 1:
         hand = [c for c in (code(int(row[0])) for row in privileged["op_hand"]) if c]
@@ -250,6 +254,9 @@ class Assignment:
     # a look-ahead opponent (ygorl.train.lookahead.LookaheadConfig; needs a snapshot opponent, no line, an environment
     # with snapshots): at its qualifying decisions the snapshot plays best-of-K by snapshot branching; None: none
     lookahead: Any = None
+    # a prefix start (ygorl.train.positions): the env plays these action indices right after the start, so the game
+    # begins at a recorded position (e.g. a solver line's turn-1 end); None: from the start
+    prefix: tuple[int, ...] | None = None
 
     def is_learner(self, seat: int) -> bool:
         return self.opponent is None or seat == self.learner_seat
@@ -311,6 +318,9 @@ class Rollout:
     line_effect: Tensor | None = None  # [T, B] effect (card vocab index) a chain window answers; -1 elsewhere
     line_occurrence: Tensor | None = None  # [T, B] answers to that effect so far in the game (1-based); 0 elsewhere
     line_seat: Tensor | None = None  # [T, B] the learner's seat of the row's scripted game (0 / 1), -1 without one
+    # score_opp_board: board_score of the opponent's board on the first seat's first own row of turn 3 (what the
+    # second seat built through turn 2 against the first seat's turn-1 board), NaN on every other row
+    opp_board: Tensor | None = None  # [T, B]
     # window branching (BranchConfig; None without it): each branch-set candidate's mean value from the learner's view
     # (NaN off the set and on rows without a branch), whether the row was branched with every rollout valid, and the
     # pass row of the set (-1 without one); branch_windows / branch_decisions count the branched windows and the engine
@@ -356,6 +366,7 @@ class _Row:
     line_effect: int = -1
     line_occurrence: int = 0
     line_seat: int = -1
+    opp_board: float = float("nan")
     branch_value: Tensor | None = None
     branch_valid: bool = False
     branch_pass: int = -1
@@ -417,6 +428,25 @@ class _Slot:
     look: _LookState | None = None  # a look-ahead opponent's decision being rolled out (Assignment.lookahead)
     looks: int = 0  # look-ahead decisions of the opponent so far in this game (their random-number keys)
     turn: int = 0  # the turn of the game's latest decision seen (look-ahead games: _look_slot)
+    opp_scored: bool = False  # score_opp_board: the first seat's turn-3 opponent board is recorded
+
+
+class _ProbSlice:
+    """Rows ``start:stop`` of a threaded opponent forward's probabilities, padded back to ``width`` columns (the C++
+    graph slices actions to the true prefix; the zero-probability columns keep the eager path's arity)."""
+
+    __slots__ = ("future", "start", "stop", "width")
+
+    def __init__(self, future, start: int, stop: int, width: int) -> None:
+        self.future, self.start, self.stop, self.width = future, start, stop, width
+
+    def result(self) -> Tensor:
+        p = self.future.result()[self.start : self.stop]
+        return p if p.shape[-1] == self.width else torch.nn.functional.pad(p, (0, self.width - p.shape[-1]))
+
+
+def _resolve(probs) -> Tensor:
+    return probs if isinstance(probs, Tensor) else probs.result()
 
 
 class RolloutCollector:
@@ -434,7 +464,8 @@ class RolloutCollector:
                  device: torch.device | str = "cpu", stall_timeout: float | None = 900.0,
                  turn_discount: float = 1.0, complete_games: bool = False, branch: BranchConfig | None = None,
                  branch_hooks=None, forks: int = 0, look_rounds: int = 4,
-                 opp_cpu_threads: int = 0, opp_artifact: str | None = None) -> None:  # fmt: skip
+                 opp_cpu_threads: int = 0, opp_artifact: str | None = None,
+                 score_opp_board: bool | str = False) -> None:  # fmt: skip
         if num_steps < 1:
             raise ValueError("num_steps must be at least 1")
         self.num_envs = env.num_envs - forks  # game slots; the forks come after them
@@ -491,6 +522,10 @@ class RolloutCollector:
         # collate+forwards overlap the learner's GPU forward instead of serializing the collect loop (profiling
         # 2026-10-30: the opponents' small-batch forwards were ~58% of a segment). 0 keeps every forward on
         # ``device`` exactly as before.
+        # False: off; True / "board": board_score; "material": board_score without the interruption term
+        if score_opp_board not in (False, True, "board", "material"):
+            raise ValueError("score_opp_board must be False, True, 'board' or 'material'")
+        self.score_opp_board = score_opp_board
         self._opp_executor = None
         if opp_cpu_threads > 0:
             from concurrent.futures import ThreadPoolExecutor
@@ -803,7 +838,10 @@ class RolloutCollector:
         self._slots[env_id] = _Slot(assignment, opponent, line=line, serial=self.games_started, turn=1)
         self._watch.started(env_id)
         self.games_started += 1
-        self.env.reset(env_id, assignment.spec)
+        if assignment.prefix is not None:
+            self.env.reset(env_id, assignment.spec, assignment.prefix)
+        else:
+            self.env.reset(env_id, assignment.spec)
 
     def _finish(self, ev, col: list[_Row]) -> FinishedGame:
         slot = self._slots[ev.env_id]
@@ -867,6 +905,18 @@ class RolloutCollector:
             row = _Row(ev.obs, ev.privileged, int(ev.player), a, float(chosen[i]), probs[i], q[i], float(v[i]),
                        line_id=line_id, line_window=window, line_effect=effect, line_occurrence=occurrence,
                        line_seat=slot.assignment.learner_seat if scripted else -1)  # fmt: skip
+            if self.score_opp_board and not slot.opp_scored and int(ev.player) == 0:
+                g = ev.obs["globals"]
+                if int(g[3]) >= 3 and int(g[2]) == 1:  # the first seat's first own row from turn 3 on
+                    slot.opp_scored = True
+                    row.opp_board = board_score(
+                        ev.obs,
+                        ev.privileged,
+                        self.env.cards,
+                        self.env.vocab,
+                        side=1,
+                        interruptions=self.score_opp_board != "material",
+                    )
             cols[ev.env_id].append(row)
             slot.rows += 1
             slot.rows_here += 1
@@ -977,7 +1027,7 @@ class RolloutCollector:
 
     def _step_branch_opponents(self, pending: list[tuple[list, Tensor]]) -> None:
         for evs, probs in pending:
-            probs = probs.cpu()
+            probs = _resolve(probs).cpu()
             for i, ev in enumerate(evs):
                 a = int(torch.multinomial(probs[i], 1, generator=self._slots[ev.env_id].branch.gen))
                 self._branch_counts[1] += 1
@@ -1085,7 +1135,7 @@ class RolloutCollector:
 
         answers = list(zip(learner, learner_probs, strict=True))
         for rows, probs in pending:
-            p = probs.float().cpu().numpy().astype(np.float64)
+            p = _resolve(probs).float().cpu().numpy().astype(np.float64)
             answers.extend(zip(rows, p))
         touched: dict[int, _Slot] = {}
         for (slot, runner, seat, ev), p in answers:
@@ -1207,7 +1257,28 @@ class RolloutCollector:
             evs = [*main, *extra, *(row[3] for row in look)] if extra or look else main
             snapshot = self._slots[evs[0].env_id].opponent if main or extra else look_groups[key][0]
             jobs.append((main, extra, look, self._opponent_module(snapshot), [ev.obs for ev in evs]))
-        threaded = self._opp_executor is not None and not branch_groups and not look_groups
+        threaded = self._opp_executor is not None
+        if threaded and (branch_groups or look_groups):
+            # Branch / look-ahead decisions share their module's CPU forward with the main ones, as on the device
+            # path: one job per module, its probabilities split afterwards (each part resolves the future).
+            for main, extra, look, m, obs in jobs:
+                batch = self.model.collate(obs, "cpu")
+                runner = self._opp_runner(m)
+                target = self._opp_cpp_forward if runner is not None else self._opp_cpu_forward
+                fut = self._opp_executor.submit(
+                    target, runner if runner is not None else self._opp_cpu_module(m), batch
+                )
+                width = batch["action_mask"].shape[1]
+                a, b = len(main), len(main) + len(extra)
+                if main:
+                    pending.append((main, _ProbSlice(fut, 0, a, width)))
+                if extra:
+                    branch_pending.append((extra, _ProbSlice(fut, a, b, width)))
+                if look:
+                    look_pending.append((look, _ProbSlice(fut, b, len(obs), width)))
+            if look_groups is not None:
+                return pending, branch_pending, look_pending
+            return (pending, branch_pending) if two else pending
         if threaded:
             # Each opponent group's CPU forward runs on a thread (the GIL is released by torch compute) and
             # overlaps the learner's forward on the main thread. The strictly-CPU module copies and the collate
@@ -1404,6 +1475,7 @@ class RolloutCollector:
             line_effect=grid([r.line_effect for r in rows], torch.long),
             line_occurrence=grid([r.line_occurrence for r in rows], torch.long),
             line_seat=grid([r.line_seat for r in rows], torch.long),
+            opp_board=grid([r.opp_board for r in rows], torch.float32) if self.score_opp_board else None,
             lookahead_decisions=self._look_counts[0], lookahead_branched=self._look_counts[1],
             lookahead_changed=self._look_counts[2], lookahead_steps=self._look_counts[3],
             **(self._branch_fields(rows, T, B) if self.branch is not None else {}),

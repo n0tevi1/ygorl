@@ -403,6 +403,39 @@ def test_history_stepwise_matches_full_sequence(module):
         assert torch.allclose(seq, full.tokens[i, : len(seq)], atol=1e-5)
 
 
+def test_window_fast_path_is_bitwise_the_general_path():
+    """Window mode (no state, valid tokens a prefix): a cached bias, the state built lazily; same outputs and, on its
+    valid slots, the same state."""
+    from ygorl.nets.history import window_fast_path
+
+    torch.manual_seed(0)
+    net = PolicyNet(small()).eval()
+    batch = random_batch(16, seed=3)
+    with torch.no_grad():
+        with window_fast_path(False):
+            slow = net(batch)
+        fast = net(batch)
+    assert torch.equal(slow.logits, fast.logits) and torch.equal(slow.features.history, fast.features.history)
+    v = slow.state.valid
+    assert torch.equal(v, fast.state.valid) and torch.equal(slow.state.pos, fast.state.pos)
+    for a, b in zip(slow.state.memory, fast.state.memory):
+        assert torch.equal(a[v], b[v])
+
+
+def test_actor_critic_policy_logits_score_the_trimmed_rows_only():
+    from ygorl.nets.actor_critic import ActorCritic
+
+    torch.manual_seed(0)
+    ac = ActorCritic(small(), shared_backbone=False).eval()
+    batch = random_batch(8, seed=4)
+    with torch.no_grad():
+        ref, got = ac.actor(batch).logits, ac.policy_logits(batch)
+    m = batch["action_mask"]
+    # the einsum over fewer action rows may round differently in the last bit
+    assert got.shape == ref.shape and bool((got[~m] == MASKED_LOGIT).all())
+    torch.testing.assert_close(got[m], ref[m], rtol=1e-6, atol=1e-7)
+
+
 def test_policy_history_state_roundtrip():
     """PolicyNet threads the history state: streaming new tokens = the full window."""
     torch.manual_seed(0)

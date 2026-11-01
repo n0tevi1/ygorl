@@ -23,6 +23,7 @@ from torch import Tensor, nn
 
 from ygorl.nets.batch import Batch, collate, stack_arrays
 from ygorl.nets.config import NetConfig
+from ygorl.nets import policy as _policy
 from ygorl.nets.heads import MASKED_LOGIT
 from ygorl.nets.policy import PolicyNet, _pad_to, trim_padding
 from ygorl.nets.text import TextFeatures
@@ -108,7 +109,11 @@ class ActorCritic(nn.Module):
     collate_privileged = staticmethod(collate_privileged)
 
     def policy_logits(self, obs: Batch) -> Tensor:
-        return self.actor(obs).logits
+        # The head scores the trimmed action rows only; padded back like forward() (masked rows are MASKED_LOGIT).
+        if not _policy._TRIM:
+            return self.actor(obs).logits
+        width = obs["action_mask"].shape[1]
+        return _pad_to(self.actor.logits(self.actor._features(trim_padding(obs))), width, value=MASKED_LOGIT)
 
     def forward(self, obs: Batch, privileged: Mapping[str, Tensor] | None = None) -> ActorCriticOutput:
         # Heads on the trimmed batch (the critic's Q head then scores only the used action rows, not all 128);

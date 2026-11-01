@@ -142,9 +142,12 @@ class SnapshotPool:
         self._pinned[sid] = Snapshot(sid, 0, self._freeze(model), tag)
         return sid
 
-    def sample(self, rng: np.random.Generator) -> int | None:
-        """A snapshot id (pinned ones take ``pinned_share`` of the draws), or None when the pool is empty."""
+    def sample(self, rng: np.random.Generator, among: Sequence[int] | None = None) -> int | None:
+        """A snapshot id (pinned ones take ``pinned_share`` of the draws), or None when the pool is empty. ``among``:
+        draw the regular snapshot from these ids only (an active cohort, :meth:`cohort`) when any is still pooled."""
         pinned, regular = list(self._pinned), list(self._snaps)
+        if among is not None:
+            regular = [i for i in among if i in self._snaps] or regular
         if pinned and (not regular or rng.random() < self.pinned_share):
             return pinned[int(rng.integers(len(pinned)))]
         if not regular:
@@ -153,6 +156,18 @@ class SnapshotPool:
             return regular[int(rng.integers(len(regular)))]
         w = np.array([(1.0 - self._snaps[i].learner_win_rate) ** self.pfsp_power for i in regular]) + 1e-6
         return regular[int(rng.choice(len(regular), p=w / w.sum()))]
+
+    def cohort(self, rng: np.random.Generator, k: int) -> list[int]:
+        """``k`` distinct regular snapshot ids, drawn without replacement with :meth:`sample`'s weights."""
+        regular = list(self._snaps)
+        if len(regular) <= k:
+            return regular
+        if self.sampling == "uniform":
+            w = np.ones(len(regular))
+        else:
+            w = np.array([(1.0 - self._snaps[i].learner_win_rate) ** self.pfsp_power for i in regular]) + 1e-6
+        picks = rng.choice(len(regular), size=k, replace=False, p=w / w.sum())
+        return [regular[int(i)] for i in sorted(picks)]
 
     def record(self, sid: int, learner_score: float) -> None:
         """One finished pool game against snapshot ``sid`` (ignored if it has left the pool)."""
@@ -365,13 +380,20 @@ class SelfPlaySchedule:
                  selfplay_fraction: float = 0.75, seed: int = 0, evolved: EvolvedDecks | None = None,
                  lines: LineLibrary | None = None, line_share: float = 0.0,
                  line_first_share: float = 0.0, lookahead=None, lookahead_share: float = 0.0,
-                 lookahead_second: bool = False) -> None:  # fmt: skip
+                 lookahead_second: bool = False, active_k: int = 0, active_deals: int = 64,
+                 positions=None, position_share: float = 0.0) -> None:  # fmt: skip
         if not 0 <= selfplay_fraction <= 1:
             raise ValueError("selfplay_fraction must be in [0, 1]")
         if not 0 <= line_share <= 1:
             raise ValueError("line_share must be in [0, 1]")
         if not 0 <= line_first_share <= 1:
             raise ValueError("line_first_share must be in [0, 1]")
+        if not 0 <= position_share <= 1 or (position_share > 0 and not positions):
+            raise ValueError("position_share must be in [0, 1] and needs positions when above 0")
+        # position starts (ygorl.train.positions.PositionLibrary): with probability position_share a deal is one game
+        # from a recorded position, the learner on the position's learner seat (both seats in self-play)
+        self.positions = positions if positions else None
+        self.position_share = position_share
         if not 0 <= lookahead_share <= 1 or (lookahead_share > 0 and lookahead is None):
             raise ValueError("lookahead_share must be in [0, 1] and needs a look-ahead configuration when above 0")
         self.lookahead = lookahead
@@ -390,6 +412,15 @@ class SelfPlaySchedule:
         self.deals = 0
         self._queue: deque[Assignment] = deque()
         self._held: dict[int, nn.Module] = {}  # snapshots of the current deal, resolved when it was dealt
+        # Active cohort (0 = off, bit-identical): pool deals draw from ``active_k`` snapshots, redrawn every
+        # ``active_deals`` deals, so the games in flight share a few opponent forwards (batching) instead of one
+        # small forward per pooled snapshot; over a run every snapshot still comes up with the pool's weights.
+        if active_k < 0 or active_deals < 1:
+            raise ValueError("active_k must be >= 0 and active_deals >= 1")
+        self.active_k, self.active_deals = active_k, active_deals
+        self._active: list[int] | None = None
+        self._active_at = 0
+        self._active_rng = np.random.default_rng(derive_seed(seed, 9))
 
     def __call__(self) -> Assignment:
         if not self._queue:
@@ -416,6 +447,9 @@ class SelfPlaySchedule:
         return deck_a, deck_b, None
 
     def _deal(self) -> None:
+        if self.positions is not None and self.position_share > 0 and self.rng.random() < self.position_share:
+            self._deal_position()
+            return
         deck_a, deck_b, evolved = self._sample_decks()
         seed = derive_seed(self.seed, 2, self.deals)
         self.deals += 1
@@ -424,7 +458,7 @@ class SelfPlaySchedule:
         self._held.clear()
         opponent = None
         if self.rng.random() >= self.selfplay_fraction:
-            opponent = self.pool.sample(self.rng)
+            opponent = self.pool.sample(self.rng, self._cohort())
             if opponent is not None:
                 self._held[opponent] = self.pool.get(opponent)
         side = int(self.rng.integers(2))  # the learner's deck in a pool game: 0 = deck_a, 1 = deck_b
@@ -446,6 +480,32 @@ class SelfPlaySchedule:
             if look is not None:
                 info["lookahead"] = look.first_turn
             self._queue.append(Assignment(spec, opponent, seat, info, lookahead=look))
+
+    def _cohort(self) -> list[int] | None:
+        if not self.active_k:
+            return None
+        stale = self._active is None or not any(i in self.pool._snaps for i in self._active)
+        if stale or self.deals - self._active_at >= self.active_deals:
+            self._active, self._active_at = self.pool.cohort(self._active_rng, self.active_k), self.deals
+        return self._active
+
+    def _deal_position(self) -> None:
+        """One game from a recorded position (the opponent drawn as in any deal: self-play or a pool snapshot)."""
+        self.deals += 1
+        self._held.clear()
+        pos = self.positions.sample(self.rng)
+        opponent = None
+        if self.rng.random() >= self.selfplay_fraction:
+            opponent = self.pool.sample(self.rng, self._cohort())
+            if opponent is not None:
+                self._held[opponent] = self.pool.get(opponent)
+        spec = pos.spec()
+        seat = 0 if pos.learner_seat is None else pos.learner_seat
+        info = {"deck_a": spec.deck_a.name, "deck_b": spec.deck_b.name, "first": spec.first, "position": True,
+                **{k: v for k, v in pos.origin.items() if k in ("line_id", "line_deck", "opponent_deck")}}  # fmt: skip
+        if opponent is not None:
+            info["learner_deck"] = (spec.deck_a, spec.deck_b)[0 if spec.seat_of_deck(0) == seat else 1].name
+        self._queue.append(Assignment(spec, opponent, seat, info, prefix=pos.prefix))
 
     def _lookahead(self, learner_seat: int):
         """The snapshot's look-ahead in a game where the learner holds ``learner_seat``: its first own turn (2 when the
@@ -475,11 +535,18 @@ class SelfPlaySchedule:
             self._queue.append(Assignment(spec, opponent, seat, info, script))
 
     def state_dict(self) -> dict:
-        return {"deals": self.deals, "rng": self.rng.bit_generator.state}
+        out = {"deals": self.deals, "rng": self.rng.bit_generator.state}
+        if self.active_k:
+            out["active"] = {"ids": self._active, "at": self._active_at, "rng": self._active_rng.bit_generator.state}
+        return out
 
     def load_state_dict(self, state: dict) -> None:
         self.deals = int(state["deals"])
         self.rng.bit_generator.state = state["rng"]
+        active = state.get("active")
+        if active is not None and self.active_k:
+            self._active, self._active_at = active["ids"], int(active["at"])
+            self._active_rng.bit_generator.state = active["rng"]
         self._queue.clear()
         self._held.clear()
 

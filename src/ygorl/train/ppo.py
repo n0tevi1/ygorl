@@ -53,6 +53,29 @@ BRANCH_CE_WEIGHTS = ("delta", "uniform")
 
 
 @torch.no_grad()
+def opp_board_rewards(ro: Rollout, coef: float, center: float = 0.0) -> tuple[Tensor, dict[str, float]]:
+    """``-coef * (opp_board - center)`` on the first seat's last row before each scored turn-3 row (PPOConfig.opp_board_coef),
+    found backwards in the column without crossing a game end; a scored row whose earlier seat-0 rows are all in a
+    previous rollout gives nothing. Also the stats: scored rows and the mean opponent board (the turn-2 end board)."""
+    T, B = ro.shape
+    out = torch.zeros(T, B)
+    board = ro.opp_board
+    hit = torch.isfinite(board).nonzero().tolist()
+    players, dones = ro.players.tolist(), ro.dones.tolist()
+    placed = 0
+    for t, b in hit:
+        u = t - 1
+        while u >= 0 and not dones[u][b] and players[u][b] != 0:
+            u -= 1
+        if u >= 0 and not dones[u][b]:
+            out[u, b] -= coef * (float(board[t, b]) - center)
+            placed += 1
+    vals = board[torch.isfinite(board)]
+    return out, {"opp_board_rows": len(hit), "opp_board_placed": placed,
+                 "opp_board_mean": float(vals.mean()) if len(hit) else float("nan")}  # fmt: skip
+
+
+@torch.no_grad()
 def branch_advantages(ro: Rollout) -> tuple[Tensor, Tensor, Tensor]:
     """The window counterfactual advantage of each branched row (first-seat plan §5.1 A, a COMA-style baseline):
     ``(adv, used, in_set)`` -- ``adv`` [T, B] is ``V_b(a_taken) - Σ_{a in set} π̃(a) V_b(a)`` with π̃ the behaviour
@@ -103,6 +126,11 @@ class PPOConfig:
     gamma: float = 1.0
     lam: float = 0.5  # design I2: lower-variance advantages; 0.3 / the critic mode are worse (docs/benchmarks.md)
     critic_lam: float | None = None  # Q / V target λ (None: lam); 1.0 still retains VRPO control variates/bootstrap
+    # advantage λ of the first seat's rows (engine player 0) only; None: lam. With λ = 0.5 the outcome reaches a row only
+    # through the game's last few rows, and both seats learn from near-pure TD noise (out/research/fs3/seat-signal); a
+    # second estimate over the whole rollout with this λ replaces the seat-0 rows' advantages (the trace runs through
+    # the opponent's rows, as the estimator's per-seat signs do), before normalization. The critic targets keep their λ
+    first_seat_lam: float | None = None
     critic_target: str = "lambda"  # experimental "terminal": actual z for Q/V, same policy advantages
     clip: float = 0.2  # PPO ratio clip
     entropy_coef: float = 0.05  # design I1: 0.05-0.2
@@ -158,6 +186,13 @@ class PPOConfig:
     phi_coef: float = 0.0
     phi_shape_coef: float = 0.0
     phi_shape_first_seat_only: bool = False  # shape only the rows of engine player 0 (the seat that moved first)
+    # first-seat opponent-board reward (Rollout.opp_board; TrainConfig turns on the collector's scoring): the first
+    # seat's last row before its turn 3 gets -opp_board_coef * board_score(opponent board then) / opp_board_scale —
+    # how much the second seat still built through turn 2 against the turn-1 board (3 per interruption, 1 per
+    # monster, 0.5 per spell / trap). Only seat-0 rows; the second seat's objective is unchanged. 0 = off
+    opp_board_coef: float = 0.0
+    opp_board_scale: float = 10.0
+    opp_board_center: float = 0.0  # subtracted from the score first (e.g. its mean, so the reward is centred)
     # window counterfactual advantages (TrainConfig.branch_windows, Rollout.branch_value; docs/training.md §8.2
     # 「窗口反事实优势」): on a branched row whose taken action is in the branch set, Â = V_b(a_taken) - Σ π̃(a) V_b(a)
     # (π̃ the behaviour policy renormalized on the set); "replace" puts Â in place of the row's VRPO advantage,
@@ -207,12 +242,16 @@ class PPOConfig:
             raise ValueError("response_weight must be positive")
         if not self.first_seat_weight > 0:
             raise ValueError("first_seat_weight must be positive")
+        if self.first_seat_lam is not None and not 0 <= self.first_seat_lam <= 1:
+            raise ValueError("first_seat_lam must be in [0, 1]")
         if self.aux_coef < 0:
             raise ValueError("aux_coef must be nonnegative")
         if self.line_bonus_coef < 0:
             raise ValueError("line_bonus_coef must be nonnegative")
         if self.line_ce_coef < 0:
             raise ValueError("line_ce_coef must be nonnegative")
+        if self.opp_board_coef < 0 or self.opp_board_scale <= 0:
+            raise ValueError("opp_board_coef must be nonnegative and opp_board_scale positive")
         if self.phi_coef < 0 or self.phi_shape_coef < 0:
             raise ValueError("phi_coef and phi_shape_coef must be nonnegative")
         if self.branch_mode not in BRANCH_MODES:
@@ -480,6 +519,11 @@ class PPOLearner:
             self._boundaries = turn_boundaries(ro.obs, ro.players, ro.dones, ro.rewards, ro.truncated)
         if cfg.phi_shape_coef > 0:
             rewards = rewards + self.phi_shaping(ro)
+        if ro.opp_board is not None:
+            shaped, ob_stats = opp_board_rewards(ro, cfg.opp_board_coef / cfg.opp_board_scale, cfg.opp_board_center)
+            self._phi_stats.update(ob_stats)
+            if cfg.opp_board_coef > 0:
+                rewards = rewards + shaped.to(rewards)
         bonus = None
         if self.line_labels is not None and cfg.line_bonus_coef > 0:
             bonus, self._line_stats = self.line_labels.bonus(ro)
@@ -496,7 +540,8 @@ class PPOLearner:
             self._branch_stats = self._branch_summary(ro, *branch, ce)
             if cfg.branch_ce_coef > 0:
                 self._branch_ce = (ce[0], ce[1])
-        shift = bonus is not None or (branch is not None and cfg.branch_mode != "off")
+        long_seat0 = cfg.first_seat_lam is not None and cfg.first_seat_lam != cfg.lam
+        shift = bonus is not None or (branch is not None and cfg.branch_mode != "off") or long_seat0
         est = estimate(cfg.estimator, rewards=rewards, dones=ro.dones, players=ro.players, actions=ro.actions,
                         action_mask=ro.action_mask, probs=ro.probs, q=ro.q, values=ro.values, gamma=cfg.gamma,
                         lam=cfg.lam, bootstrap_player=ro.bootstrap_player, bootstrap_value=ro.bootstrap_value,
@@ -505,6 +550,30 @@ class PPOLearner:
                         normalize="none" if shift else cfg.adv_norm, target_lam=cfg.critic_lam)  # fmt: skip
         if shift:
             raw = est.advantages
+            if long_seat0:
+                long = estimate(
+                    cfg.estimator,
+                    rewards=rewards,
+                    dones=ro.dones,
+                    players=ro.players,
+                    actions=ro.actions,
+                    action_mask=ro.action_mask,
+                    probs=ro.probs,
+                    q=ro.q,
+                    values=ro.values,
+                    gamma=cfg.gamma,
+                    lam=cfg.first_seat_lam,
+                    bootstrap_player=ro.bootstrap_player,
+                    bootstrap_value=ro.bootstrap_value,
+                    bootstrap_q=ro.bootstrap_q,
+                    bootstrap_probs=ro.bootstrap_probs,
+                    bootstrap_mask=ro.bootstrap_mask,
+                    truncated=ro.truncated,
+                    vrpo_mode=cfg.vrpo_mode,
+                    normalize="none",
+                ).advantages
+                seat0 = ro.players.to(raw.device) == 0
+                raw = torch.where(seat0, long.to(raw), raw)
             if branch is not None and cfg.branch_mode != "off":
                 adv, used, _ = branch
                 if cfg.branch_mode == "replace":

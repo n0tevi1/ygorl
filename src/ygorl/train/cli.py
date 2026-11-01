@@ -126,6 +126,12 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
         _f("--phi-coef", "ppo.phi_coef", "survival-potential BCE coefficient (needs --critic-phi; docs/training.md 8.2)"),
         _f("--phi-shape-coef", "ppo.phi_shape_coef", "potential-based shaping with the survival potential at the "
            "deciding seat's turn boundaries (needs --critic-phi; 0 = off)"),
+        _f("--opp-board-coef", "ppo.opp_board_coef", "first-seat reward: -coef * the opponent's board score on the "
+           "first seat's turn 3 / --opp-board-scale, on its last row before turn 3 (needs the privileged critic)"),
+        _f("--opp-board-scale", "ppo.opp_board_scale", "board points per unit of --opp-board-coef"),
+        _f("--opp-board-center", "ppo.opp_board_center", "subtracted from the opponent's board score first"),
+        _f("--first-seat-lam", "ppo.first_seat_lam", "advantage λ of the first seat's rows only (default: --lam); "
+           "the critic targets keep theirs"),
         _f("--phi-shape-first-seat-only", "ppo.phi_shape_first_seat_only",
            "shape only the rows of the seat that moved first"),
         _f("--v-coef", "ppo.v_coef", "V-head loss coefficient"),
@@ -231,6 +237,17 @@ FLAGS: tuple[tuple[str | None, tuple[Flag, ...]], ...] = (
            "pfsp (design I1): draw pool opponents by (1 - learner win rate) ** --pfsp-power",
            choices=("uniform", "pfsp")),
         _f("--pfsp-power", "pfsp_power"),
+        _f("--pool-active-k", "pool_active_k", "pool deals draw from an active cohort of K snapshots (0 = the whole "
+           "pool), so in-flight games share a few batched opponent forwards"),
+        _f("--pool-active-deals", "pool_active_deals", "deals between two cohort draws (0 = --envs)"),
+        _f("--position-starts", "position_starts", "position JSONL (ygorl.train.positions; tools/make_line_positions.py) "
+           "to start games from (repeatable)", metavar="JSONL", listing="append"),
+        _f("--position-share", "position_share", "share of the deals that start one game from a --position-starts "
+           "position"),
+        _f("--score-opp-board", "score_opp_board", "record the opponent's board on the first seat's turn 3 "
+           "(metrics opp_board_mean) without rewarding it"),
+        _f("--opp-board-kind", "opp_board_kind", "opponent board score: board (3 per interruption + material) or "
+           "material (1 per monster + 0.5 per spell / trap)", choices=("board", "material")),
         _f("--snapshot-min-win-rate", "snapshot_min_win_rate",
            "a due snapshot joins the pool only if the learner scored above this against the pool"),
         _f("--snapshot-min-games", "snapshot_min_games"),

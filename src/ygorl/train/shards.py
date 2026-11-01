@@ -38,6 +38,7 @@ _T_B_FIELDS = (
     "line_effect",
     "line_occurrence",
     "line_seat",
+    "opp_board",
     "branch_valid",
     "branch_pass",
 )

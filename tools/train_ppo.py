@@ -63,26 +63,33 @@ def main(argv: list[str] | None = None) -> int:
         if args.resume is not None:
             # The checkpoint restores its saved config; these schedule knobs are the ones a resume may want to
             # change (a dropped --eval-every 0 once silently re-enabled 6,000-game evaluations mid-run).
-            ppo_over = {}
-            if args.resume is not None:
-                # resume restores the saved PPO config; forward explicitly given --kl-prior / --target-kl
-                # resume restores the saved PPO config; forward explicitly given --kl-prior / --target-kl
-                from ygorl.train.checkpoint import load_checkpoint
-                from ygorl.train.ppo import PPOConfig as _PC
+            parser = build_parser()
+            given = set()  # dests of the flags given on this command line (only those override the checkpoint)
+            for tok in argv if argv is not None else sys.argv[1:]:
+                action = parser._option_string_actions.get(tok.split("=", 1)[0]) if tok.startswith("--") else None
+                if action is not None:
+                    given.add(action.dest)
+            from ygorl.train.checkpoint import load_checkpoint
+            from ygorl.train.ppo import PPOConfig as _PC
 
-                saved = dict(load_checkpoint(args.resume)["config"].get("ppo", {}))
-                changed = False
-                if args.kl_prior is not None and args.kl_prior != saved.get("kl_prior_coef"):
-                    saved["kl_prior_coef"], changed = args.kl_prior, True
-                if args.target_kl is not None and args.target_kl != saved.get("target_kl"):
-                    saved["target_kl"], changed = args.target_kl, True
-                if changed:
-                    ppo_over = {"ppo": _PC(**saved)}
-            trainer = Trainer.resume(
-                args.resume, args.out,
-                eval_every=args.eval_every, eval_pairings=args.eval_pairings, eval_pairs=args.eval_pairs,
-                eval_workers=args.eval_workers, checkpoint_every=args.checkpoint_every,
-                collect_device=args.collect_device, line_first_share=args.line_first_share, **ppo_over)  # fmt: skip
+            overrides = {k: getattr(args, k) for k in ("eval_every", "eval_pairings", "eval_pairs", "eval_workers",
+                                                        "checkpoint_every", "collect_device", "line_first_share",
+                                                        "score_opp_board", "opp_board_kind", "pinned_share",
+                                                        "position_share")
+                         if k in given}  # fmt: skip
+            if "position_starts" in given:
+                overrides["position_starts"] = tuple(str(p) for p in args.position_starts)
+            if "pin" in given:  # pinned opponents live outside the saved pool, so a resume can add them
+                overrides["pin_opponents"] = tuple(str(p) for p in args.pin)
+            # resume restores the saved PPO config; forward explicitly given PPO knobs
+            saved = dict(load_checkpoint(args.resume)["config"].get("ppo", {}))
+            ppo_keys = {"kl_prior": "kl_prior_coef", "target_kl": "target_kl", "opp_board_coef": "opp_board_coef",
+                        "opp_board_scale": "opp_board_scale", "opp_board_center": "opp_board_center",
+                        "lam": "lam", "first_seat_lam": "first_seat_lam"}  # fmt: skip
+            changed = {key: getattr(args, arg) for arg, key in ppo_keys.items() if arg in given}
+            if changed:
+                overrides["ppo"] = _PC(**{**saved, **changed})
+            trainer = Trainer.resume(args.resume, args.out, **overrides)
         else:
             if not args.decks:
                 raise CommandError("give at least one DECK (or --resume)")

@@ -1036,3 +1036,97 @@ def test_a_second_trainer_on_a_running_directory_is_refused(tmp_path):
     Trainer(cfg, tmp_path / "run")  # same process: allowed (the old inode is retired)
     t2 = Trainer(cfg, tmp_path / "other")  # a different directory is unaffected
     assert t2.run_dir != t.run_dir
+
+
+def test_opp_board_reward_lands_on_the_first_seats_last_row_before_turn_3():
+    from types import SimpleNamespace
+
+    from ygorl.train.ppo import opp_board_rewards
+
+    nan = float("nan")
+    # one column: seat 0, seat 1, seat 0 (scored turn-3 row), then a new game whose first row is scored (nothing before)
+    board = torch.tensor([[nan], [nan], [12.0], [nan], [5.0]])
+    players = torch.tensor([[0], [1], [0], [0], [0]])
+    dones = torch.tensor([[False], [False], [False], [True], [False]])
+    ro = SimpleNamespace(shape=(5, 1), opp_board=board, players=players, dones=dones)
+    out, stats = opp_board_rewards(ro, 0.1)
+    assert out[:, 0].tolist() == pytest.approx([-1.2, 0, 0, 0, 0])
+    centred, _ = opp_board_rewards(ro, 0.1, center=2.0)
+    assert centred[0, 0].item() == pytest.approx(-1.0)
+    assert stats["opp_board_rows"] == 2 and stats["opp_board_placed"] == 1 and stats["opp_board_mean"] == 8.5
+
+
+def test_score_opp_board_records_the_first_seats_turn_3_board(tmp_path):
+    cfg = TrainConfig(decks=PAIR, num_envs=2, env_threads=1, steps=96, event_length=16, net=TINY, privileged_dim=8,
+                      critic_hidden=16, max_decisions=400, ppo=PPOConfig(epochs=1, minibatch_size=32,
+                      opp_board_coef=0.1), snapshot_every=0, checkpoint_every=0, eval_every=0, torch_threads=1,
+                      collect_threads=1, seed=5)  # fmt: skip
+    trainer = Trainer(cfg, tmp_path, log=None)
+    ro = trainer.collector.collect()
+    hit = torch.isfinite(ro.opp_board)
+    assert ro.opp_board.shape == ro.players.shape
+    assert bool((ro.players[hit] == 0).all())
+    i = hit.reshape(-1).nonzero().squeeze(1)
+    assert i.numel() > 0
+    g = ro.obs["globals"][i].cpu()
+    assert bool((g[:, 3] >= 3).all()) and bool((g[:, 2] == 1).all())
+    stats = trainer.learner.update(ro)
+    assert "opp_board_rows" in stats
+    material = Trainer(replace(cfg, opp_board_kind="material"), tmp_path / "m", log=None).collector.collect()
+    m = material.opp_board[torch.isfinite(material.opp_board)]
+    assert m.numel() > 0 and bool(((m * 2) == (m * 2).round()).all())  # monsters + 0.5 per spell / trap
+
+
+def test_position_starts_begin_games_at_the_recorded_position(tmp_path):
+    from ygorl.train.positions import Position, write_positions
+
+    cfg = TrainConfig(decks=PAIR, num_envs=2, env_threads=1, steps=16, event_length=16, net=TINY, privileged_dim=8,
+                      critic_hidden=16, max_decisions=400, ppo=PPOConfig(epochs=1, minibatch_size=16),
+                      snapshot_every=0, checkpoint_every=0, eval_every=0, torch_threads=1, collect_threads=1, seed=5,
+                      selfplay_fraction=1.0)  # fmt: skip
+    db = CardDB.load()
+    env = EncodedVecEnv(1, 1, cards=db, vocab=CardVocab.from_db(db), event_length=16, skip_forced=cfg.skip_forced,
+                        cancel_budget=cfg.cancel_budget, record_actions=True)  # fmt: skip
+    spec = GameSpec(seed=3, deck_a=load_ydk(PAIR[0]), deck_b=load_ydk(PAIR[1]), first=0,
+                    config=DuelConfig(max_decisions=400))  # fmt: skip
+    env.reset(0, spec)
+    turn = 1
+    while turn < 2:  # play the first legal row until turn 2: the position is the first decision of turn 2
+        ev = env.recv(1)[0]
+        assert ev.result is None
+        turn = int(ev.obs["globals"][3])
+        if turn < 2:
+            env.step(0, int(np.flatnonzero(ev.obs["action_mask"])[0]))
+    pos = Position.from_spec(spec, list(env.actions(0)), skip_forced=cfg.skip_forced, cancel_budget=cfg.cancel_budget,
+                             learner_seat=0)  # fmt: skip
+    path = tmp_path / "pos.jsonl"
+    write_positions(path, [pos])
+    trainer = Trainer(replace(cfg, position_starts=(str(path),), position_share=1.0), tmp_path / "run", log=None)
+    ro = trainer.collector.collect()
+    first = ro.obs["globals"].view(ro.shape[0], ro.shape[1], -1)[0].cpu()
+    assert bool((first[:, 3] >= 2).all())  # every column's first row is past turn 1
+    assert all(g.assignment.info.get("position") for g in ro.games)
+    with pytest.raises(ValueError, match="position_share"):
+        replace(cfg, position_share=0.5)
+
+
+def test_first_seat_lam_replaces_only_the_first_seats_advantages(tmp_path):
+    cfg = TrainConfig(decks=PAIR, num_envs=2, env_threads=1, steps=48, event_length=16, net=TINY, privileged_dim=8,
+                      critic_hidden=16, max_decisions=400, ppo=PPOConfig(epochs=1, minibatch_size=32, adv_norm="none"),
+                      snapshot_every=0, checkpoint_every=0, eval_every=0, torch_threads=1, collect_threads=1, seed=5,
+                      selfplay_fraction=1.0)  # fmt: skip
+    trainer = Trainer(cfg, tmp_path, log=None)
+    ro = trainer.collector.collect()
+    learner = trainer.learner
+    base = learner.targets(ro)
+    learner.cfg = replace(cfg.ppo, lam=0.95)
+    long = learner.targets(ro)
+    learner.cfg = replace(cfg.ppo, first_seat_lam=0.95)
+    mixed = learner.targets(ro)
+    seat0 = ro.players == 0
+    assert bool(seat0.any()) and bool((~seat0).any())
+    assert torch.equal(mixed.advantages[~seat0], base.advantages[~seat0])
+    torch.testing.assert_close(mixed.advantages[seat0], long.advantages[seat0])
+    assert torch.equal(mixed.q_targets, base.q_targets)  # the critic keeps its λ
+    learner.cfg = replace(cfg.ppo, first_seat_lam=cfg.ppo.lam)
+    assert torch.equal(learner.targets(ro).advantages, base.advantages)
